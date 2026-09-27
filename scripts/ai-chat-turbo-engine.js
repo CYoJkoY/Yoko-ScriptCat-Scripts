@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v3
-// @version      0.2.1
-// @description  零回流增量索引 + 安全无感视口脱水 + 事件代理折叠 + 弹窗安全隔离 (AzSkills 精密磨砂设计系统 + 完整矢量图标版)
-// @author       Senior Frontend Engineer
+// @version      0.3.0
+// @description  增量消息索引 + 安全视口脱水 + 独立代码预览折叠 + Gemini 兼容挂载
+// @author       Yoko
 // @match        https://chatgpt.com/*
 // @match        https://gemini.google.com/*
 // @match        https://grok.com/*
@@ -11,6 +11,7 @@
 // @match        https://claude.ai/*
 // @run-at       document-start
 // @grant        none
+// @noframes
 // @icon         data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64"><rect width="24" height="24" rx="6" fill="%2309090b"/><path d="M13 2L3 14h8l-1 8 11-12h-8l1-8z" fill="%2310b981"/></svg>
 // @license      MIT
 // ==/UserScript==
@@ -18,1081 +19,2597 @@
 (function () {
   "use strict";
 
-  // --- 1. 平台特征选择器与提取引擎 ---
+  const VERSION = "0.3.0";
+  const HUD_ID = "ai-turbo-extreme-hud";
+  const STYLE_ID = "ai-turbo-engine-styles";
+  const CODE_SHELL_CLASS = "ai-turbo-code-shell";
+  const CODE_COLLAPSE_HEIGHT = 320;
+  const CODE_PREVIEW_HEIGHT = 220;
+  const TURN_TEXT_LIMIT = 800;
+  const SEARCH_LIMIT = 10;
+
   const PLATFORMS = {
     chatgpt: {
       name: "ChatGPT",
-      turns:
-        'article[data-testid^="conversation-turn-"], div[data-message-author-role]',
-      getTurns: () =>
-        document.querySelectorAll(
-          'article[data-testid^="conversation-turn-"], div[data-message-author-role]',
-        ),
-      inputContainer:
-        'form, div[class*="composer"], div[class*="PromptTextarea"]',
-      contentBody: 'div[class*="markdown"], div[data-message-author-role]',
-      codeBlocks: "pre",
-      styleTurns:
-        'article[data-testid^="conversation-turn-"], div[data-message-author-role]',
+      turnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+        'article[data-testid^="conversation-turn-"]',
+      ],
+      codeSelector: "pre",
+      contentSelectors: ["div.markdown", "div.prose", '[class*="markdown"]'],
     },
+
     gemini: {
       name: "Gemini",
-      // 解决 Gemini 父子嵌套重复统计缺陷：优先取顶层 turn 容器，无顶层容器时才并列取 user/model 节点
-      getTurns: () => {
-        const topContainers = document.querySelectorAll(
-          "chat-turn, .chat-turn-container, div[class*='chat-turn-container']",
-        );
-        if (topContainers.length > 0) return topContainers;
-        return document.querySelectorAll(
-          "user-query-container, model-response, user-query",
-        );
-      },
-      inputContainer:
-        ".input-area-container, rich-textarea, .chat-input-container",
-      contentBody: ".message-content, .model-response-text, message-content",
-      // 避免 code-block 和内部 pre 重复折叠导致双层遮罩
-      codeBlocks: "code-block, pre:not(code-block pre)",
-      styleTurns:
-        "chat-turn, .chat-turn-container, user-query-container, model-response, user-query",
+      turnSelectors: [
+        "user-query",
+        "model-response",
+        '[data-message-author="user"]',
+        '[data-message-author="model"]',
+        ".user-query",
+        ".model-response",
+      ],
+      codeSelector: "code-block, pre:not(code-block pre)",
+      contentSelectors: [
+        ".query-text",
+        "[class*='query-content']",
+        ".model-response-text",
+        ".message-content",
+        ".markdown",
+        ".response-content",
+      ],
     },
+
     grok: {
       name: "Grok",
-      getTurns: () =>
-        document.querySelectorAll(
-          'div[data-testid*="message-container"], div[data-testid*="conversation-turn"], div[class*="message-bubble"]',
-        ),
-      inputContainer: 'div[class*="composer"], textarea, div[role="textbox"]',
-      contentBody: 'div[class*="message-content"], div[dir="auto"]',
-      codeBlocks: "pre",
-      styleTurns:
-        'div[data-testid*="message-container"], div[data-testid*="conversation-turn"], div[class*="message-bubble"]',
+      turnSelectors: [
+        'div[data-testid*="message-container"]',
+        'div[data-testid*="conversation-turn"]',
+        'div[class*="message-bubble"]',
+      ],
+      codeSelector: "pre",
+      contentSelectors: ['div[class*="message-content"]', 'div[dir="auto"]'],
     },
+
     claude: {
       name: "Claude",
-      getTurns: () =>
-        document.querySelectorAll(
-          "div[data-test-render-count], div.font-user-message, div.font-claude-message",
-        ),
-      inputContainer: 'fieldset, div[contenteditable="true"]',
-      contentBody: 'div.grid-cols-1, div[class*="font-claude"]',
-      codeBlocks: "pre",
-      styleTurns:
-        "div[data-test-render-count], div.font-user-message, div.font-claude-message",
+      turnSelectors: [
+        "div.font-user-message",
+        ".font-claude-response",
+        ".font-claude-message",
+        "div[data-test-render-count]",
+      ],
+      codeSelector: "pre",
+      contentSelectors: [
+        ".standard-markdown",
+        ".progressive-markdown",
+        ".markdown",
+        '[class*="font-claude"]',
+      ],
     },
   };
 
   function detectPlatform() {
     const host = window.location.hostname;
+
     if (host.includes("chatgpt.com")) return PLATFORMS.chatgpt;
     if (host.includes("gemini.google.com")) return PLATFORMS.gemini;
-    if (host.includes("grok.com") || host.includes("x.com"))
+    if (host.includes("grok.com") || host.includes("x.com")) {
       return PLATFORMS.grok;
+    }
     if (host.includes("claude.ai")) return PLATFORMS.claude;
+
     return null;
   }
 
   const currentPlatform = detectPlatform();
   if (!currentPlatform) return;
 
-  // --- 2. 状态中心 ---
   const state = {
     pruneEnabled: true,
     keepTurns: 8,
     collapseCode: true,
-    gpuSaver: true,
-    indexedTurns: [],
+    hudOpen: false,
     totalTurns: 0,
     hiddenCount: 0,
-    hudOpen: false,
+    foldedCodeCount: 0,
+    indexedTurns: [],
   };
 
-  const indexedSet = new WeakSet();
+  const turnIndex = new Map();
+  const codeState = new WeakMap();
 
-  // --- 3. 样式注入引擎 ---
-  function injectEngineStyles() {
-    const styleId = "ai-turbo-extreme-styles";
-    if (document.getElementById(styleId)) return;
-
-    const style = document.createElement("style");
-    style.id = styleId;
-    style.textContent = `
-      /* 视口脱水：保障自定义元素以 block 布局排布，规避 content-visibility 导致的高度归零 */
-      ${currentPlatform.styleTurns} {
-        display: block !important;
-        content-visibility: auto !important;
-        contain-intrinsic-size: auto 240px !important;
-      }
-      .ai-turbo-dehydrated {
-        content-visibility: hidden !important;
-        contain-intrinsic-size: auto 80px !important;
-      }
-      /* 输入框容器轻量隔离 */
-      ${currentPlatform.inputContainer} {
-        contain: style !important;
-      }
-      /* 长代码折叠容器 (纯 CSS 驱动) */
-      .ai-turbo-folded-code {
-        display: block !important;
-        max-height: 96px !important;
-        overflow: hidden !important;
-        position: relative !important;
-        border-bottom: 2px solid #10b981 !important;
-      }
-      .ai-turbo-folded-code::after {
-        content: "⚡ 代码已自动折叠 (点击展开)";
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 32px;
-        line-height: 32px;
-        background: linear-gradient(180deg, rgba(15,23,42,0.4) 0%, rgba(15,23,42,0.96) 100%);
-        color: #34d399;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11px;
-        font-weight: 600;
-        text-align: center;
-        cursor: pointer;
-        z-index: 10;
-        pointer-events: auto;
-      }
-      /* 低开销 GPU 节流模式 */
-      body.ai-turbo-low-power,
-      body.ai-turbo-low-power pre,
-      body.ai-turbo-low-power code {
-        text-shadow: none !important;
-        box-shadow: none !important;
-        animation-duration: 0.001ms !important;
-        transition-duration: 0.001ms !important;
-      }
-    `;
-    (document.head || document.documentElement).appendChild(style);
-
-    if (state.gpuSaver) {
-      if (document.body) {
-        document.body.classList.add("ai-turbo-low-power");
-      } else {
-        document.addEventListener("DOMContentLoaded", () => {
-          document.body.classList.add("ai-turbo-low-power");
-        });
-      }
-    }
-  }
-
-  injectEngineStyles();
-
-  // --- 4. 增量脱水与调度 ---
-  let isScheduling = false;
-  let lastScheduleTime = 0;
-  const THROTTLE_INTERVAL_MS = 60;
-
-  function scheduleVirtualUpdate() {
-    const now = performance.now();
-    if (isScheduling) return;
-
-    if (now - lastScheduleTime < THROTTLE_INTERVAL_MS) {
-      isScheduling = true;
-      setTimeout(
-        () => {
-          requestAnimationFrame(() => {
-            runBatchUpdate();
-            isScheduling = false;
-            lastScheduleTime = performance.now();
-          });
-        },
-        THROTTLE_INTERVAL_MS - (now - lastScheduleTime),
-      );
-      return;
-    }
-
-    isScheduling = true;
-    requestAnimationFrame(() => {
-      runBatchUpdate();
-      isScheduling = false;
-      lastScheduleTime = performance.now();
-    });
-  }
-
-  function runBatchUpdate() {
-    executePruneAndIncrementalIndex();
-    if (state.collapseCode) executeCodeCollapseCSS();
-    updateHudDashboard();
-    ensureHUDMounted();
-  }
-
-  function executePruneAndIncrementalIndex() {
-    const turns = currentPlatform.getTurns();
-    const len = turns.length;
-    state.totalTurns = len;
-
-    const cutoff = state.pruneEnabled ? Math.max(0, len - state.keepTurns) : 0;
-    state.hiddenCount = cutoff;
-    state.indexedTurns = [];
-
-    for (let i = 0; i < len; i++) {
-      const turn = turns[i];
-      const text = (turn.textContent || "").replace(/\s+/g, " ").slice(0, 800);
-      state.indexedTurns.push({ id: i, element: turn, text: text });
-
-      if (i < cutoff) {
-        if (!turn.classList.contains("ai-turbo-dehydrated")) {
-          turn.classList.add("ai-turbo-dehydrated");
-        }
-      } else {
-        if (turn.classList.contains("ai-turbo-dehydrated")) {
-          turn.classList.remove("ai-turbo-dehydrated");
-        }
-      }
-    }
-  }
-
-  function executeCodeCollapseCSS() {
-    const blocks = document.querySelectorAll(currentPlatform.codeBlocks);
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i];
-      if (indexedSet.has(block)) continue;
-      indexedSet.add(block);
-      if (block.clientHeight > 300) {
-        block.classList.add("ai-turbo-folded-code");
-      }
-    }
-  }
-
-  document.addEventListener(
-    "click",
-    (e) => {
-      const target = e.target;
-      if (!target) return;
-      const block = target.closest(".ai-turbo-folded-code");
-      if (block) {
-        block.classList.remove("ai-turbo-folded-code");
-        block.setAttribute("data-user-unfolded", "true");
-      }
-    },
-    { capture: true, passive: true },
-  );
-
-  // --- 5. 对话提纯导出 ---
-  function exportCleanContext(onSuccess) {
-    const turns = currentPlatform.getTurns();
-    if (!turns.length) return alert("未检测到有效对话内容");
-
-    let markdown = `# 会话上下文提取 [${currentPlatform.name}] - ${new Date().toLocaleString()}\n\n`;
-    turns.forEach((turn, idx) => {
-      const content = (turn.textContent || "").trim();
-      if (content) {
-        markdown += `### Turn ${idx + 1}\n\n${content}\n\n---\n\n`;
-      }
-    });
-
-    navigator.clipboard
-      .writeText(markdown)
-      .then(() => {
-        if (typeof onSuccess === "function") onSuccess(turns.length);
-      })
-      .catch((err) => {
-        console.error(err);
-        alert("写入剪贴板失败，请检查浏览器权限。");
-      });
-  }
-
-  // --- 6. HUD 面板系统 (AzSkills 精密磨砂玻璃 + 完整矢量图标) ---
   let hudRootElement = null;
+  let hudShadowRoot = null;
   let hudStats = null;
   let searchInput = null;
   let searchResultsBox = null;
   let searchDebounceTimer = null;
+  let observer = null;
+  let codeResizeObserver = null;
+
+  let scheduleFrameId = 0;
+  let scheduleQueued = false;
+  let fullTurnSyncRequested = true;
+  let codeScanRequested = true;
+  let dirtyTurns = new Set();
+  let dirtyCodeBlocks = new Set();
+  let previousTurns = [];
+  let previousCutoff = 0;
+  let selfMutationDepth = 0;
 
   const POS_STORAGE_KEY = "ai_turbo_hud_position";
+
+  function withSelfMutation(task) {
+    selfMutationDepth++;
+
+    try {
+      return task();
+    } finally {
+      selfMutationDepth--;
+    }
+  }
+
+  function normalizeText(sourceText) {
+    return String(sourceText || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, TURN_TEXT_LIMIT);
+  }
+
+  function uniqueDomOrdered(elements) {
+    const seen = new Set();
+    const unique = [];
+
+    for (const element of elements) {
+      if (!(element instanceof Element)) continue;
+      if (seen.has(element)) continue;
+
+      seen.add(element);
+      unique.push(element);
+    }
+
+    unique.sort((firstElement, secondElement) => {
+      if (firstElement === secondElement) return 0;
+
+      const relation = firstElement.compareDocumentPosition(secondElement);
+
+      if (relation & Node.DOCUMENT_POSITION_FOLLOWING) {
+        return -1;
+      }
+
+      if (relation & Node.DOCUMENT_POSITION_PRECEDING) {
+        return 1;
+      }
+
+      return 0;
+    });
+
+    return unique;
+  }
+
+  function isNestedTurn(element, candidates) {
+    let parentElement = element.parentElement;
+
+    while (parentElement) {
+      if (candidates.has(parentElement)) return true;
+      parentElement = parentElement.parentElement;
+    }
+
+    return false;
+  }
+
+  function getTurns() {
+    const collected = [];
+
+    for (const selector of currentPlatform.turnSelectors) {
+      const nodes = document.querySelectorAll(selector);
+
+      for (const node of nodes) {
+        collected.push(node);
+      }
+    }
+
+    const ordered = uniqueDomOrdered(collected);
+    const candidateSet = new Set(ordered);
+
+    return ordered.filter((element) => !isNestedTurn(element, candidateSet));
+  }
+
+  function findContentElement(turnElement) {
+    for (const selector of currentPlatform.contentSelectors) {
+      const contentElement = turnElement.querySelector(selector);
+
+      if (contentElement) {
+        return contentElement;
+      }
+    }
+
+    return turnElement;
+  }
+
+  function extractTurnText(turnElement) {
+    const contentElement = findContentElement(turnElement);
+
+    const visibleText =
+      typeof contentElement.innerText === "string"
+        ? contentElement.innerText
+        : contentElement.textContent || "";
+
+    return normalizeText(visibleText);
+  }
+
+  function buildTurnRecord(element, index) {
+    return {
+      id: index,
+      element,
+      text: extractTurnText(element),
+    };
+  }
+
+  function syncTurnIndex(forceFull) {
+    const turns = getTurns();
+
+    const previousLength = previousTurns.length;
+
+    const firstChanged = turns[0] !== previousTurns[0];
+
+    const lastChanged =
+      turns[turns.length - 1] !== previousTurns[previousTurns.length - 1];
+
+    const identityChanged = firstChanged || lastChanged;
+
+    const structuralChange = forceFull || identityChanged;
+
+    if (structuralChange) {
+      turnIndex.clear();
+
+      for (let index = 0; index < turns.length; index++) {
+        const turnElement = turns[index];
+
+        turnIndex.set(turnElement, buildTurnRecord(turnElement, index));
+      }
+    } else {
+      for (const turnElement of dirtyTurns) {
+        const record = turnIndex.get(turnElement);
+
+        if (!record) {
+          fullTurnSyncRequested = true;
+          continue;
+        }
+
+        record.text = extractTurnText(turnElement);
+      }
+    }
+
+    state.totalTurns = turns.length;
+
+    state.indexedTurns = turns.map((turnElement, index) => {
+      const record = turnIndex.get(turnElement);
+
+      if (record) {
+        record.id = index;
+        return record;
+      }
+
+      const fallbackRecord = buildTurnRecord(turnElement, index);
+
+      turnIndex.set(turnElement, fallbackRecord);
+
+      return fallbackRecord;
+    });
+
+    applyPruneWindow(turns, {
+      forceFull: structuralChange || previousLength === 0,
+
+      previousLength,
+    });
+
+    previousTurns = turns;
+    dirtyTurns.clear();
+    fullTurnSyncRequested = false;
+  }
+
+  function applyPruneWindow(turns, options = {}) {
+    const cutoff = state.pruneEnabled
+      ? Math.max(0, turns.length - state.keepTurns)
+      : 0;
+
+    const forceFull = options.forceFull === true;
+
+    if (forceFull) {
+      for (let index = 0; index < turns.length; index++) {
+        turns[index].classList.toggle(
+          "ai-turbo-dehydrated",
+          state.pruneEnabled && index < cutoff,
+        );
+      }
+    } else if (cutoff !== previousCutoff) {
+      const startIndex = Math.min(previousCutoff, cutoff);
+
+      const endIndex = Math.max(previousCutoff, cutoff);
+
+      for (let index = startIndex; index < endIndex; index++) {
+        const turnElement = turns[index];
+
+        if (!turnElement) continue;
+
+        turnElement.classList.toggle(
+          "ai-turbo-dehydrated",
+          state.pruneEnabled && index < cutoff,
+        );
+      }
+    }
+
+    state.hiddenCount = cutoff;
+    previousCutoff = cutoff;
+  }
+
+  function getCodeBlocks(rootElement = document) {
+    const nodes = rootElement.querySelectorAll(currentPlatform.codeSelector);
+
+    const result = [];
+    const seen = new Set();
+
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement)) {
+        continue;
+      }
+
+      if (seen.has(node)) continue;
+
+      if (node.closest(`.${CODE_SHELL_CLASS}`)) {
+        continue;
+      }
+
+      if (
+        node.matches("pre") &&
+        currentPlatform === PLATFORMS.gemini &&
+        node.parentElement?.closest("code-block")
+      ) {
+        continue;
+      }
+
+      seen.add(node);
+      result.push(node);
+    }
+
+    return result;
+  }
+
+  function getCodeText(codeElement) {
+    const preElement = codeElement.matches("pre")
+      ? codeElement
+      : codeElement.querySelector("pre");
+
+    const sourceElement =
+      preElement?.querySelector("code") || preElement || codeElement;
+
+    return typeof sourceElement.textContent === "string"
+      ? sourceElement.textContent
+      : "";
+  }
+
+  function getCodeLanguage(codeElement) {
+    const languageElement = codeElement.querySelector(
+      'code[class*="language-"], [class*="language-"]',
+    );
+
+    if (!languageElement) {
+      return "代码";
+    }
+
+    const classText = String(languageElement.className || "");
+
+    const match = classText.match(/language-([a-z0-9+#.-]+)/i);
+
+    return match ? match[1].toUpperCase() : "代码";
+  }
+
+  function getCodeLineCount(codeElement) {
+    const codeText = getCodeText(codeElement);
+
+    if (!codeText) return 0;
+
+    return codeText.replace(/\r\n/g, "\n").split("\n").length;
+  }
+
+  function updateCodeMeta(codeStateEntry, codeElement) {
+    if (!codeStateEntry || !codeElement.isConnected) {
+      return;
+    }
+
+    const lineCount = getCodeLineCount(codeElement);
+
+    const language = getCodeLanguage(codeElement);
+
+    codeStateEntry.languageLabel.textContent = language;
+
+    codeStateEntry.metaLabel.textContent = lineCount
+      ? `${lineCount.toLocaleString()} 行`
+      : "代码预览";
+
+    codeStateEntry.toggleButton.textContent = codeStateEntry.expanded
+      ? "收起代码"
+      : `展开 ${lineCount ? `${lineCount.toLocaleString()} 行` : "代码"}`;
+
+    codeStateEntry.shell.classList.toggle(
+      "is-expanded",
+      codeStateEntry.expanded,
+    );
+  }
+
+  function unmountCodeShell(codeElement) {
+    const codeStateEntry = codeState.get(codeElement);
+
+    if (!codeStateEntry) {
+      return;
+    }
+
+    withSelfMutation(() => {
+      const shell = codeStateEntry.shell;
+
+      if (shell.parentNode) {
+        shell.parentNode.insertBefore(codeElement, shell);
+
+        shell.remove();
+      }
+    });
+
+    codeState.delete(codeElement);
+  }
+
+  function mountCodeShell(codeElement) {
+    if (!state.collapseCode) {
+      return;
+    }
+
+    if (!codeElement.isConnected) {
+      return;
+    }
+
+    if (codeElement.closest(`.${CODE_SHELL_CLASS}`)) {
+      return;
+    }
+
+    const measuredHeight = Math.max(
+      codeElement.scrollHeight || 0,
+      codeElement.getBoundingClientRect().height || 0,
+    );
+
+    if (measuredHeight <= CODE_COLLAPSE_HEIGHT) {
+      return;
+    }
+
+    const shell = document.createElement("div");
+
+    shell.className = CODE_SHELL_CLASS;
+
+    const header = document.createElement("div");
+
+    header.className = "ai-turbo-code-header";
+
+    const headerLeft = document.createElement("div");
+
+    headerLeft.className = "ai-turbo-code-header-left";
+
+    const languageLabel = document.createElement("span");
+
+    languageLabel.className = "ai-turbo-code-language";
+
+    headerLeft.appendChild(languageLabel);
+
+    const metaLabel = document.createElement("span");
+
+    metaLabel.className = "ai-turbo-code-meta";
+
+    headerLeft.appendChild(metaLabel);
+
+    const headerHint = document.createElement("span");
+
+    headerHint.className = "ai-turbo-code-status";
+
+    headerHint.textContent = "自动预览";
+
+    header.appendChild(headerLeft);
+
+    header.appendChild(headerHint);
+
+    const content = document.createElement("div");
+
+    content.className = "ai-turbo-code-content";
+
+    const fade = document.createElement("div");
+
+    fade.className = "ai-turbo-code-fade";
+
+    const footer = document.createElement("div");
+
+    footer.className = "ai-turbo-code-footer";
+
+    const toggleButton = document.createElement("button");
+
+    toggleButton.type = "button";
+
+    toggleButton.className = "ai-turbo-code-toggle";
+
+    toggleButton.setAttribute("aria-expanded", "false");
+
+    footer.appendChild(toggleButton);
+
+    codeElement.parentNode?.insertBefore(shell, codeElement);
+
+    shell.appendChild(header);
+
+    shell.appendChild(content);
+
+    content.appendChild(codeElement);
+
+    content.appendChild(fade);
+
+    shell.appendChild(footer);
+
+    const entry = {
+      shell,
+      content,
+      languageLabel,
+      metaLabel,
+      toggleButton,
+      expanded: false,
+    };
+
+    codeState.set(codeElement, entry);
+
+    toggleButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      entry.expanded = !entry.expanded;
+
+      shell.classList.toggle("is-expanded", entry.expanded);
+
+      toggleButton.setAttribute("aria-expanded", String(entry.expanded));
+
+      headerHint.textContent = entry.expanded ? "完整代码" : "自动预览";
+
+      if (!entry.expanded) {
+        shell.scrollIntoView({
+          block: "nearest",
+          behavior: "smooth",
+        });
+      }
+
+      updateCodeMeta(entry, codeElement);
+    });
+
+    updateCodeMeta(entry, codeElement);
+  }
+
+  function syncCodeBlocks(forceScan, dirtyCandidates) {
+    if (!state.collapseCode) {
+      document.querySelectorAll(`.${CODE_SHELL_CLASS}`).forEach((shell) => {
+        const sourceElement = shell.querySelector("pre, code-block");
+
+        if (sourceElement) {
+          unmountCodeShell(sourceElement);
+        }
+      });
+
+      state.foldedCodeCount = 0;
+      codeScanRequested = false;
+      dirtyCodeBlocks.clear();
+
+      return;
+    }
+
+    const candidates = forceScan
+      ? getCodeBlocks()
+      : Array.from(dirtyCandidates).filter(
+          (element) => element instanceof HTMLElement && element.isConnected,
+        );
+
+    for (const codeElement of candidates) {
+      if (codeResizeObserver) {
+        codeResizeObserver.observe(codeElement);
+      }
+
+      const entry = codeState.get(codeElement);
+
+      if (entry) {
+        updateCodeMeta(entry, codeElement);
+
+        continue;
+      }
+
+      mountCodeShell(codeElement);
+    }
+
+    if (forceScan) {
+      document
+        .querySelectorAll(
+          `.${CODE_SHELL_CLASS} pre,
+           .${CODE_SHELL_CLASS} code-block`,
+        )
+        .forEach((codeElement) => {
+          if (codeElement instanceof HTMLElement && codeResizeObserver) {
+            codeResizeObserver.observe(codeElement);
+          }
+        });
+    }
+
+    state.foldedCodeCount = document.querySelectorAll(
+      `.${CODE_SHELL_CLASS}:not(.is-expanded)`,
+    ).length;
+
+    codeScanRequested = false;
+    dirtyCodeBlocks.clear();
+  }
+
+  function injectEngineStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+
+    const styleElement = document.createElement("style");
+
+    styleElement.id = STYLE_ID;
+
+    styleElement.textContent = `
+      .ai-turbo-dehydrated {
+        content-visibility: hidden !important;
+        contain: layout paint style !important;
+        contain-intrinsic-size: 1px 120px !important;
+      }
+
+      .ai-turbo-dehydrated * {
+        pointer-events: none !important;
+      }
+
+      .${CODE_SHELL_CLASS} {
+        display: block !important;
+        width: 100% !important;
+        margin: 14px 0 !important;
+        border: 1px solid rgba(148, 163, 184, 0.16) !important;
+        border-radius: 12px !important;
+        background: rgba(15, 23, 42, 0.56) !important;
+        overflow: hidden !important;
+        isolation: isolate !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-header,
+      .${CODE_SHELL_CLASS} .ai-turbo-code-footer {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        min-height: 34px !important;
+        padding: 7px 10px !important;
+        background: rgba(15, 23, 42, 0.72) !important;
+        border-color: rgba(148, 163, 184, 0.1) !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-header {
+        gap: 12px !important;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.1) !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-footer {
+        justify-content: center !important;
+        border-top: 1px solid rgba(148, 163, 184, 0.1) !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-header-left {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        min-width: 0 !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-language {
+        color: #e2e8f0 !important;
+        font:
+          600 11px/1.2
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace !important;
+        letter-spacing: 0.02em !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-meta,
+      .${CODE_SHELL_CLASS} .ai-turbo-code-status {
+        color: #7c8aa0 !important;
+        font:
+          500 10px/1.2
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-content {
+        position: relative !important;
+        overflow: hidden !important;
+        max-height: ${CODE_PREVIEW_HEIGHT}px !important;
+      }
+
+      .${CODE_SHELL_CLASS}.is-expanded
+      .ai-turbo-code-content {
+        max-height: none !important;
+        overflow: visible !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-fade {
+        position: absolute !important;
+        inset: auto 0 0 0 !important;
+        height: 72px !important;
+        background: linear-gradient(
+          180deg,
+          rgba(15, 23, 42, 0),
+          rgba(15, 23, 42, 0.92)
+        ) !important;
+        pointer-events: none !important;
+        opacity: 1 !important;
+        transition:
+          opacity 160ms ease !important;
+      }
+
+      .${CODE_SHELL_CLASS}.is-expanded
+      .ai-turbo-code-fade {
+        opacity: 0 !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-toggle {
+        appearance: none !important;
+        border: 0 !important;
+        background: transparent !important;
+        color: #cbd5e1 !important;
+        padding: 4px 10px !important;
+        border-radius: 7px !important;
+        font:
+          600 11px/1.2
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif !important;
+        cursor: pointer !important;
+        transition:
+          background 140ms ease,
+          color 140ms ease !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-toggle:hover {
+        background: rgba(148, 163, 184, 0.12) !important;
+        color: #f8fafc !important;
+      }
+
+      .${CODE_SHELL_CLASS} .ai-turbo-code-toggle:focus-visible {
+        outline:
+          2px solid
+          rgba(52, 211, 153, 0.72) !important;
+        outline-offset: 2px !important;
+      }
+
+      .${CODE_SHELL_CLASS} pre,
+      .${CODE_SHELL_CLASS} code-block {
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .${CODE_SHELL_CLASS}
+        .ai-turbo-code-toggle {
+          transition: none !important;
+        }
+      }
+    `;
+
+    (document.head || document.documentElement).appendChild(styleElement);
+  }
+
   function getSavedPosition() {
     try {
-      const pos = JSON.parse(localStorage.getItem(POS_STORAGE_KEY));
-      if (pos && typeof pos.x === "number" && typeof pos.y === "number") {
-        const maxX = Math.max(10, window.innerWidth - 60);
-        const maxY = Math.max(10, window.innerHeight - 60);
+      const storedPosition = JSON.parse(
+        localStorage.getItem(POS_STORAGE_KEY) || "null",
+      );
+
+      if (
+        storedPosition &&
+        typeof storedPosition.x === "number" &&
+        typeof storedPosition.y === "number"
+      ) {
+        const maxX = Math.max(10, window.innerWidth - 52);
+
+        const maxY = Math.max(10, window.innerHeight - 52);
+
         return {
-          x: Math.min(Math.max(10, pos.x), maxX),
-          y: Math.min(Math.max(10, pos.y), maxY),
+          x: Math.min(Math.max(10, storedPosition.x), maxX),
+
+          y: Math.min(Math.max(10, storedPosition.y), maxY),
         };
       }
     } catch (_) {}
-    return { x: window.innerWidth - 68, y: window.innerHeight - 76 };
+
+    return {
+      x: Math.max(10, window.innerWidth - 58),
+
+      y: Math.max(10, window.innerHeight - 76),
+    };
   }
 
   function savePosition(x, y) {
     try {
-      localStorage.setItem(POS_STORAGE_KEY, JSON.stringify({ x, y }));
+      localStorage.setItem(
+        POS_STORAGE_KEY,
+        JSON.stringify({
+          x,
+          y,
+        }),
+      );
     } catch (_) {}
   }
 
+  function updateHudDashboard() {
+    if (!hudStats) return;
+
+    hudStats.total.textContent = String(state.totalTurns);
+
+    hudStats.hidden.textContent = String(state.hiddenCount);
+
+    hudStats.folded.textContent = String(state.foldedCodeCount);
+  }
+
+  function togglePanel(forceState) {
+    if (!hudRootElement || !hudShadowRoot) {
+      return;
+    }
+
+    state.hudOpen =
+      typeof forceState === "boolean" ? forceState : !state.hudOpen;
+
+    const panel = hudShadowRoot.getElementById("panel");
+
+    const searchBox = hudShadowRoot.getElementById("search-section");
+
+    panel?.classList.toggle("open", state.hudOpen);
+
+    if (searchBox) {
+      searchBox.hidden = !state.hudOpen;
+    }
+
+    if (state.hudOpen) {
+      window.setTimeout(() => searchInput?.focus(), 80);
+    }
+  }
+
+  function renderSearchResults(queryText) {
+    if (!searchResultsBox) {
+      return;
+    }
+
+    searchResultsBox.textContent = "";
+
+    if (!queryText) return;
+
+    const normalizedQuery = queryText.toLowerCase();
+
+    const matches = state.indexedTurns
+      .filter((record) => record.text.toLowerCase().includes(normalizedQuery))
+      .slice(0, SEARCH_LIMIT);
+
+    if (!matches.length) {
+      const emptyElement = document.createElement("div");
+
+      emptyElement.className = "result-empty";
+
+      emptyElement.textContent = "没有匹配的消息";
+
+      searchResultsBox.appendChild(emptyElement);
+
+      return;
+    }
+
+    for (const record of matches) {
+      const resultButton = document.createElement("button");
+
+      resultButton.type = "button";
+
+      resultButton.className = "result-item";
+
+      resultButton.textContent = `#${record.id + 1}  ${
+        record.text || "（无文本）"
+      }`;
+
+      resultButton.addEventListener("click", () => {
+        record.element.classList.remove("ai-turbo-dehydrated");
+
+        record.element.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+
+        record.element.style.outline = "1px solid rgba(52, 211, 153, 0.7)";
+
+        record.element.style.outlineOffset = "4px";
+
+        window.setTimeout(() => {
+          record.element.style.outline = "";
+
+          record.element.style.outlineOffset = "";
+        }, 1800);
+      });
+
+      searchResultsBox.appendChild(resultButton);
+    }
+  }
+
   function buildHUD() {
-    if (document.getElementById("ai-turbo-extreme-hud")) return;
+    if (hudRootElement?.isConnected) {
+      return;
+    }
+
+    if (!document.body) {
+      return;
+    }
+
+    const existingRoot = document.getElementById(HUD_ID);
+
+    if (existingRoot) {
+      existingRoot.remove();
+    }
 
     hudRootElement = document.createElement("div");
-    hudRootElement.id = "ai-turbo-extreme-hud";
-    const shadow = hudRootElement.attachShadow({ mode: "closed" });
+
+    hudRootElement.id = HUD_ID;
+
+    hudRootElement.setAttribute("data-ai-turbo-host", "1");
+
+    hudRootElement.style.cssText = [
+      "position:fixed !important",
+      "display:block !important",
+      "visibility:visible !important",
+      "opacity:1 !important",
+      "pointer-events:auto !important",
+      "z-index:2147483647 !important",
+      "width:42px !important",
+      "height:42px !important",
+      "margin:0 !important",
+      "padding:0 !important",
+      "border:0 !important",
+      "background:transparent !important",
+      "box-shadow:none !important",
+      "transform:none !important",
+      "inset:auto !important",
+      "contain:layout style !important",
+    ].join(";");
+
+    hudShadowRoot = hudRootElement.attachShadow({
+      mode: "closed",
+    });
 
     const styles = `
       :host {
         all: initial;
         position: fixed;
+        width: 42px;
+        height: 42px;
         z-index: 2147483647;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-        -webkit-font-smoothing: antialiased;
-        user-select: none;
+        font-family:
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          "PingFang SC",
+          "Microsoft YaHei",
+          sans-serif;
       }
-      *, *::before, *::after {
+
+      * {
         box-sizing: border-box;
       }
 
-      /* 悬浮球体 (FAB) */
+      button,
+      input {
+        font: inherit;
+      }
+
       .hud-ball {
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        background: radial-gradient(135% 135% at 20% 20%, rgba(30, 41, 59, 0.95) 0%, rgba(9, 9, 11, 0.98) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        box-shadow: 0 8px 24px -2px rgba(0, 0, 0, 0.55),
-                    0 0 0 1px rgba(0, 0, 0, 0.4),
-                    inset 0 1px 1px rgba(255, 255, 255, 0.25);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: grab;
-        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
-        backdrop-filter: blur(12px);
         position: relative;
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        border: 1px solid
+          rgba(255, 255, 255, 0.16);
+        border-radius: 13px;
+        background:
+          rgba(
+            13,
+            18,
+            28,
+            0.9
+          );
+        box-shadow:
+          0 8px 24px
+            rgba(0, 0, 0, 0.28),
+          inset 0 1px 0
+            rgba(
+              255,
+              255,
+              255,
+              0.08
+            );
+        backdrop-filter:
+          blur(14px)
+          saturate(130%);
+        -webkit-backdrop-filter:
+          blur(14px)
+          saturate(130%);
+        color: #34d399;
+        cursor: grab;
+        user-select: none;
       }
-      .hud-ball:hover {
-        transform: scale(1.06);
-        border-color: rgba(52, 211, 153, 0.5);
-        box-shadow: 0 12px 28px -2px rgba(16, 185, 129, 0.3),
-                    0 0 0 1px rgba(16, 185, 129, 0.4),
-                    inset 0 1px 1px rgba(255, 255, 255, 0.35);
-      }
-      .hud-ball:active {
-        cursor: grabbing;
-        transform: scale(0.96);
-      }
-      .hud-ball.active-pulse::after {
-        content: '';
+
+      .hud-ball::after {
+        content: "";
         position: absolute;
-        inset: -3px;
-        border-radius: 50%;
-        border: 2px solid rgba(16, 185, 129, 0.5);
-        animation: pulse-ring 2.4s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+        inset: 7px;
+        border-radius: 9px;
+        border: 1px solid
+          rgba(
+            52,
+            211,
+            153,
+            0.12
+          );
         pointer-events: none;
       }
-      @keyframes pulse-ring {
-        0% { transform: scale(0.9); opacity: 0.8; }
-        60%, 100% { transform: scale(1.35); opacity: 0; }
+
+      .hud-ball:hover {
+        border-color:
+          rgba(
+            52,
+            211,
+            153,
+            0.42
+          );
+        box-shadow:
+          0 10px 28px
+            rgba(0, 0, 0, 0.34),
+          0 0 0 1px
+            rgba(
+              52,
+              211,
+              153,
+              0.08
+            );
+      }
+
+      .hud-ball:active {
+        cursor: grabbing;
       }
 
       .hud-ball svg {
-        width: 22px;
-        height: 22px;
-        filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.7));
-        transition: transform 0.25s ease;
-      }
-      .hud-ball:hover svg {
-        transform: scale(1.12) rotate(-4deg);
+        width: 20px;
+        height: 20px;
+        position: relative;
+        z-index: 1;
       }
 
-      /* 悬浮控制面板 */
       .hud-panel {
-        display: none;
         position: absolute;
-        bottom: 54px;
         right: 0;
-        width: 300px;
-        background: rgba(15, 17, 26, 0.88);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 16px;
-        padding: 16px;
-        box-shadow: 0 20px 40px -8px rgba(0, 0, 0, 0.75),
-                    0 0 0 1px rgba(255, 255, 255, 0.05),
-                    inset 0 1px 0 rgba(255, 255, 255, 0.15);
-        backdrop-filter: blur(20px) saturate(180%);
-        color: #f1f5f9;
-        font-size: 12px;
-        transform-origin: bottom right;
+        bottom: 52px;
+        width: 342px;
+        padding: 12px;
+        border: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.16
+          );
+        border-radius: 14px;
+        background:
+          rgba(
+            10,
+            14,
+            22,
+            0.96
+          );
+        box-shadow:
+          0 22px 60px
+            rgba(
+              0,
+              0,
+              0,
+              0.42
+            ),
+          0 0 0 1px
+            rgba(
+              255,
+              255,
+              255,
+              0.02
+            );
+        color: #e2e8f0;
         opacity: 0;
-        transform: scale(0.92) translateY(10px);
-        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-                    transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-      }
-      .hud-panel.open {
-        display: block;
-        opacity: 1;
-        transform: scale(1) translateY(0);
-      }
-      .hud-panel.pos-left {
-        right: auto;
-        left: 0;
-        transform-origin: bottom left;
-      }
-      .hud-panel.pos-top {
-        bottom: auto;
-        top: 54px;
-        transform-origin: top right;
-      }
-      .hud-panel.pos-top.pos-left {
-        transform-origin: top left;
+        pointer-events: none;
+        transform:
+          translateY(7px)
+          scale(0.985);
+        transform-origin:
+          bottom right;
+        transition:
+          opacity 150ms ease,
+          transform
+            150ms
+            cubic-bezier(
+              0.16,
+              1,
+              0.3,
+              1
+            );
       }
 
-      /* 头部与标题 */
+      .hud-panel.open {
+        opacity: 1;
+        pointer-events: auto;
+        transform:
+          translateY(0)
+          scale(1);
+      }
+
+      .hud-panel.pos-left {
+        left: 0;
+        right: auto;
+        transform-origin:
+          bottom left;
+      }
+
+      .hud-panel.pos-top {
+        top: 52px;
+        bottom: auto;
+        transform-origin:
+          top right;
+      }
+
+      .hud-panel.pos-top.pos-left {
+        transform-origin:
+          top left;
+      }
+
       .header {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        margin-bottom: 12px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      }
-      .brand-title {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-        background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-      }
-      .brand-icon {
-        width: 15px;
-        height: 15px;
-        fill: #10b981;
-      }
-      .header-actions {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .tag {
-        font-size: 9.5px;
-        font-family: ui-monospace, Menlo, monospace;
-        font-weight: 600;
-        background: rgba(16, 185, 129, 0.12);
-        color: #34d399;
-        padding: 2px 6px;
-        border-radius: 9999px;
-        border: 1px solid rgba(52, 211, 153, 0.28);
-      }
-      .close-btn {
-        background: transparent;
-        border: none;
-        color: #94a3b8;
-        cursor: pointer;
-        padding: 3px;
-        border-radius: 5px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: color 0.15s, background 0.15s;
-      }
-      .close-btn:hover {
-        color: #f8fafc;
-        background: rgba(255, 255, 255, 0.08);
+        justify-content:
+          space-between;
+        gap: 10px;
+        min-height: 26px;
+        margin-bottom: 10px;
       }
 
-      /* 状态与统计看板 */
-      .metrics-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-        margin-bottom: 12px;
-      }
-      .metric-card {
-        background: rgba(255, 255, 255, 0.035);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 10px;
-        padding: 8px 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .metric-header {
+      .brand {
         display: flex;
         align-items: center;
-        gap: 5px;
-        font-size: 10.5px;
-        color: #94a3b8;
+        min-width: 0;
+        gap: 8px;
       }
-      .metric-header svg {
+
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 7px;
+        background:
+          rgba(
+            52,
+            211,
+            153,
+            0.1
+          );
+        border: 1px solid
+          rgba(
+            52,
+            211,
+            153,
+            0.16
+          );
+        color: #34d399;
+      }
+
+      .brand-mark svg {
         width: 13px;
         height: 13px;
-        stroke: #94a3b8;
       }
-      .metric-card .val {
-        font-size: 16px;
+
+      .brand-text {
+        min-width: 0;
+      }
+
+      .brand-title {
+        font-size: 12px;
+        line-height: 1.2;
         font-weight: 700;
-        font-family: ui-monospace, monospace;
-        color: #34d399;
-        padding-left: 18px;
+        color: #f8fafc;
       }
 
-      /* 控件行与矢量图标 */
-      .control-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 7px 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      }
-      .control-label {
-        font-size: 11.5px;
-        color: #e2e8f0;
-        display: flex;
-        align-items: center;
-        gap: 7px;
-      }
-      .control-icon {
-        width: 14px;
-        height: 14px;
-        stroke: #34d399;
-        opacity: 0.9;
+      .brand-subtitle {
+        margin-top: 2px;
+        font-size: 9.5px;
+        line-height: 1.2;
+        color: #64748b;
       }
 
-      /* 现代 Stepper 步进调节器 */
-      .stepper {
-        display: flex;
-        align-items: center;
-        background: rgba(0, 0, 0, 0.35);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 8px;
-        overflow: hidden;
-      }
-      .stepper-btn {
+      .close-btn {
+        appearance: none;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        border: 1px solid transparent;
+        border-radius: 7px;
         background: transparent;
-        border: none;
-        color: #94a3b8;
-        padding: 4px 7px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        color: #64748b;
         cursor: pointer;
-        transition: background 0.15s, color 0.15s;
       }
-      .stepper-btn svg {
-        width: 12px;
-        height: 12px;
-        stroke: currentColor;
-        stroke-width: 2.2;
+
+      .close-btn:hover {
+        background:
+          rgba(
+            148,
+            163,
+            184,
+            0.08
+          );
+        color: #cbd5e1;
       }
-      .stepper-btn:hover {
-        background: rgba(255, 255, 255, 0.1);
-        color: #34d399;
+
+      .status-strip {
+        display: grid;
+        grid-template-columns:
+          repeat(
+            3,
+            1fr
+          );
+        gap: 6px;
+        margin-bottom: 10px;
       }
-      .stepper-btn:active {
-        background: rgba(255, 255, 255, 0.18);
+
+      .status-item {
+        padding: 7px 8px;
+        border: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.1
+          );
+        border-radius: 9px;
+        background:
+          rgba(
+            148,
+            163,
+            184,
+            0.035
+          );
       }
-      .stepper-val {
-        min-width: 28px;
-        text-align: center;
-        font-family: ui-monospace, monospace;
-        font-size: 11.5px;
-        font-weight: 600;
+
+      .status-label {
+        font-size: 9px;
+        line-height: 1.2;
+        color: #64748b;
+      }
+
+      .status-value {
+        display: block;
+        margin-top: 3px;
+        font-size: 14px;
+        line-height: 1.15;
+        font-weight: 700;
+        font-variant-numeric:
+          tabular-nums;
         color: #f1f5f9;
       }
 
-      /* 现代微拟物 Switch 开关 */
-      .switch {
-        position: relative;
-        display: inline-block;
-        width: 36px;
-        height: 20px;
+      .section {
+        padding-top: 10px;
+        border-top: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.08
+          );
+      }
+
+      .section-title {
+        margin-bottom: 5px;
+        font-size: 9.5px;
+        line-height: 1.2;
+        font-weight: 700;
+        color: #64748b;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .control-row {
+        display: flex;
+        align-items: center;
+        justify-content:
+          space-between;
+        min-height: 34px;
+        gap: 12px;
+      }
+
+      .control-label {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: #dbe4ee;
+        font-size: 11px;
+      }
+
+      .control-label svg {
+        width: 14px;
+        height: 14px;
+        color: #7c8aa0;
+        flex: 0 0 auto;
+      }
+
+      .stepper {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.12
+          );
+        border-radius: 8px;
+        overflow: hidden;
+        background:
+          rgba(
+            0,
+            0,
+            0,
+            0.2
+          );
+      }
+
+      .stepper button {
+        width: 28px;
+        height: 25px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #94a3b8;
         cursor: pointer;
       }
-      .switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
+
+      .stepper button:hover {
+        background:
+          rgba(
+            148,
+            163,
+            184,
+            0.09
+          );
+        color: #f8fafc;
       }
+
+      .stepper span {
+        min-width: 34px;
+        text-align: center;
+        color: #f8fafc;
+        font:
+          600 11px/1.2
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+
+      .switch {
+        position: relative;
+        width: 34px;
+        height: 20px;
+        flex: 0 0 auto;
+      }
+
+      .switch input {
+        position: absolute;
+        opacity: 0;
+        inset: 0;
+        margin: 0;
+      }
+
       .slider {
         position: absolute;
         inset: 0;
-        background: rgba(255, 255, 255, 0.14);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 9999px;
-        transition: background 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease;
-      }
-      .slider::before {
-        position: absolute;
-        content: "";
-        height: 14px;
-        width: 14px;
-        left: 2px;
-        bottom: 2px;
-        background-color: #ffffff;
-        border-radius: 50%;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-        transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-      }
-      .switch input:checked + .slider {
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        border-color: #34d399;
-      }
-      .switch input:checked + .slider::before {
-        transform: translateX(16px);
+        border: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.14
+          );
+        border-radius: 999px;
+        background:
+          rgba(
+            148,
+            163,
+            184,
+            0.16
+          );
+        cursor: pointer;
       }
 
-      /* 主要动作按钮 */
+      .slider::before {
+        content: "";
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        left: 2px;
+        top: 2px;
+        border-radius: 50%;
+        background: #f8fafc;
+        box-shadow:
+          0 1px 3px
+            rgba(
+              0,
+              0,
+              0,
+              0.3
+            );
+        transition:
+          transform 150ms ease;
+      }
+
+      .switch input:checked
+      + .slider {
+        background: #059669;
+        border-color: #10b981;
+      }
+
+      .switch input:checked
+      + .slider::before {
+        transform:
+          translateX(14px);
+      }
+
+      .switch
+      input:focus-visible
+      + .slider {
+        outline:
+          2px solid
+          rgba(
+            52,
+            211,
+            153,
+            0.65
+          );
+        outline-offset: 2px;
+      }
+
       .action-btn {
         width: 100%;
-        margin-top: 10px;
-        padding: 8px 12px;
-        border-radius: 8px;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #f1f5f9;
-        font-size: 11.5px;
-        font-weight: 600;
-        cursor: pointer;
+        min-height: 34px;
+        margin-top: 8px;
+        padding: 7px 10px;
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 6px;
-        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        gap: 7px;
+        border: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.13
+          );
+        border-radius: 9px;
+        background:
+          rgba(
+            148,
+            163,
+            184,
+            0.055
+          );
+        color: #e2e8f0;
+        font-size: 11px;
+        font-weight: 650;
+        cursor: pointer;
       }
-      .action-btn svg {
-        width: 14px;
-        height: 14px;
-        stroke: currentColor;
-      }
+
       .action-btn:hover {
-        background: linear-gradient(180deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.15) 100%);
-        border-color: rgba(52, 211, 153, 0.45);
-        color: #34d399;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+        background:
+          rgba(
+            52,
+            211,
+            153,
+            0.09
+          );
+        border-color:
+          rgba(
+            52,
+            211,
+            153,
+            0.22
+          );
+        color: #f8fafc;
       }
-      .action-btn:active {
-        transform: translateY(0);
-      }
+
       .action-btn.copied {
-        background: #065f46;
-        border-color: #34d399;
+        background:
+          rgba(
+            5,
+            150,
+            105,
+            0.14
+          );
+        border-color:
+          rgba(
+            52,
+            211,
+            153,
+            0.3
+          );
         color: #6ee7b7;
       }
 
-      /* 搜索历史模块 */
-      .search-box {
-        margin-top: 12px;
-        padding-top: 8px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      .search-section[hidden] {
+        display: none;
       }
-      .search-input-wrap {
+
+      .search-wrap {
         position: relative;
-        display: flex;
-        align-items: center;
+        margin-top: 9px;
       }
-      .search-icon {
-        position: absolute;
-        left: 8px;
-        width: 14px;
-        height: 14px;
-        fill: #64748b;
-        pointer-events: none;
-      }
+
       .search-input {
         width: 100%;
-        background: rgba(0, 0, 0, 0.35);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        color: #f8fafc;
+        height: 32px;
+        padding:
+          0 10px 0 28px;
+        border: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.12
+          );
         border-radius: 8px;
-        padding: 6px 8px 6px 28px;
-        font-size: 11px;
         outline: none;
-        transition: border-color 0.2s, box-shadow 0.2s;
-      }
-      .search-input:focus {
-        border-color: rgba(52, 211, 153, 0.6);
-        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
-      }
-      .search-input::placeholder {
-        color: #64748b;
-      }
-      .results {
-        max-height: 120px;
-        overflow-y: auto;
-        margin-top: 6px;
-        padding-right: 2px;
-      }
-      .results::-webkit-scrollbar {
-        width: 4px;
-      }
-      .results::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.15);
-        border-radius: 4px;
-      }
-      .result-item {
-        padding: 5px 8px;
-        background: rgba(255, 255, 255, 0.025);
-        border: 1px solid rgba(255, 255, 255, 0.04);
-        border-radius: 6px;
-        margin-bottom: 4px;
-        cursor: pointer;
+        background:
+          rgba(
+            0,
+            0,
+            0,
+            0.2
+          );
+        color: #f8fafc;
         font-size: 10.5px;
-        color: #cbd5e1;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        transition: background 0.15s, color 0.15s, transform 0.15s;
-      }
-      .result-item:hover {
-        background: rgba(16, 185, 129, 0.12);
-        border-color: rgba(52, 211, 153, 0.3);
-        color: #34d399;
-        transform: translateX(2px);
       }
 
-      /* 底部热键提示 */
-      .hotkey-hint {
-        margin-top: 8px;
-        font-size: 9.5px;
+      .search-input:focus {
+        border-color:
+          rgba(
+            52,
+            211,
+            153,
+            0.38
+          );
+        box-shadow:
+          0 0 0 2px
+          rgba(
+            52,
+            211,
+            153,
+            0.08
+          );
+      }
+
+      .search-input::placeholder {
+        color: #5f6d80;
+      }
+
+      .search-icon {
+        position: absolute;
+        left: 9px;
+        top: 9px;
+        width: 14px;
+        height: 14px;
+        color: #64748b;
+        pointer-events: none;
+      }
+
+      .results {
+        max-height: 126px;
+        overflow: auto;
+        margin-top: 6px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .result-item,
+      .result-empty {
+        width: 100%;
+        min-height: 28px;
+        padding: 6px 8px;
+        border-radius: 7px;
+        border: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.08
+          );
+        background:
+          rgba(
+            148,
+            163,
+            184,
+            0.025
+          );
+        color: #cbd5e1;
+        font-size: 10px;
+        text-align: left;
+      }
+
+      .result-item {
+        cursor: pointer;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+
+      .result-item:hover {
+        background:
+          rgba(
+            52,
+            211,
+            153,
+            0.07
+          );
+        border-color:
+          rgba(
+            52,
+            211,
+            153,
+            0.16
+          );
+        color: #f8fafc;
+      }
+
+      .result-empty {
         color: #64748b;
         text-align: center;
-        letter-spacing: 0.02em;
-      }
-      kbd {
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 3px;
-        padding: 1px 4px;
-        font-family: ui-monospace, monospace;
-        color: #94a3b8;
       }
 
-      @media (prefers-reduced-motion: reduce) {
-        *, *::before, *::after {
-          animation-duration: 0.01ms !important;
-          transition-duration: 0.01ms !important;
+      .footer-hint {
+        margin-top: 9px;
+        color: #4f5d70;
+        font-size: 9px;
+        line-height: 1.4;
+        text-align: center;
+      }
+
+      kbd {
+        padding: 1px 4px;
+        border: 1px solid
+          rgba(
+            148,
+            163,
+            184,
+            0.13
+          );
+        border-radius: 4px;
+        background:
+          rgba(
+            148,
+            163,
+            184,
+            0.05
+          );
+        color: #7c8aa0;
+        font:
+          600 9px/1.2
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+
+      @media (
+        prefers-reduced-motion: reduce
+      ) {
+        .hud-panel,
+        .slider::before {
+          transition: none !important;
         }
       }
     `;
 
-    shadow.innerHTML = `
-      <style>${styles}</style>
-
-      <!-- 悬浮控制面板 -->
-      <div class="hud-panel" id="panel">
+    hudShadowRoot.innerHTML = `
+      <div
+        class="hud-panel"
+        id="panel"
+      >
         <div class="header">
-          <div class="brand-title">
-            <svg class="brand-icon" viewBox="0 0 24 24"><path d="M13 2L3 14h8l-1 8 11-12h-8l1-8z"/></svg>
-            <span>AI Turbo Engine</span>
-          </div>
-          <div class="header-actions">
-            <span class="tag">v0.2.1</span>
-            <button class="close-btn" id="btn-close" title="关闭面板 (Esc)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="metrics-grid">
-          <div class="metric-card">
-            <div class="metric-header">
-              <svg fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span>检测总轮次</span>
+          <div class="brand">
+            <div
+              class="brand-mark"
+              aria-hidden="true"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <path
+                  d="M13 2L3 14h8l-1 8 11-12h-8l1-8z"
+                  fill="currentColor"
+                />
+              </svg>
             </div>
-            <span class="val" id="total-val">0</span>
-          </div>
-          <div class="metric-card">
-            <div class="metric-header">
-              <svg fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
-              <span>视口脱水挂起</span>
+
+            <div class="brand-text">
+              <div class="brand-title">
+                AI Turbo Engine
+              </div>
+
+              <div class="brand-subtitle">
+                ${currentPlatform.name}
+                · v${VERSION}
+              </div>
             </div>
-            <span class="val" id="hidden-val">0</span>
+          </div>
+
+          <button
+            class="close-btn"
+            id="btn-close"
+            type="button"
+            title="关闭面板"
+            aria-label="关闭面板"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            >
+              <path d="M6 6l12 12M18 6L6 18"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="status-strip">
+          <div class="status-item">
+            <span class="status-label">
+              消息
+            </span>
+
+            <strong
+              class="status-value"
+              id="total-val"
+            >
+              0
+            </strong>
+          </div>
+
+          <div class="status-item">
+            <span class="status-label">
+              已脱水
+            </span>
+
+            <strong
+              class="status-value"
+              id="hidden-val"
+            >
+              0
+            </strong>
+          </div>
+
+          <div class="status-item">
+            <span class="status-label">
+              代码
+            </span>
+
+            <strong
+              class="status-value"
+              id="folded-val"
+            >
+              0
+            </strong>
           </div>
         </div>
 
-        <div class="control-row">
-          <span class="control-label">
-            <svg class="control-icon" fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-            活跃保留轮次
-          </span>
-          <div class="stepper">
-            <button class="stepper-btn" id="step-dec" title="减少">
-              <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </button>
-            <span class="stepper-val" id="keep-val">${state.keepTurns}</span>
-            <button class="stepper-btn" id="step-inc" title="增加">
-              <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            </button>
+        <div class="section">
+          <div class="section-title">
+            优化策略
           </div>
-        </div>
 
-        <div class="control-row">
-          <span class="control-label">
-            <svg class="control-icon" fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            安全视口脱水
-          </span>
-          <label class="switch">
-            <input type="checkbox" id="chk-prune" ${state.pruneEnabled ? "checked" : ""}>
-            <span class="slider"></span>
-          </label>
-        </div>
+          <div class="control-row">
+            <span class="control-label">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9"
+                />
 
-        <div class="control-row">
-          <span class="control-label">
-            <svg class="control-icon" fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
-            长代码自动折叠
-          </span>
-          <label class="switch">
-            <input type="checkbox" id="chk-collapse" ${state.collapseCode ? "checked" : ""}>
-            <span class="slider"></span>
-          </label>
-        </div>
+                <path d="M12 7v5l3 2"/>
+              </svg>
 
-        <button class="action-btn" id="btn-fork">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
-          <span id="fork-text">提取无损上下文至剪贴板</span>
-        </button>
+              活跃保留消息
+            </span>
 
-        <div class="search-box">
-          <div class="search-input-wrap">
-            <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 14z"/></svg>
-            <input type="text" class="search-input" id="search-input" placeholder="瞬时检索对话历史...">
+            <div class="stepper">
+              <button
+                id="step-dec"
+                type="button"
+                title="减少"
+              >
+                −
+              </button>
+
+              <span id="keep-val">
+                ${state.keepTurns}
+              </span>
+
+              <button
+                id="step-inc"
+                type="button"
+                title="增加"
+              >
+                +
+              </button>
+            </div>
           </div>
-          <div class="results" id="search-results"></div>
+
+          <div class="control-row">
+            <span class="control-label">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              >
+                <path
+                  d="M12 3l7 3v5c0 5-3.2 8.5-7 10-3.8-1.5-7-5-7-10V6l7-3z"
+                />
+              </svg>
+
+              安全视口脱水
+            </span>
+
+            <label class="switch">
+              <input
+                id="chk-prune"
+                type="checkbox"
+                ${state.pruneEnabled ? "checked" : ""}
+                aria-label="安全视口脱水"
+              />
+
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="control-row">
+            <span class="control-label">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              >
+                <path
+                  d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"
+                />
+              </svg>
+
+              长代码自动折叠
+            </span>
+
+            <label class="switch">
+              <input
+                id="chk-collapse"
+                type="checkbox"
+                ${state.collapseCode ? "checked" : ""}
+                aria-label="长代码自动折叠"
+              />
+
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <button
+            class="action-btn"
+            id="btn-fork"
+            type="button"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M8 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+              />
+
+              <rect
+                x="8"
+                y="2"
+                width="8"
+                height="4"
+                rx="1"
+              />
+
+              <path
+                d="M13 13l8-8M17 5h4v4"
+              />
+            </svg>
+
+            <span id="fork-text">
+              提取当前上下文
+            </span>
+          </button>
         </div>
 
-        <div class="hotkey-hint">
-          快捷键 <kbd>Alt</kbd> + <kbd>T</kbd> 切换展开 / 拖拽可吸附边缘
+        <div
+          class="search-section section"
+          id="search-section"
+          hidden
+        >
+          <div class="section-title">
+            历史检索
+          </div>
+
+          <div class="search-wrap">
+            <svg
+              class="search-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <circle
+                cx="10.5"
+                cy="10.5"
+                r="6.5"
+              />
+
+              <path d="M16 16l4.5 4.5"/>
+            </svg>
+
+            <input
+              id="search-input"
+              class="search-input"
+              type="text"
+              placeholder="检索当前会话..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <div
+            class="results"
+            id="search-results"
+          ></div>
+        </div>
+
+        <div class="footer-hint">
+          <kbd>Alt</kbd>
+          +
+          <kbd>T</kbd>
+          展开 / 收起 · 拖拽吸附边缘
         </div>
       </div>
 
-      <!-- 悬浮微光球 -->
-      <div class="hud-ball active-pulse" id="ball" title="AI Turbo Engine (可拖拽 / 点击展开 / Alt+T)">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <defs>
-            <linearGradient id="turbo-bolt-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#34d399"/>
-              <stop offset="100%" stop-color="#10b981"/>
-            </linearGradient>
-          </defs>
-          <path fill="url(#turbo-bolt-grad)" d="M13 2L3 14h8l-1 8 11-12h-8l1-8z"/>
+      <button
+        class="hud-ball"
+        id="ball"
+        type="button"
+        title="AI Turbo Engine"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M13 2L3 14h8l-1 8 11-12h-8l1-8z"
+            fill="currentColor"
+          />
         </svg>
-      </div>
+      </button>
     `;
 
-    (document.body || document.documentElement).appendChild(hudRootElement);
+    document.body.appendChild(hudRootElement);
 
-    const ball = shadow.getElementById("ball");
-    const panel = shadow.getElementById("panel");
-    const btnClose = shadow.getElementById("btn-close");
-    const chkPrune = shadow.getElementById("chk-prune");
-    const chkCollapse = shadow.getElementById("chk-collapse");
-    const btnFork = shadow.getElementById("btn-fork");
-    const forkText = shadow.getElementById("fork-text");
-    const stepDec = shadow.getElementById("step-dec");
-    const stepInc = shadow.getElementById("step-inc");
-    const keepVal = shadow.getElementById("keep-val");
-    searchInput = shadow.getElementById("search-input");
-    searchResultsBox = shadow.getElementById("search-results");
+    const ball = hudShadowRoot.getElementById("ball");
+
+    const panel = hudShadowRoot.getElementById("panel");
+
+    const btnClose = hudShadowRoot.getElementById("btn-close");
+
+    const chkPrune = hudShadowRoot.getElementById("chk-prune");
+
+    const chkCollapse = hudShadowRoot.getElementById("chk-collapse");
+
+    const btnFork = hudShadowRoot.getElementById("btn-fork");
+
+    const forkText = hudShadowRoot.getElementById("fork-text");
+
+    const stepDec = hudShadowRoot.getElementById("step-dec");
+
+    const stepInc = hudShadowRoot.getElementById("step-inc");
+
+    const keepVal = hudShadowRoot.getElementById("keep-val");
+
+    searchInput = hudShadowRoot.getElementById("search-input");
+
+    searchResultsBox = hudShadowRoot.getElementById("search-results");
 
     hudStats = {
-      total: shadow.getElementById("total-val"),
-      hidden: shadow.getElementById("hidden-val"),
+      total: hudShadowRoot.getElementById("total-val"),
+
+      hidden: hudShadowRoot.getElementById("hidden-val"),
+
+      folded: hudShadowRoot.getElementById("folded-val"),
     };
 
-    let currentPos = getSavedPosition();
-    function applyPosition(x, y) {
-      hudRootElement.style.left = `${x}px`;
-      hudRootElement.style.top = `${y}px`;
-
-      panel.classList.toggle("pos-left", x < 320);
-      panel.classList.toggle("pos-top", y < 340);
-    }
-    applyPosition(currentPos.x, currentPos.y);
+    let currentPosition = getSavedPosition();
 
     let isDragging = false;
-    let dragStartX = 0,
-      dragStartY = 0;
-    let initialBallX = 0,
-      initialBallY = 0;
     let hasMoved = false;
 
-    ball.addEventListener("pointerdown", (e) => {
-      isDragging = true;
-      hasMoved = false;
-      dragStartX = e.clientX;
-      dragStartY = e.clientY;
-      initialBallX = currentPos.x;
-      initialBallY = currentPos.y;
-      ball.setPointerCapture(e.pointerId);
-    });
+    let dragStartX = 0;
+    let dragStartY = 0;
 
-    ball.addEventListener("pointermove", (e) => {
-      if (!isDragging) return;
-      const dx = e.clientX - dragStartX;
-      const dy = e.clientY - dragStartY;
-      if (Math.hypot(dx, dy) > 4) {
-        hasMoved = true;
-      }
-      if (hasMoved) {
-        let newX = initialBallX + dx;
-        let newY = initialBallY + dy;
-        newX = Math.max(8, Math.min(newX, window.innerWidth - 52));
-        newY = Math.max(8, Math.min(newY, window.innerHeight - 52));
-        currentPos = { x: newX, y: newY };
-        applyPosition(newX, newY);
-      }
-    });
+    let initialX = 0;
+    let initialY = 0;
 
-    ball.addEventListener("pointerup", (e) => {
-      if (!isDragging) return;
-      isDragging = false;
-      ball.releasePointerCapture(e.pointerId);
-      if (hasMoved) {
-        const snapX =
-          currentPos.x < window.innerWidth / 2 ? 12 : window.innerWidth - 56;
-        currentPos.x = snapX;
-        applyPosition(currentPos.x, currentPos.y);
-        savePosition(currentPos.x, currentPos.y);
-      } else {
-        togglePanel();
-      }
-    });
+    function applyPosition(x, y) {
+      const maxX = Math.max(8, window.innerWidth - 50);
 
-    function togglePanel(forceState) {
-      state.hudOpen =
-        typeof forceState === "boolean" ? forceState : !state.hudOpen;
-      panel.classList.toggle("open", state.hudOpen);
-      if (state.hudOpen) {
-        setTimeout(() => searchInput?.focus(), 80);
-      }
+      const maxY = Math.max(8, window.innerHeight - 50);
+
+      const safeX = Math.min(Math.max(8, x), maxX);
+
+      const safeY = Math.min(Math.max(8, y), maxY);
+
+      hudRootElement.style.left = `${safeX}px`;
+
+      hudRootElement.style.top = `${safeY}px`;
+
+      panel?.classList.toggle("pos-left", safeX < 320);
+
+      panel?.classList.toggle("pos-top", safeY < 300);
     }
 
-    btnClose.onclick = () => togglePanel(false);
+    applyPosition(currentPosition.x, currentPosition.y);
 
-    chkPrune.onchange = () => {
+    ball?.addEventListener("pointerdown", (event) => {
+      isDragging = true;
+      hasMoved = false;
+
+      dragStartX = event.clientX;
+
+      dragStartY = event.clientY;
+
+      initialX = currentPosition.x;
+
+      initialY = currentPosition.y;
+
+      ball.setPointerCapture(event.pointerId);
+    });
+
+    ball?.addEventListener("pointermove", (event) => {
+      if (!isDragging) return;
+
+      const deltaX = event.clientX - dragStartX;
+
+      const deltaY = event.clientY - dragStartY;
+
+      if (Math.hypot(deltaX, deltaY) > 4) {
+        hasMoved = true;
+      }
+
+      if (!hasMoved) return;
+
+      currentPosition = {
+        x: initialX + deltaX,
+
+        y: initialY + deltaY,
+      };
+
+      applyPosition(currentPosition.x, currentPosition.y);
+    });
+
+    ball?.addEventListener("pointerup", (event) => {
+      if (!isDragging) {
+        return;
+      }
+
+      isDragging = false;
+
+      ball.releasePointerCapture(event.pointerId);
+
+      if (hasMoved) {
+        const snapX =
+          currentPosition.x < window.innerWidth / 2
+            ? 10
+            : Math.max(10, window.innerWidth - 52);
+
+        currentPosition.x = snapX;
+
+        applyPosition(currentPosition.x, currentPosition.y);
+
+        savePosition(currentPosition.x, currentPosition.y);
+
+        return;
+      }
+
+      togglePanel();
+    });
+
+    btnClose?.addEventListener("click", () => togglePanel(false));
+
+    chkPrune?.addEventListener("change", () => {
       state.pruneEnabled = chkPrune.checked;
-      ball.classList.toggle("active-pulse", state.pruneEnabled);
-      scheduleVirtualUpdate();
-    };
 
-    chkCollapse.onchange = () => {
+      previousCutoff = -1;
+      fullTurnSyncRequested = true;
+
+      requestUpdate("prune-toggle");
+    });
+
+    chkCollapse?.addEventListener("change", () => {
       state.collapseCode = chkCollapse.checked;
-      document.querySelectorAll(".ai-turbo-folded-code").forEach((b) => {
-        if (!state.collapseCode) b.classList.remove("ai-turbo-folded-code");
-      });
-      scheduleVirtualUpdate();
-    };
 
-    stepDec.onclick = () => {
-      if (state.keepTurns > 2) {
-        state.keepTurns--;
-        keepVal.textContent = state.keepTurns;
-        scheduleVirtualUpdate();
+      codeScanRequested = true;
+
+      requestUpdate("code-toggle");
+    });
+
+    stepDec?.addEventListener("click", () => {
+      if (state.keepTurns <= 2) {
+        return;
       }
-    };
 
-    stepInc.onclick = () => {
-      if (state.keepTurns < 50) {
-        state.keepTurns++;
-        keepVal.textContent = state.keepTurns;
-        scheduleVirtualUpdate();
+      state.keepTurns--;
+
+      keepVal.textContent = String(state.keepTurns);
+
+      previousCutoff = -1;
+      fullTurnSyncRequested = true;
+
+      requestUpdate("keep-decrement");
+    });
+
+    stepInc?.addEventListener("click", () => {
+      if (state.keepTurns >= 50) {
+        return;
       }
-    };
 
-    btnFork.onclick = () => {
+      state.keepTurns++;
+
+      keepVal.textContent = String(state.keepTurns);
+
+      previousCutoff = -1;
+      fullTurnSyncRequested = true;
+
+      requestUpdate("keep-increment");
+    });
+
+    btnFork?.addEventListener("click", () => {
       exportCleanContext((count) => {
         btnFork.classList.add("copied");
-        forkText.textContent = `已复制 ${count} 轮纯净上下文!`;
-        setTimeout(() => {
+
+        forkText.textContent = `已复制 ${count} 条消息`;
+
+        window.setTimeout(() => {
           btnFork.classList.remove("copied");
-          forkText.textContent = "提取无损上下文至剪贴板";
-        }, 2200);
+
+          forkText.textContent = "提取当前上下文";
+        }, 2000);
       });
-    };
+    });
 
-    searchInput.oninput = () => {
+    searchInput?.addEventListener("input", () => {
       clearTimeout(searchDebounceTimer);
-      searchDebounceTimer = setTimeout(() => {
-        const q = searchInput.value.trim().toLowerCase();
-        searchResultsBox.innerHTML = "";
-        if (!q) return;
 
-        const matches = state.indexedTurns.filter((t) =>
-          t.text.toLowerCase().includes(q),
-        );
-        matches.slice(0, 10).forEach((m) => {
-          const item = document.createElement("div");
-          item.className = "result-item";
-          item.textContent = `#${m.id + 1}: ${m.text}`;
-          item.onclick = () => {
-            m.element.classList.remove("ai-turbo-dehydrated");
-            m.element.scrollIntoView({ behavior: "smooth", block: "center" });
-            m.element.style.outline = "2px solid #10b981";
-            setTimeout(() => {
-              m.element.style.outline = "";
-            }, 2000);
-          };
-          searchResultsBox.appendChild(item);
-        });
-      }, 120);
-    };
-
-    window.addEventListener("keydown", (e) => {
-      if (e.altKey && (e.code === "KeyT" || e.key.toLowerCase() === "t")) {
-        e.preventDefault();
-        togglePanel();
-      } else if (e.key === "Escape" && state.hudOpen) {
-        togglePanel(false);
-      }
+      searchDebounceTimer = window.setTimeout(() => {
+        renderSearchResults(searchInput.value.trim());
+      }, 100);
     });
 
     window.addEventListener("resize", () => {
-      const maxX = window.innerWidth - 56;
-      const maxY = window.innerHeight - 56;
-      if (currentPos.x > maxX || currentPos.y > maxY) {
-        currentPos.x = Math.min(currentPos.x, maxX);
-        currentPos.y = Math.min(currentPos.y, maxY);
-        applyPosition(currentPos.x, currentPos.y);
-      }
+      currentPosition.x = Math.min(
+        currentPosition.x,
+        Math.max(8, window.innerWidth - 50),
+      );
+
+      currentPosition.y = Math.min(
+        currentPosition.y,
+        Math.max(8, window.innerHeight - 50),
+      );
+
+      applyPosition(currentPosition.x, currentPosition.y);
     });
   }
 
-  function ensureHUDMounted() {
-    if (!hudRootElement || !hudRootElement.isConnected) {
-      if (document.body) {
-        buildHUD();
+  function exportCleanContext(onSuccess) {
+    const turns = getTurns();
+
+    if (!turns.length) {
+      window.alert("未检测到有效对话内容");
+
+      return;
+    }
+
+    const sections = [];
+
+    for (let index = 0; index < turns.length; index++) {
+      const turnElement = turns[index];
+
+      const contentText = extractTurnText(turnElement);
+
+      if (!contentText) {
+        continue;
       }
+
+      sections.push(`### Message ${index + 1}\n\n${contentText}`);
+    }
+
+    if (!sections.length) {
+      window.alert("当前页面没有可提取的文本");
+
+      return;
+    }
+
+    const markdown = [
+      `# 会话上下文提取 [${currentPlatform.name}]`,
+      "",
+      `> ${new Date().toLocaleString()}`,
+      "",
+      sections.join("\n\n---\n\n"),
+      "",
+    ].join("\n");
+
+    navigator.clipboard
+      .writeText(markdown)
+      .then(() => {
+        if (typeof onSuccess === "function") {
+          onSuccess(sections.length);
+        }
+      })
+      .catch(() => {
+        window.alert("写入剪贴板失败，请检查浏览器权限。");
+      });
+  }
+
+  function collectMutationTargets(records) {
+    const turnSelector = currentPlatform.turnSelectors.join(",");
+
+    let structuralChange = false;
+
+    for (const mutationRecord of records) {
+      const mutationTarget = mutationRecord.target;
+
+      if (
+        mutationTarget instanceof Element &&
+        mutationTarget.closest(`#${HUD_ID}, .${CODE_SHELL_CLASS}`)
+      ) {
+        continue;
+      }
+
+      const possibleTurn =
+        mutationTarget instanceof Element
+          ? mutationTarget.closest(turnSelector)
+          : mutationTarget.parentElement?.closest(turnSelector);
+
+      if (possibleTurn instanceof Element) {
+        dirtyTurns.add(possibleTurn);
+      }
+
+      const possibleCode =
+        mutationTarget instanceof Element
+          ? mutationTarget.closest(currentPlatform.codeSelector)
+          : mutationTarget.parentElement?.closest(currentPlatform.codeSelector);
+
+      if (possibleCode instanceof HTMLElement) {
+        dirtyCodeBlocks.add(possibleCode);
+      }
+
+      if (mutationRecord.type === "characterData") {
+        continue;
+      }
+
+      if (mutationRecord.type !== "childList") {
+        continue;
+      }
+
+      const changedNodes = [
+        ...Array.from(mutationRecord.addedNodes),
+
+        ...Array.from(mutationRecord.removedNodes),
+      ];
+
+      for (const changedNode of changedNodes) {
+        if (!(changedNode instanceof Element)) {
+          continue;
+        }
+
+        if (
+          changedNode.matches(turnSelector) ||
+          changedNode.querySelector(turnSelector)
+        ) {
+          structuralChange = true;
+        }
+
+        const directCodeBlocks = changedNode.matches(
+          currentPlatform.codeSelector,
+        )
+          ? [changedNode]
+          : Array.from(
+              changedNode.querySelectorAll(currentPlatform.codeSelector),
+            );
+
+        for (const codeElement of directCodeBlocks) {
+          if (codeElement instanceof HTMLElement) {
+            dirtyCodeBlocks.add(codeElement);
+          }
+        }
+      }
+    }
+
+    if (structuralChange) {
+      fullTurnSyncRequested = true;
+
+      codeScanRequested = true;
     }
   }
 
-  function updateHudDashboard() {
-    if (!hudStats) return;
-    hudStats.total.textContent = state.totalTurns;
-    hudStats.hidden.textContent = state.hiddenCount;
+  function runScheduledUpdate() {
+    scheduleFrameId = 0;
+    scheduleQueued = false;
+
+    if (selfMutationDepth > 0) {
+      requestUpdate("self-mutation-retry");
+
+      return;
+    }
+
+    const currentTurnSet = new Set(previousTurns);
+
+    for (const dirtyTurn of dirtyTurns) {
+      if (dirtyTurn instanceof Element && currentTurnSet.has(dirtyTurn)) {
+        continue;
+      }
+
+      fullTurnSyncRequested = true;
+    }
+
+    syncTurnIndex(fullTurnSyncRequested);
+
+    syncCodeBlocks(codeScanRequested, dirtyCodeBlocks);
+
+    updateHudDashboard();
+    ensureHUDMounted();
   }
 
-  // --- 7. 变更观察器 ---
-  function initObserver() {
-    const observer = new MutationObserver(() => {
-      scheduleVirtualUpdate();
+  function requestUpdate() {
+    if (scheduleQueued) {
+      return;
+    }
+
+    scheduleQueued = true;
+
+    scheduleFrameId = window.requestAnimationFrame(runScheduledUpdate);
+  }
+
+  function observeCodeLayout() {
+    if (!("ResizeObserver" in window)) {
+      return;
+    }
+
+    codeResizeObserver?.disconnect();
+
+    codeResizeObserver = new ResizeObserver((entries) => {
+      let shouldSchedule = false;
+
+      for (const resizeEntry of entries) {
+        const codeElement = resizeEntry.target;
+
+        if (!(codeElement instanceof HTMLElement)) {
+          continue;
+        }
+
+        if (codeElement.closest(`.${CODE_SHELL_CLASS}`)) {
+          dirtyCodeBlocks.add(codeElement);
+
+          shouldSchedule = true;
+
+          continue;
+        }
+
+        if (
+          state.collapseCode &&
+          resizeEntry.contentRect.height > CODE_COLLAPSE_HEIGHT
+        ) {
+          dirtyCodeBlocks.add(codeElement);
+
+          shouldSchedule = true;
+        }
+      }
+
+      if (shouldSchedule) {
+        requestUpdate("code-resize");
+      }
     });
 
-    observer.observe(document.documentElement, {
+    for (const codeElement of getCodeBlocks()) {
+      codeResizeObserver.observe(codeElement);
+    }
+  }
+
+  function observeDom() {
+    if (!document.body) {
+      return;
+    }
+
+    observer?.disconnect();
+
+    observer = new MutationObserver((mutationRecords) => {
+      if (selfMutationDepth > 0) {
+        return;
+      }
+
+      collectMutationTargets(mutationRecords);
+
+      requestUpdate("dom-mutation");
+    });
+
+    observer.observe(document.body, {
       childList: true,
+      characterData: true,
       subtree: true,
     });
   }
 
-  // --- 8. 入口执行 ---
-  if (document.readyState === "loading") {
-    window.addEventListener("DOMContentLoaded", () => {
+  function ensureHUDMounted() {
+    if (hudRootElement?.isConnected) {
+      return;
+    }
+
+    if (document.body) {
       buildHUD();
-      scheduleVirtualUpdate();
-      initObserver();
+    }
+  }
+
+  function patchHistoryForSpaNavigation() {
+    const originalPushState = history.pushState;
+
+    const originalReplaceState = history.replaceState;
+
+    history.pushState = function (...args) {
+      const result = originalPushState.apply(this, args);
+
+      window.setTimeout(() => {
+        fullTurnSyncRequested = true;
+
+        codeScanRequested = true;
+
+        requestUpdate("push-state");
+
+        ensureHUDMounted();
+      }, 0);
+
+      return result;
+    };
+
+    history.replaceState = function (...args) {
+      const result = originalReplaceState.apply(this, args);
+
+      window.setTimeout(() => {
+        fullTurnSyncRequested = true;
+
+        codeScanRequested = true;
+
+        requestUpdate("replace-state");
+
+        ensureHUDMounted();
+      }, 0);
+
+      return result;
+    };
+
+    window.addEventListener("popstate", () => {
+      fullTurnSyncRequested = true;
+
+      codeScanRequested = true;
+
+      requestUpdate("pop-state");
+
+      ensureHUDMounted();
+    });
+  }
+
+  function boot() {
+    injectEngineStyles();
+    buildHUD();
+    observeCodeLayout();
+    observeDom();
+    patchHistoryForSpaNavigation();
+
+    fullTurnSyncRequested = true;
+
+    codeScanRequested = true;
+
+    requestUpdate("boot");
+
+    window.addEventListener("load", () => {
+      ensureHUDMounted();
+      requestUpdate("load");
+    });
+
+    window.setTimeout(() => ensureHUDMounted(), 250);
+
+    window.setTimeout(() => ensureHUDMounted(), 1000);
+
+    window.setTimeout(() => ensureHUDMounted(), 2500);
+
+    window.addEventListener("keydown", (event) => {
+      if (
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        (event.code === "KeyT" || event.key.toLowerCase() === "t")
+      ) {
+        event.preventDefault();
+
+        togglePanel();
+
+        return;
+      }
+
+      if (event.key === "Escape" && state.hudOpen) {
+        togglePanel(false);
+      }
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot, {
+      once: true,
     });
   } else {
-    buildHUD();
-    scheduleVirtualUpdate();
-    initObserver();
+    boot();
   }
 })();
