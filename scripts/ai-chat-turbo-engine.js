@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v3
-// @version      0.2.0
-// @description  零回流增量索引 + 安全无感视口脱水 + 事件代理折叠 + 弹窗安全隔离 (AzSkills 精密磨砂设计系统版)
+// @version      0.2.1
+// @description  零回流增量索引 + 安全无感视口脱水 + 事件代理折叠 + 弹窗安全隔离 (AzSkills 精密磨砂设计系统 + 完整矢量图标版)
 // @author       Senior Frontend Engineer
 // @match        https://chatgpt.com/*
 // @match        https://gemini.google.com/*
@@ -11,46 +11,73 @@
 // @match        https://claude.ai/*
 // @run-at       document-start
 // @grant        none
+// @icon         data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64"><rect width="24" height="24" rx="6" fill="%2309090b"/><path d="M13 2L3 14h8l-1 8 11-12h-8l1-8z" fill="%2310b981"/></svg>
 // @license      MIT
 // ==/UserScript==
 
 (function () {
   "use strict";
 
-  // --- 1. 平台特征选择器映射矩阵 ---
+  // --- 1. 平台特征选择器与提取引擎 ---
   const PLATFORMS = {
     chatgpt: {
       name: "ChatGPT",
       turns:
         'article[data-testid^="conversation-turn-"], div[data-message-author-role]',
+      getTurns: () =>
+        document.querySelectorAll(
+          'article[data-testid^="conversation-turn-"], div[data-message-author-role]',
+        ),
       inputContainer:
         'form, div[class*="composer"], div[class*="PromptTextarea"]',
       contentBody: 'div[class*="markdown"], div[data-message-author-role]',
       codeBlocks: "pre",
+      styleTurns:
+        'article[data-testid^="conversation-turn-"], div[data-message-author-role]',
     },
     gemini: {
       name: "Gemini",
-      turns: "user-query-container, model-response, .chat-turn-container",
+      // 解决 Gemini 父子嵌套重复统计缺陷：优先取顶层 turn 容器，无顶层容器时才并列取 user/model 节点
+      getTurns: () => {
+        const topContainers = document.querySelectorAll(
+          "chat-turn, .chat-turn-container, div[class*='chat-turn-container']",
+        );
+        if (topContainers.length > 0) return topContainers;
+        return document.querySelectorAll(
+          "user-query-container, model-response, user-query",
+        );
+      },
       inputContainer:
         ".input-area-container, rich-textarea, .chat-input-container",
-      contentBody: ".message-content, .model-response-text",
-      codeBlocks: "code-block, pre",
+      contentBody: ".message-content, .model-response-text, message-content",
+      // 避免 code-block 和内部 pre 重复折叠导致双层遮罩
+      codeBlocks: "code-block, pre:not(code-block pre)",
+      styleTurns:
+        "chat-turn, .chat-turn-container, user-query-container, model-response, user-query",
     },
     grok: {
       name: "Grok",
-      turns:
-        'div[data-testid*="message-container"], div[data-testid*="conversation-turn"], div[class*="message-bubble"]',
+      getTurns: () =>
+        document.querySelectorAll(
+          'div[data-testid*="message-container"], div[data-testid*="conversation-turn"], div[class*="message-bubble"]',
+        ),
       inputContainer: 'div[class*="composer"], textarea, div[role="textbox"]',
       contentBody: 'div[class*="message-content"], div[dir="auto"]',
       codeBlocks: "pre",
+      styleTurns:
+        'div[data-testid*="message-container"], div[data-testid*="conversation-turn"], div[class*="message-bubble"]',
     },
     claude: {
       name: "Claude",
-      turns:
-        "div[data-test-render-count], div.font-user-message, div.font-claude-message",
+      getTurns: () =>
+        document.querySelectorAll(
+          "div[data-test-render-count], div.font-user-message, div.font-claude-message",
+        ),
       inputContainer: 'fieldset, div[contenteditable="true"]',
       contentBody: 'div.grid-cols-1, div[class*="font-claude"]',
       codeBlocks: "pre",
+      styleTurns:
+        "div[data-test-render-count], div.font-user-message, div.font-claude-message",
     },
   };
 
@@ -89,8 +116,9 @@
     const style = document.createElement("style");
     style.id = styleId;
     style.textContent = `
-      /* 视口脱水：利用 content-visibility 保护滚动条几何尺寸，避免高度坍塌 */
-      ${currentPlatform.turns} {
+      /* 视口脱水：保障自定义元素以 block 布局排布，规避 content-visibility 导致的高度归零 */
+      ${currentPlatform.styleTurns} {
+        display: block !important;
         content-visibility: auto !important;
         contain-intrinsic-size: auto 240px !important;
       }
@@ -98,13 +126,13 @@
         content-visibility: hidden !important;
         contain-intrinsic-size: auto 80px !important;
       }
-      /* 输入框隔离：仅使用 layout style，规避 paint 截断 */
+      /* 输入框容器轻量隔离 */
       ${currentPlatform.inputContainer} {
-        contain: layout style !important;
-        isolation: isolate !important;
+        contain: style !important;
       }
       /* 长代码折叠容器 (纯 CSS 驱动) */
       .ai-turbo-folded-code {
+        display: block !important;
         max-height: 96px !important;
         overflow: hidden !important;
         position: relative !important;
@@ -131,8 +159,7 @@
       /* 低开销 GPU 节流模式 */
       body.ai-turbo-low-power,
       body.ai-turbo-low-power pre,
-      body.ai-turbo-low-power code,
-      body.ai-turbo-low-power div {
+      body.ai-turbo-low-power code {
         text-shadow: none !important;
         box-shadow: none !important;
         animation-duration: 0.001ms !important;
@@ -190,11 +217,11 @@
     executePruneAndIncrementalIndex();
     if (state.collapseCode) executeCodeCollapseCSS();
     updateHudDashboard();
-    ensureHUDMounted(); // 防御式节点保活检测
+    ensureHUDMounted();
   }
 
   function executePruneAndIncrementalIndex() {
-    const turns = document.querySelectorAll(currentPlatform.turns);
+    const turns = currentPlatform.getTurns();
     const len = turns.length;
     state.totalTurns = len;
 
@@ -247,7 +274,7 @@
 
   // --- 5. 对话提纯导出 ---
   function exportCleanContext(onSuccess) {
-    const turns = document.querySelectorAll(currentPlatform.turns);
+    const turns = currentPlatform.getTurns();
     if (!turns.length) return alert("未检测到有效对话内容");
 
     let markdown = `# 会话上下文提取 [${currentPlatform.name}] - ${new Date().toLocaleString()}\n\n`;
@@ -269,15 +296,13 @@
       });
   }
 
-  // --- 6. HUD 面板系统 (AzSkills 精密磨砂玻璃架构) ---
+  // --- 6. HUD 面板系统 (AzSkills 精密磨砂玻璃 + 完整矢量图标) ---
   let hudRootElement = null;
   let hudStats = null;
   let searchInput = null;
   let searchResultsBox = null;
   let searchDebounceTimer = null;
-  let togglePanelFunc = null;
 
-  // 坐标持久化与位置防越界计算
   const POS_STORAGE_KEY = "ai_turbo_hud_position";
   function getSavedPosition() {
     try {
@@ -364,14 +389,13 @@
       }
 
       .hud-ball svg {
-        width: 20px;
-        height: 20px;
-        fill: url(#turbo-lightning-gradient);
-        filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.65));
+        width: 22px;
+        height: 22px;
+        filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.7));
         transition: transform 0.25s ease;
       }
       .hud-ball:hover svg {
-        transform: scale(1.1) rotate(-4deg);
+        transform: scale(1.12) rotate(-4deg);
       }
 
       /* 悬浮控制面板 */
@@ -428,13 +452,18 @@
       .brand-title {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 7px;
         font-size: 13px;
         font-weight: 700;
         letter-spacing: -0.01em;
         background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
+      }
+      .brand-icon {
+        width: 15px;
+        height: 15px;
+        fill: #10b981;
       }
       .header-actions {
         display: flex;
@@ -456,8 +485,8 @@
         border: none;
         color: #94a3b8;
         cursor: pointer;
-        padding: 2px;
-        border-radius: 4px;
+        padding: 3px;
+        border-radius: 5px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -468,7 +497,7 @@
         background: rgba(255, 255, 255, 0.08);
       }
 
-      /* 状态与统计看板 (Metrics Grid) */
+      /* 状态与统计看板 */
       .metrics-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -482,25 +511,34 @@
         padding: 8px 10px;
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 4px;
       }
-      .metric-card .label {
+      .metric-header {
+        display: flex;
+        align-items: center;
+        gap: 5px;
         font-size: 10.5px;
         color: #94a3b8;
+      }
+      .metric-header svg {
+        width: 13px;
+        height: 13px;
+        stroke: #94a3b8;
       }
       .metric-card .val {
         font-size: 16px;
         font-weight: 700;
         font-family: ui-monospace, monospace;
         color: #34d399;
+        padding-left: 18px;
       }
 
-      /* 控件行 */
+      /* 控件行与矢量图标 */
       .control-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 6px 0;
+        padding: 7px 0;
         border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       }
       .control-label {
@@ -508,7 +546,13 @@
         color: #e2e8f0;
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 7px;
+      }
+      .control-icon {
+        width: 14px;
+        height: 14px;
+        stroke: #34d399;
+        opacity: 0.9;
       }
 
       /* 现代 Stepper 步进调节器 */
@@ -524,11 +568,18 @@
         background: transparent;
         border: none;
         color: #94a3b8;
-        padding: 3px 8px;
-        font-size: 12px;
-        font-weight: 700;
+        padding: 4px 7px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         cursor: pointer;
         transition: background 0.15s, color 0.15s;
+      }
+      .stepper-btn svg {
+        width: 12px;
+        height: 12px;
+        stroke: currentColor;
+        stroke-width: 2.2;
       }
       .stepper-btn:hover {
         background: rgba(255, 255, 255, 0.1);
@@ -546,7 +597,7 @@
         color: #f1f5f9;
       }
 
-      /* 现代微拟物 Switch 开关 (iOS 级触感) */
+      /* 现代微拟物 Switch 开关 */
       .switch {
         position: relative;
         display: inline-block;
@@ -605,6 +656,11 @@
         gap: 6px;
         transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+      }
+      .action-btn svg {
+        width: 14px;
+        height: 14px;
+        stroke: currentColor;
       }
       .action-btn:hover {
         background: linear-gradient(180deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.15) 100%);
@@ -721,24 +777,15 @@
     shadow.innerHTML = `
       <style>${styles}</style>
 
-      <!-- SVG 渐变定义库 (单文件无外部依赖) -->
-      <svg style="position: absolute; width: 0; height: 0; overflow: hidden;" aria-hidden="true">
-        <defs>
-          <linearGradient id="turbo-lightning-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#34d399" />
-            <stop offset="100%" stop-color="#10b981" />
-          </linearGradient>
-        </defs>
-      </svg>
-
       <!-- 悬浮控制面板 -->
       <div class="hud-panel" id="panel">
         <div class="header">
           <div class="brand-title">
-            <span>⚡ AI Turbo Engine</span>
+            <svg class="brand-icon" viewBox="0 0 24 24"><path d="M13 2L3 14h8l-1 8 11-12h-8l1-8z"/></svg>
+            <span>AI Turbo Engine</span>
           </div>
           <div class="header-actions">
-            <span class="tag">v0.2.0</span>
+            <span class="tag">v0.2.1</span>
             <button class="close-btn" id="btn-close" title="关闭面板 (Esc)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
@@ -747,26 +794,42 @@
 
         <div class="metrics-grid">
           <div class="metric-card">
-            <span class="label">检测总轮次</span>
+            <div class="metric-header">
+              <svg fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span>检测总轮次</span>
+            </div>
             <span class="val" id="total-val">0</span>
           </div>
           <div class="metric-card">
-            <span class="label">安全脱水挂起</span>
+            <div class="metric-header">
+              <svg fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+              <span>视口脱水挂起</span>
+            </div>
             <span class="val" id="hidden-val">0</span>
           </div>
         </div>
 
         <div class="control-row">
-          <span class="control-label">活跃保留轮次</span>
+          <span class="control-label">
+            <svg class="control-icon" fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            活跃保留轮次
+          </span>
           <div class="stepper">
-            <button class="stepper-btn" id="step-dec" title="减少">-</button>
+            <button class="stepper-btn" id="step-dec" title="减少">
+              <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
             <span class="stepper-val" id="keep-val">${state.keepTurns}</span>
-            <button class="stepper-btn" id="step-inc" title="增加">+</button>
+            <button class="stepper-btn" id="step-inc" title="增加">
+              <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
           </div>
         </div>
 
         <div class="control-row">
-          <span class="control-label">安全视口脱水</span>
+          <span class="control-label">
+            <svg class="control-icon" fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            安全视口脱水
+          </span>
           <label class="switch">
             <input type="checkbox" id="chk-prune" ${state.pruneEnabled ? "checked" : ""}>
             <span class="slider"></span>
@@ -774,7 +837,10 @@
         </div>
 
         <div class="control-row">
-          <span class="control-label">长代码自动折叠</span>
+          <span class="control-label">
+            <svg class="control-icon" fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+            长代码自动折叠
+          </span>
           <label class="switch">
             <input type="checkbox" id="chk-collapse" ${state.collapseCode ? "checked" : ""}>
             <span class="slider"></span>
@@ -782,27 +848,33 @@
         </div>
 
         <button class="action-btn" id="btn-fork">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
           <span id="fork-text">提取无损上下文至剪贴板</span>
         </button>
 
         <div class="search-box">
           <div class="search-input-wrap">
-            <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 14z"/></svg>
             <input type="text" class="search-input" id="search-input" placeholder="瞬时检索对话历史...">
           </div>
           <div class="results" id="search-results"></div>
         </div>
 
         <div class="hotkey-hint">
-          快捷键 <kbd>Alt</kbd> + <kbd>T</kbd> 切换展开 / 拖拽可记忆位置
+          快捷键 <kbd>Alt</kbd> + <kbd>T</kbd> 切换展开 / 拖拽可吸附边缘
         </div>
       </div>
 
       <!-- 悬浮微光球 -->
       <div class="hud-ball active-pulse" id="ball" title="AI Turbo Engine (可拖拽 / 点击展开 / Alt+T)">
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
+          <defs>
+            <linearGradient id="turbo-bolt-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#34d399"/>
+              <stop offset="100%" stop-color="#10b981"/>
+            </linearGradient>
+          </defs>
+          <path fill="url(#turbo-bolt-grad)" d="M13 2L3 14h8l-1 8 11-12h-8l1-8z"/>
         </svg>
       </div>
     `;
@@ -827,19 +899,16 @@
       hidden: shadow.getElementById("hidden-val"),
     };
 
-    // --- 坐标初始化与自适应弹窗方向 ---
     let currentPos = getSavedPosition();
     function applyPosition(x, y) {
       hudRootElement.style.left = `${x}px`;
       hudRootElement.style.top = `${y}px`;
 
-      // 当靠屏幕上方或左方时，动态倒置弹出方向，避免超出屏幕边缘
       panel.classList.toggle("pos-left", x < 320);
       panel.classList.toggle("pos-top", y < 340);
     }
     applyPosition(currentPos.x, currentPos.y);
 
-    // --- 拖拽控制器 (防抖阈值，拖拽不触发 Click) ---
     let isDragging = false;
     let dragStartX = 0,
       dragStartY = 0;
@@ -879,7 +948,6 @@
       isDragging = false;
       ball.releasePointerCapture(e.pointerId);
       if (hasMoved) {
-        // 吸附至最近水平边缘优化体验 (保留距离边缘 12px)
         const snapX =
           currentPos.x < window.innerWidth / 2 ? 12 : window.innerWidth - 56;
         currentPos.x = snapX;
@@ -890,7 +958,6 @@
       }
     });
 
-    // --- 显隐切换逻辑 ---
     function togglePanel(forceState) {
       state.hudOpen =
         typeof forceState === "boolean" ? forceState : !state.hudOpen;
@@ -899,11 +966,9 @@
         setTimeout(() => searchInput?.focus(), 80);
       }
     }
-    togglePanelFunc = togglePanel;
 
     btnClose.onclick = () => togglePanel(false);
 
-    // --- 开关绑定 ---
     chkPrune.onchange = () => {
       state.pruneEnabled = chkPrune.checked;
       ball.classList.toggle("active-pulse", state.pruneEnabled);
@@ -918,7 +983,6 @@
       scheduleVirtualUpdate();
     };
 
-    // --- 步进器绑定 ---
     stepDec.onclick = () => {
       if (state.keepTurns > 2) {
         state.keepTurns--;
@@ -935,7 +999,6 @@
       }
     };
 
-    // --- 对话导出动效 ---
     btnFork.onclick = () => {
       exportCleanContext((count) => {
         btnFork.classList.add("copied");
@@ -947,7 +1010,6 @@
       });
     };
 
-    // --- 检索防抖 ---
     searchInput.oninput = () => {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {
@@ -975,7 +1037,6 @@
       }, 120);
     };
 
-    // --- 快捷键监听 (Alt + T 切换 / Esc 关闭) ---
     window.addEventListener("keydown", (e) => {
       if (e.altKey && (e.code === "KeyT" || e.key.toLowerCase() === "t")) {
         e.preventDefault();
@@ -985,7 +1046,6 @@
       }
     });
 
-    // 视口尺寸变化保护
     window.addEventListener("resize", () => {
       const maxX = window.innerWidth - 56;
       const maxY = window.innerHeight - 56;
@@ -997,7 +1057,6 @@
     });
   }
 
-  // 防御式保活检查：当宿主被 SPA 路由清理时自动复活
   function ensureHUDMounted() {
     if (!hudRootElement || !hudRootElement.isConnected) {
       if (document.body) {
