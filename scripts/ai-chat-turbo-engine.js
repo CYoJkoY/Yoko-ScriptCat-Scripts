@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
-// @namespace    https://local/ai-turbo-engine-v8
-// @version      0.8.4
-// @description  独立药囊长代码折叠(流式防误触) + 长文本智能伪文件胶囊(持久化配置·原子级极速注入彻底防卡死) + 增量消息索引 + 自适应脱水 + 纯DOM免疫CSP
+// @namespace    https://local/ai-turbo-engine-v9
+// @version      0.9.0
+// @description  独立药囊长代码折叠(流式防卡顿) + 长文本智能伪文件胶囊(DOM安全沙箱·读写分离防死锁) + 增量消息索引 + 自适应脱水 + 纯DOM免疫CSP
 // @author       Yoko
 // @match        https://chatgpt.com/*
 // @match        https://gemini.google.com/*
@@ -19,7 +19,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.8.4";
+  const VERSION = "0.9.0";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -30,9 +30,9 @@
   const STORAGE_KEY_CONFIG = "ai_turbo_engine_config";
   const VIRTUAL_FILE_THRESHOLD = 1500;
   const STREAMING_IDLE_DELAY = 1500;
+  const THROTTLE_INTERVAL = 80; // 突变合并节流周期 (ms)
   const CODE_FENCE = "\x60\x60\x60";
 
-  // 不可伪造的专属 Token 标识，严格要求数字匹配
   const VF_TOKEN_START = "[[TURBO_VFILE_START:";
   const VF_TOKEN_END = ":TURBO_VFILE_END]]";
   const VF_REGEX =
@@ -209,6 +209,7 @@
 
   const turnIndex = new Map();
   const codeState = new Map();
+  const processedUserTurns = new WeakSet();
   let activeVirtualFiles = [];
   let trayIsDirty = false;
   let isSubmitting = false;
@@ -218,10 +219,14 @@
   let hudStats = null;
   let searchInput = null;
   let searchResultsBox = null;
+  let virtualFileTrayAnchor = null;
+  let virtualFileTrayResizeObserver = null;
+  let virtualFileTrayPositionFrame = 0;
   let searchDebounceTimer = null;
   let observer = null;
   let codeResizeObserver = null;
-  let scheduleQueued = false;
+  let scheduleTimer = null;
+  let lastUpdateTime = 0;
   let fullTurnSyncRequested = true;
   let codeScanRequested = true;
   let dirtyTurns = new Set();
@@ -304,7 +309,9 @@
       turnElement.matches(
         "user-query, [data-test-id='user-query'], .user-query, .user-query-container",
       ) ||
-      turnElement.querySelector(".user-query-text, [class*='query-content']")
+      turnElement.querySelector(
+        ".user-query-text, .query-text, [class*='query-content']",
+      )
     ) {
       return true;
     }
@@ -395,112 +402,130 @@
     return normalizeText(raw.slice(0, 1500));
   }
 
+  // 优化点2：无损沙箱化。完全保留宿主原始 DOM 节点（仅 display:none），插入药囊兄弟节点，100% 免疫框架虚拟 DOM 冲突
   function collapseInChatFileBlocks(turnElement) {
     if (!state.virtualFileEnabled || !turnElement || !isUserTurn(turnElement)) {
       return;
     }
+    if (processedUserTurns.has(turnElement)) {
+      return;
+    }
 
-    const candidates = turnElement.querySelectorAll(
-      "pre, code-block, code, div.markdown > p, .user-query-text",
+    const walker = document.createTreeWalker(
+      turnElement,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false,
     );
 
-    candidates.forEach((node) => {
+    let targetTextNode = null;
+    while (walker.nextNode()) {
       if (
-        node.getAttribute("data-ai-turbo-vf-processed") === "true" ||
-        node.closest(".ai-turbo-chat-folded-target") ||
-        node.closest(".ai-turbo-chat-capsule")
+        walker.currentNode.nodeValue &&
+        walker.currentNode.nodeValue.includes(VF_TOKEN_START)
       ) {
-        return;
+        targetTextNode = walker.currentNode;
+        break;
       }
+    }
 
-      const raw = node.textContent || "";
-      if (raw.includes(VF_TOKEN_START) && raw.includes(VF_TOKEN_END)) {
-        node.setAttribute("data-ai-turbo-vf-processed", "true");
+    if (!targetTextNode) return;
 
-        const match = raw.match(VF_REGEX);
-        if (!match) return;
-
-        const fileName = match[1].trim();
-        const lineCount = parseInt(match[2], 10) || 0;
-        const sizeBytes = parseInt(match[3], 10) || 0;
-        const kbSize = (sizeBytes / 1024).toFixed(1);
-        const metaInfo = `${lineCount.toLocaleString()} 行 · ${kbSize} KB`;
-
-        const targetToFold =
-          node.closest("code-block, pre, .code-block-wrapper") || node;
-
-        const iconSpan = el(
-          "span",
-          { style: "font-size:14px;line-height:1;" },
-          ["📄"],
-        );
-        const titleSpan = el(
-          "span",
-          {
-            style:
-              "font:600 12px/1 ui-monospace,monospace;color:#f1f5f9;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
-          },
-          [fileName],
-        );
-        const metaBadge = el(
-          "span",
-          {
-            style:
-              "font:10px ui-monospace;background:rgba(52,211,153,0.15);color:#34d399;padding:2px 6px;border-radius:4px;",
-          },
-          [metaInfo],
-        );
-
-        let isExpanded = false;
-        const toggleBtn = el(
-          "button",
-          {
-            type: "button",
-            style:
-              "background:rgba(255,255,255,0.06);border:1px solid rgba(148,163,184,0.2);color:#cbd5e1;padding:3px 10px;border-radius:999px;font:11px sans-serif;cursor:pointer;margin-left:auto;transition:all 0.15s ease;",
-          },
-          ["展开查看文本"],
-        );
-
-        const chatCapsule = el(
-          "div",
-          {
-            className: "ai-turbo-chat-capsule",
-            style:
-              "display:inline-flex;align-items:center;gap:8px;padding:6px 14px;background:rgba(18,24,38,0.95);border:1px solid rgba(52,211,153,0.4);border-radius:9999px;margin:6px 0;box-shadow:0 2px 10px rgba(0,0,0,0.3);user-select:none;max-width:100%;box-sizing:border-box;",
-          },
-          [iconSpan, titleSpan, metaBadge, toggleBtn],
-        );
-
-        withSelfMutation(() => {
-          targetToFold.insertAdjacentElement("beforebegin", chatCapsule);
-          targetToFold.classList.add("ai-turbo-chat-folded-target");
-          targetToFold.style.setProperty("display", "none", "important");
-        });
-
-        toggleBtn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          isExpanded = !isExpanded;
-          toggleBtn.textContent = isExpanded ? "收起文本" : "展开查看文本";
-          withSelfMutation(() => {
-            if (isExpanded) {
-              targetToFold.style.setProperty("display", "block", "important");
-              targetToFold.style.setProperty(
-                "max-height",
-                "360px",
-                "important",
-              );
-              targetToFold.style.setProperty("overflow", "auto", "important");
-            } else {
-              targetToFold.style.setProperty("display", "none", "important");
-            }
-          });
-        });
+    let containerBlock = targetTextNode.parentElement;
+    while (containerBlock && containerBlock !== turnElement) {
+      const tag = containerBlock.tagName.toLowerCase();
+      if (
+        ["p", "div", "pre", "code-block"].includes(tag) ||
+        containerBlock.classList.contains("query-text") ||
+        containerBlock.classList.contains("user-query-text")
+      ) {
+        break;
       }
+      containerBlock = containerBlock.parentElement;
+    }
+
+    if (!containerBlock) containerBlock = targetTextNode.parentElement;
+
+    const rawText = containerBlock.textContent || "";
+    const startIndex = rawText.indexOf(VF_TOKEN_START);
+    if (startIndex === -1) return;
+
+    const match = rawText.match(VF_REGEX);
+    if (!match) return;
+
+    processedUserTurns.add(turnElement);
+
+    const fileName = match[1].trim();
+    const lineCount = parseInt(match[2], 10) || 0;
+    const sizeBytes = parseInt(match[3], 10) || 0;
+    const kbSize = (sizeBytes / 1024).toFixed(1);
+    const metaInfo = `${lineCount.toLocaleString()} 行 · ${kbSize} KB`;
+
+    withSelfMutation(() => {
+      let isExpanded = false;
+      const toggleBtn = el(
+        "button",
+        {
+          type: "button",
+          style:
+            "background:rgba(255,255,255,0.08);border:1px solid rgba(148,163,184,0.25);color:#cbd5e1;padding:3px 12px;border-radius:999px;font:11px sans-serif;cursor:pointer;margin-left:auto;transition:all 0.15s ease;",
+        },
+        ["展开查看文本"],
+      );
+
+      const pill = el(
+        "div",
+        {
+          className: "ai-turbo-chat-capsule",
+          style:
+            "display:inline-flex;align-items:center;gap:8px;padding:5px 14px;background:rgba(18,24,38,0.95);border:1px solid rgba(52,211,153,0.45);border-radius:9999px;box-shadow:0 2px 10px rgba(0,0,0,0.3);user-select:none;max-width:100%;box-sizing:border-box;margin:6px 0;",
+        },
+        [
+          el("span", { style: "font-size:14px;line-height:1;" }, ["📄"]),
+          el(
+            "span",
+            {
+              style:
+                "font:600 12px ui-monospace,monospace;color:#f1f5f9;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+            },
+            [fileName],
+          ),
+          el(
+            "span",
+            {
+              style:
+                "font:10px ui-monospace;background:rgba(52,211,153,0.15);color:#34d399;padding:2px 6px;border-radius:4px;",
+            },
+            [metaInfo],
+          ),
+          toggleBtn,
+        ],
+      );
+
+      // 将原宿主容器隐藏并赋予隔离沙箱，不删除任何节点
+      containerBlock.classList.add("ai-turbo-chat-folded-target");
+      containerBlock.style.setProperty("display", "none", "important");
+      containerBlock.style.setProperty("contain", "strict", "important");
+
+      toggleBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isExpanded = !isExpanded;
+        toggleBtn.textContent = isExpanded ? "收起文本" : "展开查看文本";
+        if (isExpanded) {
+          containerBlock.style.setProperty("display", "block", "important");
+          containerBlock.style.setProperty("max-height", "320px", "important");
+          containerBlock.style.setProperty("overflow", "auto", "important");
+        } else {
+          containerBlock.style.setProperty("display", "none", "important");
+        }
+      });
+
+      containerBlock.insertAdjacentElement("beforebegin", pill);
     });
   }
 
+  // 优化点1：彻底重构脱水循环，实行严格的“先全量读取，后全量写入”，消灭 Layout Thrashing
   function syncTurnIndex(forceFull) {
     const turns = getTurns();
     const structuralChange =
@@ -550,24 +575,36 @@
       ? Math.max(0, turns.length - state.keepTurns)
       : 0;
 
+    // Phase 1: 批量集中读取（无任何 DOM 写入，零强制重排）
+    const toDehydrate = [];
+    const toHydrate = [];
+
     turns.forEach((turnElement, index) => {
       const shouldDehydrate = state.pruneEnabled && index < cutoff;
-      if (
-        shouldDehydrate &&
-        !turnElement.classList.contains("ai-turbo-dehydrated")
-      ) {
-        const measuredHeight = turnElement.offsetHeight || 120;
-        turnElement.style.setProperty(
-          "--turbo-cached-h",
-          `${measuredHeight}px`,
-        );
-        turnElement.classList.add("ai-turbo-dehydrated");
-      } else if (
-        !shouldDehydrate &&
-        turnElement.classList.contains("ai-turbo-dehydrated")
-      ) {
-        turnElement.classList.remove("ai-turbo-dehydrated");
-        turnElement.style.removeProperty("--turbo-cached-h");
+      const isDehydrated = turnElement.classList.contains(
+        "ai-turbo-dehydrated",
+      );
+
+      if (shouldDehydrate && !isDehydrated) {
+        toDehydrate.push({
+          elem: turnElement,
+          height: turnElement.offsetHeight || 120,
+        });
+      } else if (!shouldDehydrate && isDehydrated) {
+        toHydrate.push(turnElement);
+      }
+    });
+
+    // Phase 2: 批量集中写入样式
+    withSelfMutation(() => {
+      for (let i = 0; i < toDehydrate.length; i++) {
+        const item = toDehydrate[i];
+        item.elem.style.setProperty("--turbo-cached-h", `${item.height}px`);
+        item.elem.classList.add("ai-turbo-dehydrated");
+      }
+      for (let i = 0; i < toHydrate.length; i++) {
+        toHydrate[i].classList.remove("ai-turbo-dehydrated");
+        toHydrate[i].style.removeProperty("--turbo-cached-h");
       }
     });
 
@@ -597,7 +634,9 @@
       rootNode.querySelectorAll(selector).forEach((candidate) => {
         if (
           candidate.classList.contains("ai-turbo-chat-folded-target") ||
-          candidate.closest(".ai-turbo-chat-folded-target")
+          candidate.closest(
+            ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], .font-user-message",
+          )
         ) {
           return;
         }
@@ -677,11 +716,21 @@
     });
   }
 
-  // 极速 O(1) 判定：流式输出期间坚决不提取 textContent，消除 GC 与 Reflow 压力
+  // 优化点3：彻底修复流式检测与轻量化判定
   function updateCodeMeta(entry, codeElement) {
     if (!entry || !codeElement?.isConnected) return;
 
+    const currentText = getCodeText(codeElement);
+    const currentLen = currentText.length;
     const now = Date.now();
+
+    // 只有文本长度真正变长，才认定 AI 在打字
+    if (currentLen !== entry.lastLength) {
+      entry.lastLength = currentLen;
+      entry.lastMutationTime = now;
+      entry.renderedStaticOnce = false;
+    }
+
     const isActivelyStreaming =
       entry.lastMutationTime > 0 &&
       now - entry.lastMutationTime < STREAMING_IDLE_DELAY;
@@ -708,6 +757,7 @@
       return;
     }
 
+    // 静态状态短路跳过，杜绝重复渲染
     if (!entry.isDisplayingStreaming && entry.renderedStaticOnce) {
       return;
     }
@@ -715,9 +765,7 @@
     entry.isDisplayingStreaming = false;
     entry.renderedStaticOnce = true;
 
-    const currentText = getCodeText(codeElement);
     const lineCount = fastCountLines(currentText);
-    entry.cachedLineCount = lineCount;
     entry.langLabel.textContent = getCodeLanguage(codeElement);
     entry.linesLabel.textContent = lineCount
       ? `${lineCount.toLocaleString()} 行`
@@ -765,6 +813,8 @@
       toRemove.remove();
     }
 
+    const initialText = getCodeText(codeElement);
+
     const langLabel = el("span", { className: "ai-turbo-code-lang" });
     const linesLabel = el("span", { className: "ai-turbo-code-lines" });
     const metaWrap = el("div", { className: "ai-turbo-code-bar-meta" }, [
@@ -789,7 +839,7 @@
       linesLabel,
       toggleButton,
       expanded: false,
-      cachedLineCount: 0,
+      lastLength: initialText.length,
       lastMutationTime: 0,
       streamingTimer: null,
       isDisplayingStreaming: false,
@@ -898,6 +948,148 @@
     );
   }
 
+  function createUiIcon(name, size = 14) {
+    const paths = {
+      file: ["M6 3.5h7.7L18.5 8v12H6z", "M13.5 3.5V8h5"],
+      eye: [
+        "M2.8 12s3.3-5 9.2-5 9.2 5 9.2 5-3.3 5-9.2 5-9.2-5-9.2-5z",
+        "M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
+      ],
+      close: ["M5 5l14 14", "M19 5L5 19"],
+      bolt: ["M13.2 2.5L5 13h6.1l-.8 8.5L19 10.2h-6.2z"],
+    };
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", String(size));
+    svg.setAttribute("height", String(size));
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.8");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+
+    for (const pathData of paths[name] || []) {
+      const path = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path",
+      );
+
+      path.setAttribute("d", pathData);
+      svg.appendChild(path);
+    }
+
+    return svg;
+  }
+
+  function stopVirtualFileTrayTracking() {
+    if (virtualFileTrayResizeObserver) {
+      virtualFileTrayResizeObserver.disconnect();
+      virtualFileTrayResizeObserver = null;
+    }
+
+    virtualFileTrayAnchor = null;
+
+    if (virtualFileTrayPositionFrame) {
+      window.cancelAnimationFrame(virtualFileTrayPositionFrame);
+      virtualFileTrayPositionFrame = 0;
+    }
+  }
+
+  function scheduleVirtualFileTrayPosition() {
+    if (!activeVirtualFiles.length) return;
+
+    if (virtualFileTrayPositionFrame) return;
+
+    virtualFileTrayPositionFrame = window.requestAnimationFrame(() => {
+      virtualFileTrayPositionFrame = 0;
+      positionVirtualFileTray();
+    });
+  }
+
+  function positionVirtualFileTray() {
+    const tray = document.getElementById("ai-turbo-vf-tray");
+
+    if (!tray || !tray.isConnected || !activeVirtualFiles.length) {
+      return;
+    }
+
+    const input = getChatInput();
+    const anchor = getInputContainer(input);
+
+    if (!anchor || !anchor.isConnected) {
+      tray.classList.remove("is-positioned");
+      return;
+    }
+
+    if (anchor !== virtualFileTrayAnchor) {
+      if (virtualFileTrayResizeObserver) {
+        virtualFileTrayResizeObserver.disconnect();
+      }
+
+      virtualFileTrayAnchor = anchor;
+
+      if ("ResizeObserver" in window) {
+        virtualFileTrayResizeObserver = new ResizeObserver(() => {
+          scheduleVirtualFileTrayPosition();
+        });
+
+        virtualFileTrayResizeObserver.observe(anchor);
+      }
+    }
+
+    const rect = anchor.getBoundingClientRect();
+
+    if (!rect.width || !rect.height) {
+      tray.classList.remove("is-positioned");
+      return;
+    }
+
+    const viewportPadding = 12;
+    const gap = 8;
+    const availableWidth = Math.max(0, window.innerWidth - viewportPadding * 2);
+
+    const trayWidth = Math.min(Math.max(rect.width, 280), availableWidth);
+
+    const left = Math.min(
+      Math.max(viewportPadding, rect.left),
+      Math.max(
+        viewportPadding,
+        window.innerWidth - trayWidth - viewportPadding,
+      ),
+    );
+
+    tray.style.width = `${trayWidth}px`;
+    tray.style.left = `${left}px`;
+
+    const trayHeight = tray.getBoundingClientRect().height;
+
+    let top = rect.top - trayHeight - gap;
+    let placement = "top";
+
+    if (top < viewportPadding) {
+      top = rect.bottom + gap;
+      placement = "bottom";
+    }
+
+    top = Math.max(
+      viewportPadding,
+      Math.min(
+        top,
+        Math.max(
+          viewportPadding,
+          window.innerHeight - trayHeight - viewportPadding,
+        ),
+      ),
+    );
+
+    tray.style.top = `${top}px`;
+    tray.dataset.placement = placement;
+    tray.classList.add("is-positioned");
+  }
+
   function removeVirtualFile(id) {
     activeVirtualFiles = activeVirtualFiles.filter((item) => item.id !== id);
     trayIsDirty = true;
@@ -1001,97 +1193,193 @@
 
   function renderVirtualFileTray() {
     let tray = document.getElementById("ai-turbo-vf-tray");
+
     if (!activeVirtualFiles.length) {
       if (tray) {
         withSelfMutation(() => tray.remove());
       }
+
+      stopVirtualFileTrayTracking();
       trayIsDirty = false;
       return;
     }
 
-    if (!trayIsDirty && tray?.isConnected) return;
-
     const input = getChatInput();
     const container = getInputContainer(input);
-    if (!container) return;
+
+    if (!container || !container.isConnected) {
+      return;
+    }
 
     withSelfMutation(() => {
       if (!tray) {
         tray = el("div", {
           id: "ai-turbo-vf-tray",
           className: "ai-turbo-vf-tray",
+          role: "region",
+          "aria-label": "虚拟文件",
         });
-        container.insertAdjacentElement("beforebegin", tray);
+
+        document.body.appendChild(tray);
       }
 
       tray.textContent = "";
 
-      const hint = el(
-        "span",
+      const header = el(
+        "div",
         {
-          style:
-            "font:10px sans-serif;color:#10b981;font-weight:600;display:inline-flex;align-items:center;margin-right:4px;",
+          className: "ai-turbo-vf-header",
         },
-        ["⚡ 伪文件胶囊 (零配额消耗):"],
+        [
+          el(
+            "div",
+            {
+              className: "ai-turbo-vf-heading",
+            },
+            [
+              el(
+                "span",
+                {
+                  className: "ai-turbo-vf-heading-icon",
+                },
+                [createUiIcon("bolt", 13)],
+              ),
+              el(
+                "span",
+                {
+                  className: "ai-turbo-vf-heading-title",
+                },
+                ["虚拟文件"],
+              ),
+              el(
+                "span",
+                {
+                  className: "ai-turbo-vf-heading-count",
+                },
+                [`${activeVirtualFiles.length}`],
+              ),
+            ],
+          ),
+
+          el(
+            "span",
+            {
+              className: "ai-turbo-vf-heading-hint",
+            },
+            ["发送时作为上下文附加"],
+          ),
+        ],
       );
-      tray.appendChild(hint);
+
+      const fileList = el("div", {
+        className: "ai-turbo-vf-list",
+      });
+
+      tray.appendChild(header);
+      tray.appendChild(fileList);
 
       for (const item of activeVirtualFiles) {
-        const badge = el("span", { className: "ai-turbo-vf-badge" }, [
-          `${(item.size / 1024).toFixed(1)} KB`,
-        ]);
+        const sizeText = `${(item.size / 1024).toFixed(1)} KB`;
 
         const nameLabel = el(
           "span",
           {
-            style:
-              "max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+            className: "ai-turbo-vf-name",
+            title: item.name,
           },
           [item.name],
+        );
+
+        const metaLabel = el(
+          "span",
+          {
+            className: "ai-turbo-vf-meta",
+          },
+          [`${item.lineCount.toLocaleString()} 行`, " · ", sizeText],
         );
 
         const btnPreview = el(
           "button",
           {
             type: "button",
-            className: "ai-turbo-vf-btn ai-turbo-vf-btn-preview",
+            className: "ai-turbo-vf-action ai-turbo-vf-action-preview",
             title: "预览文本内容",
-            onclick: (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              showTextPreviewModal(item);
-            },
+            "aria-label": `预览 ${item.name}`,
           },
-          ["👁 预览"],
+          [createUiIcon("eye", 13)],
         );
 
-        const btnDel = el(
+        btnPreview.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          showTextPreviewModal(item);
+        });
+
+        const btnDelete = el(
           "button",
           {
             type: "button",
-            className: "ai-turbo-vf-btn",
-            title: "移除该文件胶囊",
-            onclick: (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              removeVirtualFile(item.id);
-            },
+            className: "ai-turbo-vf-action ai-turbo-vf-action-delete",
+            title: "移除该文件",
+            "aria-label": `移除 ${item.name}`,
           },
-          ["✕"],
+          [createUiIcon("close", 13)],
         );
 
-        const pill = el("div", { className: "ai-turbo-vf-pill" }, [
-          "📄 ",
-          nameLabel,
-          badge,
-          btnPreview,
-          btnDel,
-        ]);
+        btnDelete.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          removeVirtualFile(item.id);
+        });
 
-        tray.appendChild(pill);
+        const fileItem = el(
+          "div",
+          {
+            className: "ai-turbo-vf-pill",
+          },
+          [
+            el(
+              "span",
+              {
+                className: "ai-turbo-vf-file-icon",
+              },
+              [createUiIcon("file", 14)],
+            ),
+
+            el(
+              "div",
+              {
+                className: "ai-turbo-vf-file-copy",
+              },
+              [nameLabel, metaLabel],
+            ),
+
+            el(
+              "span",
+              {
+                className: "ai-turbo-vf-badge",
+              },
+              ["TEXT"],
+            ),
+
+            el(
+              "div",
+              {
+                className: "ai-turbo-vf-actions",
+              },
+              [btnPreview, btnDelete],
+            ),
+          ],
+        );
+
+        fileList.appendChild(fileItem);
       }
+
       trayIsDirty = false;
     });
+
+    positionVirtualFileTray();
+    window.requestAnimationFrame(positionVirtualFileTray);
   }
 
   function handlePasteIntercept(event) {
@@ -1138,7 +1426,6 @@
     renderVirtualFileTray();
   }
 
-  // 原子级批量安全注入：彻底摒弃造成死锁的逐行 execCommand("insertText")
   function insertTextAtomic(inputElement, text) {
     if (inputElement instanceof HTMLTextAreaElement) {
       inputElement.value = text;
@@ -1149,36 +1436,18 @@
 
     inputElement.focus();
 
-    // 方案 A：通过 insertHTML 进行单次原子级全树注入，速度提升 1000 倍，不产生行循环卡死
-    const html = text
-      .split("\n")
-      .map((line) => `<p>${escapeHtml(line) || "<br>"}</p>`)
-      .join("");
+    const singleContainer = `<div style="white-space:pre-wrap;">${escapeHtml(text)}</div>`;
 
     document.execCommand("selectAll", false, null);
     let success = false;
     try {
-      success = document.execCommand("insertHTML", false, html);
+      success = document.execCommand("insertHTML", false, singleContainer);
     } catch (_) {}
 
-    // 方案 B：若环境封锁 insertHTML，使用内存级 DocumentFragment 进行零开销替换
     if (!success) {
-      inputElement.textContent = "";
-      const fragment = document.createDocumentFragment();
-      const lines = text.split("\n");
-      for (const line of lines) {
-        const p = document.createElement("p");
-        if (line) {
-          p.textContent = line;
-        } else {
-          p.appendChild(document.createElement("br"));
-        }
-        fragment.appendChild(p);
-      }
-      inputElement.appendChild(fragment);
+      inputElement.textContent = text;
     }
 
-    // 广播输入完成信号
     inputElement.dispatchEvent(
       new InputEvent("input", {
         bubbles: true,
@@ -1215,7 +1484,6 @@
     trayIsDirty = true;
     renderVirtualFileTray();
 
-    // 发送期间断开监听，阻止主线程自旋死锁
     observer?.disconnect();
     codeResizeObserver?.disconnect();
 
@@ -1548,6 +1816,423 @@
       }
     `;
 
+    styleElement.textContent += `
+      /* ---------------------------------------------------------
+        AI Turbo visual refresh
+        AzSkills-inspired: restrained dark surfaces + one accent
+        --------------------------------------------------------- */
+
+      .ai-turbo-vf-tray {
+        position: fixed !important;
+        z-index: 2147483645 !important;
+
+        display: grid !important;
+        gap: 7px !important;
+
+        padding: 8px !important;
+
+        box-sizing: border-box !important;
+
+        background: rgba(14, 18, 20, 0.985) !important;
+
+        border: 1px solid rgba(153, 166, 161, 0.19) !important;
+        border-left: 2px solid rgba(101, 210, 164, 0.72) !important;
+
+        border-radius: 12px !important;
+
+        box-shadow:
+          0 16px 36px rgba(0, 0, 0, 0.28),
+          0 4px 10px rgba(0, 0, 0, 0.18) !important;
+
+        color: #e7eeea !important;
+
+        pointer-events: auto !important;
+
+        opacity: 0 !important;
+        visibility: hidden !important;
+
+        transform: translateY(3px) !important;
+        transition:
+          opacity 120ms ease,
+          transform 120ms ease,
+          visibility 120ms ease !important;
+      }
+
+      .ai-turbo-vf-tray.is-positioned {
+        opacity: 1 !important;
+        visibility: visible !important;
+        transform: translateY(0) !important;
+      }
+
+      .ai-turbo-vf-header {
+        min-width: 0 !important;
+
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 12px !important;
+
+        padding: 1px 3px 2px !important;
+      }
+
+      .ai-turbo-vf-heading {
+        min-width: 0 !important;
+
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+
+      .ai-turbo-vf-heading-icon {
+        width: 20px !important;
+        height: 20px !important;
+
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+
+        color: #72d6ab !important;
+
+        border: 1px solid rgba(101, 210, 164, 0.22) !important;
+        border-radius: 6px !important;
+
+        background: rgba(101, 210, 164, 0.07) !important;
+      }
+
+      .ai-turbo-vf-heading-title {
+        font:
+          650 11px/1.2
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif !important;
+
+        color: #e7eeea !important;
+      }
+
+      .ai-turbo-vf-heading-count {
+        min-width: 18px !important;
+        height: 18px !important;
+
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+
+        padding: 0 5px !important;
+
+        border-radius: 6px !important;
+
+        background: rgba(101, 210, 164, 0.09) !important;
+        color: #72d6ab !important;
+
+        font:
+          700 9px/1
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace !important;
+      }
+
+      .ai-turbo-vf-heading-hint {
+        flex: 0 0 auto !important;
+
+        color: #69756f !important;
+
+        font:
+          9.5px/1.2
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif !important;
+      }
+
+      .ai-turbo-vf-list {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+
+        min-width: 0 !important;
+      }
+
+      .ai-turbo-vf-pill {
+        min-width: 0 !important;
+
+        display: inline-flex !important;
+        align-items: center !important;
+
+        gap: 7px !important;
+
+        min-height: 34px !important;
+
+        padding: 5px 7px 5px 8px !important;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.16) !important;
+
+        border-radius: 9px !important;
+
+        background: rgba(24, 29, 32, 0.96) !important;
+
+        box-sizing: border-box !important;
+
+        transition:
+          background 120ms ease,
+          border-color 120ms ease !important;
+      }
+
+      .ai-turbo-vf-pill:hover {
+        background: rgba(29, 35, 38, 0.98) !important;
+        border-color: rgba(101, 210, 164, 0.27) !important;
+      }
+
+      .ai-turbo-vf-file-icon {
+        width: 24px !important;
+        height: 24px !important;
+
+        flex: 0 0 24px !important;
+
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+
+        color: #9eaba5 !important;
+
+        background: rgba(255, 255, 255, 0.035) !important;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.13) !important;
+
+        border-radius: 7px !important;
+      }
+
+      .ai-turbo-vf-file-copy {
+        min-width: 80px !important;
+        max-width: 260px !important;
+
+        display: grid !important;
+        gap: 2px !important;
+      }
+
+      .ai-turbo-vf-name {
+        display: block !important;
+
+        overflow: hidden !important;
+
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+
+        color: #e8eeeb !important;
+
+        font:
+          550 11px/1.25
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif !important;
+      }
+
+      .ai-turbo-vf-meta {
+        display: block !important;
+
+        overflow: hidden !important;
+
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+
+        color: #68746f !important;
+
+        font:
+          9px/1.2
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace !important;
+      }
+
+      .ai-turbo-vf-badge {
+        flex: 0 0 auto !important;
+
+        display: inline-flex !important;
+        align-items: center !important;
+
+        height: 20px !important;
+
+        padding: 0 6px !important;
+
+        border-radius: 5px !important;
+
+        background: rgba(101, 210, 164, 0.08) !important;
+        border: 1px solid rgba(101, 210, 164, 0.14) !important;
+
+        color: #72d6ab !important;
+
+        font:
+          700 8px/1
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace !important;
+
+        letter-spacing: 0.04em !important;
+      }
+
+      .ai-turbo-vf-actions {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 2px !important;
+
+        margin-left: 2px !important;
+      }
+
+      .ai-turbo-vf-action {
+        width: 26px !important;
+        height: 26px !important;
+
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+
+        padding: 0 !important;
+
+        border: 0 !important;
+        border-radius: 6px !important;
+
+        background: transparent !important;
+
+        color: #77827d !important;
+
+        cursor: pointer !important;
+
+        transition:
+          background 120ms ease,
+          color 120ms ease !important;
+      }
+
+      .ai-turbo-vf-action:hover {
+        background: rgba(255, 255, 255, 0.055) !important;
+        color: #d8e1dc !important;
+      }
+
+      .ai-turbo-vf-action-preview:hover {
+        color: #72d6ab !important;
+      }
+
+      .ai-turbo-vf-action-delete:hover {
+        color: #ef8c8c !important;
+        background: rgba(239, 68, 68, 0.08) !important;
+      }
+
+      /*
+      * Sent-message virtual-file capsule.
+      * Keep it recognizable as the product signature,
+      * but remove the oversized "magic pill" feeling.
+      */
+      .ai-turbo-chat-capsule {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+
+        padding: 7px 9px !important;
+        margin: 7px 0 10px !important;
+
+        max-width: min(100%, 680px) !important;
+
+        background: #111619 !important;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.18) !important;
+
+        border-left:
+          2px solid rgba(101, 210, 164, 0.7) !important;
+
+        border-radius: 10px !important;
+
+        box-shadow:
+          0 5px 16px rgba(0, 0, 0, 0.16) !important;
+
+        user-select: none !important;
+      }
+
+      .ai-turbo-chat-capsule:hover {
+        border-color:
+          rgba(101, 210, 164, 0.3) !important;
+      }
+
+      /*
+      * Code toolbar: less pill, more product control.
+      */
+      .ai-turbo-code-bar {
+        min-height: 38px !important;
+
+        padding:
+          5px 8px 5px 12px !important;
+
+        margin:
+          14px 0 8px !important;
+
+        background: #111619 !important;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.16) !important;
+
+        border-radius: 10px !important;
+
+        box-shadow:
+          0 5px 16px rgba(0, 0, 0, 0.14) !important;
+
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+      }
+
+      .ai-turbo-code-bar:hover {
+        border-color:
+          rgba(101, 210, 164, 0.3) !important;
+
+        box-shadow:
+          0 6px 18px rgba(0, 0, 0, 0.18) !important;
+      }
+
+      .ai-turbo-code-lang {
+        color: #72d6ab !important;
+      }
+
+      .ai-turbo-code-toggle {
+        padding: 5px 9px !important;
+
+        border-radius: 7px !important;
+
+        background:
+          rgba(255, 255, 255, 0.035) !important;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.14) !important;
+
+        color: #c9d2ce !important;
+
+        font-size: 10.5px !important;
+      }
+
+      .ai-turbo-code-toggle:hover {
+        background:
+          rgba(101, 210, 164, 0.08) !important;
+
+        color: #72d6ab !important;
+
+        border-color:
+          rgba(101, 210, 164, 0.28) !important;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .ai-turbo-vf-tray,
+        .ai-turbo-vf-pill,
+        .ai-turbo-vf-action,
+        .ai-turbo-code-bar,
+        .ai-turbo-code-toggle {
+          transition: none !important;
+        }
+      }
+    `;
+
     (document.head || document.documentElement).appendChild(styleElement);
   }
 
@@ -1742,6 +2427,158 @@
       .result-empty { text-align: center; color: #64748b; }
       .footer-hint { margin-top: 12px; font-size: 9.5px; color: #475569; text-align: center; }
       kbd { padding: 2px 4px; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 4px; color: #94a3b8; font-family: ui-monospace, monospace; }
+    `;
+    styles.textContent += `
+      .docked-pill {
+        height: 34px;
+        padding: 0 11px;
+
+        background: #0d1113;
+        border: 1px solid rgba(153, 166, 161, 0.22);
+
+        box-shadow:
+          0 8px 24px rgba(0, 0, 0, 0.24);
+
+        color: #dce5e1;
+        font:
+          650 11px/1
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .docked-pill:hover {
+        color: #72d6ab;
+        border-color: rgba(101, 210, 164, 0.45);
+      }
+
+      .hud-panel {
+        width: 392px;
+        max-width: 94vw;
+
+        padding: 18px;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.19);
+
+        border-radius: 14px;
+
+        background: #0c1012;
+
+        box-shadow:
+          0 26px 70px rgba(0, 0, 0, 0.48);
+
+        color: #e2ebe6;
+      }
+
+      .status-item {
+        padding: 9px;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.11);
+
+        border-radius: 9px;
+
+        background: #101517;
+      }
+
+      .status-value {
+        color: #e8efeb;
+      }
+
+      .section {
+        border-top:
+          1px solid rgba(153, 166, 161, 0.1);
+      }
+
+      .section-title {
+        color: #68746f;
+      }
+
+      .control-row {
+        color: #c9d3ce;
+      }
+
+      .stepper {
+        border:
+          1px solid rgba(153, 166, 161, 0.15);
+
+        border-radius: 8px;
+
+        background: #0f1315;
+      }
+
+      .stepper button:hover {
+        background:
+          rgba(101, 210, 164, 0.07);
+
+        color: #72d6ab;
+      }
+
+      .action-btn {
+        height: 34px;
+
+        margin-top: 10px;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.15);
+
+        border-radius: 8px;
+
+        background: #111719;
+
+        color: #ccd6d1;
+      }
+
+      .action-btn:hover {
+        background:
+          rgba(101, 210, 164, 0.07);
+
+        border-color:
+          rgba(101, 210, 164, 0.25);
+
+        color: #72d6ab;
+      }
+
+      .search-input {
+        height: 34px;
+
+        border:
+          1px solid rgba(153, 166, 161, 0.16);
+
+        border-radius: 8px;
+
+        background: #0f1416;
+
+        color: #e6eeea;
+      }
+
+      .search-input:focus {
+        border-color:
+          rgba(101, 210, 164, 0.48);
+      }
+
+      .result-item,
+      .result-empty {
+        border-radius: 7px;
+
+        background: #101517;
+      }
+
+      .result-item:hover {
+        background:
+          rgba(101, 210, 164, 0.07);
+
+        color: #72d6ab;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .modal-backdrop,
+        .hud-panel {
+          transition: none !important;
+        }
+      }
     `;
     hudShadowRoot.appendChild(styles);
 
@@ -2191,7 +3028,9 @@
   }
 
   function runScheduledUpdate() {
-    scheduleQueued = false;
+    scheduleTimer = null;
+    lastUpdateTime = performance.now();
+
     if (selfMutationDepth > 0) {
       requestUpdate();
       return;
@@ -2211,10 +3050,17 @@
     if (trayIsDirty) renderVirtualFileTray();
   }
 
+  // 优化点4：80ms 弹性合并节流，杜绝 60 FPS 无意义轰炸
   function requestUpdate() {
-    if (scheduleQueued) return;
-    scheduleQueued = true;
-    window.requestAnimationFrame(runScheduledUpdate);
+    if (scheduleTimer) return;
+    const elapsed = performance.now() - lastUpdateTime;
+    if (elapsed >= THROTTLE_INTERVAL) {
+      scheduleTimer = window.requestAnimationFrame(runScheduledUpdate);
+    } else {
+      scheduleTimer = window.setTimeout(() => {
+        scheduleTimer = window.requestAnimationFrame(runScheduledUpdate);
+      }, THROTTLE_INTERVAL - elapsed);
+    }
   }
 
   function observeCodeLayout() {
@@ -2347,6 +3193,25 @@
     observeDom();
     patchHistoryForSpaNavigation();
     bindGlobalListeners();
+
+    window.addEventListener("resize", scheduleVirtualFileTrayPosition, {
+      passive: true,
+    });
+
+    window.addEventListener("scroll", scheduleVirtualFileTrayPosition, {
+      passive: true,
+      capture: true,
+    });
+
+    window.visualViewport?.addEventListener(
+      "resize",
+      scheduleVirtualFileTrayPosition,
+    );
+
+    window.visualViewport?.addEventListener(
+      "scroll",
+      scheduleVirtualFileTrayPosition,
+    );
 
     fullTurnSyncRequested = true;
     codeScanRequested = true;
