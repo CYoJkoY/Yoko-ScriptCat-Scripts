@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.9.0
-// @description  独立药囊长代码折叠(流式防卡顿) + 长文本智能伪文件胶囊(DOM安全沙箱·读写分离防死锁) + 增量消息索引 + 自适应脱水 + 纯DOM免疫CSP
+// @version      0.9.2
+// @description  独立药囊长代码折叠(流式防卡顿) + 长文本智能伪文件胶囊(呼吸悬浮净空·用户原始提问常驻·读写分离防死锁) + 增量消息索引 + 自适应脱水 + 纯DOM免疫CSP
 // @author       Yoko
 // @match        https://chatgpt.com/*
 // @match        https://gemini.google.com/*
@@ -19,7 +19,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.9.0";
+  const VERSION = "0.9.2";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -30,7 +30,7 @@
   const STORAGE_KEY_CONFIG = "ai_turbo_engine_config";
   const VIRTUAL_FILE_THRESHOLD = 1500;
   const STREAMING_IDLE_DELAY = 1500;
-  const THROTTLE_INTERVAL = 80; // 突变合并节流周期 (ms)
+  const THROTTLE_INTERVAL = 80;
   const CODE_FENCE = "\x60\x60\x60";
 
   const VF_TOKEN_START = "[[TURBO_VFILE_START:";
@@ -210,6 +210,7 @@
   const turnIndex = new Map();
   const codeState = new Map();
   const processedUserTurns = new WeakSet();
+  const virtualFileChatRows = new WeakMap();
   let activeVirtualFiles = [];
   let trayIsDirty = false;
   let isSubmitting = false;
@@ -396,19 +397,94 @@
     return turnElement;
   }
 
+  // 消息内容提取：自动过滤附件代码乱码，优先提取用户真实提问
   function extractTurnText(turnElement) {
     const contentElement = findContentElement(turnElement);
-    const raw = contentElement.textContent || "";
-    return normalizeText(raw.slice(0, 1500));
+    let raw = contentElement.textContent || "";
+
+    contentElement
+      .querySelectorAll(".ai-turbo-chat-file-row, .ai-turbo-chat-capsule")
+      .forEach((element) => {
+        raw = raw.replace(element.textContent || "", "");
+      });
+    const vfIdx = raw.indexOf(VF_TOKEN_START);
+    if (vfIdx !== -1) {
+      let userPart = raw
+        .slice(0, vfIdx)
+        .replace(/```[a-z]*\s*$/i, "")
+        .trim();
+      if (
+        userPart === "请查阅并分析以下文本内容：" ||
+        userPart === "请查阅以下文本："
+      ) {
+        userPart = "";
+      }
+      const match = raw.match(VF_REGEX);
+      const fileName = match ? ` [📎 ${match[1]}]` : " [📎 附件文件]";
+      raw = (userPart || "附件文本") + fileName;
+    }
+    return normalizeText(raw);
   }
 
-  // 优化点2：无损沙箱化。完全保留宿主原始 DOM 节点（仅 display:none），插入药囊兄弟节点，100% 免疫框架虚拟 DOM 冲突
+  function mountVirtualFileCapsuleOutsideTurn(turnElement, pill) {
+    if (!(turnElement instanceof Element) || !pill) {
+      return null;
+    }
+
+    const parent = turnElement.parentElement;
+
+    if (!parent) {
+      return null;
+    }
+
+    const previousRow = virtualFileChatRows.get(turnElement);
+
+    if (previousRow?.isConnected) {
+      previousRow.remove();
+    }
+
+    const row = el(
+      "div",
+      {
+        className: "ai-turbo-chat-file-row",
+        role: "group",
+        "aria-label": "虚拟文件",
+      },
+      [pill],
+    );
+
+    /*
+     * 关键：
+     * 不再把 pill 插入 bubble 内部。
+     * 而是把它作为 turnElement 的同级节点，
+     * 并放在消息气泡之前。
+     */
+    parent.insertBefore(row, turnElement);
+
+    virtualFileChatRows.set(turnElement, row);
+
+    return row;
+  }
+
+  // 修复问题(2)：保留并醒目呈现用户原本的提问文本，将大文件精准收纳为小胶囊
   function collapseInChatFileBlocks(turnElement) {
     if (!state.virtualFileEnabled || !turnElement || !isUserTurn(turnElement)) {
       return;
     }
-    if (processedUserTurns.has(turnElement)) {
+
+    const existingRow = virtualFileChatRows.get(turnElement);
+
+    if (processedUserTurns.has(turnElement) && existingRow?.isConnected) {
       return;
+    }
+
+    /*
+     * 宿主网站 SPA 重绘后，原来的外置节点可能已经被移除。
+     * 这种情况下允许重新挂载。
+     */
+    if (!existingRow?.isConnected) {
+      processedUserTurns.delete(turnElement);
+      virtualFileChatRows.delete(turnElement);
     }
 
     const walker = document.createTreeWalker(
@@ -431,35 +507,61 @@
 
     if (!targetTextNode) return;
 
-    let containerBlock = targetTextNode.parentElement;
-    while (containerBlock && containerBlock !== turnElement) {
-      const tag = containerBlock.tagName.toLowerCase();
-      if (
-        ["p", "div", "pre", "code-block"].includes(tag) ||
-        containerBlock.classList.contains("query-text") ||
-        containerBlock.classList.contains("user-query-text")
-      ) {
-        break;
-      }
-      containerBlock = containerBlock.parentElement;
-    }
+    const codeBlockElem =
+      targetTextNode.parentElement?.closest("pre, code-block");
 
+    // 智能定位待折叠宿主元素
+    let containerBlock = codeBlockElem;
+    if (!containerBlock) {
+      let cur = targetTextNode.parentElement;
+      while (cur && cur !== turnElement) {
+        const tag = cur.tagName.toLowerCase();
+        if (
+          ["p", "div", "pre", "code-block"].includes(tag) ||
+          cur.classList.contains("query-text") ||
+          cur.classList.contains("user-query-text")
+        ) {
+          containerBlock = cur;
+          break;
+        }
+        cur = cur.parentElement;
+      }
+    }
     if (!containerBlock) containerBlock = targetTextNode.parentElement;
 
-    const rawText = containerBlock.textContent || "";
-    const startIndex = rawText.indexOf(VF_TOKEN_START);
+    const fullRawText = containerBlock.textContent || "";
+    const startIndex = fullRawText.indexOf(VF_TOKEN_START);
     if (startIndex === -1) return;
 
-    const match = rawText.match(VF_REGEX);
+    const match = fullRawText.match(VF_REGEX);
     if (!match) return;
-
-    processedUserTurns.add(turnElement);
 
     const fileName = match[1].trim();
     const lineCount = parseInt(match[2], 10) || 0;
     const sizeBytes = parseInt(match[3], 10) || 0;
     const kbSize = (sizeBytes / 1024).toFixed(1);
     const metaInfo = `${lineCount.toLocaleString()} 行 · ${kbSize} KB`;
+
+    // 提取用户真实提问 Prompt
+    let userPrompt = fullRawText.slice(0, startIndex);
+    userPrompt = userPrompt.replace(/```[a-z]*\s*$/i, "").trim();
+    if (
+      userPrompt === "请查阅并分析以下文本内容：" ||
+      userPrompt === "请查阅以下文本："
+    ) {
+      userPrompt = "";
+    }
+
+    // 检查是否有前序兄弟节点已经独立呈现了该提问
+    let promptAlreadyVisible = false;
+    let prev = containerBlock.previousElementSibling;
+    while (prev) {
+      if (prev.textContent && prev.textContent.trim().length > 0) {
+        promptAlreadyVisible = true;
+        break;
+      }
+      prev = prev.previousElementSibling;
+    }
 
     withSelfMutation(() => {
       let isExpanded = false;
@@ -478,7 +580,7 @@
         {
           className: "ai-turbo-chat-capsule",
           style:
-            "display:inline-flex;align-items:center;gap:8px;padding:5px 14px;background:rgba(18,24,38,0.95);border:1px solid rgba(52,211,153,0.45);border-radius:9999px;box-shadow:0 2px 10px rgba(0,0,0,0.3);user-select:none;max-width:100%;box-sizing:border-box;margin:6px 0;",
+            "display:inline-flex;align-items:center;gap:8px;padding:6px 14px;background:rgba(18,24,38,0.95);border:1px solid rgba(52,211,153,0.45);border-radius:9999px;box-shadow:0 2px 10px rgba(0,0,0,0.3);user-select:none;max-width:100%;box-sizing:border-box;margin:6px 0 10px;",
         },
         [
           el("span", { style: "font-size:14px;line-height:1;" }, ["📄"]),
@@ -502,7 +604,7 @@
         ],
       );
 
-      // 将原宿主容器隐藏并赋予隔离沙箱，不删除任何节点
+      // 将原大文本容器隔离脱水
       containerBlock.classList.add("ai-turbo-chat-folded-target");
       containerBlock.style.setProperty("display", "none", "important");
       containerBlock.style.setProperty("contain", "strict", "important");
@@ -521,11 +623,30 @@
         }
       });
 
-      containerBlock.insertAdjacentElement("beforebegin", pill);
+      // 若原容器内包含用户提问且无前序元素展示，独立保留用户真实提问
+      if (!promptAlreadyVisible && userPrompt) {
+        const promptElem = el(
+          "div",
+          {
+            className: "ai-turbo-chat-user-prompt",
+            style:
+              "margin-bottom:8px!important;white-space:pre-wrap!important;word-break:break-word!important;font:inherit!important;color:inherit!important;line-height:1.5!important;",
+          },
+          [userPrompt],
+        );
+
+        containerBlock.insertAdjacentElement("beforebegin", promptElem);
+      }
     });
+
+    const mountedRow = mountVirtualFileCapsuleOutsideTurn(turnElement, pill);
+
+    if (mountedRow) {
+      processedUserTurns.add(turnElement);
+    }
   }
 
-  // 优化点1：彻底重构脱水循环，实行严格的“先全量读取，后全量写入”，消灭 Layout Thrashing
+  // 读写分离脱水，彻底杜绝 Layout Thrashing
   function syncTurnIndex(forceFull) {
     const turns = getTurns();
     const structuralChange =
@@ -575,7 +696,6 @@
       ? Math.max(0, turns.length - state.keepTurns)
       : 0;
 
-    // Phase 1: 批量集中读取（无任何 DOM 写入，零强制重排）
     const toDehydrate = [];
     const toHydrate = [];
 
@@ -595,7 +715,6 @@
       }
     });
 
-    // Phase 2: 批量集中写入样式
     withSelfMutation(() => {
       for (let i = 0; i < toDehydrate.length; i++) {
         const item = toDehydrate[i];
@@ -716,7 +835,6 @@
     });
   }
 
-  // 优化点3：彻底修复流式检测与轻量化判定
   function updateCodeMeta(entry, codeElement) {
     if (!entry || !codeElement?.isConnected) return;
 
@@ -724,7 +842,6 @@
     const currentLen = currentText.length;
     const now = Date.now();
 
-    // 只有文本长度真正变长，才认定 AI 在打字
     if (currentLen !== entry.lastLength) {
       entry.lastLength = currentLen;
       entry.lastMutationTime = now;
@@ -757,7 +874,6 @@
       return;
     }
 
-    // 静态状态短路跳过，杜绝重复渲染
     if (!entry.isDisplayingStreaming && entry.renderedStaticOnce) {
       return;
     }
@@ -941,11 +1057,24 @@
 
   function getInputContainer(input) {
     if (!input) return null;
-    return (
-      input.closest(
-        "rich-textarea, .rich-textarea, .input-area-container, form, [class*='composer'], [class*='input-container'], fieldset",
-      ) || input.parentElement
-    );
+    const candidates = [
+      ".input-area",
+      ".input-area-container",
+      "rich-textarea",
+      "[class*='composer-parent']",
+      "[class*='input-area']",
+      "form",
+      "[class*='composer']",
+      "[class*='input-container']",
+      "fieldset",
+    ];
+    for (const selector of candidates) {
+      const matched = input.closest(selector);
+      if (matched && matched.getBoundingClientRect().height > 20) {
+        return matched;
+      }
+    }
+    return input.parentElement;
   }
 
   function createUiIcon(name, size = 14) {
@@ -960,7 +1089,6 @@
     };
 
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("width", String(size));
     svg.setAttribute("height", String(size));
@@ -976,7 +1104,6 @@
         "http://www.w3.org/2000/svg",
         "path",
       );
-
       path.setAttribute("d", pathData);
       svg.appendChild(path);
     }
@@ -1019,7 +1146,7 @@
     const input = getChatInput();
     const anchor = getInputContainer(input);
 
-    if (!anchor || !anchor.isConnected) {
+    if (!input || !anchor || !input.isConnected || !anchor.isConnected) {
       tray.classList.remove("is-positioned");
       return;
     }
@@ -1037,56 +1164,68 @@
         });
 
         virtualFileTrayResizeObserver.observe(anchor);
+
+        if (input !== anchor) {
+          virtualFileTrayResizeObserver.observe(input);
+        }
       }
     }
 
-    const rect = anchor.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    const inputRect = input.getBoundingClientRect();
 
-    if (!rect.width || !rect.height) {
+    if (
+      !anchorRect.width ||
+      !anchorRect.height ||
+      !inputRect.width ||
+      !inputRect.height
+    ) {
       tray.classList.remove("is-positioned");
       return;
     }
 
-    const viewportPadding = 12;
-    const gap = 8;
-    const availableWidth = Math.max(0, window.innerWidth - viewportPadding * 2);
+    const viewportPadding = 18;
+    const verticalGap = 16;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
 
-    const trayWidth = Math.min(Math.max(rect.width, 280), availableWidth);
+    const availableWidth = Math.max(0, viewportWidth - viewportPadding * 2);
+
+    const trayWidth = Math.min(Math.max(anchorRect.width, 280), availableWidth);
 
     const left = Math.min(
-      Math.max(viewportPadding, rect.left),
-      Math.max(
-        viewportPadding,
-        window.innerWidth - trayWidth - viewportPadding,
-      ),
+      Math.max(viewportPadding, anchorRect.left),
+      Math.max(viewportPadding, viewportWidth - trayWidth - viewportPadding),
     );
+
+    /*
+     * 核心修改：
+     * 不再使用 top / bottom 二选一。
+     * 直接使用 bottom 锚定输入框顶部。
+     *
+     * 这样无论输入框高度怎么变化，
+     * 托盘都始终位于输入框上方。
+     */
+    const bottom = viewportHeight - inputRect.top + verticalGap;
 
     tray.style.width = `${trayWidth}px`;
     tray.style.left = `${left}px`;
+    tray.style.top = "auto";
+    tray.style.bottom = `${Math.max(viewportPadding, bottom)}px`;
 
-    const trayHeight = tray.getBoundingClientRect().height;
-
-    let top = rect.top - trayHeight - gap;
-    let placement = "top";
-
-    if (top < viewportPadding) {
-      top = rect.bottom + gap;
-      placement = "bottom";
-    }
-
-    top = Math.max(
-      viewportPadding,
-      Math.min(
-        top,
-        Math.max(
-          viewportPadding,
-          window.innerHeight - trayHeight - viewportPadding,
-        ),
-      ),
+    /*
+     * 输入框非常靠近顶部时，仍然保持托盘向上布局，
+     * 不再翻转到输入框下面。
+     */
+    const maxTrayHeight = Math.max(
+      48,
+      inputRect.top - viewportPadding - verticalGap,
     );
 
-    tray.style.top = `${top}px`;
-    tray.dataset.placement = placement;
+    tray.style.maxHeight = `${maxTrayHeight}px`;
+    tray.style.overflowY = "auto";
+
+    tray.dataset.placement = "top";
     tray.classList.add("is-positioned");
   }
 
@@ -1630,25 +1769,21 @@
         display: flex !important;
         align-items: center !important;
         justify-content: space-between !important;
-        min-height: 34px !important;
-        padding: 4px 14px 4px 16px !important;
-        background: rgba(18, 24, 38, 0.92) !important;
-        backdrop-filter: blur(10px) !important;
-        -webkit-backdrop-filter: blur(10px) !important;
-        border: 1px solid rgba(148, 163, 184, 0.22) !important;
-        border-radius: 9999px !important;
-        margin-top: 14px !important;
-        margin-bottom: 8px !important;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25) !important;
-        box-sizing: border-box !important;
+        min-height: 38px !important;
+        padding: 5px 8px 5px 12px !important;
+        margin: 14px 0 8px !important;
+        background: #111619 !important;
+        border: 1px solid rgba(153, 166, 161, 0.16) !important;
+        border-radius: 10px !important;
+        box-shadow: 0 5px 16px rgba(0, 0, 0, 0.14) !important;
         position: relative !important;
         z-index: 10 !important;
         transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
       }
 
       .ai-turbo-code-bar:hover {
-        border-color: rgba(52, 211, 153, 0.45) !important;
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35), 0 0 10px rgba(52, 211, 153, 0.15) !important;
+        border-color: rgba(101, 210, 164, 0.3) !important;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18) !important;
       }
 
       .ai-turbo-code-bar-meta {
@@ -1660,7 +1795,7 @@
 
       .ai-turbo-code-lang {
         font-weight: 700 !important;
-        color: #34d399 !important;
+        color: #72d6ab !important;
       }
 
       .ai-turbo-code-lines {
@@ -1684,20 +1819,20 @@
 
       .ai-turbo-code-toggle {
         appearance: none !important;
-        background: rgba(255, 255, 255, 0.08) !important;
-        border: 1px solid rgba(148, 163, 184, 0.25) !important;
-        color: #f1f5f9 !important;
-        padding: 3px 12px !important;
-        border-radius: 9999px !important;
-        font: 600 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        background: rgba(255, 255, 255, 0.035) !important;
+        border: 1px solid rgba(153, 166, 161, 0.14) !important;
+        color: #c9d2ce !important;
+        padding: 5px 9px !important;
+        border-radius: 7px !important;
+        font: 600 10.5px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
         cursor: pointer !important;
         transition: all 120ms ease !important;
       }
 
       .ai-turbo-code-toggle:hover {
-        background: rgba(52, 211, 153, 0.2) !important;
-        color: #34d399 !important;
-        border-color: rgba(52, 211, 153, 0.4) !important;
+        background: rgba(101, 210, 164, 0.08) !important;
+        color: #72d6ab !important;
+        border-color: rgba(101, 210, 164, 0.28) !important;
       }
 
       .ai-turbo-code-target {
@@ -1741,118 +1876,31 @@
         overflow: visible !important;
       }
 
-      .ai-turbo-vf-tray {
-        display: flex !important;
-        flex-wrap: wrap !important;
-        align-items: center !important;
-        gap: 8px !important;
-        padding: 6px 12px !important;
-        margin-bottom: 8px !important;
-        background: rgba(13, 18, 28, 0.88) !important;
-        border: 1px dashed rgba(52, 211, 153, 0.4) !important;
-        border-radius: 12px !important;
-        backdrop-filter: blur(8px) !important;
-        -webkit-backdrop-filter: blur(8px) !important;
-        box-sizing: border-box !important;
-        z-index: 50 !important;
-      }
-
-      .ai-turbo-vf-pill {
-        display: inline-flex !important;
-        align-items: center !important;
-        gap: 8px !important;
-        padding: 4px 12px !important;
-        border-radius: 9999px !important;
-        background: rgba(22, 27, 34, 0.95) !important;
-        border: 1px solid rgba(52, 211, 153, 0.5) !important;
-        color: #e2e8f0 !important;
-        font: 500 11.5px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", monospace !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
-        user-select: none !important;
-      }
-
-      .ai-turbo-vf-badge {
-        background: rgba(52, 211, 153, 0.15) !important;
-        color: #34d399 !important;
-        padding: 2px 6px !important;
-        border-radius: 6px !important;
-        font-weight: 700 !important;
-        font-size: 10px !important;
-      }
-
-      .ai-turbo-vf-btn {
-        background: transparent !important;
-        border: none !important;
-        color: #94a3b8 !important;
-        cursor: pointer !important;
-        padding: 2px 4px !important;
-        border-radius: 4px !important;
-        font-size: 11px !important;
-        transition: color 0.15s, background 0.15s !important;
-      }
-
-      .ai-turbo-vf-btn:hover {
-        color: #ef4444 !important;
-        background: rgba(239, 68, 68, 0.15) !important;
-      }
-
-      .ai-turbo-vf-btn-preview:hover {
-        color: #38bdf8 !important;
-        background: rgba(56, 189, 248, 0.15) !important;
-      }
-
-      .ai-turbo-modal-backdrop {
-        position: fixed !important;
-        inset: 0 !important;
-        background: rgba(0, 0, 0, 0.72) !important;
-        backdrop-filter: blur(8px) !important;
-        -webkit-backdrop-filter: blur(8px) !important;
-        z-index: 2147483646 !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        padding: 24px !important;
-        box-sizing: border-box !important;
-      }
-    `;
-
-    styleElement.textContent += `
-      /* ---------------------------------------------------------
-        AI Turbo visual refresh
-        AzSkills-inspired: restrained dark surfaces + one accent
-        --------------------------------------------------------- */
-
+      /* 虚拟文件悬浮托盘样式 */
       .ai-turbo-vf-tray {
         position: fixed !important;
         z-index: 2147483645 !important;
-
         display: grid !important;
         gap: 7px !important;
-
         padding: 8px !important;
-
         box-sizing: border-box !important;
-
         background: rgba(14, 18, 20, 0.985) !important;
-
         border: 1px solid rgba(153, 166, 161, 0.19) !important;
         border-left: 2px solid rgba(101, 210, 164, 0.72) !important;
-
         border-radius: 12px !important;
-
         box-shadow:
           0 16px 36px rgba(0, 0, 0, 0.28),
           0 4px 10px rgba(0, 0, 0, 0.18) !important;
-
         color: #e7eeea !important;
-
         pointer-events: auto !important;
-
         opacity: 0 !important;
         visibility: hidden !important;
-
         transform: translateY(3px) !important;
+        /* 平滑浮动动画，彻底消除文本框高度变动时的跳闪 */
         transition:
+          bottom 160ms cubic-bezier(0.16, 1, 0.3, 1),
+          left 160ms cubic-bezier(0.16, 1, 0.3, 1),
+          max-height 120ms ease,
           opacity 120ms ease,
           transform 120ms ease,
           visibility 120ms ease !important;
@@ -1866,18 +1914,15 @@
 
       .ai-turbo-vf-header {
         min-width: 0 !important;
-
         display: flex !important;
         align-items: center !important;
         justify-content: space-between !important;
         gap: 12px !important;
-
         padding: 1px 3px 2px !important;
       }
 
       .ai-turbo-vf-heading {
         min-width: 0 !important;
-
         display: inline-flex !important;
         align-items: center !important;
         gap: 6px !important;
@@ -1886,98 +1931,61 @@
       .ai-turbo-vf-heading-icon {
         width: 20px !important;
         height: 20px !important;
-
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
-
         color: #72d6ab !important;
-
         border: 1px solid rgba(101, 210, 164, 0.22) !important;
         border-radius: 6px !important;
-
         background: rgba(101, 210, 164, 0.07) !important;
       }
 
       .ai-turbo-vf-heading-title {
-        font:
-          650 11px/1.2
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif !important;
-
+        font: 650 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
         color: #e7eeea !important;
       }
 
       .ai-turbo-vf-heading-count {
         min-width: 18px !important;
         height: 18px !important;
-
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
-
         padding: 0 5px !important;
-
         border-radius: 6px !important;
-
         background: rgba(101, 210, 164, 0.09) !important;
         color: #72d6ab !important;
-
-        font:
-          700 9px/1
-          ui-monospace,
-          SFMono-Regular,
-          Menlo,
-          monospace !important;
+        font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace !important;
       }
 
       .ai-turbo-vf-heading-hint {
         flex: 0 0 auto !important;
-
         color: #69756f !important;
-
-        font:
-          9.5px/1.2
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif !important;
+        font: 9.5px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
       }
 
       .ai-turbo-vf-list {
         display: flex !important;
         flex-wrap: wrap !important;
         gap: 6px !important;
-
         min-width: 0 !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        scrollbar-width: thin !important;
       }
 
       .ai-turbo-vf-pill {
         min-width: 0 !important;
-
         display: inline-flex !important;
         align-items: center !important;
-
         gap: 7px !important;
-
         min-height: 34px !important;
-
         padding: 5px 7px 5px 8px !important;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.16) !important;
-
+        border: 1px solid rgba(153, 166, 161, 0.16) !important;
         border-radius: 9px !important;
-
         background: rgba(24, 29, 32, 0.96) !important;
-
         box-sizing: border-box !important;
-
-        transition:
-          background 120ms ease,
-          border-color 120ms ease !important;
+        transition: background 120ms ease, border-color 120ms ease !important;
       }
 
       .ai-turbo-vf-pill:hover {
@@ -1988,91 +1996,52 @@
       .ai-turbo-vf-file-icon {
         width: 24px !important;
         height: 24px !important;
-
         flex: 0 0 24px !important;
-
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
-
         color: #9eaba5 !important;
-
         background: rgba(255, 255, 255, 0.035) !important;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.13) !important;
-
+        border: 1px solid rgba(153, 166, 161, 0.13) !important;
         border-radius: 7px !important;
       }
 
       .ai-turbo-vf-file-copy {
         min-width: 80px !important;
         max-width: 260px !important;
-
         display: grid !important;
         gap: 2px !important;
       }
 
       .ai-turbo-vf-name {
         display: block !important;
-
         overflow: hidden !important;
-
         text-overflow: ellipsis !important;
         white-space: nowrap !important;
-
         color: #e8eeeb !important;
-
-        font:
-          550 11px/1.25
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif !important;
+        font: 550 11px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
       }
 
       .ai-turbo-vf-meta {
         display: block !important;
-
         overflow: hidden !important;
-
         text-overflow: ellipsis !important;
         white-space: nowrap !important;
-
         color: #68746f !important;
-
-        font:
-          9px/1.2
-          ui-monospace,
-          SFMono-Regular,
-          Menlo,
-          monospace !important;
+        font: 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace !important;
       }
 
       .ai-turbo-vf-badge {
         flex: 0 0 auto !important;
-
         display: inline-flex !important;
         align-items: center !important;
-
         height: 20px !important;
-
         padding: 0 6px !important;
-
         border-radius: 5px !important;
-
         background: rgba(101, 210, 164, 0.08) !important;
         border: 1px solid rgba(101, 210, 164, 0.14) !important;
-
         color: #72d6ab !important;
-
-        font:
-          700 8px/1
-          ui-monospace,
-          SFMono-Regular,
-          Menlo,
-          monospace !important;
-
+        font: 700 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace !important;
         letter-spacing: 0.04em !important;
       }
 
@@ -2080,32 +2049,22 @@
         display: inline-flex !important;
         align-items: center !important;
         gap: 2px !important;
-
         margin-left: 2px !important;
       }
 
       .ai-turbo-vf-action {
         width: 26px !important;
         height: 26px !important;
-
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
-
         padding: 0 !important;
-
         border: 0 !important;
         border-radius: 6px !important;
-
         background: transparent !important;
-
         color: #77827d !important;
-
         cursor: pointer !important;
-
-        transition:
-          background 120ms ease,
-          color 120ms ease !important;
+        transition: background 120ms ease, color 120ms ease !important;
       }
 
       .ai-turbo-vf-action:hover {
@@ -2122,104 +2081,61 @@
         background: rgba(239, 68, 68, 0.08) !important;
       }
 
-      /*
-      * Sent-message virtual-file capsule.
-      * Keep it recognizable as the product signature,
-      * but remove the oversized "magic pill" feeling.
-      */
       .ai-turbo-chat-capsule {
         display: inline-flex !important;
         align-items: center !important;
         gap: 8px !important;
-
-        padding: 7px 9px !important;
-        margin: 7px 0 10px !important;
-
+        padding: 6px 14px !important;
+        margin: 0 !important;
         max-width: min(100%, 680px) !important;
-
         background: #111619 !important;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.18) !important;
-
-        border-left:
-          2px solid rgba(101, 210, 164, 0.7) !important;
-
+        border: 1px solid rgba(153, 166, 161, 0.18) !important;
+        border-left: 2px solid rgba(101, 210, 164, 0.7) !important;
         border-radius: 10px !important;
-
-        box-shadow:
-          0 5px 16px rgba(0, 0, 0, 0.16) !important;
-
+        box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16) !important;
         user-select: none !important;
       }
 
+      .ai-turbo-chat-file-row {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+
+        width: 100% !important;
+        max-width: 100% !important;
+
+        box-sizing: border-box !important;
+
+        margin: 4px 0 6px !important;
+        padding: 0 !important;
+
+        min-width: 0 !important;
+
+        pointer-events: auto !important;
+      }
+
+      .ai-turbo-chat-file-row .ai-turbo-chat-capsule {
+        flex: 0 1 auto !important;
+        min-width: 0 !important;
+        max-width: min(680px, 100%) !important;
+      }
+
       .ai-turbo-chat-capsule:hover {
-        border-color:
-          rgba(101, 210, 164, 0.3) !important;
+        border-color: rgba(101, 210, 164, 0.3) !important;
       }
 
-      /*
-      * Code toolbar: less pill, more product control.
-      */
-      .ai-turbo-code-bar {
-        min-height: 38px !important;
-
-        padding:
-          5px 8px 5px 12px !important;
-
-        margin:
-          14px 0 8px !important;
-
-        background: #111619 !important;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.16) !important;
-
-        border-radius: 10px !important;
-
-        box-shadow:
-          0 5px 16px rgba(0, 0, 0, 0.14) !important;
-
-        backdrop-filter: none !important;
-        -webkit-backdrop-filter: none !important;
-      }
-
-      .ai-turbo-code-bar:hover {
-        border-color:
-          rgba(101, 210, 164, 0.3) !important;
-
-        box-shadow:
-          0 6px 18px rgba(0, 0, 0, 0.18) !important;
-      }
-
-      .ai-turbo-code-lang {
-        color: #72d6ab !important;
-      }
-
-      .ai-turbo-code-toggle {
-        padding: 5px 9px !important;
-
-        border-radius: 7px !important;
-
-        background:
-          rgba(255, 255, 255, 0.035) !important;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.14) !important;
-
-        color: #c9d2ce !important;
-
-        font-size: 10.5px !important;
-      }
-
-      .ai-turbo-code-toggle:hover {
-        background:
-          rgba(101, 210, 164, 0.08) !important;
-
-        color: #72d6ab !important;
-
-        border-color:
-          rgba(101, 210, 164, 0.28) !important;
+      .ai-turbo-modal-backdrop {
+        position: fixed !important;
+        inset: 0 !important;
+        background: rgba(0, 0, 0, 0.72) !important;
+        backdrop-filter: blur(8px) !important;
+        -webkit-backdrop-filter: blur(8px) !important;
+        z-index: 2147483646 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 24px !important;
+        box-sizing: border-box !important;
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -2330,24 +2246,22 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        height: 32px;
-        padding: 0 12px;
+        height: 34px;
+        padding: 0 11px;
         border-radius: 999px;
-        background: rgba(13, 18, 28, 0.92);
-        border: 1px solid rgba(52, 211, 153, 0.4);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-        color: #e2e8f0;
-        font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0d1113;
+        border: 1px solid rgba(153, 166, 161, 0.22);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+        color: #dce5e1;
+        font: 650 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         cursor: grab;
         user-select: none;
         touch-action: none;
       }
       .docked-pill:active { cursor: grabbing; }
       .docked-pill:hover {
-        border-color: rgba(52, 211, 153, 0.8);
-        color: #34d399;
+        color: #72d6ab;
+        border-color: rgba(101, 210, 164, 0.45);
       }
 
       .modal-backdrop {
@@ -2372,14 +2286,14 @@
 
       .hud-panel {
         pointer-events: auto;
-        width: 380px;
-        max-width: 92vw;
-        padding: 16px;
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 16px;
-        background: rgba(10, 14, 22, 0.98);
-        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
-        color: #e2e8f0;
+        width: 392px;
+        max-width: 94vw;
+        padding: 18px;
+        border: 1px solid rgba(153, 166, 161, 0.19);
+        border-radius: 14px;
+        background: #0c1012;
+        box-shadow: 0 26px 70px rgba(0, 0, 0, 0.48);
+        color: #e2ebe6;
         transform: scale(0.96);
         transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -2393,17 +2307,17 @@
       .close-btn:hover { color: #f8fafc; background: rgba(255, 255, 255, 0.08); }
 
       .status-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
-      .status-item { padding: 8px; border: 1px solid rgba(148, 163, 184, 0.1); border-radius: 8px; background: rgba(255, 255, 255, 0.02); text-align: center; }
+      .status-item { padding: 9px; border: 1px solid rgba(153, 166, 161, 0.11); border-radius: 9px; background: #101517; text-align: center; }
       .status-label { font-size: 9px; color: #64748b; display: block; }
-      .status-value { font-size: 14px; font-weight: 700; color: #f1f5f9; margin-top: 2px; }
+      .status-value { font-size: 14px; font-weight: 700; color: #e8efeb; margin-top: 2px; }
 
-      .section { padding-top: 10px; border-top: 1px solid rgba(148, 163, 184, 0.1); }
-      .section-title { font-size: 10px; font-weight: 700; color: #64748b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
-      .control-row { display: flex; align-items: center; justify-content: space-between; min-height: 32px; margin-bottom: 6px; font-size: 11px; }
+      .section { padding-top: 10px; border-top: 1px solid rgba(153, 166, 161, 0.1); }
+      .section-title { font-size: 10px; font-weight: 700; color: #68746f; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+      .control-row { display: flex; align-items: center; justify-content: space-between; min-height: 32px; margin-bottom: 6px; font-size: 11px; color: #c9d3ce; }
 
-      .stepper { display: inline-flex; align-items: center; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 6px; }
+      .stepper { display: inline-flex; align-items: center; border: 1px solid rgba(153, 166, 161, 0.15); border-radius: 8px; background: #0f1315; }
       .stepper button { width: 26px; height: 24px; border: 0; background: transparent; color: #94a3b8; cursor: pointer; }
-      .stepper button:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+      .stepper button:hover { background: rgba(101, 210, 164, 0.07); color: #72d6ab; }
       .stepper span { min-width: 28px; text-align: center; font-size: 11px; font-family: ui-monospace, monospace; }
 
       .switch { position: relative; width: 34px; height: 20px; }
@@ -2413,171 +2327,23 @@
       .switch input:checked + .slider { background: #10b981; }
       .switch input:checked + .slider::before { transform: translateX(14px); }
 
-      .action-btn { width: 100%; height: 32px; margin-top: 10px; border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 8px; background: rgba(255, 255, 255, 0.05); color: #e2e8f0; font-size: 11px; font-weight: 600; cursor: pointer; transition: 140ms ease; }
-      .action-btn:hover { background: rgba(52, 211, 153, 0.12); border-color: rgba(52, 211, 153, 0.3); color: #34d399; }
+      .action-btn { width: 100%; height: 34px; margin-top: 10px; border: 1px solid rgba(153, 166, 161, 0.15); border-radius: 8px; background: #111719; color: #ccd6d1; font-size: 11px; font-weight: 600; cursor: pointer; transition: 140ms ease; }
+      .action-btn:hover { background: rgba(101, 210, 164, 0.07); border-color: rgba(101, 210, 164, 0.25); color: #72d6ab; }
       .action-btn.copied { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.4); }
 
       .search-wrap { position: relative; margin-top: 8px; }
-      .search-input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 11px; outline: none; }
-      .search-input:focus { border-color: #34d399; }
+      .search-input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid rgba(153, 166, 161, 0.16); border-radius: 8px; background: #0f1416; color: #e6eeea; font-size: 11px; outline: none; }
+      .search-input:focus { border-color: rgba(101, 210, 164, 0.48); }
       .results { max-height: 120px; overflow-y: auto; margin-top: 6px; display: grid; gap: 4px; }
-      .result-item, .result-empty { padding: 6px 8px; font-size: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.03); color: #cbd5e1; border: none; text-align: left; cursor: pointer; }
+      .result-item, .result-empty { padding: 6px 8px; font-size: 10px; border-radius: 7px; background: #101517; color: #cbd5e1; border: none; text-align: left; cursor: pointer; }
       .result-item { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-      .result-item:hover { background: rgba(52, 211, 153, 0.1); color: #34d399; }
+      .result-item:hover { background: rgba(101, 210, 164, 0.07); color: #72d6ab; }
       .result-empty { text-align: center; color: #64748b; }
       .footer-hint { margin-top: 12px; font-size: 9.5px; color: #475569; text-align: center; }
       kbd { padding: 2px 4px; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 4px; color: #94a3b8; font-family: ui-monospace, monospace; }
-    `;
-    styles.textContent += `
-      .docked-pill {
-        height: 34px;
-        padding: 0 11px;
-
-        background: #0d1113;
-        border: 1px solid rgba(153, 166, 161, 0.22);
-
-        box-shadow:
-          0 8px 24px rgba(0, 0, 0, 0.24);
-
-        color: #dce5e1;
-        font:
-          650 11px/1
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif;
-      }
-
-      .docked-pill:hover {
-        color: #72d6ab;
-        border-color: rgba(101, 210, 164, 0.45);
-      }
-
-      .hud-panel {
-        width: 392px;
-        max-width: 94vw;
-
-        padding: 18px;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.19);
-
-        border-radius: 14px;
-
-        background: #0c1012;
-
-        box-shadow:
-          0 26px 70px rgba(0, 0, 0, 0.48);
-
-        color: #e2ebe6;
-      }
-
-      .status-item {
-        padding: 9px;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.11);
-
-        border-radius: 9px;
-
-        background: #101517;
-      }
-
-      .status-value {
-        color: #e8efeb;
-      }
-
-      .section {
-        border-top:
-          1px solid rgba(153, 166, 161, 0.1);
-      }
-
-      .section-title {
-        color: #68746f;
-      }
-
-      .control-row {
-        color: #c9d3ce;
-      }
-
-      .stepper {
-        border:
-          1px solid rgba(153, 166, 161, 0.15);
-
-        border-radius: 8px;
-
-        background: #0f1315;
-      }
-
-      .stepper button:hover {
-        background:
-          rgba(101, 210, 164, 0.07);
-
-        color: #72d6ab;
-      }
-
-      .action-btn {
-        height: 34px;
-
-        margin-top: 10px;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.15);
-
-        border-radius: 8px;
-
-        background: #111719;
-
-        color: #ccd6d1;
-      }
-
-      .action-btn:hover {
-        background:
-          rgba(101, 210, 164, 0.07);
-
-        border-color:
-          rgba(101, 210, 164, 0.25);
-
-        color: #72d6ab;
-      }
-
-      .search-input {
-        height: 34px;
-
-        border:
-          1px solid rgba(153, 166, 161, 0.16);
-
-        border-radius: 8px;
-
-        background: #0f1416;
-
-        color: #e6eeea;
-      }
-
-      .search-input:focus {
-        border-color:
-          rgba(101, 210, 164, 0.48);
-      }
-
-      .result-item,
-      .result-empty {
-        border-radius: 7px;
-
-        background: #101517;
-      }
-
-      .result-item:hover {
-        background:
-          rgba(101, 210, 164, 0.07);
-
-        color: #72d6ab;
-      }
 
       @media (prefers-reduced-motion: reduce) {
-        .modal-backdrop,
-        .hud-panel {
-          transition: none !important;
-        }
+        .modal-backdrop, .hud-panel { transition: none !important; }
       }
     `;
     hudShadowRoot.appendChild(styles);
@@ -3050,7 +2816,6 @@
     if (trayIsDirty) renderVirtualFileTray();
   }
 
-  // 优化点4：80ms 弹性合并节流，杜绝 60 FPS 无意义轰炸
   function requestUpdate() {
     if (scheduleTimer) return;
     const elapsed = performance.now() - lastUpdateTime;
