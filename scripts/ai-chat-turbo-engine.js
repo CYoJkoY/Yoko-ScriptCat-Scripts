@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
-// @namespace    https://local/ai-turbo-engine-v3
-// @version      0.3.1
-// @description  增量消息索引 + 安全视口脱水 + 独立代码预览折叠 + Gemini 兼容居中面板
+// @namespace    https://local/ai-turbo-engine-v4
+// @version      0.4.0
+// @description  增量消息索引 + 真实高度自适应脱水 + 零侵入代码折叠 + 全平台自适应（深度兼容 Gemini 2026/ChatGPT/Claude/Grok）
 // @author       Yoko
 // @match        https://chatgpt.com/*
 // @match        https://gemini.google.com/*
@@ -19,14 +19,15 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.3.1";
+  const VERSION = "0.4.0";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
-  const CODE_SHELL_CLASS = "ai-turbo-code-shell";
+  const CODE_WRAPPER_CLASS = "ai-turbo-code-wrapper";
   const CODE_COLLAPSE_HEIGHT = 320;
   const CODE_PREVIEW_HEIGHT = 220;
   const TURN_TEXT_LIMIT = 800;
   const SEARCH_LIMIT = 10;
+  const STORAGE_KEY_POS = "ai_turbo_pill_pos";
 
   const PLATFORMS = {
     chatgpt: {
@@ -45,18 +46,22 @@
       turnSelectors: [
         "user-query",
         "model-response",
-        '[data-message-author="user"]',
-        '[data-message-author="model"]',
+        '[data-test-id="user-query"]',
+        '[data-test-id="model-response"]',
         ".user-query",
         ".model-response",
+        ".user-query-container",
+        ".model-response-container",
       ],
       codeSelector: "code-block, pre:not(code-block pre)",
       contentSelectors: [
         ".query-text",
+        ".user-query-text",
         "[class*='query-content']",
         ".model-response-text",
         ".message-content",
         ".markdown",
+        ".md-content",
         ".response-content",
       ],
     },
@@ -92,14 +97,11 @@
 
   function detectPlatform() {
     const host = window.location.hostname;
-
     if (host.includes("chatgpt.com")) return PLATFORMS.chatgpt;
     if (host.includes("gemini.google.com")) return PLATFORMS.gemini;
-    if (host.includes("grok.com") || host.includes("x.com")) {
+    if (host.includes("grok.com") || host.includes("x.com"))
       return PLATFORMS.grok;
-    }
     if (host.includes("claude.ai")) return PLATFORMS.claude;
-
     return null;
   }
 
@@ -129,14 +131,12 @@
   let observer = null;
   let codeResizeObserver = null;
 
-  let scheduleFrameId = 0;
   let scheduleQueued = false;
   let fullTurnSyncRequested = true;
   let codeScanRequested = true;
   let dirtyTurns = new Set();
   let dirtyCodeBlocks = new Set();
   let previousTurns = [];
-  let previousCutoff = 0;
   let selfMutationDepth = 0;
 
   function withSelfMutation(task) {
@@ -163,14 +163,13 @@
     for (const element of elements) {
       if (!(element instanceof Element)) continue;
       if (seen.has(element)) continue;
-
       seen.add(element);
       unique.push(element);
     }
 
-    unique.sort((firstElement, secondElement) => {
-      if (firstElement === secondElement) return 0;
-      const relation = firstElement.compareDocumentPosition(secondElement);
+    unique.sort((first, second) => {
+      if (first === second) return 0;
+      const relation = first.compareDocumentPosition(second);
       if (relation & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
       if (relation & Node.DOCUMENT_POSITION_PRECEDING) return 1;
       return 0;
@@ -199,7 +198,6 @@
 
     const ordered = uniqueDomOrdered(collected);
     const candidateSet = new Set(ordered);
-
     return ordered.filter((element) => !isNestedTurn(element, candidateSet));
   }
 
@@ -217,7 +215,6 @@
       typeof contentElement.innerText === "string"
         ? contentElement.innerText
         : contentElement.textContent || "";
-
     return normalizeText(visibleText);
   }
 
@@ -231,12 +228,10 @@
 
   function syncTurnIndex(forceFull) {
     const turns = getTurns();
-    const previousLength = previousTurns.length;
     const firstChanged = turns[0] !== previousTurns[0];
     const lastChanged =
       turns[turns.length - 1] !== previousTurns[previousTurns.length - 1];
-    const identityChanged = firstChanged || lastChanged;
-    const structuralChange = forceFull || identityChanged;
+    const structuralChange = forceFull || firstChanged || lastChanged;
 
     if (structuralChange) {
       turnIndex.clear();
@@ -267,47 +262,37 @@
       return fallbackRecord;
     });
 
-    applyPruneWindow(turns, {
-      forceFull: structuralChange || previousLength === 0,
-      previousLength,
-    });
-
+    applyPruneWindow(turns);
     previousTurns = turns;
     dirtyTurns.clear();
     fullTurnSyncRequested = false;
   }
 
-  function applyPruneWindow(turns, options = {}) {
+  function applyPruneWindow(turns) {
     const cutoff = state.pruneEnabled
       ? Math.max(0, turns.length - state.keepTurns)
       : 0;
 
-    const forceFull = options.forceFull === true;
+    for (let index = 0; index < turns.length; index++) {
+      const turnElement = turns[index];
+      const shouldDehydrate = state.pruneEnabled && index < cutoff;
 
-    if (forceFull) {
-      for (let index = 0; index < turns.length; index++) {
-        turns[index].classList.toggle(
-          "ai-turbo-dehydrated",
-          state.pruneEnabled && index < cutoff,
-        );
-      }
-    } else if (cutoff !== previousCutoff) {
-      const startIndex = Math.min(previousCutoff, cutoff);
-      const endIndex = Math.max(previousCutoff, cutoff);
-
-      for (let index = startIndex; index < endIndex; index++) {
-        const turnElement = turns[index];
-        if (!turnElement) continue;
-
-        turnElement.classList.toggle(
-          "ai-turbo-dehydrated",
-          state.pruneEnabled && index < cutoff,
-        );
+      if (shouldDehydrate) {
+        if (!turnElement.classList.contains("ai-turbo-dehydrated")) {
+          // 记忆测量高度，避免 Gemini 无限滚动发生塌缩抖动
+          const measuredH = turnElement.offsetHeight || 120;
+          turnElement.style.setProperty("--turbo-cached-h", `${measuredH}px`);
+          turnElement.classList.add("ai-turbo-dehydrated");
+        }
+      } else {
+        if (turnElement.classList.contains("ai-turbo-dehydrated")) {
+          turnElement.classList.remove("ai-turbo-dehydrated");
+          turnElement.style.removeProperty("--turbo-cached-h");
+        }
       }
     }
 
     state.hiddenCount = cutoff;
-    previousCutoff = cutoff;
   }
 
   function getCodeBlocks(rootElement = document) {
@@ -318,7 +303,7 @@
     for (const node of nodes) {
       if (!(node instanceof HTMLElement)) continue;
       if (seen.has(node)) continue;
-      if (node.closest(`.${CODE_SHELL_CLASS}`)) continue;
+      if (node.matches(".ai-turbo-code-bar, .ai-turbo-code-toggle")) continue;
 
       if (
         node.matches("pre") &&
@@ -339,10 +324,8 @@
     const preElement = codeElement.matches("pre")
       ? codeElement
       : codeElement.querySelector("pre");
-
     const sourceElement =
       preElement?.querySelector("code") || preElement || codeElement;
-
     return typeof sourceElement.textContent === "string"
       ? sourceElement.textContent
       : "";
@@ -353,7 +336,6 @@
       'code[class*="language-"], [class*="language-"]',
     );
     if (!languageElement) return "代码";
-
     const classText = String(languageElement.className || "");
     const match = classText.match(/language-([a-z0-9+#.-]+)/i);
     return match ? match[1].toUpperCase() : "代码";
@@ -365,45 +347,44 @@
     return codeText.replace(/\r\n/g, "\n").split("\n").length;
   }
 
-  function updateCodeMeta(codeStateEntry, codeElement) {
-    if (!codeStateEntry || !codeElement.isConnected) return;
-
+  function updateCodeMeta(entry, codeElement) {
+    if (!entry || !codeElement.isConnected) return;
     const lineCount = getCodeLineCount(codeElement);
     const language = getCodeLanguage(codeElement);
 
-    codeStateEntry.languageLabel.textContent = language;
-    codeStateEntry.metaLabel.textContent = lineCount
+    entry.langLabel.textContent = language;
+    entry.linesLabel.textContent = lineCount
       ? `${lineCount.toLocaleString()} 行`
-      : "代码预览";
+      : "";
 
-    codeStateEntry.toggleButton.textContent = codeStateEntry.expanded
+    entry.toggleButton.textContent = entry.expanded
       ? "收起代码"
       : `展开 ${lineCount ? `${lineCount.toLocaleString()} 行` : "代码"}`;
 
-    codeStateEntry.shell.classList.toggle(
-      "is-expanded",
-      codeStateEntry.expanded,
-    );
+    codeElement.classList.toggle("ai-turbo-folded", !entry.expanded);
+    codeElement.classList.toggle("ai-turbo-expanded", entry.expanded);
   }
 
-  function unmountCodeShell(codeElement) {
-    const codeStateEntry = codeState.get(codeElement);
-    if (!codeStateEntry) return;
+  function unmountCodeControls(codeElement) {
+    const entry = codeState.get(codeElement);
+    if (!entry) return;
 
     withSelfMutation(() => {
-      const shell = codeStateEntry.shell;
-      if (shell.parentNode) {
-        shell.parentNode.insertBefore(codeElement, shell);
-        shell.remove();
-      }
+      entry.bottomBar?.remove();
+      codeElement.classList.remove(
+        "ai-turbo-code-target",
+        "ai-turbo-folded",
+        "ai-turbo-expanded",
+      );
     });
 
     codeState.delete(codeElement);
   }
 
-  function mountCodeShell(codeElement) {
+  // 非侵入式折叠：不移动任何 DOM 节点，只作为后置兄弟节点插入切换条，彻底避免 Angular 崩溃
+  function mountCodeControls(codeElement) {
     if (!state.collapseCode || !codeElement.isConnected) return;
-    if (codeElement.closest(`.${CODE_SHELL_CLASS}`)) return;
+    if (codeState.has(codeElement)) return;
 
     const measuredHeight = Math.max(
       codeElement.scrollHeight || 0,
@@ -412,57 +393,37 @@
 
     if (measuredHeight <= CODE_COLLAPSE_HEIGHT) return;
 
-    const shell = document.createElement("div");
-    shell.className = CODE_SHELL_CLASS;
+    const bottomBar = document.createElement("div");
+    bottomBar.className = "ai-turbo-code-bar";
 
-    const header = document.createElement("div");
-    header.className = "ai-turbo-code-header";
+    const metaLeft = document.createElement("div");
+    metaLeft.className = "ai-turbo-code-bar-meta";
 
-    const headerLeft = document.createElement("div");
-    headerLeft.className = "ai-turbo-code-header-left";
+    const langLabel = document.createElement("span");
+    langLabel.className = "ai-turbo-code-lang";
+    metaLeft.appendChild(langLabel);
 
-    const languageLabel = document.createElement("span");
-    languageLabel.className = "ai-turbo-code-language";
-    headerLeft.appendChild(languageLabel);
-
-    const metaLabel = document.createElement("span");
-    metaLabel.className = "ai-turbo-code-meta";
-    headerLeft.appendChild(metaLabel);
-
-    const headerHint = document.createElement("span");
-    headerHint.className = "ai-turbo-code-status";
-    headerHint.textContent = "自动预览";
-
-    header.appendChild(headerLeft);
-    header.appendChild(headerHint);
-
-    const content = document.createElement("div");
-    content.className = "ai-turbo-code-content";
-
-    const fade = document.createElement("div");
-    fade.className = "ai-turbo-code-fade";
-
-    const footer = document.createElement("div");
-    footer.className = "ai-turbo-code-footer";
+    const linesLabel = document.createElement("span");
+    linesLabel.className = "ai-turbo-code-lines";
+    metaLeft.appendChild(linesLabel);
 
     const toggleButton = document.createElement("button");
     toggleButton.type = "button";
     toggleButton.className = "ai-turbo-code-toggle";
     toggleButton.setAttribute("aria-expanded", "false");
-    footer.appendChild(toggleButton);
 
-    codeElement.parentNode?.insertBefore(shell, codeElement);
-    shell.appendChild(header);
-    shell.appendChild(content);
-    content.appendChild(codeElement);
-    content.appendChild(fade);
-    shell.appendChild(footer);
+    bottomBar.appendChild(metaLeft);
+    bottomBar.appendChild(toggleButton);
+
+    withSelfMutation(() => {
+      codeElement.classList.add("ai-turbo-code-target", "ai-turbo-folded");
+      codeElement.insertAdjacentElement("afterend", bottomBar);
+    });
 
     const entry = {
-      shell,
-      content,
-      languageLabel,
-      metaLabel,
+      bottomBar,
+      langLabel,
+      linesLabel,
       toggleButton,
       expanded: false,
     };
@@ -474,15 +435,12 @@
       event.stopPropagation();
 
       entry.expanded = !entry.expanded;
-      shell.classList.toggle("is-expanded", entry.expanded);
       toggleButton.setAttribute("aria-expanded", String(entry.expanded));
-      headerHint.textContent = entry.expanded ? "完整代码" : "自动预览";
+      updateCodeMeta(entry, codeElement);
 
       if (!entry.expanded) {
-        shell.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        codeElement.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
-
-      updateCodeMeta(entry, codeElement);
     });
 
     updateCodeMeta(entry, codeElement);
@@ -490,13 +448,11 @@
 
   function syncCodeBlocks(forceScan, dirtyCandidates) {
     if (!state.collapseCode) {
-      document.querySelectorAll(`.${CODE_SHELL_CLASS}`).forEach((shell) => {
-        const sourceElement = shell.querySelector("pre, code-block");
-        if (sourceElement) {
-          unmountCodeShell(sourceElement);
-        }
-      });
-
+      document
+        .querySelectorAll(".ai-turbo-code-target")
+        .forEach((codeElement) => {
+          unmountCodeControls(codeElement);
+        });
       state.foldedCodeCount = 0;
       codeScanRequested = false;
       dirtyCodeBlocks.clear();
@@ -520,23 +476,11 @@
         continue;
       }
 
-      mountCodeShell(codeElement);
-    }
-
-    if (forceScan) {
-      document
-        .querySelectorAll(
-          `.${CODE_SHELL_CLASS} pre, .${CODE_SHELL_CLASS} code-block`,
-        )
-        .forEach((codeElement) => {
-          if (codeElement instanceof HTMLElement && codeResizeObserver) {
-            codeResizeObserver.observe(codeElement);
-          }
-        });
+      mountCodeControls(codeElement);
     }
 
     state.foldedCodeCount = document.querySelectorAll(
-      `.${CODE_SHELL_CLASS}:not(.is-expanded)`,
+      ".ai-turbo-code-target.ai-turbo-folded",
     ).length;
 
     codeScanRequested = false;
@@ -549,124 +493,85 @@
     const styleElement = document.createElement("style");
     styleElement.id = STYLE_ID;
     styleElement.textContent = `
+      /* 视口脱水：自适应记住先前高度，滚动平滑无跳跃 */
       .ai-turbo-dehydrated {
         content-visibility: hidden !important;
         contain: layout paint style !important;
-        contain-intrinsic-size: 1px 120px !important;
+        contain-intrinsic-size: auto 120px var(--turbo-cached-h, 120px) !important;
       }
-
       .ai-turbo-dehydrated * {
         pointer-events: none !important;
       }
 
-      .${CODE_SHELL_CLASS} {
-        display: block !important;
-        width: 100% !important;
-        margin: 14px 0 !important;
-        border: 1px solid rgba(148, 163, 184, 0.16) !important;
-        border-radius: 12px !important;
-        background: rgba(15, 23, 42, 0.56) !important;
+      /* 零侵入代码折叠样式 */
+      .ai-turbo-code-target.ai-turbo-folded {
+        max-height: ${CODE_PREVIEW_HEIGHT}px !important;
         overflow: hidden !important;
-        isolation: isolate !important;
+        position: relative !important;
+        margin-bottom: 0 !important;
+        border-bottom-left-radius: 0 !important;
+        border-bottom-right-radius: 0 !important;
       }
 
-      .${CODE_SHELL_CLASS} .ai-turbo-code-header,
-      .${CODE_SHELL_CLASS} .ai-turbo-code-footer {
+      .ai-turbo-code-target.ai-turbo-folded::after {
+        content: "" !important;
+        position: absolute !important;
+        inset: auto 0 0 0 !important;
+        height: 80px !important;
+        background: linear-gradient(180deg, rgba(13, 18, 28, 0) 0%, rgba(13, 18, 28, 0.95) 100%) !important;
+        pointer-events: none !important;
+        z-index: 10 !important;
+      }
+
+      .ai-turbo-code-bar {
         display: flex !important;
         align-items: center !important;
         justify-content: space-between !important;
         min-height: 34px !important;
-        padding: 7px 10px !important;
-        background: rgba(15, 23, 42, 0.72) !important;
-        border-color: rgba(148, 163, 184, 0.1) !important;
+        padding: 5px 12px !important;
+        background: rgba(22, 27, 34, 0.96) !important;
+        border: 1px solid rgba(148, 163, 184, 0.2) !important;
+        border-top: none !important;
+        border-bottom-left-radius: 10px !important;
+        border-bottom-right-radius: 10px !important;
+        box-sizing: border-box !important;
+        margin-bottom: 14px !important;
+        z-index: 11 !important;
       }
 
-      .${CODE_SHELL_CLASS} .ai-turbo-code-header {
-        gap: 12px !important;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.1) !important;
-      }
-
-      .${CODE_SHELL_CLASS} .ai-turbo-code-footer {
-        justify-content: center !important;
-        border-top: 1px solid rgba(148, 163, 184, 0.1) !important;
-      }
-
-      .${CODE_SHELL_CLASS} .ai-turbo-code-header-left {
+      .ai-turbo-code-bar-meta {
         display: inline-flex !important;
         align-items: center !important;
         gap: 8px !important;
-        min-width: 0 !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+        font-size: 11px !important;
       }
 
-      .${CODE_SHELL_CLASS} .ai-turbo-code-language {
-        color: #e2e8f0 !important;
-        font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace !important;
-        letter-spacing: 0.02em !important;
+      .ai-turbo-code-lang {
+        font-weight: 700 !important;
+        color: #34d399 !important;
       }
 
-      .${CODE_SHELL_CLASS} .ai-turbo-code-meta,
-      .${CODE_SHELL_CLASS} .ai-turbo-code-status {
-        color: #7c8aa0 !important;
-        font: 500 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+      .ai-turbo-code-lines {
+        color: #64748b !important;
       }
 
-      .${CODE_SHELL_CLASS} .ai-turbo-code-content {
-        position: relative !important;
-        overflow: hidden !important;
-        max-height: ${CODE_PREVIEW_HEIGHT}px !important;
-      }
-
-      .${CODE_SHELL_CLASS}.is-expanded .ai-turbo-code-content {
-        max-height: none !important;
-        overflow: visible !important;
-      }
-
-      .${CODE_SHELL_CLASS} .ai-turbo-code-fade {
-        position: absolute !important;
-        inset: auto 0 0 0 !important;
-        height: 72px !important;
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0), rgba(15, 23, 42, 0.92)) !important;
-        pointer-events: none !important;
-        opacity: 1 !important;
-        transition: opacity 160ms ease !important;
-      }
-
-      .${CODE_SHELL_CLASS}.is-expanded .ai-turbo-code-fade {
-        opacity: 0 !important;
-      }
-
-      .${CODE_SHELL_CLASS} .ai-turbo-code-toggle {
+      .ai-turbo-code-toggle {
         appearance: none !important;
-        border: 0 !important;
-        background: transparent !important;
-        color: #cbd5e1 !important;
-        padding: 4px 10px !important;
-        border-radius: 7px !important;
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(148, 163, 184, 0.25) !important;
+        color: #f1f5f9 !important;
+        padding: 4px 12px !important;
+        border-radius: 6px !important;
         font: 600 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
         cursor: pointer !important;
-        transition: background 140ms ease, color 140ms ease !important;
+        transition: all 120ms ease !important;
       }
 
-      .${CODE_SHELL_CLASS} .ai-turbo-code-toggle:hover {
-        background: rgba(148, 163, 184, 0.12) !important;
-        color: #f8fafc !important;
-      }
-
-      .${CODE_SHELL_CLASS} .ai-turbo-code-toggle:focus-visible {
-        outline: 2px solid rgba(52, 211, 153, 0.72) !important;
-        outline-offset: 2px !important;
-      }
-
-      .${CODE_SHELL_CLASS} pre,
-      .${CODE_SHELL_CLASS} code-block {
-        max-width: 100% !important;
-        box-sizing: border-box !important;
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .${CODE_SHELL_CLASS} .ai-turbo-code-toggle {
-          transition: none !important;
-        }
+      .ai-turbo-code-toggle:hover {
+        background: rgba(52, 211, 153, 0.2) !important;
+        color: #34d399 !important;
+        border-color: rgba(52, 211, 153, 0.4) !important;
       }
     `;
 
@@ -682,7 +587,6 @@
 
   function togglePanel(forceState) {
     if (!hudRootElement || !hudShadowRoot) return;
-
     state.hudOpen =
       typeof forceState === "boolean" ? forceState : !state.hudOpen;
 
@@ -696,7 +600,6 @@
 
   function renderSearchResults(queryText) {
     if (!searchResultsBox) return;
-
     searchResultsBox.textContent = "";
     if (!queryText) return;
 
@@ -725,7 +628,7 @@
         togglePanel(false);
         record.element.classList.remove("ai-turbo-dehydrated");
         record.element.scrollIntoView({ behavior: "smooth", block: "center" });
-        record.element.style.outline = "1px solid rgba(52, 211, 153, 0.7)";
+        record.element.style.outline = "2px solid rgba(52, 211, 153, 0.85)";
         record.element.style.outlineOffset = "4px";
 
         window.setTimeout(() => {
@@ -741,20 +644,15 @@
   function buildHUD() {
     if (hudRootElement?.isConnected) return;
 
-    // 挂载到根节点，免疫前端 SPA 路由切换时清除 body 子节点的操作
     const mountTarget = document.documentElement || document.body;
     if (!mountTarget) return;
 
     const existingRoot = document.getElementById(HUD_ID);
-    if (existingRoot) {
-      existingRoot.remove();
-    }
+    if (existingRoot) existingRoot.remove();
 
     hudRootElement = document.createElement("div");
     hudRootElement.id = HUD_ID;
     hudRootElement.setAttribute("data-ai-turbo-host", "1");
-
-    // 全局穿透容器，不影响任何网页点击与布局
     hudRootElement.style.cssText = [
       "all: initial !important",
       "position: fixed !important",
@@ -770,40 +668,35 @@
       * { box-sizing: border-box; }
       button, input { font: inherit; }
 
-      /* 右下角极简常驻胶囊按钮 */
       .docked-pill {
         pointer-events: auto;
-        position: absolute;
-        bottom: 24px;
-        right: 24px;
+        position: fixed;
         display: inline-flex;
         align-items: center;
         gap: 6px;
         height: 32px;
         padding: 0 12px;
         border-radius: 999px;
-        background: rgba(13, 18, 28, 0.88);
-        border: 1px solid rgba(52, 211, 153, 0.35);
+        background: rgba(13, 18, 28, 0.92);
+        border: 1px solid rgba(52, 211, 153, 0.4);
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
         color: #e2e8f0;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         font-size: 11px;
         font-weight: 600;
-        cursor: pointer;
+        cursor: grab;
         user-select: none;
-        transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+        touch-action: none;
       }
+      .docked-pill:active { cursor: grabbing; }
       .docked-pill:hover {
-        transform: translateY(-1px);
-        border-color: rgba(52, 211, 153, 0.7);
+        border-color: rgba(52, 211, 153, 0.8);
         color: #34d399;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
       }
-      .docked-pill svg { width: 14px; height: 14px; fill: #34d399; }
+      .docked-pill svg { width: 14px; height: 14px; fill: #34d399; pointer-events: none; }
 
-      /* 模态遮罩层 */
       .modal-backdrop {
         position: absolute;
         inset: 0;
@@ -824,7 +717,6 @@
         pointer-events: auto;
       }
 
-      /* 居中面板主窗体 */
       .hud-panel {
         pointer-events: auto;
         width: 380px;
@@ -839,9 +731,7 @@
         transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
-      .modal-backdrop.open .hud-panel {
-        transform: scale(1);
-      }
+      .modal-backdrop.open .hud-panel { transform: scale(1); }
 
       .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
       .brand { display: flex; align-items: center; gap: 8px; }
@@ -890,7 +780,7 @@
     hudShadowRoot.innerHTML = `
       <style>${styles}</style>
 
-      <button class="docked-pill" id="pill-trigger" type="button" title="点击呼出 (Alt+T)">
+      <button class="docked-pill" id="pill-trigger" type="button" title="点击呼出 (Alt+T)，可拖拽避开其他按钮">
         <svg viewBox="0 0 24 24"><path d="M13 2L3 14h8l-1 8 11-12h-8l1-8z"/></svg>
         <span>Turbo</span>
       </button>
@@ -980,44 +870,40 @@
       folded: hudShadowRoot.getElementById("folded-val"),
     };
 
-    pill?.addEventListener("click", () => togglePanel(true));
-    btnClose?.addEventListener("click", () => togglePanel(false));
+    // 胶囊位置初始化与自由拖拽（智能避开 Voyager 与 Timeline）
+    initPillDrag(pill);
 
+    btnClose?.addEventListener("click", () => togglePanel(false));
     backdrop?.addEventListener("click", (event) => {
-      if (event.target === backdrop) {
-        togglePanel(false);
-      }
+      if (event.target === backdrop) togglePanel(false);
     });
 
     chkPrune?.addEventListener("change", () => {
       state.pruneEnabled = chkPrune.checked;
-      previousCutoff = -1;
       fullTurnSyncRequested = true;
-      requestUpdate("prune-toggle");
+      requestUpdate();
     });
 
     chkCollapse?.addEventListener("change", () => {
       state.collapseCode = chkCollapse.checked;
       codeScanRequested = true;
-      requestUpdate("code-toggle");
+      requestUpdate();
     });
 
     stepDec?.addEventListener("click", () => {
       if (state.keepTurns <= 2) return;
       state.keepTurns--;
       keepVal.textContent = String(state.keepTurns);
-      previousCutoff = -1;
       fullTurnSyncRequested = true;
-      requestUpdate("keep-decrement");
+      requestUpdate();
     });
 
     stepInc?.addEventListener("click", () => {
       if (state.keepTurns >= 50) return;
       state.keepTurns++;
       keepVal.textContent = String(state.keepTurns);
-      previousCutoff = -1;
       fullTurnSyncRequested = true;
-      requestUpdate("keep-increment");
+      requestUpdate();
     });
 
     btnFork?.addEventListener("click", () => {
@@ -1036,6 +922,86 @@
       searchDebounceTimer = window.setTimeout(() => {
         renderSearchResults(searchInput.value.trim());
       }, 100);
+    });
+  }
+
+  function initPillDrag(pill) {
+    if (!pill) return;
+
+    // 默认避让位置（避开右下角常用工具栏）
+    let posX = window.innerWidth - 110;
+    let posY = window.innerHeight - 80;
+
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY_POS) || "null");
+      if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
+        posX = Math.min(window.innerWidth - 80, Math.max(10, saved.x));
+        posY = Math.min(window.innerHeight - 50, Math.max(10, saved.y));
+      }
+    } catch (_) {}
+
+    pill.style.left = `${posX}px`;
+    pill.style.top = `${posY}px`;
+
+    let isDragging = false;
+    let startX = 0,
+      startY = 0;
+    let originX = 0,
+      originY = 0;
+
+    const onPointerMove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      let nextX = originX + dx;
+      let nextY = originY + dy;
+
+      nextX = Math.max(
+        8,
+        Math.min(window.innerWidth - pill.offsetWidth - 8, nextX),
+      );
+      nextY = Math.max(
+        8,
+        Math.min(window.innerHeight - pill.offsetHeight - 8, nextY),
+      );
+
+      pill.style.left = `${nextX}px`;
+      pill.style.top = `${nextY}px`;
+    };
+
+    const onPointerUp = (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+
+      const dx = Math.abs(e.clientX - startX);
+      const dy = Math.abs(e.clientY - startY);
+
+      if (dx < 4 && dy < 4) {
+        togglePanel(true);
+      } else {
+        try {
+          const rect = pill.getBoundingClientRect();
+          localStorage.setItem(
+            STORAGE_KEY_POS,
+            JSON.stringify({ x: rect.left, y: rect.top }),
+          );
+        } catch (_) {}
+      }
+    };
+
+    pill.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = pill.getBoundingClientRect();
+      originX = rect.left;
+      originY = rect.top;
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
     });
   }
 
@@ -1062,7 +1028,7 @@
     const markdown = [
       `# 会话上下文提取 [${currentPlatform.name}]`,
       "",
-      `> ${new Date().toLocaleString()}`,
+      `> 提取时间: ${new Date().toLocaleString()}`,
       "",
       sections.join("\n\n---\n\n"),
       "",
@@ -1071,9 +1037,7 @@
     navigator.clipboard
       .writeText(markdown)
       .then(() => {
-        if (typeof onSuccess === "function") {
-          onSuccess(sections.length);
-        }
+        if (typeof onSuccess === "function") onSuccess(sections.length);
       })
       .catch(() => {
         window.alert("写入剪贴板失败，请检查浏览器权限。");
@@ -1089,7 +1053,7 @@
 
       if (
         mutationTarget instanceof Element &&
-        mutationTarget.closest(`#${HUD_ID}, .${CODE_SHELL_CLASS}`)
+        mutationTarget.closest(`#${HUD_ID}, .ai-turbo-code-bar`)
       ) {
         continue;
       }
@@ -1153,20 +1117,17 @@
   }
 
   function runScheduledUpdate() {
-    scheduleFrameId = 0;
     scheduleQueued = false;
 
     if (selfMutationDepth > 0) {
-      requestUpdate("self-mutation-retry");
+      requestUpdate();
       return;
     }
 
     const currentTurnSet = new Set(previousTurns);
-
     for (const dirtyTurn of dirtyTurns) {
-      if (dirtyTurn instanceof Element && currentTurnSet.has(dirtyTurn)) {
+      if (dirtyTurn instanceof Element && currentTurnSet.has(dirtyTurn))
         continue;
-      }
       fullTurnSyncRequested = true;
     }
 
@@ -1179,7 +1140,7 @@
   function requestUpdate() {
     if (scheduleQueued) return;
     scheduleQueued = true;
-    scheduleFrameId = window.requestAnimationFrame(runScheduledUpdate);
+    window.requestAnimationFrame(runScheduledUpdate);
   }
 
   function observeCodeLayout() {
@@ -1193,7 +1154,7 @@
         const codeElement = resizeEntry.target;
         if (!(codeElement instanceof HTMLElement)) continue;
 
-        if (codeElement.closest(`.${CODE_SHELL_CLASS}`)) {
+        if (codeElement.classList.contains("ai-turbo-code-target")) {
           dirtyCodeBlocks.add(codeElement);
           shouldSchedule = true;
           continue;
@@ -1208,9 +1169,7 @@
         }
       }
 
-      if (shouldSchedule) {
-        requestUpdate("code-resize");
-      }
+      if (shouldSchedule) requestUpdate();
     });
 
     for (const codeElement of getCodeBlocks()) {
@@ -1225,7 +1184,7 @@
     observer = new MutationObserver((mutationRecords) => {
       if (selfMutationDepth > 0) return;
       collectMutationTargets(mutationRecords);
-      requestUpdate("dom-mutation");
+      requestUpdate();
     });
 
     observer.observe(document.documentElement || document.body, {
@@ -1238,9 +1197,7 @@
   function ensureHUDMounted() {
     if (hudRootElement?.isConnected) return;
     const mountTarget = document.documentElement || document.body;
-    if (mountTarget) {
-      buildHUD();
-    }
+    if (mountTarget) buildHUD();
   }
 
   function patchHistoryForSpaNavigation() {
@@ -1252,7 +1209,7 @@
       window.setTimeout(() => {
         fullTurnSyncRequested = true;
         codeScanRequested = true;
-        requestUpdate("push-state");
+        requestUpdate();
         ensureHUDMounted();
       }, 0);
       return result;
@@ -1263,7 +1220,7 @@
       window.setTimeout(() => {
         fullTurnSyncRequested = true;
         codeScanRequested = true;
-        requestUpdate("replace-state");
+        requestUpdate();
         ensureHUDMounted();
       }, 0);
       return result;
@@ -1272,7 +1229,7 @@
     window.addEventListener("popstate", () => {
       fullTurnSyncRequested = true;
       codeScanRequested = true;
-      requestUpdate("pop-state");
+      requestUpdate();
       ensureHUDMounted();
     });
   }
@@ -1286,11 +1243,11 @@
 
     fullTurnSyncRequested = true;
     codeScanRequested = true;
-    requestUpdate("boot");
+    requestUpdate();
 
     window.addEventListener("load", () => {
       ensureHUDMounted();
-      requestUpdate("load");
+      requestUpdate();
     });
 
     window.setTimeout(() => ensureHUDMounted(), 250);
