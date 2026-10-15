@@ -215,6 +215,193 @@
         "fieldset button:last-child",
       ],
     },
+    deepseek: {
+      name: "DeepSeek",
+      turnSelectors: [
+        ".ds-message",
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+      ],
+      userContentSelectors: [
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+        ".ds-message",
+      ],
+      codeSelectors: ["pre", "code-block"],
+      contentSelectors: [".ds-markdown", ".markdown", ".prose", '[class*="markdown"]'],
+      inputSelectors: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        "textarea",
+        '[contenteditable="true"]',
+      ],
+      sendButtonSelectors: [
+        'button[data-testid*="send"]',
+        'button[type="submit"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+      ],
+    },
+    copilot: {
+      name: "Microsoft Copilot",
+      turnSelectors: [
+        '[class*="user-message"]',
+        '[class*="assistant-message"]',
+        '[data-testid*="message"]',
+      ],
+      userTurnSelectors: [
+        '[class*="user-message"]',
+        '[data-testid*="user-message"]',
+        '[data-message-author-role="user"]',
+      ],
+      userContentSelectors: [
+        '[class*="user-message"]',
+        '[data-testid*="user-message"]',
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".ac-textBlock",
+        ".markdown",
+        ".prose",
+        '[class*="message-content"]',
+      ],
+      inputSelectors: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        'button[data-testid*="send"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
+    perplexity: {
+      name: "Perplexity",
+      turnSelectors: [
+        '[data-testid="chat-message"]',
+        '[data-testid*="chat-message"]',
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[data-testid*="user-message"]',
+        '[data-message-author-role="user"]',
+        '[class*="user-message"]',
+        '[class*="human"]',
+      ],
+      userContentSelectors: [
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+        ".whitespace-pre-wrap",
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".prose",
+        ".markdown",
+        '[class*="prose"]',
+        '[class*="message-content"]',
+      ],
+      inputSelectors: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        'button[data-testid*="send"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
+    poe: {
+      name: "Poe",
+      turnSelectors: [
+        ".Message",
+        ".ChatMessage",
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-testid*="user-message"]',
+        '[class*="UserMessage"]',
+        '[class*="humanMessage"]',
+      ],
+      userContentSelectors: [
+        '[data-testid*="user-message"]',
+        '[class*="UserMessage"]',
+        ".Message",
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".markdown",
+        ".MessageContent",
+        '[class*="messageContent"]',
+        '[class*="message-content"]',
+      ],
+      inputSelectors: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        'button[data-testid*="send"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
+    doubao: {
+      name: "Doubao",
+      turnSelectors: [
+        '[data-testid="message_content"]',
+        '[data-testid*="message_content"]',
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-message-role="user"]',
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+      ],
+      userContentSelectors: [
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+        '[data-testid="message_content"]',
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        '[data-testid="message_content"]',
+        '[data-testid*="message_content"]',
+        ".markdown",
+        '[class*="message-content"]',
+      ],
+      inputSelectors: [
+        '[data-testid="chat_input_input"]',
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        '[data-testid="chat_input_send_button"]',
+        'button[data-testid*="send"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
   };
 
   function hostnameMatches(hostname, domains) {
@@ -241,6 +428,21 @@
     }
     if (hostnameMatches(hostname, ["claude.ai"])) {
       return PLATFORMS.claude;
+    }
+    if (hostnameMatches(hostname, ["deepseek.com"])) {
+      return PLATFORMS.deepseek;
+    }
+    if (hostnameMatches(hostname, ["copilot.microsoft.com"])) {
+      return PLATFORMS.copilot;
+    }
+    if (hostnameMatches(hostname, ["perplexity.ai"])) {
+      return PLATFORMS.perplexity;
+    }
+    if (hostnameMatches(hostname, ["poe.com"])) {
+      return PLATFORMS.poe;
+    }
+    if (hostnameMatches(hostname, ["doubao.com"])) {
+      return PLATFORMS.doubao;
     }
     return null;
   }
@@ -392,6 +594,48 @@
   function isUserTurn(turnElement) {
     if (!(turnElement instanceof Element)) return false;
 
+    const contentSearchKey = turnElement.getAttribute(
+      "data-content-search-unit-key",
+    );
+    if (contentSearchKey && /:(user|human)$/i.test(contentSearchKey)) {
+      return true;
+    }
+    if (contentSearchKey && /:(assistant|model|system)$/i.test(contentSearchKey)) {
+      return false;
+    }
+
+    const roleValues = [
+      turnElement.getAttribute("data-message-author-role"),
+      turnElement.getAttribute("data-role"),
+      turnElement.getAttribute("data-message-role"),
+      turnElement.getAttribute("data-conversation-role"),
+    ].filter(Boolean);
+    if (roleValues.some((role) => /^(user|human)$/i.test(role))) return true;
+    if (roleValues.some((role) => /^(assistant|model|system)$/i.test(role))) {
+      return false;
+    }
+
+    const platformUserSelectors = currentPlatform.userTurnSelectors || [];
+    for (const selector of platformUserSelectors) {
+      if (
+        turnElement.matches(selector) ||
+        turnElement.querySelector(selector)
+      ) {
+        return true;
+      }
+    }
+
+    // Some platforms mark the wrapper's parent rather than the message-content node.
+    let ancestor = turnElement.parentElement;
+    let ancestorDepth = 0;
+    while (ancestor && ancestorDepth < 3) {
+      if (platformUserSelectors.some((selector) => ancestor.matches(selector))) {
+        return true;
+      }
+      ancestor = ancestor.parentElement;
+      ancestorDepth++;
+    }
+
     if (
       turnElement.matches(
         "user-query, [data-test-id='user-query'], .user-query, .user-query-container",
@@ -399,14 +643,6 @@
       turnElement.querySelector(
         ".user-query-text, .query-text, [class*='query-content']",
       )
-    ) {
-      return true;
-    }
-
-    if (
-      turnElement.matches('[data-message-author-role="user"]') ||
-      turnElement.getAttribute("data-message-author-role") === "user" ||
-      turnElement.querySelector('[data-message-author-role="user"]')
     ) {
       return true;
     }
@@ -865,7 +1101,7 @@
         if (
           candidate.classList.contains("ai-turbo-chat-folded-target") ||
           candidate.closest(
-            ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], .font-user-message",
+            ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], [data-content-search-unit-key$=':user'], [data-user-message-bubble='true'], [data-testid='collapsible-user-message-root'], .font-user-message",
           )
         ) {
           return;
@@ -1155,15 +1391,38 @@
   }
 
   function getChatInput() {
-    for (const sel of currentPlatform.inputSelectors) {
-      const elem = document.querySelector(sel);
-      if (elem && elem.offsetParent !== null) return elem;
+    const selectors = [
+      ...(currentPlatform.inputSelectors || []),
+      'form[data-chatgpt-composer] [contenteditable="true"][role="textbox"]',
+      'div.ProseMirror[contenteditable="true"][role="textbox"]',
+      "rich-textarea div[contenteditable='true']",
+      'div[contenteditable="true"][role="textbox"]',
+      "textarea",
+      '[contenteditable="true"]',
+    ];
+
+    for (const selector of [...new Set(selectors)]) {
+      const candidates = document.querySelectorAll(selector);
+      for (const candidate of candidates) {
+        if (
+          !(candidate instanceof HTMLElement) ||
+          !candidate.isConnected ||
+          candidate.closest("#" + HUD_ID) ||
+          (candidate.offsetParent === null && candidate.getClientRects().length === 0)
+        ) {
+          continue;
+        }
+        if (
+          candidate.matches('input[type="hidden"], textarea[aria-hidden="true"]') ||
+          candidate.getAttribute("aria-hidden") === "true"
+        ) {
+          continue;
+        }
+        return candidate;
+      }
     }
-    return (
-      document.querySelector(
-        "rich-textarea div[contenteditable='true'], textarea, [contenteditable='true']",
-      ) || null
-    );
+
+    return null;
   }
 
   function getInputContainer(input) {
@@ -1757,6 +2016,8 @@
         for (const btn of candidates) {
           if (
             btn instanceof HTMLElement &&
+            btn.isConnected &&
+            (btn.offsetParent !== null || btn.getClientRects().length > 0) &&
             !btn.hasAttribute("disabled") &&
             btn.getAttribute("aria-disabled") !== "true"
           ) {
@@ -1777,7 +2038,11 @@
       if (attempts >= 8) {
         for (const sel of currentPlatform.sendButtonSelectors || []) {
           const btn = document.querySelector(sel);
-          if (btn instanceof HTMLElement) {
+          if (
+            btn instanceof HTMLElement &&
+            btn.isConnected &&
+            (btn.offsetParent !== null || btn.getClientRects().length > 0)
+          ) {
             clearInterval(timer);
             btn.removeAttribute("disabled");
             btn.setAttribute("aria-disabled", "false");
@@ -1843,8 +2108,10 @@
     }
 
     if (event.type === "click") {
-      const btn = event.target.closest(
-        currentPlatform.sendButtonSelectors.join(","),
+      const eventTarget = event.target;
+      if (!(eventTarget instanceof Element)) return;
+      const btn = eventTarget.closest(
+        (currentPlatform.sendButtonSelectors || []).join(","),
       );
       if (btn) {
         event.preventDefault();
