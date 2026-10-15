@@ -1448,8 +1448,8 @@
 
     const inputForm = inputElement.closest("form");
     const sendForm = sendControl.closest("form");
-    if (inputForm || sendForm) {
-      return Boolean(inputForm && inputForm === sendForm);
+    if (inputForm && sendForm) {
+      return inputForm === sendForm;
     }
 
     const composerSelectors = [
@@ -1464,12 +1464,25 @@
       "fieldset",
     ];
 
-    return composerSelectors.some((selector) => {
+    const sharesComposerContainer = composerSelectors.some((selector) => {
       const inputContainer = inputElement.closest(selector);
       return Boolean(
         inputContainer && inputContainer === sendControl.closest(selector),
       );
     });
+    if (sharesComposerContainer) return true;
+
+    // Some platforms render the input and send control as siblings without a
+    // shared form or a consistently named composer wrapper.
+    let ancestor = inputElement.parentElement;
+    let depth = 0;
+    while (ancestor && depth < 5 && ancestor !== document.body) {
+      if (ancestor.contains(sendControl)) return true;
+      ancestor = ancestor.parentElement;
+      depth++;
+    }
+
+    return false;
   }
 
   function getInputContainer(input) {
