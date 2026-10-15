@@ -1,14 +1,22 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.9.2
-// @description  独立药囊长代码折叠(流式防卡顿) + 长文本智能伪文件胶囊(呼吸悬浮净空·用户原始提问常驻·读写分离防死锁) + 增量消息索引 + 自适应脱水 + 纯DOM免疫CSP
+// @version      0.10.0
+// @description  跨平台 AI 对话加速：新旧 ChatGPT DOM 兼容 + 多平台适配 + 长代码折叠 + 长文本虚拟文件胶囊 + 增量消息索引 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
+// @match        https://chat.openai.com/*
 // @match        https://gemini.google.com/*
 // @match        https://grok.com/*
 // @match        https://x.com/i/grok*
 // @match        https://claude.ai/*
+// @match        https://chat.deepseek.com/*
+// @match        https://copilot.microsoft.com/*
+// @match        https://perplexity.ai/*
+// @match        https://www.perplexity.ai/*
+// @match        https://poe.com/*
+// @match        https://doubao.com/*
+// @match        https://www.doubao.com/*
 // @run-at       document-start
 // @grant        none
 // @noframes
@@ -19,7 +27,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.9.2";
+  const VERSION = "0.10.0";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -41,23 +49,83 @@
   const PLATFORMS = {
     chatgpt: {
       name: "ChatGPT",
+      turnSelectorGroups: [
+        [
+          '[data-content-search-unit-key$=":user"]',
+          '[data-content-search-unit-key$=":assistant"]',
+        ],
+        [
+          '[data-message-author-role="user"]',
+          '[data-message-author-role="assistant"]',
+          '[data-role="user"]',
+          '[data-role="assistant"]',
+        ],
+        [
+          '[data-testid^="conversation-turn-"]',
+          "article[data-turn]",
+          "section[data-turn]",
+        ],
+        ["[data-turn-key]"],
+      ],
       turnSelectors: [
+        '[data-content-search-unit-key$=":user"]',
+        '[data-content-search-unit-key$=":assistant"]',
         '[data-message-author-role="user"]',
         '[data-message-author-role="assistant"]',
-        'article[data-testid^="conversation-turn-"]',
+        '[data-role="user"]',
+        '[data-role="assistant"]',
+        '[data-testid^="conversation-turn-"]',
+        "article[data-turn]",
+        "section[data-turn]",
+        "[data-turn-key]",
+      ],
+      userTurnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-role="user"]',
+        '[data-content-search-unit-key$=":user"]',
+        '[data-user-message-bubble="true"]',
+        '[data-testid="collapsible-user-message-root"]',
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+      ],
+      userContentSelectors: [
+        '[data-testid="collapsible-user-message-root"]',
+        ".whitespace-pre-wrap",
+        '[data-user-message-bubble="true"]',
+        '[data-content-search-unit-key$=":user"]',
+        '[data-message-author-role="user"]',
       ],
       codeSelectors: ["pre"],
-      contentSelectors: ["div.markdown", "div.prose", '[class*="markdown"]'],
+      contentSelectors: [
+        ".markdown",
+        ".prose",
+        '[class*="markdown"]',
+        ".whitespace-pre-wrap",
+        '[data-content-search-unit-key$=":assistant"]',
+        '[data-message-author-role="assistant"]',
+        '[data-testid="message-content"]',
+      ],
       inputSelectors: [
+        'form[data-chatgpt-composer] [contenteditable="true"][role="textbox"]',
+        'form[data-chatgpt-composer] [contenteditable="true"]',
+        '[data-chatgpt-composer] [contenteditable="true"]',
+        'div.ProseMirror[contenteditable="true"][role="textbox"]',
         "#prompt-textarea",
+        'textarea[name="prompt-textarea"]',
+        'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
         "textarea",
       ],
       sendButtonSelectors: [
+        'form[data-chatgpt-composer] button[type="submit"]',
+        'form[data-chatgpt-composer] button[data-testid*="send"]',
+        'form[data-chatgpt-composer] button[aria-label*="Send"]',
+        'form[data-chatgpt-composer] button[aria-label*="发送"]',
         'button[data-testid="send-button"]',
         'button[data-testid="fruitjuice-send-button"]',
         'button[aria-label*="Send"]',
         'button[aria-label*="发送"]',
+        'button[type="submit"]',
       ],
     },
     gemini: {
@@ -149,13 +217,31 @@
     },
   };
 
+  function hostnameMatches(hostname, domains) {
+    return domains.some(
+      (domain) => hostname === domain || hostname.endsWith("." + domain),
+    );
+  }
+
   function detectPlatform() {
-    const host = window.location.hostname;
-    if (host.includes("chatgpt.com")) return PLATFORMS.chatgpt;
-    if (host.includes("gemini.google.com")) return PLATFORMS.gemini;
-    if (host.includes("grok.com") || host.includes("x.com"))
+    const hostname = window.location.hostname.toLowerCase();
+    const pathname = window.location.pathname;
+
+    if (hostnameMatches(hostname, ["chatgpt.com", "chat.openai.com"])) {
+      return PLATFORMS.chatgpt;
+    }
+    if (hostnameMatches(hostname, ["gemini.google.com"])) {
+      return PLATFORMS.gemini;
+    }
+    if (
+      hostnameMatches(hostname, ["grok.com"]) ||
+      (hostname === "x.com" && pathname.startsWith("/i/grok"))
+    ) {
       return PLATFORMS.grok;
-    if (host.includes("claude.ai")) return PLATFORMS.claude;
+    }
+    if (hostnameMatches(hostname, ["claude.ai"])) {
+      return PLATFORMS.claude;
+    }
     return null;
   }
 
@@ -377,9 +463,21 @@
     });
   }
 
+  function getActiveTurnSelectors() {
+    const selectorGroups = currentPlatform.turnSelectorGroups;
+    if (Array.isArray(selectorGroups)) {
+      for (const selectorGroup of selectorGroups) {
+        if (selectorGroup.some((selector) => document.querySelector(selector))) {
+          return selectorGroup;
+        }
+      }
+    }
+    return currentPlatform.turnSelectors;
+  }
+
   function getTurns() {
     const collected = [];
-    for (const selector of currentPlatform.turnSelectors) {
+    for (const selector of getActiveTurnSelectors()) {
       document
         .querySelectorAll(selector)
         .forEach((elem) => collected.push(elem));
@@ -390,9 +488,22 @@
   }
 
   function findContentElement(turnElement) {
-    for (const selector of currentPlatform.contentSelectors) {
-      const match = turnElement.querySelector(selector);
-      if (match && !isGeminiThoughtElement(match)) return match;
+    const selectorGroups = [];
+    if (
+      isUserTurn(turnElement) &&
+      Array.isArray(currentPlatform.userContentSelectors)
+    ) {
+      selectorGroups.push(currentPlatform.userContentSelectors);
+    }
+    selectorGroups.push(currentPlatform.contentSelectors || []);
+
+    for (const selectorGroup of selectorGroups) {
+      for (const selector of selectorGroup) {
+        const match = turnElement.matches(selector)
+          ? turnElement
+          : turnElement.querySelector(selector);
+        if (match && !isGeminiThoughtElement(match)) return match;
+      }
     }
     return turnElement;
   }
@@ -2709,7 +2820,7 @@
   }
 
   function collectMutationTargets(records) {
-    const turnSelector = currentPlatform.turnSelectors.join(",");
+    const turnSelector = getActiveTurnSelectors().join(",");
     let structuralChange = false;
 
     for (const mutationRecord of records) {
