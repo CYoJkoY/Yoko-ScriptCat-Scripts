@@ -521,6 +521,7 @@
   let dirtyTurns = new Set();
   let dirtyCodeBlocks = new Set();
   let previousTurns = [];
+  let activeTurnSelectorGroup = null;
   let selfMutationDepth = 0;
 
   function el(tag, attrs = {}, children = []) {
@@ -701,14 +702,26 @@
 
   function getActiveTurnSelectors() {
     const selectorGroups = currentPlatform.turnSelectorGroups;
-    if (Array.isArray(selectorGroups)) {
-      for (const selectorGroup of selectorGroups) {
-        if (selectorGroup.some((selector) => document.querySelector(selector))) {
-          return selectorGroup;
-        }
+    if (!Array.isArray(selectorGroups)) {
+      return currentPlatform.turnSelectors;
+    }
+
+    if (activeTurnSelectorGroup) {
+      return activeTurnSelectorGroup;
+    }
+
+    for (const selectorGroup of selectorGroups) {
+      if (selectorGroup.some((selector) => document.querySelector(selector))) {
+        activeTurnSelectorGroup = selectorGroup;
+        return activeTurnSelectorGroup;
       }
     }
+
     return currentPlatform.turnSelectors;
+  }
+
+  function invalidateActiveTurnSelectorGroup() {
+    activeTurnSelectorGroup = null;
   }
 
   function getTurns() {
@@ -1425,6 +1438,40 @@
     return null;
   }
 
+  function isSendControlForInput(sendControl, inputElement) {
+    if (
+      !(sendControl instanceof HTMLElement) ||
+      !(inputElement instanceof HTMLElement)
+    ) {
+      return false;
+    }
+
+    const inputForm = inputElement.closest("form");
+    const sendForm = sendControl.closest("form");
+    if (inputForm || sendForm) {
+      return Boolean(inputForm && inputForm === sendForm);
+    }
+
+    const composerSelectors = [
+      "[data-chatgpt-composer]",
+      ".input-area",
+      ".input-area-container",
+      "rich-textarea",
+      "[class*='composer-parent']",
+      "[class*='input-area']",
+      "[class*='composer']",
+      "[class*='input-container']",
+      "fieldset",
+    ];
+
+    return composerSelectors.some((selector) => {
+      const inputContainer = inputElement.closest(selector);
+      return Boolean(
+        inputContainer && inputContainer === sendControl.closest(selector),
+      );
+    });
+  }
+
   function getInputContainer(input) {
     if (!input) return null;
     const candidates = [
@@ -2110,21 +2157,22 @@
     if (event.type === "click") {
       const eventTarget = event.target;
       if (!(eventTarget instanceof Element)) return;
-      const btn = eventTarget.closest(
+
+      const sendControl = eventTarget.closest(
         (currentPlatform.sendButtonSelectors || []).join(","),
       );
-      if (btn) {
-        event.preventDefault();
-        event.stopPropagation();
-        const input = getChatInput();
-        if (input) {
-          isSubmitting = true;
-          fuseAndSubmit(input);
-          sendWithRetry(input, () => {
-            isSubmitting = false;
-          });
-        }
-      }
+      if (!sendControl) return;
+
+      const input = getChatInput();
+      if (!input || !isSendControlForInput(sendControl, input)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      isSubmitting = true;
+      fuseAndSubmit(input);
+      sendWithRetry(input, () => {
+        isSubmitting = false;
+      });
     }
   }
 
@@ -3261,6 +3309,7 @@
     history.pushState = function (...args) {
       const result = originalPushState.apply(this, args);
       window.setTimeout(() => {
+        invalidateActiveTurnSelectorGroup();
         fullTurnSyncRequested = true;
         codeScanRequested = true;
         requestUpdate();
@@ -3271,6 +3320,7 @@
     history.replaceState = function (...args) {
       const result = originalReplaceState.apply(this, args);
       window.setTimeout(() => {
+        invalidateActiveTurnSelectorGroup();
         fullTurnSyncRequested = true;
         codeScanRequested = true;
         requestUpdate();
@@ -3279,6 +3329,7 @@
     };
 
     window.addEventListener("popstate", () => {
+      invalidateActiveTurnSelectorGroup();
       fullTurnSyncRequested = true;
       codeScanRequested = true;
       requestUpdate();
