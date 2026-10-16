@@ -3524,10 +3524,14 @@
           el("span", { className: "slider" }),
         ]),
       ]),
-      btnFork,
+    ]);
+
+    const handoffSection = el("div", { className: "section" }, [
+      el("div", { className: "section-title" }, ["上下文交接"]),
       btnGenerateHandoff,
       btnContinueHandoff,
       handoffStatusNode,
+      btnFork,
     ]);
 
     searchInput = el("input", {
@@ -3584,6 +3588,7 @@
       panelHeader,
       statusStrip,
       strategySection,
+      handoffSection,
       searchSection,
       footerHint,
     ]);
