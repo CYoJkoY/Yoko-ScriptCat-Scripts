@@ -41,6 +41,14 @@
   const LOAD_INDICATOR_FULL_TURNS = 60;
   const LOAD_RING_RADIUS = 8.7;
   const LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
+  const TURN_MARKER_ATTRIBUTES = new Set([
+    "data-testid",
+    "data-turn",
+    "data-turn-key",
+    "data-message-author-role",
+    "data-role",
+    "data-content-search-unit-key",
+  ]);
   const SEARCH_PREVIEW_LIMIT = 180;
   const SEARCH_LIMIT = 10;
   const STORAGE_KEY_POS = "ai_turbo_pill_pos";
@@ -4374,17 +4382,9 @@
       }
 
       if (mutationRecord.type === "attributes") {
-        const markerAttributes = new Set([
-          "data-testid",
-          "data-turn",
-          "data-turn-key",
-          "data-message-author-role",
-          "data-role",
-          "data-content-search-unit-key",
-        ]);
         const attributeName = mutationRecord.attributeName || "";
         if (
-          markerAttributes.has(attributeName) &&
+          TURN_MARKER_ATTRIBUTES.has(attributeName) &&
           mutationTarget instanceof Element &&
           (
             mutationTarget.matches(allTurnSelector) ||
