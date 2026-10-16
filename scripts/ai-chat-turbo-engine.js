@@ -4382,6 +4382,7 @@
       '[data-content-search-unit-key$=":assistant"]',
     ].join(",");
     let structuralChange = false;
+    let shouldRequestUpdate = false;
 
     for (const mutationRecord of records) {
       const mutationTarget = mutationRecord.target;
@@ -4399,25 +4400,34 @@
         const attributeName = mutationRecord.attributeName || "";
         if (!(mutationTarget instanceof Element)) continue;
 
+        const isSelectorAttribute =
+          attributeName === "class" || attributeName === "id";
+        const isMarkerAttribute = TURN_MARKER_ATTRIBUTES.has(attributeName);
         const isIndexedTurn = turnIndex.has(mutationTarget);
-        const matchesKnownTurn = Boolean(allTurnSelector) && (
-          mutationTarget.matches(allTurnSelector) ||
-          mutationTarget.matches(turnMarkerSelector) ||
-          mutationTarget.matches('[data-testid^="conversation-turn-"]')
+        const matchesKnownTurn = isIndexedTurn || (
+          Boolean(allTurnSelector) && (
+            mutationTarget.matches(allTurnSelector) ||
+            mutationTarget.matches(turnMarkerSelector) ||
+            mutationTarget.matches('[data-testid^="conversation-turn-"]')
+          )
         );
 
+        // Preserve the existing refresh behaviour for marker attributes.
+        // Ignore unrelated class/id changes to avoid redundant full syncs.
+        if (isMarkerAttribute) shouldRequestUpdate = true;
+
         if (
-          (TURN_MARKER_ATTRIBUTES.has(attributeName) ||
-            attributeName === "class" ||
-            attributeName === "id") &&
-          (isIndexedTurn || matchesKnownTurn)
+          matchesKnownTurn &&
+          (isMarkerAttribute || isSelectorAttribute)
         ) {
           invalidateActiveTurnSelectorGroup();
           structuralChange = true;
+          shouldRequestUpdate = true;
         }
         continue;
       }
 
+      shouldRequestUpdate = true;
       const possibleTurn =
         mutationTarget instanceof Element
           ? mutationTarget.closest(turnSelector)
@@ -4489,6 +4499,8 @@
       fullTurnSyncRequested = true;
       codeScanRequested = true;
     }
+
+    return shouldRequestUpdate || structuralChange;
   }
 
   function runScheduledUpdate() {
@@ -4552,8 +4564,7 @@
     observer?.disconnect();
     observer = new MutationObserver((records) => {
       if (selfMutationDepth > 0) return;
-      collectMutationTargets(records);
-      requestUpdate();
+      if (collectMutationTargets(records)) requestUpdate();
     });
 
     observer.observe(observeRoot, {
