@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.10.0
-// @description  跨平台 AI 对话加速：新旧 ChatGPT DOM 兼容 + 多平台适配 + 长代码折叠 + 长文本虚拟文件胶囊 + 增量消息索引 + 自适应脱水
+// @version      0.11.0
+// @description  跨平台 AI 对话加速：新旧 ChatGPT DOM 兼容 + 主流 AI 平台适配 + 长代码折叠 + 长文本虚拟文件胶囊 + 增量消息索引 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -17,6 +17,12 @@
 // @match        https://poe.com/*
 // @match        https://doubao.com/*
 // @match        https://www.doubao.com/*
+// @match        https://yuanbao.tencent.com/*
+// @match        https://chat.qwen.ai/*
+// @match        https://qianwen.com/*
+// @match        https://www.qianwen.com/*
+// @match        https://chatglm.cn/*
+// @match        https://chat.z.ai/*
 // @run-at       document-start
 // @grant        none
 // @noframes
@@ -27,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.10.0";
+  const VERSION = "0.11.0";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -219,28 +225,50 @@
       name: "DeepSeek",
       turnSelectors: [
         ".ds-message",
+        "div[data-um-id]",
+        "div.dad65929",
+        "div._4f9bf79",
+        "div.d29f3d7d",
         '[data-message-author-role="user"]',
         '[data-message-author-role="assistant"]',
+        '[data-role="user"]',
+        '[data-role="assistant"]',
       ],
       userTurnSelectors: [
         '[data-message-author-role="user"]',
+        '[data-role="user"]',
+        "div[data-um-id]",
+        "div.d29f3d7d",
         '[data-testid*="user-message"]',
         '[class*="user-message"]',
       ],
       userContentSelectors: [
+        "._9663006 .fbb737a4",
+        ".ds-markdown",
+        "div[data-um-id]",
         '[data-testid*="user-message"]',
         '[class*="user-message"]',
-        ".ds-message",
       ],
       codeSelectors: ["pre", "code-block"],
-      contentSelectors: [".ds-markdown", ".markdown", ".prose", '[class*="markdown"]'],
+      contentSelectors: [
+        ".ds-markdown",
+        ".markdown",
+        ".prose",
+        '[class*="markdown"]',
+        '[class*="answer"]',
+      ],
       inputSelectors: [
+        "#chat-input",
+        'textarea[data-testid="chat-input"]',
+        'textarea[placeholder*="Send a message" i]',
         'textarea[placeholder]',
         'div[contenteditable="true"][role="textbox"]',
         "textarea",
         '[contenteditable="true"]',
       ],
       sendButtonSelectors: [
+        'button[data-testid="send-button"]',
+        'button[aria-label="Send message"]',
         'button[data-testid*="send"]',
         'button[type="submit"]',
         'button[aria-label*="Send"]',
@@ -364,24 +392,31 @@
     doubao: {
       name: "Doubao",
       turnSelectors: [
+        '[data-testid="send_message"]',
+        '[data-testid="receive_message"]',
+        '[data-testid="message_text_content"]',
         '[data-testid="message_content"]',
         '[data-testid*="message_content"]',
         '[data-message-author-role="user"]',
         '[data-message-author-role="assistant"]',
       ],
       userTurnSelectors: [
+        '[data-testid="send_message"]',
+        '[data-testid*="user-message"]',
         '[data-message-author-role="user"]',
         '[data-message-role="user"]',
-        '[data-testid*="user-message"]',
+        '[data-role="user"]',
         '[class*="user-message"]',
       ],
       userContentSelectors: [
+        '[data-testid="message_text_content"]',
+        '[data-testid="message_content"]',
         '[data-testid*="user-message"]',
         '[class*="user-message"]',
-        '[data-testid="message_content"]',
       ],
       codeSelectors: ["pre"],
       contentSelectors: [
+        '[data-testid="message_text_content"]',
         '[data-testid="message_content"]',
         '[data-testid*="message_content"]',
         ".markdown",
@@ -389,6 +424,7 @@
       ],
       inputSelectors: [
         '[data-testid="chat_input_input"]',
+        "#chat-input",
         'textarea[placeholder]',
         'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
@@ -400,6 +436,293 @@
         'button[aria-label*="Send"]',
         'button[aria-label*="发送"]',
         'button[type="submit"]',
+      ],
+    },
+    yuanbao: {
+      name: "Tencent Yuanbao / 腾讯元宝",
+      turnSelectors: [
+        ".agent-chat__list__item--human",
+        ".agent-chat__list__item--ai",
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        ".agent-chat__list__item--human",
+        ".agent-chat__bubble--human",
+        '[data-message-author-role="user"]',
+        '[data-role="user"]',
+      ],
+      userContentSelectors: [
+        ".agent-chat__bubble--human .hyc-content-text",
+        ".agent-chat__bubble--human .agent-chat__bubble__content",
+        ".agent-chat__bubble__content",
+        '[data-message-author-role="user"]',
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".hyc-common-markdown-style",
+        ".hyc-content-md-done",
+        ".hyc-content-md",
+        ".agent-chat__speech-text",
+        ".agent-chat__bubble__content",
+        ".hyc-content-text",
+        '[data-message-author-role="assistant"]',
+      ],
+      inputSelectors: [
+        '.agent-dialogue__content--common__input .ql-editor[contenteditable="true"]',
+        '#search-bar .ql-editor[contenteditable="true"]',
+        '.ql-editor[contenteditable="true"]',
+        'div[contenteditable="true"][role="textbox"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        "#yuanbao-send-btn",
+        '.agent-dialogue__content--common__input button[type="submit"]',
+        'button[aria-label*="发送"]',
+        'button[aria-label*="Send"]',
+        'button[type="submit"]',
+      ],
+    },
+    qwen: {
+      name: "Qwen Chat",
+      turnSelectors: [
+        ".chat-user-message-container",
+        ".chat-user-message",
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+        '[data-message-author="user"]',
+        '[data-message-author="assistant"]',
+        '[data-role="user"]',
+        '[data-role="assistant"]',
+        '[data-testid="chat-message"]',
+        '[class*="questionItem"]',
+        '[class*="answerItem"]',
+      ],
+      userTurnSelectors: [
+        ".chat-user-message-container",
+        ".chat-user-message",
+        '[data-message-author-role="user"]',
+        '[data-message-author="user"]',
+        '[data-role="user"]',
+        '[data-testid="user-message"]',
+        '[class*="questionItem"]',
+        '[class*="user-message"]',
+      ],
+      userContentSelectors: [
+        ".chat-user-message",
+        ".chat-user-message-container",
+        '[class*="questionItem"]',
+        '[data-message-author-role="user"]',
+        '[data-message-author="user"]',
+        '[data-role="user"]',
+        ".whitespace-pre-wrap",
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".markdown-root",
+        ".markdown-body",
+        ".tongyi-markdown",
+        ".markdown",
+        ".prose",
+        '[class*="answerItem"]',
+        '[data-message-author-role="assistant"]',
+        '[data-message-author="assistant"]',
+        '[data-role="assistant"]',
+      ],
+      inputSelectors: [
+        "textarea#chat-input",
+        '#chat-input[contenteditable="true"]',
+        "textarea.message-input-textarea",
+        'textarea[placeholder*="Ask Qwen" i]',
+        'textarea[placeholder*="message" i]',
+        '[contenteditable="true"][role="textbox"]',
+        "textarea",
+        '[contenteditable="true"]',
+      ],
+      sendButtonSelectors: [
+        ".message-input-right-button-send",
+        'button[data-testid="send-button"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
+    qianwen: {
+      name: "Qianwen / 千问",
+      turnSelectors: [
+        '[class*="questionItem"]',
+        '[class*="answerItem"]',
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+        '[data-message-author="user"]',
+        '[data-message-author="assistant"]',
+        '[data-role="user"]',
+        '[data-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[class*="questionItem"]',
+        '[data-message-author-role="user"]',
+        '[data-message-author="user"]',
+        '[data-role="user"]',
+        '[class*="user-message"]',
+      ],
+      userContentSelectors: [
+        '[class*="questionItem"]',
+        ".bubble-uo23is",
+        '[data-message-author-role="user"]',
+        '[data-message-author="user"]',
+        '[data-role="user"]',
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".tongyi-markdown",
+        ".markdown-body",
+        ".markdown",
+        ".prose",
+        '[class*="answerItem"]',
+        '[data-message-author-role="assistant"]',
+        '[data-message-author="assistant"]',
+        '[data-role="assistant"]',
+      ],
+      inputSelectors: [
+        "textarea#chat-input",
+        "textarea.message-input-textarea",
+        '#chat-input[contenteditable="true"]',
+        'textarea[placeholder*="问" i]',
+        'textarea[placeholder*="消息" i]',
+        '[contenteditable="true"][role="textbox"]',
+        "textarea",
+        '[contenteditable="true"]',
+      ],
+      sendButtonSelectors: [
+        ".message-input-right-button-send",
+        'button[data-testid="send-button"]',
+        'button[aria-label*="发送"]',
+        'button[aria-label*="Send"]',
+        'button[type="submit"]',
+      ],
+    },
+    glm: {
+      name: "ChatGLM / 智谱清言",
+      turnSelectors: [
+        ".question-txt.dots",
+        '[data-message-author="user"]',
+        '[data-message-author="assistant"]',
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+        '[data-role="user"]',
+        '[data-role="assistant"]',
+        ".role-user",
+        ".role-assistant",
+        ".message-user",
+        ".message-assistant",
+      ],
+      userTurnSelectors: [
+        ".question-txt.dots",
+        '[data-message-author="user"]',
+        '[data-message-author-role="user"]',
+        '[data-role="user"]',
+        ".role-user",
+        ".message-user",
+        '[data-testid*="user-message"]',
+      ],
+      userContentSelectors: [
+        ".question-txt.dots",
+        ".message-user .markdown-body",
+        ".message-user .markdown",
+        ".role-user",
+        ".message-user",
+        '[data-message-author="user"]',
+        '[data-role="user"]',
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".role-assistant .markdown-body",
+        ".message-assistant .markdown-body",
+        ".markdown-body",
+        ".markdown",
+        ".prose",
+        '[class*="markdown"]',
+        '[class*="answer"]',
+        '[data-message-author="assistant"]',
+        '[data-role="assistant"]',
+      ],
+      inputSelectors: [
+        "#chat-input",
+        'textarea[placeholder*="请输入"]',
+        'textarea[placeholder*="消息"]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        'button[data-testid="send-button"]',
+        'button[aria-label*="发送"]',
+        'button[aria-label*="Send"]',
+        'button[type="submit"]',
+      ],
+    },
+    zai: {
+      name: "Z.ai (GLM)",
+      turnSelectors: [
+        ".chat-user",
+        ".chat-assistant",
+        '[data-message-author="user"]',
+        '[data-message-author="assistant"]',
+        '[data-role="user"]',
+        '[data-role="assistant"]',
+        ".message-user",
+        ".message-assistant",
+        ".role-user",
+        ".role-assistant",
+      ],
+      userTurnSelectors: [
+        ".chat-user",
+        '[data-message-author="user"]',
+        '[data-role="user"]',
+        ".message-user",
+        ".role-user",
+        '[data-testid="user-message"]',
+      ],
+      userContentSelectors: [
+        ".chat-user .flex.justify-end.pb-1",
+        '[data-message-author="user"]',
+        '[data-role="user"]',
+        ".chat-user",
+        ".message-user",
+        ".role-user",
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".chat-assistant .markdown-body",
+        ".chat-assistant .markdown-root",
+        ".chat-assistant",
+        ".markdown-body",
+        ".markdown-root",
+        ".markdown",
+        ".prose",
+        '[class*="markdown"]',
+        '[data-message-author="assistant"]',
+        '[data-role="assistant"]',
+        ".message-assistant",
+        ".role-assistant",
+      ],
+      inputSelectors: [
+        'div[contenteditable="true"]#chat-input',
+        'div[contenteditable="true"][data-testid*="input"]',
+        "textarea#chat-input",
+        'textarea[placeholder="Send a Message"]',
+        'textarea[placeholder*="message" i]',
+        'div[contenteditable="true"][role="textbox"]',
+        "textarea",
+        '[contenteditable="true"]',
+      ],
+      sendButtonSelectors: [
+        'button[type="submit"]',
+        'button[aria-label="Send"]',
+        'button[data-testid="send-button"]',
+        'button[aria-label*="send" i]',
+        'button[aria-label*="发送"]',
       ],
     },
   };
@@ -443,6 +766,21 @@
     }
     if (hostnameMatches(hostname, ["doubao.com"])) {
       return PLATFORMS.doubao;
+    }
+    if (hostnameMatches(hostname, ["yuanbao.tencent.com"])) {
+      return PLATFORMS.yuanbao;
+    }
+    if (hostnameMatches(hostname, ["chat.qwen.ai"])) {
+      return PLATFORMS.qwen;
+    }
+    if (hostnameMatches(hostname, ["qianwen.com"])) {
+      return PLATFORMS.qianwen;
+    }
+    if (hostnameMatches(hostname, ["chatglm.cn"])) {
+      return PLATFORMS.glm;
+    }
+    if (hostnameMatches(hostname, ["chat.z.ai"])) {
+      return PLATFORMS.zai;
     }
     return null;
   }
@@ -607,6 +945,7 @@
 
     const roleValues = [
       turnElement.getAttribute("data-message-author-role"),
+      turnElement.getAttribute("data-message-author"),
       turnElement.getAttribute("data-role"),
       turnElement.getAttribute("data-message-role"),
       turnElement.getAttribute("data-conversation-role"),
@@ -1111,8 +1450,19 @@
 
     for (const selector of selectors) {
       rootNode.querySelectorAll(selector).forEach((candidate) => {
+        const belongsToUserTurn = (
+          currentPlatform.userTurnSelectors || []
+        ).some((selector) => {
+          try {
+            return candidate.matches(selector) || Boolean(candidate.closest(selector));
+          } catch (_) {
+            return false;
+          }
+        });
+
         if (
           candidate.classList.contains("ai-turbo-chat-folded-target") ||
+          belongsToUserTurn ||
           candidate.closest(
             ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], [data-content-search-unit-key$=':user'], [data-user-message-bubble='true'], [data-testid='collapsible-user-message-root'], .font-user-message",
           )
@@ -2078,6 +2428,7 @@
             btn instanceof HTMLElement &&
             btn.isConnected &&
             (btn.offsetParent !== null || btn.getClientRects().length > 0) &&
+            isSendControlForInput(btn, inputElement) &&
             !btn.hasAttribute("disabled") &&
             btn.getAttribute("aria-disabled") !== "true"
           ) {
@@ -2101,7 +2452,8 @@
           if (
             btn instanceof HTMLElement &&
             btn.isConnected &&
-            (btn.offsetParent !== null || btn.getClientRects().length > 0)
+            (btn.offsetParent !== null || btn.getClientRects().length > 0) &&
+            isSendControlForInput(btn, inputElement)
           ) {
             clearInterval(timer);
             btn.removeAttribute("disabled");
