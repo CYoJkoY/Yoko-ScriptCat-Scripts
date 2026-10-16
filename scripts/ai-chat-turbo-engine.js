@@ -4555,6 +4555,20 @@
     resumePendingHandoffPrompt();
   }
 
+  function findIndexedTurnAncestor(mutationNode) {
+    let ancestor =
+      mutationNode instanceof Element
+        ? mutationNode
+        : mutationNode.parentElement;
+
+    while (ancestor) {
+      if (turnIndex.has(ancestor)) return ancestor;
+      ancestor = ancestor.parentElement;
+    }
+
+    return null;
+  }
+
   function collectMutationTargets(records) {
     const turnSelector = getActiveTurnSelectors().join(",");
     const allTurnSelectors = [
@@ -4624,10 +4638,12 @@
       }
 
       shouldRequestUpdate = true;
+      const indexedTurn = findIndexedTurnAncestor(mutationTarget);
       const possibleTurn =
-        mutationTarget instanceof Element
+        indexedTurn ||
+        (mutationTarget instanceof Element
           ? mutationTarget.closest(turnSelector)
-          : mutationTarget.parentElement?.closest(turnSelector);
+          : mutationTarget.parentElement?.closest(turnSelector));
 
       if (
         possibleTurn instanceof Element &&
