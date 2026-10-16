@@ -1788,30 +1788,24 @@
   function getCodeControlAnchor(codeElement) {
     if (currentPlatform !== PLATFORMS.chatgpt) return codeElement;
 
-    let anchor = codeElement;
-    for (let depth = 0; depth < 4; depth++) {
-      const layoutParent = anchor.parentElement;
-      if (!(layoutParent instanceof HTMLElement)) break;
+    const parent = codeElement.parentElement;
+    if (!(parent instanceof HTMLElement)) return codeElement;
 
-      let parentStyle;
-      try {
-        parentStyle = window.getComputedStyle(layoutParent);
-      } catch (_) {
-        break;
-      }
-
-      const isUnwrappedHorizontalFlex =
-        ["flex", "inline-flex"].includes(parentStyle.display) &&
-        parentStyle.flexDirection.startsWith("row") &&
-        parentStyle.flexWrap === "nowrap";
-      if (!isUnwrappedHorizontalFlex) break;
-
-      anchor = layoutParent;
+    let parentStyle;
+    try {
+      parentStyle = window.getComputedStyle(parent);
+    } catch (_) {
+      return codeElement;
     }
 
-    // Keep the bar outside horizontal flex rows that would otherwise place it
-    // beside the code, but never give it a full main-axis basis.
-    return anchor;
+    const isUnwrappedHorizontalFlex =
+      ["flex", "inline-flex"].includes(parentStyle.display) &&
+      parentStyle.flexDirection.startsWith("row") &&
+      parentStyle.flexWrap === "nowrap";
+
+    // Escape only the immediate row that would place the bar beside the code.
+    // Keep the control inside its local code-card subtree.
+    return isUnwrappedHorizontalFlex ? parent : codeElement;
   }
 
   function positionCodeControl(entry, codeElement) {
