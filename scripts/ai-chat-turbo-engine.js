@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.12.0
+// @version      0.12.1
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.12.0";
+  const VERSION = "0.12.1";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -1767,6 +1767,46 @@
     codeState.delete(codeElement);
   }
 
+  function getCodeControlAnchor(codeElement) {
+    if (currentPlatform !== PLATFORMS.chatgpt) return codeElement;
+
+    const parent = codeElement.parentElement;
+    if (!(parent instanceof HTMLElement)) return codeElement;
+
+    let parentStyle;
+    try {
+      parentStyle = window.getComputedStyle(parent);
+    } catch (_) {
+      return codeElement;
+    }
+
+    const isUnwrappedHorizontalFlex =
+      ["flex", "inline-flex"].includes(parentStyle.display) &&
+      parentStyle.flexDirection.startsWith("row") &&
+      parentStyle.flexWrap === "nowrap";
+
+    // Only escape a horizontal flex row that cannot wrap the bar onto its own
+    // line. Grid layouts use the bar's grid-column span instead.
+    return isUnwrappedHorizontalFlex ? parent : codeElement;
+  }
+
+  function positionCodeControl(entry, codeElement) {
+    const anchor = getCodeControlAnchor(codeElement);
+    if (
+      entry.anchor === anchor &&
+      entry.bar.isConnected &&
+      entry.bar.nextElementSibling === anchor
+    ) {
+      return;
+    }
+
+    withSelfMutation(() => {
+      entry.bar.remove();
+      anchor.insertAdjacentElement("beforebegin", entry.bar);
+      entry.anchor = anchor;
+    });
+  }
+
   function mountCodeControls(codeElement) {
     if (
       !state.collapseCode ||
@@ -1787,6 +1827,7 @@
     }
 
     const initialText = getCodeText(codeElement);
+    const anchor = getCodeControlAnchor(codeElement);
 
     const langLabel = el("span", { className: "ai-turbo-code-lang" });
     const linesLabel = el("span", { className: "ai-turbo-code-lines" });
@@ -1801,13 +1842,20 @@
       "aria-expanded": "false",
     });
 
-    const bar = el("div", { className: "ai-turbo-code-bar" }, [
-      metaWrap,
-      toggleButton,
-    ]);
+    const bar = el(
+      "div",
+      {
+        className:
+          currentPlatform === PLATFORMS.chatgpt
+            ? "ai-turbo-code-bar ai-turbo-code-bar-chatgpt"
+            : "ai-turbo-code-bar",
+      },
+      [metaWrap, toggleButton],
+    );
 
     const entry = {
       bar,
+      anchor,
       langLabel,
       linesLabel,
       toggleButton,
@@ -1823,7 +1871,7 @@
 
     withSelfMutation(() => {
       codeElement.classList.add("ai-turbo-code-target");
-      codeElement.insertAdjacentElement("beforebegin", bar);
+      anchor.insertAdjacentElement("beforebegin", bar);
     });
 
     toggleButton.addEventListener("click", (event) => {
@@ -1844,7 +1892,18 @@
   }
 
   function sweepOrphanBars() {
+    const activeBars = new Set(
+      Array.from(codeState.values(), (entry) => entry.bar),
+    );
+
     document.querySelectorAll(".ai-turbo-code-bar").forEach((bar) => {
+      if (!activeBars.has(bar)) {
+        bar.remove();
+        return;
+      }
+
+      if (bar.classList.contains("ai-turbo-code-bar-chatgpt")) return;
+
       const next = bar.nextElementSibling;
       if (!next || !codeState.has(next) || codeState.get(next).bar !== bar) {
         bar.remove();
@@ -1881,6 +1940,9 @@
     for (const codeElement of candidates) {
       const entry = codeState.get(codeElement);
       if (entry) {
+        if (currentPlatform === PLATFORMS.chatgpt) {
+          positionCodeControl(entry, codeElement);
+        }
         updateCodeMeta(entry, codeElement);
       } else {
         mountCodeControls(codeElement);
@@ -2710,6 +2772,7 @@
       }
 
       .ai-turbo-code-bar {
+        box-sizing: border-box !important;
         display: flex !important;
         align-items: center !important;
         justify-content: space-between !important;
@@ -2723,6 +2786,15 @@
         position: relative !important;
         z-index: 10 !important;
         transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+      }
+
+      .ai-turbo-code-bar-chatgpt {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        flex: 0 0 100% !important;
+        grid-column: 1 / -1 !important;
+        align-self: stretch !important;
       }
 
       .ai-turbo-code-bar:hover {
