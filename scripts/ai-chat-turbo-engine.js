@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.12.1
+// @version      0.13.0
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,11 +33,22 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.12.1";
+  const VERSION = "0.13.0";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
   const CODE_PREVIEW_HEIGHT = 200;
+  const LOAD_INDICATOR_FULL_TURNS = 60;
+  const LOAD_RING_RADIUS = 8.7;
+  const LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
+  const TURN_MARKER_ATTRIBUTES = new Set([
+    "data-testid",
+    "data-turn",
+    "data-turn-key",
+    "data-message-author-role",
+    "data-role",
+    "data-content-search-unit-key",
+  ]);
   const SEARCH_PREVIEW_LIMIT = 180;
   const SEARCH_LIMIT = 10;
   const STORAGE_KEY_POS = "ai_turbo_pill_pos";
@@ -81,8 +92,9 @@
       name: "ChatGPT",
       turnSelectorGroups: [
         [
-          '[data-content-search-unit-key$=":user"]',
-          '[data-content-search-unit-key$=":assistant"]',
+          '[data-testid^="conversation-turn-"][data-turn]',
+          "article[data-turn]",
+          "section[data-turn]",
         ],
         [
           '[data-message-author-role="user"]',
@@ -91,22 +103,21 @@
           '[data-role="assistant"]',
         ],
         [
-          '[data-testid^="conversation-turn-"]',
-          "article[data-turn]",
-          "section[data-turn]",
+          '[data-content-search-unit-key$=":user"]',
+          '[data-content-search-unit-key$=":assistant"]',
         ],
         ["[data-turn-key]"],
       ],
       turnSelectors: [
-        '[data-content-search-unit-key$=":user"]',
-        '[data-content-search-unit-key$=":assistant"]',
+        '[data-testid^="conversation-turn-"][data-turn]',
+        "article[data-turn]",
+        "section[data-turn]",
         '[data-message-author-role="user"]',
         '[data-message-author-role="assistant"]',
         '[data-role="user"]',
         '[data-role="assistant"]',
-        '[data-testid^="conversation-turn-"]',
-        "article[data-turn]",
-        "section[data-turn]",
+        '[data-content-search-unit-key$=":user"]',
+        '[data-content-search-unit-key$=":assistant"]',
         "[data-turn-key]",
       ],
       userTurnSelectors: [
@@ -1066,6 +1077,7 @@
       turnElement.getAttribute("data-role"),
       turnElement.getAttribute("data-message-role"),
       turnElement.getAttribute("data-conversation-role"),
+      turnElement.getAttribute("data-turn"),
     ].filter(Boolean);
     if (roleValues.some((role) => /^(user|human)$/i.test(role))) return true;
     if (roleValues.some((role) => /^(assistant|model|system)$/i.test(role))) {
@@ -1140,6 +1152,7 @@
       turnElement.getAttribute("data-role"),
       turnElement.getAttribute("data-message-role"),
       turnElement.getAttribute("data-conversation-role"),
+      turnElement.getAttribute("data-turn"),
     ].filter(Boolean);
 
     if (roleValues.some((role) => /^(user|human)$/i.test(role))) return "user";
@@ -1497,6 +1510,7 @@
     const turns = getTurns();
     const structuralChange =
       forceFull ||
+      turns.length !== previousTurns.length ||
       turns[0] !== previousTurns[0] ||
       turns[turns.length - 1] !== previousTurns[previousTurns.length - 1];
 
@@ -1573,7 +1587,11 @@
       }
     });
 
-    state.hiddenCount = cutoff;
+    state.hiddenCount = turns.reduce(
+      (count, turnElement) =>
+        count + Number(turnElement.classList.contains("ai-turbo-dehydrated")),
+      0,
+    );
     previousTurns = turns;
     dirtyTurns.clear();
     fullTurnSyncRequested = false;
@@ -1785,8 +1803,8 @@
       parentStyle.flexDirection.startsWith("row") &&
       parentStyle.flexWrap === "nowrap";
 
-    // Only escape a horizontal flex row that cannot wrap the bar onto its own
-    // line. Grid layouts use the bar's grid-column span instead.
+    // Escape only the immediate row that would place the bar beside the code.
+    // Keep the control inside its local code-card subtree.
     return isUnwrappedHorizontalFlex ? parent : codeElement;
   }
 
@@ -2765,7 +2783,7 @@
       .ai-turbo-dehydrated {
         content-visibility: hidden !important;
         contain: layout paint style !important;
-        contain-intrinsic-size: auto 120px var(--turbo-cached-h, 120px) !important;
+        contain-intrinsic-size: auto var(--turbo-cached-h, 120px) !important;
       }
       .ai-turbo-dehydrated * {
         pointer-events: none !important;
@@ -2792,7 +2810,7 @@
         width: 100% !important;
         min-width: 0 !important;
         max-width: 100% !important;
-        flex: 0 0 100% !important;
+        flex: 0 0 auto !important;
         grid-column: 1 / -1 !important;
         align-self: stretch !important;
       }
@@ -3177,9 +3195,30 @@
     if (hudStats.pillHidden) hudStats.pillHidden.textContent = String(state.hiddenCount);
     if (hudStats.pillFolded) hudStats.pillFolded.textContent = String(state.foldedCodeCount);
     if (hudStats.pillVirtual) hudStats.pillVirtual.textContent = String(activeVirtualFiles.length);
+
+    const loadProgress = Math.min(
+      1,
+      Math.max(0, state.totalTurns) / LOAD_INDICATOR_FULL_TURNS,
+    );
+    const loadColor =
+      loadProgress < 1 / 3
+        ? "#34d399"
+        : loadProgress < 2 / 3
+          ? "#facc15"
+          : "#ef4444";
+    hudStats.pillLoadProgress?.setAttribute("stroke", loadColor);
+    hudStats.pillLoadProgress?.setAttribute(
+      "stroke-dashoffset",
+      String(LOAD_RING_CIRCUMFERENCE * (1 - loadProgress)),
+    );
+    hudStats.pillLoadRing?.setAttribute(
+      "aria-label",
+      `长对话负载提示：${state.totalTurns}/${LOAD_INDICATOR_FULL_TURNS} 条消息；仅为消息数量启发式，不代表模型真实智力或上下文容量。`,
+    );
+
     const pill = hudShadowRoot?.querySelector("#pill-trigger");
     if (pill) {
-      pill.title = `消息 ${state.totalTurns} · 已脱水 ${state.hiddenCount} · 代码折叠 ${state.foldedCodeCount} · 虚拟文件 ${activeVirtualFiles.length}；点击打开面板，拖动可移动`;
+      pill.title = `长对话负载 ${state.totalTurns}/${LOAD_INDICATOR_FULL_TURNS}（仅按消息数估算） · 消息 ${state.totalTurns} · 已脱水 ${state.hiddenCount} · 代码折叠 ${state.foldedCodeCount} · 虚拟文件 ${activeVirtualFiles.length}；点击打开面板，拖动可移动`;
     }
   }
 
@@ -3289,7 +3328,10 @@
         touch-action: none;
         white-space: nowrap;
       }
-      .pill-brand { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+      .pill-brand { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+      .pill-load-ring { display: block; width: 16px; height: 16px; flex: 0 0 auto; overflow: visible; }
+      .pill-load-track { fill: none; stroke: rgba(153, 166, 161, 0.32); stroke-width: 2.4; }
+      .pill-load-progress { fill: none; stroke: #34d399; stroke-width: 2.4; stroke-linecap: round; transition: stroke-dashoffset 220ms cubic-bezier(0.16, 1, 0.3, 1), stroke 220ms ease; }
       .pill-metrics {
         display: inline-flex;
         align-items: center;
@@ -3394,7 +3436,7 @@
       kbd { padding: 2px 4px; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 4px; color: #94a3b8; font-family: ui-monospace, monospace; }
 
       @media (prefers-reduced-motion: reduce) {
-        .modal-backdrop, .hud-panel { transition: none !important; }
+        .modal-backdrop, .hud-panel, .pill-load-progress { transition: none !important; }
       }
     `;
     hudShadowRoot.appendChild(styles);
@@ -3403,6 +3445,32 @@
     const pillHiddenVal = el("span", { className: "pill-metric-value" }, ["0"]);
     const pillFoldedVal = el("span", { className: "pill-metric-value" }, ["0"]);
     const pillVirtualVal = el("span", { className: "pill-metric-value" }, ["0"]);
+
+    const svgNamespace = "http://www.w3.org/2000/svg";
+    const pillLoadRing = document.createElementNS(svgNamespace, "svg");
+    pillLoadRing.setAttribute("class", "pill-load-ring");
+    pillLoadRing.setAttribute("viewBox", "0 0 24 24");
+    pillLoadRing.setAttribute("role", "img");
+    pillLoadRing.setAttribute(
+      "aria-label",
+      "长对话负载提示：仅根据检测到的消息数量估算，不代表模型真实智力或上下文容量。",
+    );
+
+    const pillLoadTrack = document.createElementNS(svgNamespace, "circle");
+    pillLoadTrack.setAttribute("class", "pill-load-track");
+    pillLoadTrack.setAttribute("cx", "12");
+    pillLoadTrack.setAttribute("cy", "12");
+    pillLoadTrack.setAttribute("r", String(LOAD_RING_RADIUS));
+
+    const pillLoadProgress = document.createElementNS(svgNamespace, "circle");
+    pillLoadProgress.setAttribute("class", "pill-load-progress");
+    pillLoadProgress.setAttribute("cx", "12");
+    pillLoadProgress.setAttribute("cy", "12");
+    pillLoadProgress.setAttribute("r", String(LOAD_RING_RADIUS));
+    pillLoadProgress.setAttribute("stroke-dasharray", String(LOAD_RING_CIRCUMFERENCE));
+    pillLoadProgress.setAttribute("stroke-dashoffset", String(LOAD_RING_CIRCUMFERENCE));
+    pillLoadProgress.setAttribute("transform", "rotate(-90 12 12)");
+    pillLoadRing.append(pillLoadTrack, pillLoadProgress);
 
     const pill = el(
       "button",
@@ -3413,7 +3481,10 @@
         title: "消息 0 · 已脱水 0 · 代码折叠 0 · 虚拟文件 0；点击打开面板，拖动可移动",
       },
       [
-        el("span", { className: "pill-brand" }, ["⚡ ", el("span", {}, ["Turbo"])]),
+        el("span", { className: "pill-brand" }, [
+          pillLoadRing,
+          el("span", {}, ["Turbo"]),
+        ]),
         el("span", { className: "pill-metrics", "aria-label": "实时统计" }, [
           el("span", { className: "pill-metric", title: "消息总数" }, [
             el("span", { className: "pill-metric-label" }, ["消息"]),
@@ -3717,6 +3788,8 @@
       pillHidden: pillHiddenVal,
       pillFolded: pillFoldedVal,
       pillVirtual: pillVirtualVal,
+      pillLoadRing,
+      pillLoadProgress,
     };
     updateHudDashboard();
 
@@ -4274,6 +4347,20 @@
 
   function collectMutationTargets(records) {
     const turnSelector = getActiveTurnSelectors().join(",");
+    const allTurnSelectors = [
+      ...(currentPlatform.turnSelectors || []),
+      ...(currentPlatform.turnSelectorGroups || []).flat(),
+    ];
+    const allTurnSelector = [...new Set(allTurnSelectors)].join(",");
+    const turnMarkerSelector = [
+      '[data-testid^="conversation-turn-"]',
+      "[data-turn]",
+      "[data-turn-key]",
+      "[data-message-author-role]",
+      "[data-role]",
+      '[data-content-search-unit-key$=":user"]',
+      '[data-content-search-unit-key$=":assistant"]',
+    ].join(",");
     let structuralChange = false;
 
     for (const mutationRecord of records) {
@@ -4285,6 +4372,23 @@
           `#${HUD_ID}, .ai-turbo-code-bar, #ai-turbo-vf-tray, .ai-turbo-chat-capsule, #ai-turbo-vf-preview-modal`,
         )
       ) {
+        continue;
+      }
+
+      if (mutationRecord.type === "attributes") {
+        const attributeName = mutationRecord.attributeName || "";
+        if (
+          TURN_MARKER_ATTRIBUTES.has(attributeName) &&
+          mutationTarget instanceof Element &&
+          (
+            mutationTarget.matches(allTurnSelector) ||
+            mutationTarget.matches(turnMarkerSelector) ||
+            mutationTarget.matches('[data-testid^="conversation-turn-"]')
+          )
+        ) {
+          invalidateActiveTurnSelectorGroup();
+          structuralChange = true;
+        }
         continue;
       }
 
@@ -4329,8 +4433,10 @@
         if (!(changedNode instanceof Element)) continue;
 
         if (
-          changedNode.matches(turnSelector) ||
-          changedNode.querySelector(turnSelector)
+          changedNode.matches(allTurnSelector) ||
+          changedNode.querySelector(allTurnSelector) ||
+          changedNode.matches(turnMarkerSelector) ||
+          changedNode.querySelector(turnMarkerSelector)
         ) {
           structuralChange = true;
         }
@@ -4426,6 +4532,15 @@
     observer.observe(observeRoot, {
       childList: true,
       characterData: true,
+      attributes: true,
+      attributeFilter: [
+        "data-testid",
+        "data-turn",
+        "data-turn-key",
+        "data-message-author-role",
+        "data-role",
+        "data-content-search-unit-key",
+      ],
       subtree: true,
     });
   }
