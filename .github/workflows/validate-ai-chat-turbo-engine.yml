@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "fix/**"
+      - "feat/**"
     paths:
       - "scripts/ai-chat-turbo-engine.js"
       - ".github/workflows/validate-ai-chat-turbo-engine.yml"
