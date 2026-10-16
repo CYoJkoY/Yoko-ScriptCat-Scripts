@@ -3654,14 +3654,18 @@
   function initPillDrag(pill) {
     if (!pill) return;
 
-    let posX = window.innerWidth - 110;
-    let posY = window.innerHeight - 80;
+    const pillWidth = pill.offsetWidth || 280;
+    const pillHeight = pill.offsetHeight || 36;
+    const maxX = Math.max(8, window.innerWidth - pillWidth - 8);
+    const maxY = Math.max(8, window.innerHeight - pillHeight - 8);
+    let posX = maxX;
+    let posY = maxY;
 
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY_POS) || "null");
       if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
-        posX = Math.min(window.innerWidth - 80, Math.max(10, saved.x));
-        posY = Math.min(window.innerHeight - 50, Math.max(10, saved.y));
+        posX = Math.min(maxX, Math.max(8, saved.x));
+        posY = Math.min(maxY, Math.max(8, saved.y));
       }
     } catch (_) {}
 
