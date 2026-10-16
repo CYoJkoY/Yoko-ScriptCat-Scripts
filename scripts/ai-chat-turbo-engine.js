@@ -3500,6 +3500,24 @@
       },
       ["恢复到新对话"],
     );
+    const btnCopyHandoffYaml = el(
+      "button",
+      {
+        className: "action-btn",
+        type: "button",
+        onclick: copyLatestHandoffYaml,
+      },
+      ["仅复制 YAML 交接包"],
+    );
+    const btnCopyRestorePrompt = el(
+      "button",
+      {
+        className: "action-btn",
+        type: "button",
+        onclick: copyLatestRestorePrompt,
+      },
+      ["仅复制新对话恢复指令"],
+    );
     handoffStatusNode = el(
       "div",
       { className: "handoff-status", role: "status", "aria-live": "polite" },
@@ -3539,6 +3557,8 @@
       el("div", { className: "section-title" }, ["上下文交接"]),
       btnGenerateHandoff,
       btnContinueHandoff,
+      btnCopyRestorePrompt,
+      btnCopyHandoffYaml,
       handoffStatusNode,
       btnFork,
     ]);
@@ -3909,6 +3929,51 @@
     }
 
     return normalizeHandoffYaml(fullText);
+  }
+
+  function copyHandoffText(text, successMessage) {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API is unavailable");
+      }
+      navigator.clipboard
+        .writeText(text)
+        .then(() => setHandoffStatus(successMessage))
+        .catch(() => {
+          setHandoffStatus("剪贴板写入失败，请检查浏览器权限。");
+          window.alert("无法写入剪贴板，请检查浏览器权限，或手动选择对应内容。");
+        });
+    } catch (_) {
+      setHandoffStatus("剪贴板不可用，请检查浏览器权限。");
+      window.alert("当前页面无法访问剪贴板。请检查浏览器权限，或手动选择对应内容。");
+    }
+  }
+
+  function copyLatestHandoffYaml() {
+    const yamlText = extractLatestHandoffYaml();
+    if (!yamlText) {
+      setHandoffStatus("尚未检测到最新助手回答中的完整 YAML。");
+      window.alert("未找到符合交接包结构的 YAML。请等待助手回答完整结束后重试。");
+      return;
+    }
+    copyHandoffText(
+      yamlText,
+      `已复制 YAML 交接包（${yamlText.length.toLocaleString()} 字符）。`,
+    );
+  }
+
+  function copyLatestRestorePrompt() {
+    const yamlText = extractLatestHandoffYaml();
+    if (!yamlText) {
+      setHandoffStatus("尚未检测到最新助手回答中的完整 YAML。");
+      window.alert("未找到符合交接包结构的 YAML。请等待助手回答完整结束后重试。");
+      return;
+    }
+    const restoreText = buildHandoffRestorePrompt(yamlText);
+    copyHandoffText(
+      restoreText,
+      `已复制完整的新对话恢复指令（${restoreText.length.toLocaleString()} 字符）。`,
+    );
   }
 
   function findNewChatControl() {
