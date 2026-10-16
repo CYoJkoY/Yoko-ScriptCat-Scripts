@@ -228,6 +228,7 @@
         "div[data-um-id]",
         "div.dad65929",
         "div._4f9bf79",
+        "div.d29f3d7d",
         '[data-message-author-role="user"]',
         '[data-message-author-role="assistant"]',
         '[data-role="user"]',
@@ -237,10 +238,12 @@
         '[data-message-author-role="user"]',
         '[data-role="user"]',
         "div[data-um-id]",
+        "div.d29f3d7d",
         '[data-testid*="user-message"]',
         '[class*="user-message"]',
       ],
       userContentSelectors: [
+        "._9663006 .fbb737a4",
         ".ds-markdown",
         "div[data-um-id]",
         '[data-testid*="user-message"]',
@@ -483,6 +486,8 @@
     qwen: {
       name: "Qwen Chat",
       turnSelectors: [
+        ".chat-user-message-container",
+        ".chat-user-message",
         '[data-message-author-role="user"]',
         '[data-message-author-role="assistant"]',
         '[data-message-author="user"]',
@@ -494,6 +499,8 @@
         '[class*="answerItem"]',
       ],
       userTurnSelectors: [
+        ".chat-user-message-container",
+        ".chat-user-message",
         '[data-message-author-role="user"]',
         '[data-message-author="user"]',
         '[data-role="user"]',
@@ -502,6 +509,8 @@
         '[class*="user-message"]',
       ],
       userContentSelectors: [
+        ".chat-user-message",
+        ".chat-user-message-container",
         '[class*="questionItem"]',
         '[data-message-author-role="user"]',
         '[data-message-author="user"]',
@@ -510,6 +519,7 @@
       ],
       codeSelectors: ["pre"],
       contentSelectors: [
+        ".markdown-root",
         ".markdown-body",
         ".tongyi-markdown",
         ".markdown",
@@ -595,6 +605,7 @@
     glm: {
       name: "ChatGLM / 智谱清言",
       turnSelectors: [
+        ".question-txt.dots",
         '[data-message-author="user"]',
         '[data-message-author="assistant"]',
         '[data-message-author-role="user"]',
@@ -607,6 +618,7 @@
         ".message-assistant",
       ],
       userTurnSelectors: [
+        ".question-txt.dots",
         '[data-message-author="user"]',
         '[data-message-author-role="user"]',
         '[data-role="user"]',
@@ -615,6 +627,7 @@
         '[data-testid*="user-message"]',
       ],
       userContentSelectors: [
+        ".question-txt.dots",
         ".message-user .markdown-body",
         ".message-user .markdown",
         ".role-user",
@@ -630,6 +643,7 @@
         ".markdown",
         ".prose",
         '[class*="markdown"]',
+        '[class*="answer"]',
         '[data-message-author="assistant"]',
         '[data-role="assistant"]',
       ],
@@ -651,6 +665,8 @@
     zai: {
       name: "Z.ai (GLM)",
       turnSelectors: [
+        ".chat-user",
+        ".chat-assistant",
         '[data-message-author="user"]',
         '[data-message-author="assistant"]',
         '[data-role="user"]',
@@ -661,6 +677,7 @@
         ".role-assistant",
       ],
       userTurnSelectors: [
+        ".chat-user",
         '[data-message-author="user"]',
         '[data-role="user"]',
         ".message-user",
@@ -668,14 +685,20 @@
         '[data-testid="user-message"]',
       ],
       userContentSelectors: [
+        ".chat-user .flex.justify-end.pb-1",
         '[data-message-author="user"]',
         '[data-role="user"]',
+        ".chat-user",
         ".message-user",
         ".role-user",
       ],
       codeSelectors: ["pre"],
       contentSelectors: [
+        ".chat-assistant .markdown-body",
+        ".chat-assistant .markdown-root",
+        ".chat-assistant",
         ".markdown-body",
+        ".markdown-root",
         ".markdown",
         ".prose",
         '[class*="markdown"]',
@@ -702,7 +725,6 @@
         'button[aria-label*="发送"]',
       ],
     },
-
   };
 
   function hostnameMatches(hostname, domains) {
