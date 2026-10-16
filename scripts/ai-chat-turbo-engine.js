@@ -1773,18 +1773,26 @@
     const parent = codeElement.parentElement;
     if (!(parent instanceof HTMLElement)) return codeElement;
 
-    let display = "";
+    let parentStyle;
     try {
-      display = window.getComputedStyle(parent).display;
+      parentStyle = window.getComputedStyle(parent);
     } catch (_) {
       return codeElement;
     }
 
-    // ChatGPT may place <pre> inside a flex/grid code surface. Insert the bar
-    // before that layout container so the control occupies its own row.
-    return ["flex", "inline-flex", "grid", "inline-grid"].includes(display)
-      ? parent
-      : codeElement;
+    const isHorizontalFlex =
+      ["flex", "inline-flex"].includes(parentStyle.display) &&
+      parentStyle.flexDirection.startsWith("row");
+    const gridTracks = parentStyle.gridTemplateColumns
+      .split(/\s+/)
+      .filter(Boolean);
+    const isMultiColumnGrid =
+      ["grid", "inline-grid"].includes(parentStyle.display) &&
+      gridTracks.length > 1;
+
+    // Move outside only a horizontal/multi-column code layout. A column-flex
+    // or single-column parent already stacks the bar and code vertically.
+    return isHorizontalFlex || isMultiColumnGrid ? parent : codeElement;
   }
 
   function positionCodeControl(entry, codeElement) {
