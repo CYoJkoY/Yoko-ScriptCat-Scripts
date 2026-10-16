@@ -3243,11 +3243,11 @@
         padding-left: 8px;
         border-left: 1px solid rgba(153, 166, 161, 0.22);
         color: #9baaa3;
-        font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        font: 600 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         min-width: 0;
       }
       .pill-metric { display: inline-flex; align-items: baseline; gap: 3px; }
-      .pill-metric-label { color: #84958d; font-size: 9px; }
+      .pill-metric-label { color: #9aa9a1; font-size: 9px; }
       .pill-metric-value { color: #74ddb1; font-size: 11px; font-weight: 800; }
       @media (max-width: 440px) {
         .docked-pill { gap: 6px; padding: 5px 8px; }
@@ -3362,19 +3362,19 @@
         el("span", { className: "pill-brand" }, ["⚡ ", el("span", {}, ["Turbo"])]),
         el("span", { className: "pill-metrics", "aria-label": "实时统计" }, [
           el("span", { className: "pill-metric", title: "消息总数" }, [
-            el("span", { className: "pill-metric-label" }, ["M"]),
+            el("span", { className: "pill-metric-label" }, ["消息"]),
             pillTotalVal,
           ]),
           el("span", { className: "pill-metric", title: "已脱水消息数" }, [
-            el("span", { className: "pill-metric-label" }, ["D"]),
+            el("span", { className: "pill-metric-label" }, ["脱水"]),
             pillHiddenVal,
           ]),
           el("span", { className: "pill-metric", title: "折叠代码块数" }, [
-            el("span", { className: "pill-metric-label" }, ["C"]),
+            el("span", { className: "pill-metric-label" }, ["折叠"]),
             pillFoldedVal,
           ]),
           el("span", { className: "pill-metric", title: "当前待发送虚拟文件数" }, [
-            el("span", { className: "pill-metric-label" }, ["V"]),
+            el("span", { className: "pill-metric-label" }, ["文件"]),
             pillVirtualVal,
           ]),
         ]),
