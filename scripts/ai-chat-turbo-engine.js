@@ -948,11 +948,20 @@
       .trim();
   }
 
+  function matchesReasoningElement(element) {
+    if (!(element instanceof Element)) return false;
+    try {
+      return element.matches(REASONING_SELECTOR);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function isReasoningElement(element) {
     if (!(element instanceof Element)) return false;
     try {
       return (
-        element.matches(REASONING_SELECTOR) ||
+        matchesReasoningElement(element) ||
         Boolean(element.closest(REASONING_SELECTOR))
       );
     } catch (_) {
@@ -961,7 +970,7 @@
   }
 
   function elementToPlainText(rootElement) {
-    if (!(rootElement instanceof Element) || isReasoningElement(rootElement)) {
+    if (!(rootElement instanceof Element) || matchesReasoningElement(rootElement)) {
       return "";
     }
 
@@ -1216,7 +1225,7 @@
     const unnested = filterOutNested(collected);
     return unnested.filter(
       (element) =>
-        !isGeminiThoughtElement(element) && !isReasoningElement(element),
+        !isGeminiThoughtElement(element) && !matchesReasoningElement(element),
     );
   }
 
@@ -4146,7 +4155,7 @@
       if (
         possibleTurn instanceof Element &&
         !isGeminiThoughtElement(possibleTurn) &&
-        !isReasoningElement(possibleTurn)
+        !matchesReasoningElement(possibleTurn)
       ) {
         dirtyTurns.add(possibleTurn);
       }
