@@ -1011,6 +1011,8 @@
       ".ai-turbo-dehydrated, .ai-turbo-chat-folded-target, .ai-turbo-folded",
     ).forEach(clearTurboLayout);
 
+    const preservedCodeBlocks = [];
+
     function walk(node) {
       if (node.nodeType === Node.TEXT_NODE) {
         return node.nodeValue || "";
@@ -1021,13 +1023,36 @@
 
       const tag = node.tagName.toUpperCase();
       if (tag === "BR") return "\n";
-      if (tag === "PRE") return "\n" + (node.textContent || "") + "\n";
+      if (tag === "PRE") {
+        const codeNode = node.querySelector("code");
+        const codeText = codeNode ? codeNode.textContent || "" : node.textContent || "";
+        const codeClasses = [
+          node.className || "",
+          codeNode?.className || "",
+          node.getAttribute("data-language") || "",
+          codeNode?.getAttribute("data-language") || "",
+          codeNode?.getAttribute("lang") || "",
+        ].join(" ");
+        const languageMatch = codeClasses.match(/language-([a-z0-9+#.-]+)/i);
+        const language = languageMatch
+          ? languageMatch[1].toLowerCase()
+          : "text";
+        const token = `\uE000TURBO_CODE_${preservedCodeBlocks.length}\uE001`;
+        preservedCodeBlocks.push({ token, codeText, language });
+        return `\n${CODE_FENCE}${language}\n${token}\n${CODE_FENCE}\n`;
+      }
 
       const content = Array.from(node.childNodes).map(walk).join("");
       return BLOCK_TEXT_TAGS.has(tag) ? "\n" + content + "\n" : content;
     }
 
-    return normalizeText(walk(clone));
+    let text = normalizeText(walk(clone));
+    for (const block of preservedCodeBlocks) {
+      const placeholder = `${CODE_FENCE}${block.language}\n${block.token}\n${CODE_FENCE}`;
+      const preserved = `${CODE_FENCE}${block.language}\n${block.codeText}\n${CODE_FENCE}`;
+      text = text.replace(placeholder, preserved);
+    }
+    return text;
   }
 
   function isGeminiThoughtElement(element) {
@@ -3859,40 +3884,44 @@
 
   function extractLatestHandoffYaml() {
     const turns = getTurns();
+    let latestAssistantTurn = null;
+
     for (let index = turns.length - 1; index >= 0; index--) {
-      const turnElement = turns[index];
-      if (getTurnRole(turnElement) !== "assistant") continue;
-
-      const codeElements = Array.from(
-        turnElement.querySelectorAll("pre code, pre, code"),
-      );
-      for (const codeElement of codeElements) {
-        if (isReasoningElement(codeElement)) continue;
-        const languageHint = [
-          codeElement.className || "",
-          codeElement.getAttribute("data-language") || "",
-          codeElement.parentElement?.className || "",
-          codeElement.parentElement?.getAttribute("data-language") || "",
-        ].join(" ");
-        const codeText = codeElement.textContent || "";
-        if (/ya?ml/i.test(languageHint) || codeText.trim().startsWith("meta:")) {
-          const candidate = normalizeHandoffYaml(codeText);
-          if (candidate) return candidate;
-        }
+      if (getTurnRole(turns[index]) === "assistant") {
+        latestAssistantTurn = turns[index];
+        break;
       }
+    }
+    if (!latestAssistantTurn) return null;
 
-      const fullText = extractTurnText(turnElement);
-      const fencedCandidates = Array.from(
-        fullText.matchAll(/```(?:yaml|yml)\s*([\s\S]*?)\s*```/gi),
-      );
-      for (const match of fencedCandidates) {
-        const candidate = normalizeHandoffYaml(match[1]);
+    const codeElements = Array.from(
+      latestAssistantTurn.querySelectorAll("pre code, pre, code"),
+    );
+    for (const codeElement of codeElements) {
+      if (isReasoningElement(codeElement)) continue;
+      const languageHint = [
+        codeElement.className || "",
+        codeElement.getAttribute("data-language") || "",
+        codeElement.parentElement?.className || "",
+        codeElement.parentElement?.getAttribute("data-language") || "",
+      ].join(" ");
+      const codeText = codeElement.textContent || "";
+      if (/ya?ml/i.test(languageHint) || codeText.trim().startsWith("meta:")) {
+        const candidate = normalizeHandoffYaml(codeText);
         if (candidate) return candidate;
       }
-      const plainCandidate = normalizeHandoffYaml(fullText);
-      if (plainCandidate) return plainCandidate;
     }
-    return null;
+
+    const fullText = extractTurnText(latestAssistantTurn);
+    const fencedCandidates = Array.from(
+      fullText.matchAll(/\`\`\`(?:yaml|yml)\s*([\s\S]*?)\s*\`\`\`/gi),
+    );
+    for (const match of fencedCandidates) {
+      const candidate = normalizeHandoffYaml(match[1]);
+      if (candidate) return candidate;
+    }
+
+    return normalizeHandoffYaml(fullText);
   }
 
   function findNewChatControl() {
