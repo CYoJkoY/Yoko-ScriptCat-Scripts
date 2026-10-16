@@ -39,7 +39,7 @@
   const CODE_COLLAPSE_HEIGHT = 300;
   const CODE_PREVIEW_HEIGHT = 200;
   const LOAD_INDICATOR_FULL_TURNS = 60;
-  const LOAD_RING_RADIUS = 14.2;
+  const LOAD_RING_RADIUS = 16.2;
   const LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
   const TURN_MARKER_ATTRIBUTES = new Set([
     "data-testid",
@@ -1331,7 +1331,8 @@
       const turnKey = (
         turnContainer.getAttribute("data-turn-key") ||
         turnContainer.getAttribute("data-turn-id") ||
-        turnContainer.id
+        turnContainer.id ||
+        ""
       ).trim();
       if (!turnKey) continue;
 
@@ -1422,7 +1423,10 @@
     const unnested = filterOutNested(collected);
     return unnested.filter(
       (element) =>
-        !isGeminiThoughtElement(element) && !matchesReasoningElement(element),
+        (currentPlatform.name !== "ChatGPT" ||
+          isRenderedChatGPTElement(element)) &&
+        !isGeminiThoughtElement(element) &&
+        !matchesReasoningElement(element),
     );
   }
 
