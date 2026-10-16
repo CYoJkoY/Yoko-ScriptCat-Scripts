@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.13.2
+// @version      0.13.3
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.2";
+  const VERSION = "0.13.3";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -69,6 +69,28 @@
   const CHATGPT_TRANSCRIPT_ROOT_SELECTOR = "ol[data-conversation-transcript]";
   const CHATGPT_TRANSCRIPT_MESSAGE_SELECTOR =
     'ol[data-conversation-transcript] > li[data-message-role]';
+  const CHATGPT_CODE_CARD_BOUNDARY_SELECTOR = [
+    "[data-turn-key]",
+    '[data-testid^="conversation-turn-"]',
+    "article[data-turn]",
+    "section[data-turn]",
+    'li[data-message-role="assistant"]',
+    '[data-message-author-role="assistant"]',
+  ].join(", ");
+  const CHATGPT_CODE_HEADER_MARKER_SELECTOR = [
+    ".code-block-decoration",
+    '[data-testid*="code-block-header" i]',
+    '[data-testid*="code-block-toolbar" i]',
+    '[class*="code-block-header" i]',
+    '[class*="code-header" i]',
+    '[class*="code-toolbar" i]',
+    'button[aria-label*="copy code" i]',
+    'button[title*="copy code" i]',
+    '[data-testid*="copy-code" i]',
+    'button[aria-label*="复制代码"]',
+    'button[title*="复制代码"]',
+  ].join(", ");
+  const CHATGPT_CODE_CARD_MAX_ANCESTORS = 10;
   const SEARCH_PREVIEW_LIMIT = 180;
   const SEARCH_LIMIT = 10;
   const STORAGE_KEY_POS = "ai_turbo_pill_pos";
@@ -1972,37 +1994,126 @@
     codeState.delete(codeElement);
   }
 
-  function getCodeControlAnchor(codeElement) {
-    if (currentPlatform !== PLATFORMS.chatgpt) return codeElement;
+  function isNativeCodeHeaderNode(node) {
+    if (!(node instanceof HTMLElement)) return false;
 
-    const parent = codeElement.parentElement;
-    if (!(parent instanceof HTMLElement)) return codeElement;
-
-    let parentStyle;
     try {
-      parentStyle = window.getComputedStyle(parent);
+      if (
+        node.matches(CHATGPT_CODE_HEADER_MARKER_SELECTOR) ||
+        node.querySelector(CHATGPT_CODE_HEADER_MARKER_SELECTOR)
+      ) {
+        return true;
+      }
     } catch (_) {
-      return codeElement;
+      return false;
     }
 
-    const isUnwrappedHorizontalFlex =
-      ["flex", "inline-flex"].includes(parentStyle.display) &&
-      parentStyle.flexDirection.startsWith("row") &&
-      parentStyle.flexWrap === "nowrap";
+    const className =
+      typeof node.className === "string" ? node.className : "";
+    const markerText = [
+      className,
+      node.getAttribute("data-testid") || "",
+      node.getAttribute("aria-label") || "",
+      node.getAttribute("title") || "",
+    ].join(" ");
 
-    // Escape only the immediate row that would place the bar beside the code.
-    // Keep the control inside its local code-card subtree.
-    return isUnwrappedHorizontalFlex ? parent : codeElement;
+    if (
+      /(?:code|language).*(?:header|toolbar|decoration)|(?:header|toolbar).*(?:code|language)/i.test(
+        markerText,
+      )
+    ) {
+      return true;
+    }
+
+    // Some native headers expose the language name and an icon-only copy
+    // button instead of an accessible "Copy code" label.
+    if (node.querySelector("button") && !node.querySelector("pre, code")) {
+      const headerText = (node.textContent || "").trim();
+      if (
+        headerText.length > 0 &&
+        headerText.length <= 64 &&
+        (/^(?:[a-z0-9_+#.-]+)$/i.test(headerText) ||
+          /copy|复制|运行代码|code block/i.test(headerText))
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function getChatGPTCodeCardAnchor(codeElement) {
+    let branch = codeElement;
+    let parent = codeElement.parentElement;
+    let classBasedFallback = null;
+    let depth = 0;
+
+    while (
+      parent instanceof HTMLElement &&
+      depth < CHATGPT_CODE_CARD_MAX_ANCESTORS
+    ) {
+      // Never treat an entire assistant turn or transcript slot as a code
+      // card. Only inspect ancestors below that boundary.
+      if (parent.matches(CHATGPT_CODE_CARD_BOUNDARY_SELECTOR)) break;
+
+      let precedingSibling = branch.previousElementSibling;
+      while (precedingSibling) {
+        if (isNativeCodeHeaderNode(precedingSibling)) {
+          return parent.contains(codeElement) ? parent : null;
+        }
+        precedingSibling = precedingSibling.previousElementSibling;
+      }
+
+      const className =
+        typeof parent.className === "string" ? parent.className : "";
+      const cardMarker = [
+        className,
+        parent.getAttribute("data-testid") || "",
+        parent.getAttribute("data-role") || "",
+      ].join(" ");
+
+      if (
+        /(?:code[-_ ]?(?:block|card|container)|(?:block|card)[-_ ]?code|group\/code)/i.test(
+          cardMarker,
+        )
+      ) {
+        classBasedFallback = parent;
+      }
+
+      branch = parent;
+      parent = parent.parentElement;
+      depth++;
+    }
+
+    // If header controls cannot be recognized, only use an explicitly named
+    // code-card wrapper. Otherwise leave this native code block untouched.
+    return classBasedFallback instanceof HTMLElement &&
+      classBasedFallback.isConnected &&
+      classBasedFallback.contains(codeElement)
+      ? classBasedFallback
+      : null;
+  }
+
+  function getCodeControlAnchor(codeElement) {
+    if (currentPlatform !== PLATFORMS.chatgpt) return codeElement;
+    return getChatGPTCodeCardAnchor(codeElement);
   }
 
   function positionCodeControl(entry, codeElement) {
     const anchor = getCodeControlAnchor(codeElement);
+    if (!(anchor instanceof HTMLElement) || anchor === codeElement) {
+      // Fail closed: remove our fold state and reveal the original code if the
+      // current ChatGPT DOM no longer exposes a safe outer-card anchor.
+      unmountCodeControls(codeElement);
+      return false;
+    }
+
     if (
       entry.anchor === anchor &&
       entry.bar.isConnected &&
       entry.bar.nextElementSibling === anchor
     ) {
-      return;
+      return true;
     }
 
     withSelfMutation(() => {
@@ -2010,6 +2121,7 @@
       anchor.insertAdjacentElement("beforebegin", entry.bar);
       entry.anchor = anchor;
     });
+    return true;
   }
 
   function mountCodeControls(codeElement) {
@@ -2024,6 +2136,14 @@
     const measuredH = getCodeElementHeight(codeElement);
     if (measuredH <= CODE_COLLAPSE_HEIGHT) return;
 
+    const anchor = getCodeControlAnchor(codeElement);
+    if (
+      currentPlatform === PLATFORMS.chatgpt &&
+      (!(anchor instanceof HTMLElement) || anchor === codeElement)
+    ) {
+      return;
+    }
+
     let sibling = codeElement.previousElementSibling;
     while (sibling && sibling.classList.contains("ai-turbo-code-bar")) {
       const toRemove = sibling;
@@ -2032,7 +2152,6 @@
     }
 
     const initialText = getCodeText(codeElement);
-    const anchor = getCodeControlAnchor(codeElement);
 
     const langLabel = el("span", { className: "ai-turbo-code-lang" });
     const linesLabel = el("span", { className: "ai-turbo-code-lines" });
@@ -2145,8 +2264,11 @@
     for (const codeElement of candidates) {
       const entry = codeState.get(codeElement);
       if (entry) {
-        if (currentPlatform === PLATFORMS.chatgpt) {
-          positionCodeControl(entry, codeElement);
+        if (
+          currentPlatform === PLATFORMS.chatgpt &&
+          !positionCodeControl(entry, codeElement)
+        ) {
+          continue;
         }
         updateCodeMeta(entry, codeElement);
       } else {
