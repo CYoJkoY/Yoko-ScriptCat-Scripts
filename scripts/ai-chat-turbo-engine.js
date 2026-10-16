@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.13.1
+// @version      0.13.2
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.1";
+  const VERSION = "0.13.2";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -46,14 +46,29 @@
     "data-turn",
     "data-turn-key",
     "data-message-author-role",
+    "data-message-role",
+    "data-conversation-role",
     "data-role",
     "data-content-search-unit-key",
+    "data-content-search-turn-key",
+    "data-thread-find-target",
+    "data-conversation-transcript",
+    "data-user-message-bubble",
+    "data-chatgpt-agent-turn-start",
+    "data-app-shell-main-surface",
   ]);
   const TURN_SELECTOR_ATTRIBUTES = new Set([
     ...TURN_MARKER_ATTRIBUTES,
     "class",
     "id",
   ]);
+  const CHATGPT_SHELL_ROOT_SELECTOR =
+    '[data-app-shell-main-surface] [data-thread-find-target="conversation"]';
+  const CHATGPT_SHELL_TURN_SELECTOR =
+    '[data-app-shell-main-surface] [data-thread-find-target="conversation"] [data-turn-key]';
+  const CHATGPT_TRANSCRIPT_ROOT_SELECTOR = "ol[data-conversation-transcript]";
+  const CHATGPT_TRANSCRIPT_MESSAGE_SELECTOR =
+    'ol[data-conversation-transcript] > li[data-message-role]';
   const SEARCH_PREVIEW_LIMIT = 180;
   const SEARCH_LIMIT = 10;
   const STORAGE_KEY_POS = "ai_turbo_pill_pos";
@@ -96,14 +111,18 @@
     chatgpt: {
       name: "ChatGPT",
       turnSelectorGroups: [
+        [CHATGPT_SHELL_TURN_SELECTOR],
+        [CHATGPT_TRANSCRIPT_MESSAGE_SELECTOR],
         [
-          '[data-testid^="conversation-turn-"][data-turn]',
+          '[data-testid^="conversation-turn-"]',
           "article[data-turn]",
           "section[data-turn]",
         ],
         [
           '[data-message-author-role="user"]',
           '[data-message-author-role="assistant"]',
+          '[data-message-role="user"]',
+          '[data-message-role="assistant"]',
           '[data-role="user"]',
           '[data-role="assistant"]',
         ],
@@ -114,11 +133,15 @@
         ["[data-turn-key]"],
       ],
       turnSelectors: [
-        '[data-testid^="conversation-turn-"][data-turn]',
+        CHATGPT_SHELL_TURN_SELECTOR,
+        CHATGPT_TRANSCRIPT_MESSAGE_SELECTOR,
+        '[data-testid^="conversation-turn-"]',
         "article[data-turn]",
         "section[data-turn]",
         '[data-message-author-role="user"]',
         '[data-message-author-role="assistant"]',
+        '[data-message-role="user"]',
+        '[data-message-role="assistant"]',
         '[data-role="user"]',
         '[data-role="assistant"]',
         '[data-content-search-unit-key$=":user"]',
@@ -1232,7 +1255,163 @@
     activeTurnSelectorGroup = null;
   }
 
+  function isRenderedChatGPTElement(element) {
+    if (
+      !(element instanceof HTMLElement) ||
+      !element.isConnected ||
+      element.closest('[hidden], [aria-hidden="true"], [inert]')
+    ) {
+      return false;
+    }
+
+    const computedStyle = window.getComputedStyle(element);
+    return (
+      computedStyle.display !== "none" &&
+      computedStyle.visibility !== "hidden" &&
+      computedStyle.visibility !== "collapse" &&
+      element.getClientRects().length > 0
+    );
+  }
+
+  function selectChatGPTRootWithMostTurns(roots, turnSelector) {
+    let selectedRoot = null;
+    let largestTurnCount = -1;
+
+    for (const candidateRoot of roots) {
+      const turnCount = Array.from(
+        candidateRoot.querySelectorAll(turnSelector),
+      ).filter(
+        (turnElement) =>
+          turnElement.closest("[data-turn-key]") === turnElement &&
+          isRenderedChatGPTElement(turnElement),
+      ).length;
+
+      if (turnCount >= largestTurnCount) {
+        selectedRoot = candidateRoot;
+        largestTurnCount = turnCount;
+      }
+    }
+
+    return selectedRoot;
+  }
+
+  function collectChatGPTShellMessages(conversationRoot) {
+    const messageNodes = [];
+    const seenTurnRoles = new Set();
+    const turnContainers = Array.from(
+      conversationRoot.querySelectorAll("[data-turn-key]"),
+    ).filter(
+      (turnContainer) =>
+        turnContainer.closest("[data-turn-key]") === turnContainer &&
+        isRenderedChatGPTElement(turnContainer),
+    );
+
+    const roleSelectors = [
+      {
+        role: "user",
+        selectors: [
+          '[data-content-search-unit-key$=":user"]',
+          '[data-user-message-bubble="true"]',
+          '[data-message-role="user"]',
+          '[data-conversation-role="user"]',
+        ],
+      },
+      {
+        role: "assistant",
+        selectors: [
+          '[data-content-search-unit-key$=":assistant"]',
+          '[data-message-role="assistant"]',
+          '[data-conversation-role="assistant"]',
+          "[data-chatgpt-agent-turn-start]",
+        ],
+      },
+    ];
+
+    for (const turnContainer of turnContainers) {
+      const turnKey = (
+        turnContainer.getAttribute("data-turn-key") ||
+        turnContainer.getAttribute("data-turn-id") ||
+        turnContainer.id
+      ).trim();
+      if (!turnKey) continue;
+
+      for (const roleConfig of roleSelectors) {
+        const roleIdentity = `${turnKey}:${roleConfig.role}`;
+        if (seenTurnRoles.has(roleIdentity)) continue;
+
+        let roleElement = null;
+        for (const selector of roleConfig.selectors) {
+          roleElement = Array.from(
+            turnContainer.querySelectorAll(selector),
+          ).find(
+            (candidateElement) =>
+              candidateElement.closest("[data-turn-key]") === turnContainer &&
+              isRenderedChatGPTElement(candidateElement),
+          );
+          if (roleElement) break;
+        }
+
+        if (!roleElement) continue;
+        seenTurnRoles.add(roleIdentity);
+        messageNodes.push(roleElement);
+      }
+    }
+
+    return filterOutNested(uniqueDomOrdered(messageNodes)).filter(
+      (element) =>
+        !isGeminiThoughtElement(element) && !matchesReasoningElement(element),
+    );
+  }
+
+  function getCurrentChatGPTTurns() {
+    if (currentPlatform.name !== "ChatGPT") return null;
+
+    const shellRoots = Array.from(
+      document.querySelectorAll(CHATGPT_SHELL_ROOT_SELECTOR),
+    ).filter(isRenderedChatGPTElement);
+
+    if (shellRoots.length) {
+      const activeShellRoot = selectChatGPTRootWithMostTurns(
+        shellRoots,
+        "[data-turn-key]",
+      );
+      // A recognized but empty shell is authoritative; do not count a kept or hidden chat.
+      return activeShellRoot
+        ? collectChatGPTShellMessages(activeShellRoot)
+        : [];
+    }
+
+    const transcriptRoots = Array.from(
+      document.querySelectorAll(CHATGPT_TRANSCRIPT_ROOT_SELECTOR),
+    ).filter(isRenderedChatGPTElement);
+
+    if (transcriptRoots.length) {
+      let activeTranscriptRoot = transcriptRoots[0];
+      let largestMessageCount = -1;
+
+      for (const candidateRoot of transcriptRoots) {
+        const messageCount = Array.from(
+          candidateRoot.querySelectorAll(":scope > li[data-message-role]"),
+        ).filter(isRenderedChatGPTElement).length;
+
+        if (messageCount >= largestMessageCount) {
+          activeTranscriptRoot = candidateRoot;
+          largestMessageCount = messageCount;
+        }
+      }
+
+      return Array.from(
+        activeTranscriptRoot.querySelectorAll(":scope > li[data-message-role]"),
+      ).filter(isRenderedChatGPTElement);
+    }
+
+    return null;
+  }
+
   function getTurns() {
+    const currentChatGPTTurns = getCurrentChatGPTTurns();
+    if (currentChatGPTTurns !== null) return currentChatGPTTurns;
+
     const collected = [];
     for (const selector of getActiveTurnSelectors()) {
       document
@@ -1516,8 +1695,7 @@
     const structuralChange =
       forceFull ||
       turns.length !== previousTurns.length ||
-      turns[0] !== previousTurns[0] ||
-      turns[turns.length - 1] !== previousTurns[previousTurns.length - 1];
+      turns.some((turnElement, index) => turnElement !== previousTurns[index]);
 
     if (structuralChange) {
       turnIndex.clear();
@@ -3202,10 +3380,6 @@
     if (hudStats.pillVirtual) hudStats.pillVirtual.textContent = String(activeVirtualFiles.length);
 
     const loadRatioLabel = `${state.totalTurns}/${LOAD_INDICATOR_FULL_TURNS}`;
-    if (hudStats.pillLoadLabel) {
-      hudStats.pillLoadLabel.textContent = loadRatioLabel;
-    }
-
     const loadProgress = Math.min(
       1,
       Math.max(0, state.totalTurns) / LOAD_INDICATOR_FULL_TURNS,
@@ -3216,6 +3390,18 @@
         : loadProgress < 2 / 3
           ? "#facc15"
           : "#ef4444";
+
+    if (hudStats.pillLoadLabel) {
+      hudStats.pillLoadLabel.textContent = loadRatioLabel;
+      hudStats.pillLoadLabel.style.fill = loadColor;
+      const labelFontSize =
+        loadRatioLabel.length >= 7
+          ? "7.4px"
+          : loadRatioLabel.length >= 6
+            ? "8.2px"
+            : "9.4px";
+      hudStats.pillLoadLabel.style.fontSize = labelFontSize;
+    }
     hudStats.pillLoadProgress?.setAttribute("stroke", loadColor);
     hudStats.pillLoadProgress?.setAttribute(
       "stroke-dashoffset",
@@ -3339,10 +3525,10 @@
         white-space: nowrap;
       }
       .pill-brand { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-      .pill-load-ring { display: block; width: 34px; height: 34px; flex: 0 0 auto; overflow: visible; }
+      .pill-load-ring { display: block; width: 38px; height: 38px; flex: 0 0 auto; overflow: visible; }
       .pill-load-track { fill: none; stroke: rgba(153, 166, 161, 0.32); stroke-width: 2.4; }
       .pill-load-progress { fill: none; stroke: #34d399; stroke-width: 2.4; stroke-linecap: round; transition: stroke-dashoffset 220ms cubic-bezier(0.16, 1, 0.3, 1), stroke 220ms ease; }
-      .pill-load-label { fill: #e6eeea; font: 800 7.2px/1 ui-monospace, SFMono-Regular, Consolas, monospace; text-anchor: middle; dominant-baseline: central; letter-spacing: -0.55px; pointer-events: none; }
+      .pill-load-label { fill: #34d399; font: 850 9.4px/1 ui-monospace, SFMono-Regular, Consolas, monospace; text-anchor: middle; dominant-baseline: central; letter-spacing: -0.65px; pointer-events: none; }
       .pill-metrics {
         display: inline-flex;
         align-items: center;
@@ -3460,7 +3646,7 @@
     const svgNamespace = "http://www.w3.org/2000/svg";
     const pillLoadRing = document.createElementNS(svgNamespace, "svg");
     pillLoadRing.setAttribute("class", "pill-load-ring");
-    pillLoadRing.setAttribute("viewBox", "0 0 36 36");
+    pillLoadRing.setAttribute("viewBox", "0 0 40 40");
     pillLoadRing.setAttribute("role", "img");
     pillLoadRing.setAttribute(
       "aria-label",
@@ -3469,23 +3655,23 @@
 
     const pillLoadTrack = document.createElementNS(svgNamespace, "circle");
     pillLoadTrack.setAttribute("class", "pill-load-track");
-    pillLoadTrack.setAttribute("cx", "18");
-    pillLoadTrack.setAttribute("cy", "18");
+    pillLoadTrack.setAttribute("cx", "20");
+    pillLoadTrack.setAttribute("cy", "20");
     pillLoadTrack.setAttribute("r", String(LOAD_RING_RADIUS));
 
     const pillLoadProgress = document.createElementNS(svgNamespace, "circle");
     pillLoadProgress.setAttribute("class", "pill-load-progress");
-    pillLoadProgress.setAttribute("cx", "18");
-    pillLoadProgress.setAttribute("cy", "18");
+    pillLoadProgress.setAttribute("cx", "20");
+    pillLoadProgress.setAttribute("cy", "20");
     pillLoadProgress.setAttribute("r", String(LOAD_RING_RADIUS));
     pillLoadProgress.setAttribute("stroke-dasharray", String(LOAD_RING_CIRCUMFERENCE));
     pillLoadProgress.setAttribute("stroke-dashoffset", String(LOAD_RING_CIRCUMFERENCE));
-    pillLoadProgress.setAttribute("transform", "rotate(-90 18 18)");
+    pillLoadProgress.setAttribute("transform", "rotate(-90 20 20)");
 
     const pillLoadLabel = document.createElementNS(svgNamespace, "text");
     pillLoadLabel.setAttribute("class", "pill-load-label");
-    pillLoadLabel.setAttribute("x", "18");
-    pillLoadLabel.setAttribute("y", "18");
+    pillLoadLabel.setAttribute("x", "20");
+    pillLoadLabel.setAttribute("y", "20");
     pillLoadLabel.setAttribute("aria-hidden", "true");
     pillLoadLabel.textContent = `0/${LOAD_INDICATOR_FULL_TURNS}`;
 
@@ -4377,9 +4563,15 @@
       "[data-turn]",
       "[data-turn-key]",
       "[data-message-author-role]",
+      "[data-message-role]",
+      "[data-conversation-role]",
       "[data-role]",
       '[data-content-search-unit-key$=":user"]',
       '[data-content-search-unit-key$=":assistant"]',
+      '[data-thread-find-target="conversation"]',
+      "ol[data-conversation-transcript]",
+      '[data-user-message-bubble="true"]',
+      "[data-chatgpt-agent-turn-start]",
     ].join(",");
     let structuralChange = false;
     let shouldRequestUpdate = false;
