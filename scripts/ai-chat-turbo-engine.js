@@ -965,10 +965,9 @@
       return "";
     }
 
-    const clone = rootElement.cloneNode(true);
-    if (!(clone instanceof Element)) return "";
-
-    const removableSelectors = [
+    // Walk the live DOM without cloning large messages on each streaming mutation.
+    // CSS dehydration/folding does not remove text nodes, so full text remains readable.
+    const ignoredSelectors = [
       REASONING_SELECTOR,
       ".ai-turbo-chat-file-row",
       ".ai-turbo-chat-capsule",
@@ -982,35 +981,6 @@
       "svg",
       "[hidden]",
     ].join(", ");
-
-    try {
-      clone.querySelectorAll(removableSelectors).forEach((element) => {
-        element.remove();
-      });
-    } catch (_) {}
-
-    const clearTurboLayout = (element) => {
-      element.classList.remove(
-        "ai-turbo-dehydrated",
-        "ai-turbo-chat-folded-target",
-        "ai-turbo-folded",
-      );
-      [
-        "display",
-        "contain",
-        "content-visibility",
-        "contain-intrinsic-size",
-        "max-height",
-        "overflow",
-        "--turbo-cached-h",
-      ].forEach((property) => element.style.removeProperty(property));
-    };
-
-    clearTurboLayout(clone);
-    clone.querySelectorAll(
-      ".ai-turbo-dehydrated, .ai-turbo-chat-folded-target, .ai-turbo-folded",
-    ).forEach(clearTurboLayout);
-
     const preservedCodeBlocks = [];
 
     function walk(node) {
@@ -1021,17 +991,20 @@
         return Array.from(node.childNodes || []).map(walk).join("");
       }
 
+      try {
+        if (node !== rootElement && node.matches(ignoredSelectors)) return "";
+      } catch (_) {}
+
       const tag = node.tagName.toUpperCase();
       if (tag === "BR") return "\n";
       if (tag === "PRE") {
-        const codeNode = node.querySelector("code");
-        const codeText = codeNode ? codeNode.textContent || "" : node.textContent || "";
+        const codeText = node.textContent || "";
         const codeClasses = [
           node.className || "",
-          codeNode?.className || "",
+          node.querySelector("code")?.className || "",
           node.getAttribute("data-language") || "",
-          codeNode?.getAttribute("data-language") || "",
-          codeNode?.getAttribute("lang") || "",
+          node.querySelector("code")?.getAttribute("data-language") || "",
+          node.querySelector("code")?.getAttribute("lang") || "",
         ].join(" ");
         const languageMatch = codeClasses.match(/language-([a-z0-9+#.-]+)/i);
         const language = languageMatch
@@ -1046,7 +1019,7 @@
       return BLOCK_TEXT_TAGS.has(tag) ? "\n" + content + "\n" : content;
     }
 
-    let text = normalizeText(walk(clone));
+    let text = normalizeText(walk(rootElement));
     for (const block of preservedCodeBlocks) {
       const placeholder = `${CODE_FENCE}${block.language}\n${block.token}\n${CODE_FENCE}`;
       const preserved = `${CODE_FENCE}${block.language}\n${block.codeText}\n${CODE_FENCE}`;
