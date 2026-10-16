@@ -1847,10 +1847,16 @@
       "aria-expanded": "false",
     });
 
-    const bar = el("div", { className: "ai-turbo-code-bar" }, [
-      metaWrap,
-      toggleButton,
-    ]);
+    const bar = el(
+      "div",
+      {
+        className:
+          currentPlatform === PLATFORMS.chatgpt
+            ? "ai-turbo-code-bar ai-turbo-code-bar-chatgpt"
+            : "ai-turbo-code-bar",
+      },
+      [metaWrap, toggleButton],
+    );
 
     const entry = {
       bar,
@@ -1896,7 +1902,17 @@
     );
 
     document.querySelectorAll(".ai-turbo-code-bar").forEach((bar) => {
-      if (!activeBars.has(bar)) bar.remove();
+      if (!activeBars.has(bar)) {
+        bar.remove();
+        return;
+      }
+
+      if (bar.classList.contains("ai-turbo-code-bar-chatgpt")) return;
+
+      const next = bar.nextElementSibling;
+      if (!next || !codeState.has(next) || codeState.get(next).bar !== bar) {
+        bar.remove();
+      }
     });
   }
 
@@ -1929,7 +1945,9 @@
     for (const codeElement of candidates) {
       const entry = codeState.get(codeElement);
       if (entry) {
-        positionCodeControl(entry, codeElement);
+        if (currentPlatform === PLATFORMS.chatgpt) {
+          positionCodeControl(entry, codeElement);
+        }
         updateCodeMeta(entry, codeElement);
       } else {
         mountCodeControls(codeElement);
@@ -2761,12 +2779,6 @@
       .ai-turbo-code-bar {
         box-sizing: border-box !important;
         display: flex !important;
-        width: 100% !important;
-        min-width: 0 !important;
-        max-width: 100% !important;
-        flex: 0 0 100% !important;
-        grid-column: 1 / -1 !important;
-        align-self: stretch !important;
         align-items: center !important;
         justify-content: space-between !important;
         min-height: 38px !important;
@@ -2779,6 +2791,15 @@
         position: relative !important;
         z-index: 10 !important;
         transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+      }
+
+      .ai-turbo-code-bar-chatgpt {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        flex: 0 0 100% !important;
+        grid-column: 1 / -1 !important;
+        align-self: stretch !important;
       }
 
       .ai-turbo-code-bar:hover {
