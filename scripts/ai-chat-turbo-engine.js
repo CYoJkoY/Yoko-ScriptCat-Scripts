@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.13.0
+// @version      0.13.1
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,13 +33,13 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.0";
+  const VERSION = "0.13.1";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
   const CODE_PREVIEW_HEIGHT = 200;
   const LOAD_INDICATOR_FULL_TURNS = 60;
-  const LOAD_RING_RADIUS = 8.7;
+  const LOAD_RING_RADIUS = 14.2;
   const LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
   const TURN_MARKER_ATTRIBUTES = new Set([
     "data-testid",
@@ -48,6 +48,11 @@
     "data-message-author-role",
     "data-role",
     "data-content-search-unit-key",
+  ]);
+  const TURN_SELECTOR_ATTRIBUTES = new Set([
+    ...TURN_MARKER_ATTRIBUTES,
+    "class",
+    "id",
   ]);
   const SEARCH_PREVIEW_LIMIT = 180;
   const SEARCH_LIMIT = 10;
@@ -3196,6 +3201,11 @@
     if (hudStats.pillFolded) hudStats.pillFolded.textContent = String(state.foldedCodeCount);
     if (hudStats.pillVirtual) hudStats.pillVirtual.textContent = String(activeVirtualFiles.length);
 
+    const loadRatioLabel = `${state.totalTurns}/${LOAD_INDICATOR_FULL_TURNS}`;
+    if (hudStats.pillLoadLabel) {
+      hudStats.pillLoadLabel.textContent = loadRatioLabel;
+    }
+
     const loadProgress = Math.min(
       1,
       Math.max(0, state.totalTurns) / LOAD_INDICATOR_FULL_TURNS,
@@ -3329,9 +3339,10 @@
         white-space: nowrap;
       }
       .pill-brand { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-      .pill-load-ring { display: block; width: 16px; height: 16px; flex: 0 0 auto; overflow: visible; }
+      .pill-load-ring { display: block; width: 34px; height: 34px; flex: 0 0 auto; overflow: visible; }
       .pill-load-track { fill: none; stroke: rgba(153, 166, 161, 0.32); stroke-width: 2.4; }
       .pill-load-progress { fill: none; stroke: #34d399; stroke-width: 2.4; stroke-linecap: round; transition: stroke-dashoffset 220ms cubic-bezier(0.16, 1, 0.3, 1), stroke 220ms ease; }
+      .pill-load-label { fill: #e6eeea; font: 800 7.2px/1 ui-monospace, SFMono-Regular, Consolas, monospace; text-anchor: middle; dominant-baseline: central; letter-spacing: -0.55px; pointer-events: none; }
       .pill-metrics {
         display: inline-flex;
         align-items: center;
@@ -3449,7 +3460,7 @@
     const svgNamespace = "http://www.w3.org/2000/svg";
     const pillLoadRing = document.createElementNS(svgNamespace, "svg");
     pillLoadRing.setAttribute("class", "pill-load-ring");
-    pillLoadRing.setAttribute("viewBox", "0 0 24 24");
+    pillLoadRing.setAttribute("viewBox", "0 0 36 36");
     pillLoadRing.setAttribute("role", "img");
     pillLoadRing.setAttribute(
       "aria-label",
@@ -3458,19 +3469,27 @@
 
     const pillLoadTrack = document.createElementNS(svgNamespace, "circle");
     pillLoadTrack.setAttribute("class", "pill-load-track");
-    pillLoadTrack.setAttribute("cx", "12");
-    pillLoadTrack.setAttribute("cy", "12");
+    pillLoadTrack.setAttribute("cx", "18");
+    pillLoadTrack.setAttribute("cy", "18");
     pillLoadTrack.setAttribute("r", String(LOAD_RING_RADIUS));
 
     const pillLoadProgress = document.createElementNS(svgNamespace, "circle");
     pillLoadProgress.setAttribute("class", "pill-load-progress");
-    pillLoadProgress.setAttribute("cx", "12");
-    pillLoadProgress.setAttribute("cy", "12");
+    pillLoadProgress.setAttribute("cx", "18");
+    pillLoadProgress.setAttribute("cy", "18");
     pillLoadProgress.setAttribute("r", String(LOAD_RING_RADIUS));
     pillLoadProgress.setAttribute("stroke-dasharray", String(LOAD_RING_CIRCUMFERENCE));
     pillLoadProgress.setAttribute("stroke-dashoffset", String(LOAD_RING_CIRCUMFERENCE));
-    pillLoadProgress.setAttribute("transform", "rotate(-90 12 12)");
-    pillLoadRing.append(pillLoadTrack, pillLoadProgress);
+    pillLoadProgress.setAttribute("transform", "rotate(-90 18 18)");
+
+    const pillLoadLabel = document.createElementNS(svgNamespace, "text");
+    pillLoadLabel.setAttribute("class", "pill-load-label");
+    pillLoadLabel.setAttribute("x", "18");
+    pillLoadLabel.setAttribute("y", "18");
+    pillLoadLabel.setAttribute("aria-hidden", "true");
+    pillLoadLabel.textContent = `0/${LOAD_INDICATOR_FULL_TURNS}`;
+
+    pillLoadRing.append(pillLoadTrack, pillLoadProgress, pillLoadLabel);
 
     const pill = el(
       "button",
@@ -3790,6 +3809,7 @@
       pillVirtual: pillVirtualVal,
       pillLoadRing,
       pillLoadProgress,
+      pillLoadLabel,
     };
     updateHudDashboard();
 
@@ -4377,14 +4397,20 @@
 
       if (mutationRecord.type === "attributes") {
         const attributeName = mutationRecord.attributeName || "";
+        if (!(mutationTarget instanceof Element)) continue;
+
+        const isIndexedTurn = turnIndex.has(mutationTarget);
+        const matchesKnownTurn = Boolean(allTurnSelector) && (
+          mutationTarget.matches(allTurnSelector) ||
+          mutationTarget.matches(turnMarkerSelector) ||
+          mutationTarget.matches('[data-testid^="conversation-turn-"]')
+        );
+
         if (
-          TURN_MARKER_ATTRIBUTES.has(attributeName) &&
-          mutationTarget instanceof Element &&
-          (
-            mutationTarget.matches(allTurnSelector) ||
-            mutationTarget.matches(turnMarkerSelector) ||
-            mutationTarget.matches('[data-testid^="conversation-turn-"]')
-          )
+          (TURN_MARKER_ATTRIBUTES.has(attributeName) ||
+            attributeName === "class" ||
+            attributeName === "id") &&
+          (isIndexedTurn || matchesKnownTurn)
         ) {
           invalidateActiveTurnSelectorGroup();
           structuralChange = true;
@@ -4459,6 +4485,7 @@
     }
 
     if (structuralChange) {
+      invalidateActiveTurnSelectorGroup();
       fullTurnSyncRequested = true;
       codeScanRequested = true;
     }
@@ -4533,14 +4560,7 @@
       childList: true,
       characterData: true,
       attributes: true,
-      attributeFilter: [
-        "data-testid",
-        "data-turn",
-        "data-turn-key",
-        "data-message-author-role",
-        "data-role",
-        "data-content-search-unit-key",
-      ],
+      attributeFilter: Array.from(TURN_SELECTOR_ATTRIBUTES),
       subtree: true,
     });
   }
