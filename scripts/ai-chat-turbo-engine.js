@@ -1780,19 +1780,14 @@
       return codeElement;
     }
 
-    const isHorizontalFlex =
+    const isUnwrappedHorizontalFlex =
       ["flex", "inline-flex"].includes(parentStyle.display) &&
-      parentStyle.flexDirection.startsWith("row");
-    const gridTracks = parentStyle.gridTemplateColumns
-      .split(/\s+/)
-      .filter(Boolean);
-    const isMultiColumnGrid =
-      ["grid", "inline-grid"].includes(parentStyle.display) &&
-      gridTracks.length > 1;
+      parentStyle.flexDirection.startsWith("row") &&
+      parentStyle.flexWrap === "nowrap";
 
-    // Move outside only a horizontal/multi-column code layout. A column-flex
-    // or single-column parent already stacks the bar and code vertically.
-    return isHorizontalFlex || isMultiColumnGrid ? parent : codeElement;
+    // Only escape a horizontal flex row that cannot wrap the bar onto its own
+    // line. Grid layouts use the bar's grid-column span instead.
+    return isUnwrappedHorizontalFlex ? parent : codeElement;
   }
 
   function positionCodeControl(entry, codeElement) {
