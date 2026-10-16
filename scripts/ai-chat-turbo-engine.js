@@ -1,14 +1,22 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.9.2
-// @description  独立药囊长代码折叠(流式防卡顿) + 长文本智能伪文件胶囊(呼吸悬浮净空·用户原始提问常驻·读写分离防死锁) + 增量消息索引 + 自适应脱水 + 纯DOM免疫CSP
+// @version      0.10.0
+// @description  跨平台 AI 对话加速：新旧 ChatGPT DOM 兼容 + 多平台适配 + 长代码折叠 + 长文本虚拟文件胶囊 + 增量消息索引 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
+// @match        https://chat.openai.com/*
 // @match        https://gemini.google.com/*
 // @match        https://grok.com/*
 // @match        https://x.com/i/grok*
 // @match        https://claude.ai/*
+// @match        https://chat.deepseek.com/*
+// @match        https://copilot.microsoft.com/*
+// @match        https://perplexity.ai/*
+// @match        https://www.perplexity.ai/*
+// @match        https://poe.com/*
+// @match        https://doubao.com/*
+// @match        https://www.doubao.com/*
 // @run-at       document-start
 // @grant        none
 // @noframes
@@ -19,7 +27,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.9.2";
+  const VERSION = "0.10.0";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -41,23 +49,83 @@
   const PLATFORMS = {
     chatgpt: {
       name: "ChatGPT",
+      turnSelectorGroups: [
+        [
+          '[data-content-search-unit-key$=":user"]',
+          '[data-content-search-unit-key$=":assistant"]',
+        ],
+        [
+          '[data-message-author-role="user"]',
+          '[data-message-author-role="assistant"]',
+          '[data-role="user"]',
+          '[data-role="assistant"]',
+        ],
+        [
+          '[data-testid^="conversation-turn-"]',
+          "article[data-turn]",
+          "section[data-turn]",
+        ],
+        ["[data-turn-key]"],
+      ],
       turnSelectors: [
+        '[data-content-search-unit-key$=":user"]',
+        '[data-content-search-unit-key$=":assistant"]',
         '[data-message-author-role="user"]',
         '[data-message-author-role="assistant"]',
-        'article[data-testid^="conversation-turn-"]',
+        '[data-role="user"]',
+        '[data-role="assistant"]',
+        '[data-testid^="conversation-turn-"]',
+        "article[data-turn]",
+        "section[data-turn]",
+        "[data-turn-key]",
+      ],
+      userTurnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-role="user"]',
+        '[data-content-search-unit-key$=":user"]',
+        '[data-user-message-bubble="true"]',
+        '[data-testid="collapsible-user-message-root"]',
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+      ],
+      userContentSelectors: [
+        '[data-testid="collapsible-user-message-root"]',
+        ".whitespace-pre-wrap",
+        '[data-user-message-bubble="true"]',
+        '[data-content-search-unit-key$=":user"]',
+        '[data-message-author-role="user"]',
       ],
       codeSelectors: ["pre"],
-      contentSelectors: ["div.markdown", "div.prose", '[class*="markdown"]'],
+      contentSelectors: [
+        ".markdown",
+        ".prose",
+        '[class*="markdown"]',
+        ".whitespace-pre-wrap",
+        '[data-content-search-unit-key$=":assistant"]',
+        '[data-message-author-role="assistant"]',
+        '[data-testid="message-content"]',
+      ],
       inputSelectors: [
+        'form[data-chatgpt-composer] [contenteditable="true"][role="textbox"]',
+        'form[data-chatgpt-composer] [contenteditable="true"]',
+        '[data-chatgpt-composer] [contenteditable="true"]',
+        'div.ProseMirror[contenteditable="true"][role="textbox"]',
         "#prompt-textarea",
+        'textarea[name="prompt-textarea"]',
+        'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
         "textarea",
       ],
       sendButtonSelectors: [
+        'form[data-chatgpt-composer] button[type="submit"]',
+        'form[data-chatgpt-composer] button[data-testid*="send"]',
+        'form[data-chatgpt-composer] button[aria-label*="Send"]',
+        'form[data-chatgpt-composer] button[aria-label*="发送"]',
         'button[data-testid="send-button"]',
         'button[data-testid="fruitjuice-send-button"]',
         'button[aria-label*="Send"]',
         'button[aria-label*="发送"]',
+        'button[type="submit"]',
       ],
     },
     gemini: {
@@ -147,15 +215,235 @@
         "fieldset button:last-child",
       ],
     },
+    deepseek: {
+      name: "DeepSeek",
+      turnSelectors: [
+        ".ds-message",
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+      ],
+      userContentSelectors: [
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+        ".ds-message",
+      ],
+      codeSelectors: ["pre", "code-block"],
+      contentSelectors: [".ds-markdown", ".markdown", ".prose", '[class*="markdown"]'],
+      inputSelectors: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        "textarea",
+        '[contenteditable="true"]',
+      ],
+      sendButtonSelectors: [
+        'button[data-testid*="send"]',
+        'button[type="submit"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+      ],
+    },
+    copilot: {
+      name: "Microsoft Copilot",
+      turnSelectors: [
+        '[class*="user-message"]',
+        '[class*="assistant-message"]',
+        '[data-testid*="message"]',
+      ],
+      userTurnSelectors: [
+        '[class*="user-message"]',
+        '[data-testid*="user-message"]',
+        '[data-message-author-role="user"]',
+      ],
+      userContentSelectors: [
+        '[class*="user-message"]',
+        '[data-testid*="user-message"]',
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".ac-textBlock",
+        ".markdown",
+        ".prose",
+        '[class*="message-content"]',
+      ],
+      inputSelectors: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        'button[data-testid*="send"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
+    perplexity: {
+      name: "Perplexity",
+      turnSelectors: [
+        '[data-testid="chat-message"]',
+        '[data-testid*="chat-message"]',
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[data-testid*="user-message"]',
+        '[data-message-author-role="user"]',
+        '[class*="user-message"]',
+        '[class*="human"]',
+      ],
+      userContentSelectors: [
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+        ".whitespace-pre-wrap",
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".prose",
+        ".markdown",
+        '[class*="prose"]',
+        '[class*="message-content"]',
+      ],
+      inputSelectors: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        'button[data-testid*="send"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
+    poe: {
+      name: "Poe",
+      turnSelectors: [
+        ".Message",
+        ".ChatMessage",
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-testid*="user-message"]',
+        '[class*="UserMessage"]',
+        '[class*="humanMessage"]',
+      ],
+      userContentSelectors: [
+        '[data-testid*="user-message"]',
+        '[class*="UserMessage"]',
+        ".Message",
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        ".markdown",
+        ".MessageContent",
+        '[class*="messageContent"]',
+        '[class*="message-content"]',
+      ],
+      inputSelectors: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        'button[data-testid*="send"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
+    doubao: {
+      name: "Doubao",
+      turnSelectors: [
+        '[data-testid="message_content"]',
+        '[data-testid*="message_content"]',
+        '[data-message-author-role="user"]',
+        '[data-message-author-role="assistant"]',
+      ],
+      userTurnSelectors: [
+        '[data-message-author-role="user"]',
+        '[data-message-role="user"]',
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+      ],
+      userContentSelectors: [
+        '[data-testid*="user-message"]',
+        '[class*="user-message"]',
+        '[data-testid="message_content"]',
+      ],
+      codeSelectors: ["pre"],
+      contentSelectors: [
+        '[data-testid="message_content"]',
+        '[data-testid*="message_content"]',
+        ".markdown",
+        '[class*="message-content"]',
+      ],
+      inputSelectors: [
+        '[data-testid="chat_input_input"]',
+        'textarea[placeholder]',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        "textarea",
+      ],
+      sendButtonSelectors: [
+        '[data-testid="chat_input_send_button"]',
+        'button[data-testid*="send"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'button[type="submit"]',
+      ],
+    },
   };
 
+  function hostnameMatches(hostname, domains) {
+    return domains.some(
+      (domain) => hostname === domain || hostname.endsWith("." + domain),
+    );
+  }
+
   function detectPlatform() {
-    const host = window.location.hostname;
-    if (host.includes("chatgpt.com")) return PLATFORMS.chatgpt;
-    if (host.includes("gemini.google.com")) return PLATFORMS.gemini;
-    if (host.includes("grok.com") || host.includes("x.com"))
+    const hostname = window.location.hostname.toLowerCase();
+    const pathname = window.location.pathname;
+
+    if (hostnameMatches(hostname, ["chatgpt.com", "chat.openai.com"])) {
+      return PLATFORMS.chatgpt;
+    }
+    if (hostnameMatches(hostname, ["gemini.google.com"])) {
+      return PLATFORMS.gemini;
+    }
+    if (
+      hostnameMatches(hostname, ["grok.com"]) ||
+      (hostname === "x.com" && pathname.startsWith("/i/grok"))
+    ) {
       return PLATFORMS.grok;
-    if (host.includes("claude.ai")) return PLATFORMS.claude;
+    }
+    if (hostnameMatches(hostname, ["claude.ai"])) {
+      return PLATFORMS.claude;
+    }
+    if (hostnameMatches(hostname, ["deepseek.com"])) {
+      return PLATFORMS.deepseek;
+    }
+    if (hostnameMatches(hostname, ["copilot.microsoft.com"])) {
+      return PLATFORMS.copilot;
+    }
+    if (hostnameMatches(hostname, ["perplexity.ai"])) {
+      return PLATFORMS.perplexity;
+    }
+    if (hostnameMatches(hostname, ["poe.com"])) {
+      return PLATFORMS.poe;
+    }
+    if (hostnameMatches(hostname, ["doubao.com"])) {
+      return PLATFORMS.doubao;
+    }
     return null;
   }
 
@@ -233,6 +521,7 @@
   let dirtyTurns = new Set();
   let dirtyCodeBlocks = new Set();
   let previousTurns = [];
+  let activeTurnSelectorGroup = null;
   let selfMutationDepth = 0;
 
   function el(tag, attrs = {}, children = []) {
@@ -306,6 +595,48 @@
   function isUserTurn(turnElement) {
     if (!(turnElement instanceof Element)) return false;
 
+    const contentSearchKey = turnElement.getAttribute(
+      "data-content-search-unit-key",
+    );
+    if (contentSearchKey && /:(user|human)$/i.test(contentSearchKey)) {
+      return true;
+    }
+    if (contentSearchKey && /:(assistant|model|system)$/i.test(contentSearchKey)) {
+      return false;
+    }
+
+    const roleValues = [
+      turnElement.getAttribute("data-message-author-role"),
+      turnElement.getAttribute("data-role"),
+      turnElement.getAttribute("data-message-role"),
+      turnElement.getAttribute("data-conversation-role"),
+    ].filter(Boolean);
+    if (roleValues.some((role) => /^(user|human)$/i.test(role))) return true;
+    if (roleValues.some((role) => /^(assistant|model|system)$/i.test(role))) {
+      return false;
+    }
+
+    const platformUserSelectors = currentPlatform.userTurnSelectors || [];
+    for (const selector of platformUserSelectors) {
+      if (
+        turnElement.matches(selector) ||
+        turnElement.querySelector(selector)
+      ) {
+        return true;
+      }
+    }
+
+    // Some platforms mark the wrapper's parent rather than the message-content node.
+    let ancestor = turnElement.parentElement;
+    let ancestorDepth = 0;
+    while (ancestor && ancestorDepth < 3) {
+      if (platformUserSelectors.some((selector) => ancestor.matches(selector))) {
+        return true;
+      }
+      ancestor = ancestor.parentElement;
+      ancestorDepth++;
+    }
+
     if (
       turnElement.matches(
         "user-query, [data-test-id='user-query'], .user-query, .user-query-container",
@@ -313,14 +644,6 @@
       turnElement.querySelector(
         ".user-query-text, .query-text, [class*='query-content']",
       )
-    ) {
-      return true;
-    }
-
-    if (
-      turnElement.matches('[data-message-author-role="user"]') ||
-      turnElement.getAttribute("data-message-author-role") === "user" ||
-      turnElement.querySelector('[data-message-author-role="user"]')
     ) {
       return true;
     }
@@ -377,9 +700,33 @@
     });
   }
 
+  function getActiveTurnSelectors() {
+    const selectorGroups = currentPlatform.turnSelectorGroups;
+    if (!Array.isArray(selectorGroups)) {
+      return currentPlatform.turnSelectors;
+    }
+
+    if (activeTurnSelectorGroup) {
+      return activeTurnSelectorGroup;
+    }
+
+    for (const selectorGroup of selectorGroups) {
+      if (selectorGroup.some((selector) => document.querySelector(selector))) {
+        activeTurnSelectorGroup = selectorGroup;
+        return activeTurnSelectorGroup;
+      }
+    }
+
+    return currentPlatform.turnSelectors;
+  }
+
+  function invalidateActiveTurnSelectorGroup() {
+    activeTurnSelectorGroup = null;
+  }
+
   function getTurns() {
     const collected = [];
-    for (const selector of currentPlatform.turnSelectors) {
+    for (const selector of getActiveTurnSelectors()) {
       document
         .querySelectorAll(selector)
         .forEach((elem) => collected.push(elem));
@@ -390,9 +737,22 @@
   }
 
   function findContentElement(turnElement) {
-    for (const selector of currentPlatform.contentSelectors) {
-      const match = turnElement.querySelector(selector);
-      if (match && !isGeminiThoughtElement(match)) return match;
+    const selectorGroups = [];
+    if (
+      isUserTurn(turnElement) &&
+      Array.isArray(currentPlatform.userContentSelectors)
+    ) {
+      selectorGroups.push(currentPlatform.userContentSelectors);
+    }
+    selectorGroups.push(currentPlatform.contentSelectors || []);
+
+    for (const selectorGroup of selectorGroups) {
+      for (const selector of selectorGroup) {
+        const match = turnElement.matches(selector)
+          ? turnElement
+          : turnElement.querySelector(selector);
+        if (match && !isGeminiThoughtElement(match)) return match;
+      }
     }
     return turnElement;
   }
@@ -754,7 +1114,7 @@
         if (
           candidate.classList.contains("ai-turbo-chat-folded-target") ||
           candidate.closest(
-            ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], .font-user-message",
+            ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], [data-content-search-unit-key$=':user'], [data-user-message-bubble='true'], [data-testid='collapsible-user-message-root'], .font-user-message",
           )
         ) {
           return;
@@ -1044,15 +1404,85 @@
   }
 
   function getChatInput() {
-    for (const sel of currentPlatform.inputSelectors) {
-      const elem = document.querySelector(sel);
-      if (elem && elem.offsetParent !== null) return elem;
+    const selectors = [
+      ...(currentPlatform.inputSelectors || []),
+      'form[data-chatgpt-composer] [contenteditable="true"][role="textbox"]',
+      'div.ProseMirror[contenteditable="true"][role="textbox"]',
+      "rich-textarea div[contenteditable='true']",
+      'div[contenteditable="true"][role="textbox"]',
+      "textarea",
+      '[contenteditable="true"]',
+    ];
+
+    for (const selector of [...new Set(selectors)]) {
+      const candidates = document.querySelectorAll(selector);
+      for (const candidate of candidates) {
+        if (
+          !(candidate instanceof HTMLElement) ||
+          !candidate.isConnected ||
+          candidate.closest("#" + HUD_ID) ||
+          (candidate.offsetParent === null && candidate.getClientRects().length === 0)
+        ) {
+          continue;
+        }
+        if (
+          candidate.matches('input[type="hidden"], textarea[aria-hidden="true"]') ||
+          candidate.getAttribute("aria-hidden") === "true"
+        ) {
+          continue;
+        }
+        return candidate;
+      }
     }
-    return (
-      document.querySelector(
-        "rich-textarea div[contenteditable='true'], textarea, [contenteditable='true']",
-      ) || null
-    );
+
+    return null;
+  }
+
+  function isSendControlForInput(sendControl, inputElement) {
+    if (
+      !(sendControl instanceof HTMLElement) ||
+      !(inputElement instanceof HTMLElement)
+    ) {
+      return false;
+    }
+
+    const inputForm = inputElement.closest("form");
+    const sendForm = sendControl.closest("form");
+    if (inputForm && sendForm) {
+      return inputForm === sendForm;
+    }
+
+    const composerSelectors = [
+      "[data-chatgpt-composer]",
+      ".input-area",
+      ".input-area-container",
+      "rich-textarea",
+      "[class*='composer-parent']",
+      "[class*='input-area']",
+      "[class*='composer']",
+      "[class*='input-container']",
+      "fieldset",
+    ];
+
+    const sharesComposerContainer = composerSelectors.some((selector) => {
+      const inputContainer = inputElement.closest(selector);
+      return Boolean(
+        inputContainer && inputContainer === sendControl.closest(selector),
+      );
+    });
+    if (sharesComposerContainer) return true;
+
+    // Some platforms render the input and send control as siblings without a
+    // shared form or a consistently named composer wrapper.
+    let ancestor = inputElement.parentElement;
+    let depth = 0;
+    while (ancestor && depth < 5 && ancestor !== document.body) {
+      if (ancestor.contains(sendControl)) return true;
+      ancestor = ancestor.parentElement;
+      depth++;
+    }
+
+    return false;
   }
 
   function getInputContainer(input) {
@@ -1646,6 +2076,8 @@
         for (const btn of candidates) {
           if (
             btn instanceof HTMLElement &&
+            btn.isConnected &&
+            (btn.offsetParent !== null || btn.getClientRects().length > 0) &&
             !btn.hasAttribute("disabled") &&
             btn.getAttribute("aria-disabled") !== "true"
           ) {
@@ -1666,7 +2098,11 @@
       if (attempts >= 8) {
         for (const sel of currentPlatform.sendButtonSelectors || []) {
           const btn = document.querySelector(sel);
-          if (btn instanceof HTMLElement) {
+          if (
+            btn instanceof HTMLElement &&
+            btn.isConnected &&
+            (btn.offsetParent !== null || btn.getClientRects().length > 0)
+          ) {
             clearInterval(timer);
             btn.removeAttribute("disabled");
             btn.setAttribute("aria-disabled", "false");
@@ -1732,21 +2168,24 @@
     }
 
     if (event.type === "click") {
-      const btn = event.target.closest(
-        currentPlatform.sendButtonSelectors.join(","),
+      const eventTarget = event.target;
+      if (!(eventTarget instanceof Element)) return;
+
+      const sendControl = eventTarget.closest(
+        (currentPlatform.sendButtonSelectors || []).join(","),
       );
-      if (btn) {
-        event.preventDefault();
-        event.stopPropagation();
-        const input = getChatInput();
-        if (input) {
-          isSubmitting = true;
-          fuseAndSubmit(input);
-          sendWithRetry(input, () => {
-            isSubmitting = false;
-          });
-        }
-      }
+      if (!sendControl) return;
+
+      const input = getChatInput();
+      if (!input || !isSendControlForInput(sendControl, input)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      isSubmitting = true;
+      fuseAndSubmit(input);
+      sendWithRetry(input, () => {
+        isSubmitting = false;
+      });
     }
   }
 
@@ -2709,7 +3148,7 @@
   }
 
   function collectMutationTargets(records) {
-    const turnSelector = currentPlatform.turnSelectors.join(",");
+    const turnSelector = getActiveTurnSelectors().join(",");
     let structuralChange = false;
 
     for (const mutationRecord of records) {
@@ -2883,6 +3322,7 @@
     history.pushState = function (...args) {
       const result = originalPushState.apply(this, args);
       window.setTimeout(() => {
+        invalidateActiveTurnSelectorGroup();
         fullTurnSyncRequested = true;
         codeScanRequested = true;
         requestUpdate();
@@ -2893,6 +3333,7 @@
     history.replaceState = function (...args) {
       const result = originalReplaceState.apply(this, args);
       window.setTimeout(() => {
+        invalidateActiveTurnSelectorGroup();
         fullTurnSyncRequested = true;
         codeScanRequested = true;
         requestUpdate();
@@ -2901,6 +3342,7 @@
     };
 
     window.addEventListener("popstate", () => {
+      invalidateActiveTurnSelectorGroup();
       fullTurnSyncRequested = true;
       codeScanRequested = true;
       requestUpdate();
