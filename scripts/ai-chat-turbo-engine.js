@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.11.0
-// @description  跨平台 AI 对话加速：新旧 ChatGPT DOM 兼容 + 主流 AI 平台适配 + 长代码折叠 + 长文本虚拟文件胶囊 + 增量消息索引 + 自适应脱水
+// @version      0.12.0
+// @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -33,12 +33,12 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.11.0";
+  const VERSION = "0.12.0";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
   const CODE_PREVIEW_HEIGHT = 200;
-  const TURN_TEXT_LIMIT = 800;
+  const SEARCH_PREVIEW_LIMIT = 180;
   const SEARCH_LIMIT = 10;
   const STORAGE_KEY_POS = "ai_turbo_pill_pos";
   const STORAGE_KEY_CONFIG = "ai_turbo_engine_config";
@@ -51,6 +51,30 @@
   const VF_TOKEN_END = ":TURBO_VFILE_END]]";
   const VF_REGEX =
     /\[\[TURBO_VFILE_START:([^|\r\n]+)\|(\d+)\|(\d+):TURBO_VFILE_END\]\]/;
+  const HANDOFF_STORAGE_KEY = "ai_turbo_handoff_restore";
+  const REASONING_SELECTOR = [
+    "model-thoughts",
+    ".thoughts-container",
+    ".thoughts-content",
+    "[data-test-id*='thought' i]",
+    "[data-testid*='thought' i]",
+    "[data-testid*='reasoning' i]",
+    "[data-testid*='thinking' i]",
+    "[class*='reasoning' i]",
+    "[class*='thinking' i]",
+    "[class*='thought-process' i]",
+    "[aria-label*='reasoning' i]",
+    "[aria-label*='thinking' i]",
+    "[aria-label*='思考']",
+    "[aria-label*='推理']",
+    "[data-type='reasoning']",
+  ].join(", ");
+  const BLOCK_TEXT_TAGS = new Set([
+    "ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DD", "DIV", "DL", "DT",
+    "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4",
+    "H5", "H6", "HEADER", "HR", "LI", "MAIN", "NAV", "OL", "P", "SECTION",
+    "TABLE", "TBODY", "TD", "TH", "THEAD", "TR", "UL",
+  ]);
 
   const PLATFORMS = {
     chatgpt: {
@@ -844,6 +868,7 @@
   let hudRootElement = null;
   let hudShadowRoot = null;
   let hudStats = null;
+  let handoffStatusNode = null;
   let searchInput = null;
   let searchResultsBox = null;
   let virtualFileTrayAnchor = null;
@@ -915,9 +940,94 @@
   function normalizeText(sourceText) {
     return String(sourceText || "")
       .replace(/\u00a0/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, TURN_TEXT_LIMIT);
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => line.replace(/[ \t]+$/g, ""))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function isReasoningElement(element) {
+    if (!(element instanceof Element)) return false;
+    try {
+      return (
+        element.matches(REASONING_SELECTOR) ||
+        Boolean(element.closest(REASONING_SELECTOR))
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function elementToPlainText(rootElement) {
+    if (!(rootElement instanceof Element) || isReasoningElement(rootElement)) {
+      return "";
+    }
+
+    const clone = rootElement.cloneNode(true);
+    if (!(clone instanceof Element)) return "";
+
+    const removableSelectors = [
+      REASONING_SELECTOR,
+      ".ai-turbo-chat-file-row",
+      ".ai-turbo-chat-capsule",
+      ".ai-turbo-code-bar",
+      "#ai-turbo-vf-tray",
+      "#ai-turbo-vf-preview-modal",
+      "button",
+      "[role='toolbar']",
+      "script",
+      "style",
+      "svg",
+      "[hidden]",
+    ].join(", ");
+
+    try {
+      clone.querySelectorAll(removableSelectors).forEach((element) => {
+        element.remove();
+      });
+    } catch (_) {}
+
+    const clearTurboLayout = (element) => {
+      element.classList.remove(
+        "ai-turbo-dehydrated",
+        "ai-turbo-chat-folded-target",
+        "ai-turbo-folded",
+      );
+      [
+        "display",
+        "contain",
+        "content-visibility",
+        "contain-intrinsic-size",
+        "max-height",
+        "overflow",
+        "--turbo-cached-h",
+      ].forEach((property) => element.style.removeProperty(property));
+    };
+
+    clearTurboLayout(clone);
+    clone.querySelectorAll(
+      ".ai-turbo-dehydrated, .ai-turbo-chat-folded-target, .ai-turbo-folded",
+    ).forEach(clearTurboLayout);
+
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return node.nodeValue || "";
+      }
+      if (!(node instanceof Element)) {
+        return Array.from(node.childNodes || []).map(walk).join("");
+      }
+
+      const tag = node.tagName.toUpperCase();
+      if (tag === "BR") return "\n";
+      if (tag === "PRE") return "\n" + (node.textContent || "") + "\n";
+
+      const content = Array.from(node.childNodes).map(walk).join("");
+      return BLOCK_TEXT_TAGS.has(tag) ? "\n" + content + "\n" : content;
+    }
+
+    return normalizeText(walk(clone));
   }
 
   function isGeminiThoughtElement(element) {
@@ -1004,6 +1114,40 @@
     return false;
   }
 
+  function getTurnRole(turnElement) {
+    if (!(turnElement instanceof Element)) return "assistant";
+
+    const contentSearchKey = turnElement.getAttribute(
+      "data-content-search-unit-key",
+    );
+    if (contentSearchKey && /:(user|human)$/i.test(contentSearchKey)) {
+      return "user";
+    }
+    if (contentSearchKey && /:(assistant|model)$/i.test(contentSearchKey)) {
+      return "assistant";
+    }
+
+    const roleValues = [
+      turnElement.getAttribute("data-message-author-role"),
+      turnElement.getAttribute("data-message-author"),
+      turnElement.getAttribute("data-role"),
+      turnElement.getAttribute("data-message-role"),
+      turnElement.getAttribute("data-conversation-role"),
+    ].filter(Boolean);
+
+    if (roleValues.some((role) => /^(user|human)$/i.test(role))) return "user";
+    if (roleValues.some((role) => /^(assistant|model)$/i.test(role))) {
+      return "assistant";
+    }
+
+    for (const selector of currentPlatform.userTurnSelectors || []) {
+      try {
+        if (turnElement.matches(selector)) return "user";
+      } catch (_) {}
+    }
+    return isUserTurn(turnElement) ? "user" : "assistant";
+  }
+
   function uniqueDomOrdered(elements) {
     const seen = new Set();
     const unique = [];
@@ -1072,7 +1216,10 @@
     }
 
     const unnested = filterOutNested(collected);
-    return unnested.filter((element) => !isGeminiThoughtElement(element));
+    return unnested.filter(
+      (element) =>
+        !isGeminiThoughtElement(element) && !isReasoningElement(element),
+    );
   }
 
   function findContentElement(turnElement) {
@@ -1096,16 +1243,9 @@
     return turnElement;
   }
 
-  // 消息内容提取：自动过滤附件代码乱码，优先提取用户真实提问
+  // 从完整消息容器中提取文本；不再只取第一个 Markdown 子节点或截断到 800 字符。
   function extractTurnText(turnElement) {
-    const contentElement = findContentElement(turnElement);
-    let raw = contentElement.textContent || "";
-
-    contentElement
-      .querySelectorAll(".ai-turbo-chat-file-row, .ai-turbo-chat-capsule")
-      .forEach((element) => {
-        raw = raw.replace(element.textContent || "", "");
-      });
+    let raw = elementToPlainText(turnElement);
     const vfIdx = raw.indexOf(VF_TOKEN_START);
     if (vfIdx !== -1) {
       let userPart = raw
@@ -2120,6 +2260,7 @@
 
       stopVirtualFileTrayTracking();
       trayIsDirty = false;
+      updateHudDashboard();
       return;
     }
 
@@ -2299,6 +2440,7 @@
 
     positionVirtualFileTray();
     window.requestAnimationFrame(positionVirtualFileTray);
+    updateHudDashboard();
   }
 
   function handlePasteIntercept(event) {
@@ -2341,12 +2483,16 @@
       timestamp: Date.now(),
     });
 
+    updateHudDashboard();
     trayIsDirty = true;
     renderVirtualFileTray();
   }
 
   function insertTextAtomic(inputElement, text) {
-    if (inputElement instanceof HTMLTextAreaElement) {
+    if (
+      inputElement instanceof HTMLTextAreaElement ||
+      inputElement instanceof HTMLInputElement
+    ) {
       inputElement.value = text;
       inputElement.dispatchEvent(new Event("input", { bubbles: true }));
       inputElement.dispatchEvent(new Event("change", { bubbles: true }));
@@ -2948,6 +3094,14 @@
     hudStats.total.textContent = String(state.totalTurns);
     hudStats.hidden.textContent = String(state.hiddenCount);
     hudStats.folded.textContent = String(state.foldedCodeCount);
+    if (hudStats.pillTotal) hudStats.pillTotal.textContent = String(state.totalTurns);
+    if (hudStats.pillHidden) hudStats.pillHidden.textContent = String(state.hiddenCount);
+    if (hudStats.pillFolded) hudStats.pillFolded.textContent = String(state.foldedCodeCount);
+    if (hudStats.pillVirtual) hudStats.pillVirtual.textContent = String(activeVirtualFiles.length);
+    const pill = hudShadowRoot?.querySelector("#pill-trigger");
+    if (pill) {
+      pill.title = `消息 ${state.totalTurns} · 已脱水 ${state.hiddenCount} · 代码折叠 ${state.foldedCodeCount} · 虚拟文件 ${activeVirtualFiles.length}；点击打开面板，拖动可移动`;
+    }
   }
 
   function togglePanel(forceState) {
@@ -2983,6 +3137,11 @@
     }
 
     for (const record of matches) {
+      const previewText = record.text || "（无文本）";
+      const resultText =
+        previewText.length > SEARCH_PREVIEW_LIMIT
+          ? previewText.slice(0, SEARCH_PREVIEW_LIMIT) + "…"
+          : previewText;
       const resultButton = el(
         "button",
         {
@@ -3004,7 +3163,7 @@
             }, 1800);
           },
         },
-        [`#${record.id + 1}  ${record.text || "（无文本）"}`],
+        [`#${record.id + 1}  ${resultText}`],
       );
       searchResultsBox.appendChild(resultButton);
     }
@@ -3036,18 +3195,39 @@
         position: fixed;
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        height: 34px;
-        padding: 0 11px;
+        gap: 8px;
+        min-height: 36px;
+        max-width: min(390px, calc(100vw - 16px));
+        padding: 5px 10px;
         border-radius: 999px;
-        background: #0d1113;
-        border: 1px solid rgba(153, 166, 161, 0.22);
+        background: rgba(13, 17, 19, 0.97);
+        border: 1px solid rgba(153, 166, 161, 0.26);
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
         color: #dce5e1;
         font: 650 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         cursor: grab;
         user-select: none;
         touch-action: none;
+        white-space: nowrap;
+      }
+      .pill-brand { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+      .pill-metrics {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding-left: 8px;
+        border-left: 1px solid rgba(153, 166, 161, 0.22);
+        color: #9baaa3;
+        font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        min-width: 0;
+      }
+      .pill-metric { display: inline-flex; align-items: baseline; gap: 3px; }
+      .pill-metric-label { color: #84958d; font-size: 9px; }
+      .pill-metric-value { color: #74ddb1; font-size: 11px; font-weight: 800; }
+      @media (max-width: 440px) {
+        .docked-pill { gap: 6px; padding: 5px 8px; }
+        .pill-metrics { gap: 5px; padding-left: 6px; }
+        .pill-metric-label { font-size: 8px; }
       }
       .docked-pill:active { cursor: grabbing; }
       .docked-pill:hover {
@@ -3121,6 +3301,7 @@
       .action-btn { width: 100%; height: 34px; margin-top: 10px; border: 1px solid rgba(153, 166, 161, 0.15); border-radius: 8px; background: #111719; color: #ccd6d1; font-size: 11px; font-weight: 600; cursor: pointer; transition: 140ms ease; }
       .action-btn:hover { background: rgba(101, 210, 164, 0.07); border-color: rgba(101, 210, 164, 0.25); color: #72d6ab; }
       .action-btn.copied { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.4); }
+      .handoff-status { margin-top: 8px; color: #8da097; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 
       .search-wrap { position: relative; margin-top: 8px; }
       .search-input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid rgba(153, 166, 161, 0.16); border-radius: 8px; background: #0f1416; color: #e6eeea; font-size: 11px; outline: none; }
@@ -3139,15 +3320,40 @@
     `;
     hudShadowRoot.appendChild(styles);
 
+    const pillTotalVal = el("span", { className: "pill-metric-value" }, ["0"]);
+    const pillHiddenVal = el("span", { className: "pill-metric-value" }, ["0"]);
+    const pillFoldedVal = el("span", { className: "pill-metric-value" }, ["0"]);
+    const pillVirtualVal = el("span", { className: "pill-metric-value" }, ["0"]);
+
     const pill = el(
       "button",
       {
         className: "docked-pill",
         id: "pill-trigger",
         type: "button",
-        title: "点击呼出 (Alt+T)，可拖拽避开其他按钮",
+        title: "消息 0 · 已脱水 0 · 代码折叠 0 · 虚拟文件 0；点击打开面板，拖动可移动",
       },
-      ["⚡ ", el("span", {}, ["Turbo"])],
+      [
+        el("span", { className: "pill-brand" }, ["⚡ ", el("span", {}, ["Turbo"])]),
+        el("span", { className: "pill-metrics", "aria-label": "实时统计" }, [
+          el("span", { className: "pill-metric", title: "消息总数" }, [
+            el("span", { className: "pill-metric-label" }, ["M"]),
+            pillTotalVal,
+          ]),
+          el("span", { className: "pill-metric", title: "已脱水消息数" }, [
+            el("span", { className: "pill-metric-label" }, ["D"]),
+            pillHiddenVal,
+          ]),
+          el("span", { className: "pill-metric", title: "折叠代码块数" }, [
+            el("span", { className: "pill-metric-label" }, ["C"]),
+            pillFoldedVal,
+          ]),
+          el("span", { className: "pill-metric", title: "当前待发送虚拟文件数" }, [
+            el("span", { className: "pill-metric-label" }, ["V"]),
+            pillVirtualVal,
+          ]),
+        ]),
+      ],
     );
 
     const totalVal = el(
@@ -3249,7 +3455,7 @@
       },
     });
 
-    const forkText = el("span", { id: "fork-text" }, ["提取当前上下文"]);
+    const forkText = el("span", { id: "fork-text" }, ["复制原始上下文（回退）"]);
     const btnFork = el(
       "button",
       {
@@ -3258,15 +3464,39 @@
         onclick: () => {
           exportCleanContext((count) => {
             btnFork.classList.add("copied");
-            forkText.textContent = `已复制 ${count} 条消息`;
+            forkText.textContent = `已复制 ${count} 条完整消息`;
             window.setTimeout(() => {
               btnFork.classList.remove("copied");
-              forkText.textContent = "提取当前上下文";
-            }, 2000);
+              forkText.textContent = "复制原始上下文（回退）";
+            }, 2200);
           });
         },
       },
       [forkText],
+    );
+
+    const btnGenerateHandoff = el(
+      "button",
+      {
+        className: "action-btn",
+        type: "button",
+        onclick: startHandoffGeneration,
+      },
+      ["发送 YAML 交接指令"],
+    );
+    const btnContinueHandoff = el(
+      "button",
+      {
+        className: "action-btn",
+        type: "button",
+        onclick: prepareNewConversationFromYaml,
+      },
+      ["恢复到新对话"],
+    );
+    handoffStatusNode = el(
+      "div",
+      { className: "handoff-status", role: "status", "aria-live": "polite" },
+      ["交接状态：未开始"],
     );
 
     const strategySection = el("div", { className: "section" }, [
@@ -3297,6 +3527,9 @@
         ]),
       ]),
       btnFork,
+      btnGenerateHandoff,
+      btnContinueHandoff,
+      handoffStatusNode,
     ]);
 
     searchInput = el("input", {
@@ -3376,7 +3609,12 @@
       total: totalVal,
       hidden: hiddenVal,
       folded: foldedVal,
+      pillTotal: pillTotalVal,
+      pillHidden: pillHiddenVal,
+      pillFolded: pillFoldedVal,
+      pillVirtual: pillVirtualVal,
     };
+    updateHudDashboard();
 
     initPillDrag(pill);
   }
@@ -3471,7 +3709,8 @@
     turns.forEach((turnElement, index) => {
       const contentText = extractTurnText(turnElement);
       if (contentText) {
-        sections.push(`### Message ${index + 1}\n\n${contentText}`);
+        const role = getTurnRole(turnElement) === "user" ? "用户" : "助手";
+        sections.push(`### ${role} · Message ${index + 1}\n\n${contentText}`);
       }
     });
 
@@ -3499,6 +3738,383 @@
       });
   }
 
+  function buildHandoffGenerationPrompt() {
+    return [
+      "你即将结束当前对话。请对迄今全部对话进行深度复盘，生成一份 YAML 格式的“上下文交接包”，用于在新会话中无缝恢复工作。",
+      "",
+      "要求：",
+      "1. 只输出一个 YAML 代码块，不要添加解释、客套话或 Markdown 标题。",
+      "2. YAML 必须语法正确；字符串包含冒号、引号、换行时使用双引号并转义，或使用 | 块。",
+      "3. 信息必须自包含、准确，不编造。没有内容的字段用 [] 或 null。",
+      "4. 若内容过长，优先压缩为关键点，但必须保证 YAML 完整闭合。",
+      "5. 严格使用以下结构和字段，不得省略顶层字段：",
+      "",
+      CODE_FENCE + "yaml",
+      "meta:",
+      '  version: "1.0"',
+      '  generated_at: ""',
+      '  source_model: ""',
+      '  language: "zh-CN"',
+      "task:",
+      '  objective: ""',
+      "  success_criteria: []",
+      '  current_status: ""',
+      "decisions:",
+      "  confirmed: []",
+      "  rejected: []",
+      "  assumptions: []",
+      "progress:",
+      "  done: []",
+      "  in_progress: []",
+      "  next_actions: []",
+      "role:",
+      '  persona: ""',
+      '  tone: ""',
+      "  response_format: []",
+      "  boundaries: []",
+      "context:",
+      "  tools: []",
+      "  tech_stack: []",
+      "  files: []",
+      "  data: []",
+      "  constraints: []",
+      "open_issues:",
+      "  questions: []",
+      "  risks: []",
+      "  blockers: []",
+      "key_entities:",
+      "  people: []",
+      "  projects: []",
+      "  terms: []",
+      "handoff_notes: []",
+      CODE_FENCE,
+    ].join("\n");
+  }
+
+  function buildHandoffRestorePrompt(yamlText) {
+    return [
+      "你将接收一份 YAML 格式的“上下文交接包”，用于恢复此前会话的工作状态。请按以下步骤操作：",
+      "",
+      "1. 解析并校验以下 YAML 的语法。",
+      "2. 如果 YAML 不完整或语法错误，只指出问题，不要猜测，也不要开始工作。",
+      "3. 如果 YAML 有效，用简短摘要确认：",
+      "   - 任务目标：",
+      "   - 当前状态：",
+      "   - 已确认决策：",
+      "   - 已排除方案：",
+      "   - 下一步行动：",
+      "   - 你的角色/风格：",
+      "4. 确认后，直接进入该角色，从 next_actions 的第一项开始继续工作。不要重新询问 YAML 中已有的信息，也不要重新讨论已确认或已排除的决策。",
+      "5. 若 YAML 中有 open_issues.questions，先按优先级列出，并询问我需要先处理哪一个；若没有，直接执行下一步。",
+      "",
+      "现在准备接收 YAML，这是你的YAML信息：",
+      CODE_FENCE + "yaml",
+      yamlText.trim(),
+      CODE_FENCE,
+    ].join("\n");
+  }
+
+  function getComposerText(inputElement) {
+    if (
+      inputElement instanceof HTMLTextAreaElement ||
+      inputElement instanceof HTMLInputElement
+    ) {
+      return inputElement.value || "";
+    }
+    return inputElement?.innerText || inputElement?.textContent || "";
+  }
+
+  function setHandoffStatus(message) {
+    if (handoffStatusNode) handoffStatusNode.textContent = message;
+  }
+
+  function isHandoffYamlShape(yamlText) {
+    const yaml = String(yamlText || "").trim();
+    if (!yaml.startsWith("meta:")) return false;
+    const requiredSections = [
+      "meta",
+      "task",
+      "decisions",
+      "progress",
+      "role",
+      "context",
+      "open_issues",
+      "key_entities",
+      "handoff_notes",
+    ];
+    return requiredSections.every((section) =>
+      new RegExp("^" + section + ":\\s*$", "m").test(yaml),
+    );
+  }
+
+  function normalizeHandoffYaml(candidate) {
+    if (!candidate) return null;
+    const yaml = String(candidate)
+      .trim()
+      .replace(/^```(?:yaml|yml)\s*/i, "")
+      .replace(/\s*```\s*$/, "")
+      .trim();
+    return isHandoffYamlShape(yaml) ? yaml : null;
+  }
+
+  function extractLatestHandoffYaml() {
+    const turns = getTurns();
+    for (let index = turns.length - 1; index >= 0; index--) {
+      const turnElement = turns[index];
+      if (getTurnRole(turnElement) !== "assistant") continue;
+
+      const codeElements = Array.from(
+        turnElement.querySelectorAll("pre code, pre, code"),
+      );
+      for (const codeElement of codeElements) {
+        if (isReasoningElement(codeElement)) continue;
+        const languageHint = [
+          codeElement.className || "",
+          codeElement.getAttribute("data-language") || "",
+          codeElement.parentElement?.className || "",
+          codeElement.parentElement?.getAttribute("data-language") || "",
+        ].join(" ");
+        const codeText = codeElement.textContent || "";
+        if (/ya?ml/i.test(languageHint) || codeText.trim().startsWith("meta:")) {
+          const candidate = normalizeHandoffYaml(codeText);
+          if (candidate) return candidate;
+        }
+      }
+
+      const fullText = extractTurnText(turnElement);
+      const fencedCandidates = Array.from(
+        fullText.matchAll(/```(?:yaml|yml)\s*([\s\S]*?)\s*```/gi),
+      );
+      for (const match of fencedCandidates) {
+        const candidate = normalizeHandoffYaml(match[1]);
+        if (candidate) return candidate;
+      }
+      const plainCandidate = normalizeHandoffYaml(fullText);
+      if (plainCandidate) return plainCandidate;
+    }
+    return null;
+  }
+
+  function findNewChatControl() {
+    const selectors = [
+      'button[data-testid*="new-chat" i]',
+      'button[data-testid*="new_chat" i]',
+      'button[data-testid*="new-conversation" i]',
+      '[role="button"][data-testid*="new-chat" i]',
+      'button[aria-label*="new chat" i]',
+      'button[aria-label*="new conversation" i]',
+      'button[aria-label*="start new chat" i]',
+      'a[aria-label*="new chat" i]',
+      'button[title*="new chat" i]',
+      'button[title*="new conversation" i]',
+      'button[aria-label*="新建对话"]',
+      'button[aria-label*="新对话"]',
+      'button[aria-label*="新建聊天"]',
+      'button[title*="新建对话"]',
+      'button[title*="新对话"]',
+      'a[aria-label*="新对话"]',
+    ];
+
+    for (const selector of selectors) {
+      let controls = [];
+      try {
+        controls = Array.from(document.querySelectorAll(selector));
+      } catch (_) {}
+      const found = controls.find((control) =>
+        control instanceof HTMLElement &&
+        control.isConnected &&
+        control.getAttribute("target") !== "_blank" &&
+        (control.offsetParent !== null || control.getClientRects().length > 0),
+      );
+      if (found) return found;
+    }
+
+    const exactLabels = new Set([
+      "new chat",
+      "new conversation",
+      "new thread",
+      "start new chat",
+      "新建对话",
+      "新对话",
+      "新建聊天",
+      "开始新对话",
+      "开启新对话",
+    ]);
+    return Array.from(
+      document.querySelectorAll("button, a, [role='button']"),
+    ).find((control) => {
+      if (
+        !(control instanceof HTMLElement) ||
+        !control.isConnected ||
+        control.getAttribute("target") === "_blank" ||
+        !(control.offsetParent !== null || control.getClientRects().length > 0)
+      ) {
+        return false;
+      }
+      const label = [
+        control.getAttribute("aria-label") || "",
+        control.getAttribute("title") || "",
+        control.innerText || control.textContent || "",
+      ]
+        .join(" ")
+        .trim()
+        .toLowerCase();
+      return exactLabels.has(label);
+    }) || null;
+  }
+
+  function resumePendingHandoffPrompt() {
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      let pending = null;
+      try {
+        pending = JSON.parse(
+          sessionStorage.getItem(HANDOFF_STORAGE_KEY) || "null",
+        );
+      } catch (_) {}
+      if (!pending || typeof pending.text !== "string") {
+        window.clearInterval(timer);
+        return;
+      }
+
+      if (Date.now() - (pending.createdAt || 0) > 5 * 60 * 1000) {
+        sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+        window.clearInterval(timer);
+        return;
+      }
+
+      const currentTurns = getTurns().length;
+      const isNewConversation =
+        window.location.href !== pending.sourceUrl ||
+        (pending.sourceTurns > 0 && currentTurns === 0);
+      attempts++;
+
+      if (isNewConversation) {
+        const input = getChatInput();
+        if (input) {
+          if (getComposerText(input).trim()) {
+            navigator.clipboard
+              .writeText(pending.text)
+              .then(() => {
+                setHandoffStatus("新对话输入框已有草稿，恢复指令已复制到剪贴板。");
+                window.alert("新对话输入框已有未发送内容。为避免覆盖草稿，已将恢复指令复制到剪贴板，请手动粘贴。");
+              })
+              .catch(() => {
+                window.alert("无法覆盖新对话中的已有草稿。请保留草稿后手动粘贴恢复指令。");
+              });
+          } else {
+            insertTextAtomic(input, pending.text);
+            input.focus();
+            setHandoffStatus("恢复指令已填入新对话；检查 YAML 后手动发送。");
+          }
+          sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+          window.clearInterval(timer);
+          return;
+        }
+      }
+
+      if (attempts >= 120) {
+        sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+        window.clearInterval(timer);
+        navigator.clipboard
+          .writeText(pending.text)
+          .then(() => {
+            setHandoffStatus("未识别到新对话输入框，恢复指令已复制到剪贴板。");
+            window.alert("未能可靠识别新对话输入框。完整恢复指令已复制，请手动打开新对话并粘贴。");
+          })
+          .catch(() => {
+            window.alert("未能识别新对话输入框，也无法写入剪贴板。请回到原回答手动复制 YAML。");
+          });
+      }
+    }, 250);
+  }
+
+  function startHandoffGeneration() {
+    const prompt = buildHandoffGenerationPrompt();
+    const input = getChatInput();
+    if (!input) {
+      navigator.clipboard
+        .writeText(prompt)
+        .then(() => {
+          setHandoffStatus("未识别当前输入框，生成指令已复制。");
+          window.alert("未识别到当前网站的输入框。生成指令已复制，请手动粘贴并发送。");
+        })
+        .catch(() => window.alert("未能识别输入框，也无法写入剪贴板。"));
+      return;
+    }
+
+    if (getComposerText(input).trim()) {
+      navigator.clipboard
+        .writeText(prompt)
+        .then(() => {
+          setHandoffStatus("当前输入框有草稿；生成指令已复制，未覆盖草稿。");
+          window.alert("当前输入框已有未发送内容。为避免覆盖草稿，生成指令已复制，请先处理现有草稿，再手动粘贴发送。");
+        })
+        .catch(() => window.alert("当前输入框有草稿，且无法复制生成指令。"));
+      return;
+    }
+
+    insertTextAtomic(input, prompt);
+    isSubmitting = true;
+    setHandoffStatus("已填入生成指令，正在发送……");
+    sendWithRetry(input, (sent) => {
+      isSubmitting = false;
+      setHandoffStatus(
+        sent
+          ? "已发送 YAML 交接指令；等待回答完成后，点击“恢复到新对话”。"
+          : "指令已填入但未确认发送，请检查输入框后手动发送。",
+      );
+    });
+  }
+
+  function prepareNewConversationFromYaml() {
+    const yamlText = extractLatestHandoffYaml();
+    if (!yamlText) {
+      window.alert(
+        "未在最近的助手回答中找到符合交接包结构的 YAML 代码块。请等待回答完整结束，或手动复制 YAML。",
+      );
+      setHandoffStatus("尚未检测到完整交接 YAML。");
+      return;
+    }
+
+    const restoreText = buildHandoffRestorePrompt(yamlText);
+    const newChatControl = findNewChatControl();
+    if (!newChatControl) {
+      navigator.clipboard
+        .writeText(restoreText)
+        .then(() => {
+          setHandoffStatus("未识别新对话入口；完整恢复指令已复制。");
+          window.alert("已提取 YAML 并复制完整恢复指令。此网站的新对话按钮未能可靠识别，请手动打开新对话并粘贴。");
+        })
+        .catch(() => {
+          window.alert("已找到 YAML，但无法识别新对话入口或写入剪贴板。请手动复制 YAML 后恢复。");
+        });
+      return;
+    }
+
+    try {
+      sessionStorage.setItem(
+        HANDOFF_STORAGE_KEY,
+        JSON.stringify({
+          text: restoreText,
+          createdAt: Date.now(),
+          sourceUrl: window.location.href,
+          sourceTurns: getTurns().length,
+        }),
+      );
+    } catch (_) {
+      navigator.clipboard
+        .writeText(restoreText)
+        .then(() => window.alert("无法暂存跨页面恢复状态，已复制完整恢复指令，请手动打开新对话并粘贴。"))
+        .catch(() => window.alert("无法暂存或复制恢复指令，请手动复制 YAML。"));
+      return;
+    }
+
+    setHandoffStatus("已识别 YAML，正在打开新对话并准备填入恢复指令……");
+    newChatControl.click();
+    resumePendingHandoffPrompt();
+  }
+
   function collectMutationTargets(records) {
     const turnSelector = getActiveTurnSelectors().join(",");
     let structuralChange = false;
@@ -3522,7 +4138,8 @@
 
       if (
         possibleTurn instanceof Element &&
-        !isGeminiThoughtElement(possibleTurn)
+        !isGeminiThoughtElement(possibleTurn) &&
+        !isReasoningElement(possibleTurn)
       ) {
         dirtyTurns.add(possibleTurn);
       }
@@ -3775,6 +4392,8 @@
     fullTurnSyncRequested = true;
     codeScanRequested = true;
     requestUpdate();
+
+    resumePendingHandoffPrompt();
 
     window.addEventListener("load", () => {
       fullTurnSyncRequested = true;
