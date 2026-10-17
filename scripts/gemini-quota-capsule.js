@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.5.0
+// @version      0.5.1
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，24px 超薄细长条同屏显示 5H 与 7D 真实用量及官方重置时间。
 // @author       Yoko
 // @match        https://gemini.google.com/*
@@ -22,8 +22,6 @@
   const STORAGE_KEY_CFG = "__gemini_quota_capsule_cfg_v5__";
   const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v5__";
 
-  const TIME_5H_MS = 5 * 60 * 60 * 1000;
-  const TIME_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
   const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000;
 
   const DEFAULT_CONFIG = {
@@ -111,7 +109,7 @@
   }
 
   // =========================================================================
-  // 3. 官方配额状态机与数据解析器（Voyager usage-observer 核心逻辑）
+  // 3. 官方配额状态机与数据解析器
   // =========================================================================
   const quotaState = {
     source: "init", // 'init' | 'rpc' | 'usage-page' | 'cache' | 'error'
@@ -132,7 +130,6 @@
       resetAt: null, // 真实官方重置时间戳 (ms)
       rawResetText: "",
     },
-    // 保存捕获到的官方配额 batchexecute RPC 请求模板，支持点击刷新时毫秒级重放
     capturedQuotaRpc: null,
   };
 
@@ -147,48 +144,12 @@
 
   /**
    * 从官方自然语言重置提示中还原真实重置时间戳（毫秒）
-   * 绝不使用任何硬编码假偏移量
    */
   function parseOfficialResetTextToTimestamp(text, nowMs = Date.now()) {
     if (!text || typeof text !== "string") return null;
     const clean = text.replace(/\s+/g, " ").trim();
 
-    // 1. 相对倒计时格式：例如 "Resets in 3 hr 12 min" / "3 小时 12 分钟后重置" / "4 days 6 hr" / "4 天 6 小时后重置"
-    const hasRelativeKeyword =
-      /(?:reset(?:s|ting)?\s+in|in\s+\d|后重置|後重置|重置于|剩余|後にリセット|あと)/i.test(
-        clean,
-      ) ||
-      /(?:\d+\s*(?:d|day|days|天|日|h|hr|hrs|hour|hours|小时|小時|時間|m|min|mins|minute|minutes|分钟|分鐘|分)\b)/i.test(
-        clean,
-      );
-
-    if (hasRelativeKeyword) {
-      const dayMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:days?|d\b|天|日(?![期曜]))/i,
-      );
-      const hrMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h\b|个?小时|個?小時|時間)/i,
-      );
-      const minMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m\b|分钟|分鐘|分(?!钟|鐘|析|辨))/i,
-      );
-      const secMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s\b|秒)/i,
-      );
-
-      if (dayMatch || hrMatch || minMatch || secMatch) {
-        const d = dayMatch ? parseFloat(dayMatch[1]) : 0;
-        const h = hrMatch ? parseFloat(hrMatch[1]) : 0;
-        const m = minMatch ? parseFloat(minMatch[1]) : 0;
-        const s = secMatch ? parseFloat(secMatch[1]) : 0;
-        const deltaMs = ((d * 24 + h) * 3600 + m * 60 + s) * 1000;
-        if (deltaMs > 0 && deltaMs <= 14 * 24 * 3600 * 1000) {
-          return Math.round(nowMs + deltaMs);
-        }
-      }
-    }
-
-    // 2. 绝对时刻格式：例如 "Resets at 5:30 PM" / "将于明天 14:00 重置"
+    // 1. 优先解析绝对时刻（例如 "Resets at 5:30 PM" / "将于明天 14:00 重置" / "3:15 下午重置"）
     const clockMatch = clean.match(
       /(?:(tomorrow|明天|明日|today|今天|今日)\s*)?(?:at\s*|于\s*|於\s*)?(上午|下午|早上|晚上|凌晨)?\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i,
     );
@@ -223,12 +184,46 @@
       }
     }
 
+    // 2. 相对倒计时格式：例如 "Resets in 3 hr 12 min" / "5 小时后重置" / "4 days 6 hr"
+    const hasRelativeKeyword =
+      /(?:reset(?:s|ting)?\s+in|in\s+\d|后重置|後重置|重置于|剩余|後にリセット|あと)/i.test(
+        clean,
+      ) ||
+      /(?:\d+\s*(?:d|day|days|天|日|h|hr|hrs|hour|hours|小时|小時|時間|m|min|mins|minute|minutes|分钟|分鐘|分)\b)/i.test(
+        clean,
+      );
+
+    if (hasRelativeKeyword) {
+      const dayMatch = clean.match(
+        /(\d+(?:\.\d+)?)\s*(?:days?|d\b|天|日(?![期曜]))/i,
+      );
+      const hrMatch = clean.match(
+        /(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h\b|个?小时|個?小時|時間)/i,
+      );
+      const minMatch = clean.match(
+        /(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m\b|分钟|分鐘|分(?!钟|鐘|析|辨))/i,
+      );
+      const secMatch = clean.match(
+        /(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s\b|秒)/i,
+      );
+
+      if (dayMatch || hrMatch || minMatch || secMatch) {
+        const d = dayMatch ? parseFloat(dayMatch[1]) : 0;
+        const h = hrMatch ? parseFloat(hrMatch[1]) : 0;
+        const m = minMatch ? parseFloat(minMatch[1]) : 0;
+        const s = secMatch ? parseFloat(secMatch[1]) : 0;
+        const deltaMs = ((d * 24 + h) * 3600 + m * 60 + s) * 1000;
+        if (deltaMs > 0 && deltaMs <= 14 * 24 * 3600 * 1000) {
+          return Math.round(nowMs + deltaMs);
+        }
+      }
+    }
+
     return null;
   }
 
   /**
-   * 递归扫描 Google batchexecute (wrb.fr) 或 AF_initDataCallback 的嵌套数组结构，
-   * 识别包含 5小时 (18000s) / 7天 (604800s) 窗口、百分比或重置时间戳的官方配额元组
+   * 递归扫描 Google batchexecute 或 AF_initDataCallback 结构
    */
   function extractQuotaFromWizStructure(rootData, nowMs = Date.now()) {
     if (!rootData || typeof rootData !== "object") return null;
@@ -241,11 +236,9 @@
 
     function normalizeTimestampToMs(val) {
       if (typeof val === "number" && Number.isFinite(val)) {
-        // 秒级时间戳 (例如 1776xxxxxx)
         if (val >= minValidResetSec && val <= maxValidResetSec) {
           return Math.round(val * 1000);
         }
-        // 毫秒级时间戳
         if (val >= minValidResetSec * 1000 && val <= maxValidResetSec * 1000) {
           return Math.round(val);
         }
@@ -253,7 +246,6 @@
       if (typeof val === "string" && /^\d{10,13}$/.test(val)) {
         return normalizeTimestampToMs(Number(val));
       }
-      // Google Protobuf Timestamp tuple: [seconds, nanos]
       if (
         Array.isArray(val) &&
         val.length >= 1 &&
@@ -271,7 +263,6 @@
       if (depth > 14 || !node) return;
 
       if (typeof node === "string") {
-        // 若字符串本身是嵌套 JSON 数组，尝试解包
         const trimmed = node.trim();
         if (
           (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
@@ -287,34 +278,51 @@
       }
 
       if (Array.isArray(node)) {
-        // 检查当前数组是否直接表达了一个配额窗口元组
         const flatStrings = node.filter((x) => typeof x === "string").join(" ");
+        // 全面覆盖 5H 窗口标签：含 Session、会话、18000s 等多端命名
         const has5hLabel =
-          /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|18000)/i.test(
+          /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|current\s*session|session|当前会话|会话|セッション|18000)/i.test(
             flatStrings,
-          ) || node.includes(18000);
+          ) ||
+          node.includes(18000) ||
+          node.includes("18000") ||
+          node.includes("18000s");
+
         const has7dLabel =
           /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間|604800)/i.test(
             flatStrings,
-          ) || node.includes(604800);
+          ) ||
+          node.includes(604800) ||
+          node.includes("604800");
 
         if (has5hLabel || has7dLabel) {
           let pct = null;
+          let used = null;
+          let limit = null;
           let resetAt = null;
 
-          for (const item of node) {
+          // 展开当前层与直接子数组，防止配额元组嵌套断裂
+          const flatItems = node.flatMap((item) =>
+            Array.isArray(item) ? item : [item],
+          );
+
+          for (const item of flatItems) {
             const ts = normalizeTimestampToMs(item);
             if (ts && !resetAt) {
               resetAt = ts;
-            } else if (
-              typeof item === "number" &&
-              item >= 0 &&
-              item <= 100 &&
-              pct === null &&
-              item !== 5 &&
-              item !== 7
-            ) {
-              pct = Math.round(item);
+            } else if (typeof item === "number" && Number.isFinite(item)) {
+              if (item > 0 && item <= 1 && pct === null) {
+                // 浮点比率（例如 0.35 对应 35%）
+                pct = Math.round(item * 100);
+              } else if (
+                item >= 0 &&
+                item <= 100 &&
+                pct === null &&
+                item !== 18000 &&
+                item !== 604800
+              ) {
+                pct = Math.round(item);
+              }
             } else if (typeof item === "string") {
               const mPct = item.match(/(\d{1,3})\s*%/);
               if (mPct && pct === null) {
@@ -328,10 +336,10 @@
           }
 
           if (pct !== null) {
-            if (has5hLabel && !has7dLabel && !found5h) {
-              found5h = { pct, resetAt, rawResetText: "" };
-            } else if (has7dLabel && !has5hLabel && !found7d) {
-              found7d = { pct, resetAt, rawResetText: "" };
+            if (has5hLabel && !found5h) {
+              found5h = { pct, used, limit, resetAt, rawResetText: "" };
+            } else if (has7dLabel && !found7d) {
+              found7d = { pct, used, limit, resetAt, rawResetText: "" };
             }
           }
         }
@@ -359,9 +367,6 @@
     };
   }
 
-  /**
-   * 解析 Google batchexecute 的 `)]}'` 多帧响应体，提取所有 `wrb.fr` 载荷
-   */
   function parseBatchExecuteResponse(rawText) {
     if (!rawText || typeof rawText !== "string") return [];
     const results = [];
@@ -391,25 +396,55 @@
           }
         }
       } catch {
-        // 忽略长度行或分片残余
+        // 忽略分片残余
       }
     }
     return results;
   }
 
   /**
-   * 从单个文本片段（如 /usage 的卡片文本）提取百分比和真实重置时间
+   * 从卡片文本中解析百分比、请求数比率及官方真实重置时间
    */
   function extractMetricFromCardText(cardText, windowType, nowMs) {
-    if (!cardText) return null;
-    const pctMatch = cardText.match(/(\d{1,3})\s*%/);
-    if (!pctMatch) return null;
+    if (!cardText || typeof cardText !== "string") return null;
 
-    const pct = Math.min(100, Math.max(0, parseInt(pctMatch[1], 10)));
-    const stripWindowPattern =
+    let pct = null;
+    let used = null;
+    let limit = null;
+
+    // 1. 匹配标准百分比
+    const pctMatch = cardText.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+    if (pctMatch) {
+      pct = Math.min(100, Math.max(0, Math.round(parseFloat(pctMatch[1]))));
+    } else {
+      // 2. 匹配频次比率（例如 "15 / 50" 或 "15 of 50" 或 "15/50 请求"）
+      const ratioMatch = cardText.match(
+        /(\d+(?:\.\d+)?)\s*(?:\/|of|共|之)\s*(\d+(?:\.\d+)?)/i,
+      );
+      if (ratioMatch) {
+        const u = parseFloat(ratioMatch[1]);
+        const l = parseFloat(ratioMatch[2]);
+        if (l > 0) {
+          used = u;
+          limit = l;
+          pct = Math.min(100, Math.max(0, Math.round((u / l) * 100)));
+        }
+      } else if (
+        /(?:已达上限|已用尽|配额耗尽|limit\s*reached|quota\s*exceeded|exhausted)/i.test(
+          cardText,
+        )
+      ) {
+        pct = 100;
+      }
+    }
+
+    if (pct === null) return null;
+
+    // 仅剔除行首的标签头部（例如 "5H: " 或 "当前会话: "），绝不剔除倒计时本身所含的时长单位
+    const cleanHeaderPattern =
       windowType === "5h"
-        ? /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour)/gi
-        : /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/gi;
+        ? /^(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|current\s*session|session|当前会话|会话)[\s:：\-—]*/i
+        : /^(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)[\s:：\-—]*/i;
 
     const lines = cardText
       .split(/[\r\n]+/)
@@ -420,9 +455,17 @@
     let rawResetText = "";
 
     for (const line of lines) {
-      if (/(?:reset|重置|刷新|恢复|剩余|後|あと|available|可用)/i.test(line)) {
-        const cleanedLine = line.replace(stripWindowPattern, "");
-        const ts = parseOfficialResetTextToTimestamp(cleanedLine, nowMs);
+      if (
+        /(?:reset|重置|刷新|恢复|剩余|後|あと|available|可用|将于|將於)/i.test(
+          line,
+        )
+      ) {
+        // 先直接解析完整行（保留 "5小时后重置" 中的数字）
+        let ts = parseOfficialResetTextToTimestamp(line, nowMs);
+        if (!ts) {
+          const strippedLine = line.replace(cleanHeaderPattern, "");
+          ts = parseOfficialResetTextToTimestamp(strippedLine, nowMs);
+        }
         if (ts) {
           resetAt = ts;
           rawResetText = line;
@@ -432,22 +475,21 @@
     }
 
     if (!resetAt) {
-      const cleanedAll = cardText.replace(stripWindowPattern, "");
-      resetAt = parseOfficialResetTextToTimestamp(cleanedAll, nowMs);
+      resetAt = parseOfficialResetTextToTimestamp(cardText, nowMs);
     }
 
-    return { pct, resetAt, rawResetText };
+    return { pct, used, limit, resetAt, rawResetText };
   }
 
   /**
-   * 从官方 /usage 页面 DOM 或 HTML 中提取 5H 与 7D 数据
+   * 从官方 /usage 页面 DOM 或 HTML 中提取配额指标
    */
   function parseUsageDocument(doc, rawHtml = "") {
     const nowMs = Date.now();
     let fiveHour = null;
     let weekly = null;
 
-    // 1. 先检查 HTML 内的 AF_initDataCallback / WIZ_global_data 脚本块
+    // 1. 先检查 HTML 源码内的 AF_initDataCallback
     if (rawHtml) {
       const initCallbackRegex =
         /AF_initDataCallback\s*\(\s*\{[^]*?data\s*:\s*(\[[^]*?\])\s*(?:,\s*sideChannel|\}\s*\))/g;
@@ -465,18 +507,20 @@
             }
           }
         } catch {
-          // 继续尝试 DOM 提取
+          // 继续走 DOM 解析
         }
       }
     }
 
     if (doc && doc.body) {
       const fiveRegex =
-        /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour)/i;
+        /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|current\s*session|session|当前会话|会话(?:配额|限额|用量)?|セッション)/i;
       const weekRegex =
         /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i;
+      const strictlyWeekRegex =
+        /(?:week(?:ly)?|每周|每週|週間|7\s*-?\s*(?:day|days|天))/i;
 
-      // 2. 遍历独立卡片容器精准提取
+      // 2. 扫描独立容器
       const blocks = Array.from(
         doc.querySelectorAll(
           "section, article, [role='region'], [class*='card'], [class*='quota'], [class*='usage'], [class*='limit'], div",
@@ -485,12 +529,14 @@
 
       for (const node of blocks) {
         const txt = (node.innerText || node.textContent || "").trim();
-        if (txt.length < 5 || txt.length > 420) continue;
+        if (txt.length < 4 || txt.length > 500) continue;
 
         const is5h = fiveRegex.test(txt);
         const is7d = weekRegex.test(txt);
+        const isStrict7d = strictlyWeekRegex.test(txt);
 
-        if (is5h && !is7d && !fiveHour) {
+        // 避免 5H 卡片中因包含日期（如“重置于 7 日”）被 weekRegex 误判
+        if (is5h && !isStrict7d && !fiveHour) {
           const m = extractMetricFromCardText(txt, "5h", nowMs);
           if (m) fiveHour = m;
         } else if (is7d && !is5h && !weekly) {
@@ -499,13 +545,13 @@
         }
       }
 
-      // 3. 若未匹配到独立容器，对全文按关键字切片提取
+      // 3. 全文按上下文切片回退提取（前后双向拓展捕获窗口）
       const fullText = doc.body.innerText || doc.body.textContent || "";
       if (!fiveHour) {
         const idx5 = fullText.search(fiveRegex);
         if (idx5 !== -1) {
           fiveHour = extractMetricFromCardText(
-            fullText.slice(Math.max(0, idx5 - 30), idx5 + 240),
+            fullText.slice(Math.max(0, idx5 - 120), idx5 + 360),
             "5h",
             nowMs,
           );
@@ -515,7 +561,7 @@
         const idx7 = fullText.search(weekRegex);
         if (idx7 !== -1) {
           weekly = extractMetricFromCardText(
-            fullText.slice(Math.max(0, idx7 - 30), idx7 + 240),
+            fullText.slice(Math.max(0, idx7 - 120), idx7 + 360),
             "7d",
             nowMs,
           );
@@ -531,9 +577,6 @@
     };
   }
 
-  /**
-   * 将提取到的官方配额写入状态并持久化到跨标签页缓存
-   */
   function commitOfficialQuota(extracted, sourceTag, saveStorage = true) {
     if (!extracted) return false;
     const has5h =
@@ -616,7 +659,7 @@
   }
 
   // =========================================================================
-  // 4. Voyager 风格的网络观察器（document-start 拦截 XHR + Fetch + 响应完成）
+  // 4. 网络观察器（document-start 拦截 XHR + Fetch）
   // =========================================================================
   const origFetch = window.fetch;
   const origXhrOpen = XMLHttpRequest.prototype.open;
@@ -633,7 +676,6 @@
   function inspectNetworkTraffic(url, reqBody, responseText) {
     if (!url || typeof url !== "string") return;
 
-    // 1. 侦听对话流生成完毕（对应 Voyager 的 response-complete-observer.js）
     if (
       url.includes("StreamGenerateContent") ||
       url.includes("assistant.vertical.chat")
@@ -642,7 +684,6 @@
       return;
     }
 
-    // 2. 侦听 batchexecute RPC 响应（对应 Voyager 的 usage-observer.js）
     if (url.includes("/batchexecute") && responseText) {
       const frames = parseBatchExecuteResponse(responseText);
       for (const frame of frames) {
@@ -651,7 +692,6 @@
           Date.now(),
         );
         if (extracted) {
-          // 捕获该官方配额 RPC 的请求参数，以便后续点刷新时直接重放该 RPC
           if (reqBody && typeof reqBody === "string") {
             quotaState.capturedQuotaRpc = {
               url,
@@ -665,7 +705,6 @@
     }
   }
 
-  // 拦截 window.fetch
   window.fetch = async function (...args) {
     const url =
       typeof args[0] === "string"
@@ -694,7 +733,6 @@
     return response;
   };
 
-  // 拦截 XMLHttpRequest（Google Closure / Wiz 的 batchexecute 默认走 XHR）
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
     this.__gc_url = typeof url === "string" ? url : String(url || "");
     return origXhrOpen.call(this, method, url, ...rest);
@@ -716,7 +754,7 @@
             inspectNetworkTraffic(url, reqBody, this.responseText);
           }
         } catch {
-          // 忽略 responseType 不兼容情况
+          // 忽略异常
         }
       });
     }
@@ -724,14 +762,11 @@
   };
 
   // =========================================================================
-  // 5. 主动官方同步器（RPC 重放 + 同源 /usage Fetch + 隐藏 Iframe 实时 Mutation）
+  // 5. 主动官方同步器
   // =========================================================================
   let activeSyncPromise = null;
   let probeIframeEl = null;
 
-  /**
-   * 若已捕获官方配额 batchexecute RPC 模板，直接携带最新 WIZ XSRF Token (SNlM0e) 重放
-   */
   async function replayCapturedQuotaRpc() {
     const tpl = quotaState.capturedQuotaRpc;
     if (!tpl || !tpl.url || !tpl.body) return false;
@@ -768,15 +803,12 @@
         }
       }
     } catch {
-      // 重放失败时回退到 /usage 提取
+      // 回退到页面解析
     }
     return false;
   }
 
-  /**
-   * 挂载同源隐藏 Iframe 并通过 MutationObserver 在 /usage 渲染出配额节点的瞬间提取
-   */
-  function extractViaSameOriginUsageIframe(usageUrl, timeoutMs = 8000) {
+  function extractViaSameOriginUsageIframe(usageUrl, timeoutMs = 8500) {
     return new Promise((resolve) => {
       if (!document.body) {
         resolve(null);
@@ -799,10 +831,13 @@
       let finished = false;
       let observer = null;
       let pollId = null;
+      let cachedResult = null;
+      let debounceTimer = null;
 
       const done = (res) => {
         if (finished) return;
         finished = true;
+        if (debounceTimer) clearTimeout(debounceTimer);
         if (observer) observer.disconnect();
         if (pollId) clearInterval(pollId);
         if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
@@ -817,12 +852,24 @@
             (iframe.contentWindow && iframe.contentWindow.document);
           if (!iDoc || !iDoc.body) return;
           const result = parseUsageDocument(iDoc, "");
-          if (
-            result &&
-            ((result.fiveHour && result.fiveHour.pct !== null) ||
-              (result.weekly && result.weekly.pct !== null))
-          ) {
+          if (!result) return;
+
+          const has5h = result.fiveHour && result.fiveHour.pct !== null;
+          const has7d = result.weekly && result.weekly.pct !== null;
+
+          // 当两项指标皆已就绪，立即完成；若仅有一项就绪，设置防抖缓冲防止扼杀 5H 渲染
+          if (has5h && has7d) {
             done(result);
+            return;
+          }
+
+          if (has5h || has7d) {
+            cachedResult = result;
+            if (!debounceTimer) {
+              debounceTimer = setTimeout(() => {
+                done(cachedResult);
+              }, 1200);
+            }
           }
         } catch {
           // 忽略未就绪状态
@@ -844,20 +891,17 @@
             });
           }
         } catch {
-          // 回退到轮询
+          // 走定时轮询
         }
         pollId = setInterval(tryExtract, 300);
       });
 
       iframe.addEventListener("error", () => done(null));
       document.body.appendChild(iframe);
-      setTimeout(() => done(null), timeoutMs);
+      setTimeout(() => done(cachedResult || null), timeoutMs);
     });
   }
 
-  /**
-   * 立即同步官方最新 5H 与 7D 用量及重置时间
-   */
   async function syncOfficialUsage(isManualClick = false) {
     if (activeSyncPromise) return activeSyncPromise;
 
@@ -869,7 +913,7 @@
 
     activeSyncPromise = (async () => {
       try {
-        // 0. 若当前就在官方 /usage 页面，直接解析当前 DOM
+        // 0. 当前处于 /usage 页面时直接解析主 DOM
         if (window.location.pathname.endsWith("/usage")) {
           const direct = parseUsageDocument(
             document,
@@ -880,11 +924,11 @@
           }
         }
 
-        // 1. 优先尝试重放已捕获的官方 batchexecute 配额 RPC
+        // 1. 优先重放已捕获的 RPC
         const rpcOk = await replayCapturedQuotaRpc();
         if (rpcOk) return true;
 
-        // 2. 检查当前页面全局 WIZ_global_data 是否已内嵌配额结构
+        // 2. 检查全局 WIZ_global_data
         if (window.WIZ_global_data) {
           const fromGlobalWiz = extractQuotaFromWizStructure(
             window.WIZ_global_data,
@@ -898,7 +942,7 @@
           }
         }
 
-        // 3. 请求同源 /usage 页面 HTML，解析内嵌 AF_initDataCallback 与 SSR 节点
+        // 3. GET 同源 /usage 页面 SSR 与内嵌 AF_initDataCallback
         const usageUrl = getOfficialUsageUrl();
         try {
           const resp = await origFetch.call(window, usageUrl, {
@@ -911,20 +955,18 @@
             const parser = new DOMParser();
             const doc = parser.parseFromString(rawHtml, "text/html");
             const fromFetch = parseUsageDocument(doc, rawHtml);
-            if (
-              fromFetch &&
-              fromFetch.fiveHour &&
-              fromFetch.weekly &&
-              commitOfficialQuota(fromFetch, "usage-page", true)
-            ) {
-              return true;
+            if (fromFetch && (fromFetch.fiveHour || fromFetch.weekly)) {
+              commitOfficialQuota(fromFetch, "usage-page", true);
+              if (fromFetch.fiveHour && fromFetch.weekly) {
+                return true;
+              }
             }
           }
         } catch {
-          // 继续走 Iframe CSR 探针
+          // 继续走探针
         }
 
-        // 4. 通过同源隐藏 Iframe 等待 /usage 客户端渲染完成并提取真实节点（因为脚本含 @noframes，不会递归执行）
+        // 4. 同源隐藏 Iframe 等待 CSR 异步节点加载
         const fromIframe = await extractViaSameOriginUsageIframe(usageUrl);
         if (fromIframe && commitOfficialQuota(fromIframe, "usage-page", true)) {
           return true;
@@ -969,6 +1011,9 @@
       return `${label}: 等待从官方同步数据...`;
     }
     const lines = [`${label} 官方已用: ${metric.pct}%`];
+    if (metric.used !== null && metric.limit !== null) {
+      lines.push(`频次用量: ${metric.used} / ${metric.limit}`);
+    }
     if (metric.resetAt && metric.resetAt > Date.now()) {
       const dt = new Date(metric.resetAt);
       const pad = (n) => String(n).padStart(2, "0");
@@ -996,7 +1041,7 @@
   }
 
   // =========================================================================
-  // 7. 超薄细长条样式表（24px 高度，单行水平排布，5H + 7D 同屏）
+  // 7. 样式定义
   // =========================================================================
   const STYLES = `
     #gc-pill-root {
@@ -1029,7 +1074,6 @@
     .gc-pill-container:active { cursor: grabbing; }
     .gc-pill-container:hover { border-color: rgba(255, 255, 255, 0.28); }
 
-    /* 左侧 16x16 微缩形态指示器（点击可切换 4 种视觉形态） */
     .gc-capsule-head {
       width: 16px;
       height: 16px;
@@ -1041,7 +1085,6 @@
       cursor: pointer;
     }
 
-    /* 单行指标单元：标签 + 百分比 + (内联进度条) + 重置倒计时 */
     .gc-metric-group {
       display: inline-flex;
       align-items: center;
@@ -1071,7 +1114,6 @@
       font-variant-numeric: tabular-nums;
     }
 
-    /* 横条模式下的细长内联进度条 */
     .gc-inline-track {
       width: 24px;
       height: 2.5px;
@@ -1087,7 +1129,6 @@
       transition: width 0.3s ease, background-color 0.3s ease;
     }
 
-    /* 1px 竖向分割线 */
     .gc-v-divider {
       width: 1px;
       height: 10px;
@@ -1095,7 +1136,6 @@
       flex-shrink: 0;
     }
 
-    /* 同步状态指示灯 */
     .gc-sync-dot {
       width: 4.5px;
       height: 4.5px;
@@ -1115,7 +1155,6 @@
       background: #f43f5e;
     }
 
-    /* 右侧图标按钮 */
     .gc-pill-actions {
       display: inline-flex;
       align-items: center;
@@ -1151,7 +1190,6 @@
       color: #38bdf8;
     }
 
-    /* 圆盘式 (14x14) */
     .gc-disk-box {
       width: 14px;
       height: 14px;
@@ -1170,7 +1208,6 @@
       border-radius: 50%;
     }
 
-    /* 晶体崩坏式 (14x14) */
     .gc-decay-capsule {
       width: 14px;
       height: 14px;
@@ -1201,7 +1238,6 @@
     }
     .gc-state-critical { animation: gc-jitter 0.18s infinite linear; }
 
-    /* 设置抽屉 */
     #gc-pill-drawer {
       position: absolute;
       bottom: calc(100% + 6px);
@@ -1279,7 +1315,7 @@
   }
 
   // =========================================================================
-  // 8. UI 节点装配与渲染
+  // 8. UI 装配与渲染更新
   // =========================================================================
   let rootEl = null;
   let pillContainerEl = null;
@@ -1332,7 +1368,6 @@
       },
     });
 
-    // 5H 单元
     badge5hEl = el("span", { className: "gc-pill-badge" }, ["5H"]);
     usage5hTextEl = el("span", { className: "gc-pill-counter" }, ["--%"]);
     fill5hEl = el("div", { className: "gc-inline-fill" });
@@ -1345,7 +1380,6 @@
       timer5hTextEl,
     ]);
 
-    // 7D 单元
     badge7dEl = el("span", { className: "gc-pill-badge" }, ["7D"]);
     usage7dTextEl = el("span", { className: "gc-pill-counter" }, ["--%"]);
     fill7dEl = el("div", { className: "gc-inline-fill" });
@@ -1360,7 +1394,6 @@
 
     syncDotEl = el("span", { className: "gc-sync-dot" });
 
-    // 刷新图标：立即同步官方当前配额与重置时间
     const refreshSvg = svgEl(
       "svg",
       {
@@ -1437,7 +1470,6 @@
       actionsBox,
     ]);
 
-    // 抽屉面板
     const drawerTitle = el("div", { className: "gc-drawer-title" }, [
       el("span", {}, ["指示器形态"]),
       el("span", { style: "font-size:9px; color:#64748b;" }, [
@@ -1552,7 +1584,7 @@
       try {
         pillContainerEl.releasePointerCapture(e.pointerId);
       } catch {
-        // 忽略
+        // 忽略异常
       }
       if (hasMoved) {
         config.pos.right = parseInt(rootEl.style.right, 10) || config.pos.right;
@@ -1753,7 +1785,6 @@
   function updateUI() {
     if (!rootEl) return;
 
-    // 自动检查官方重置到期归零
     const now = Date.now();
     if (quotaState.fiveHour.resetAt && quotaState.fiveHour.resetAt <= now) {
       quotaState.fiveHour.pct = 0;
@@ -1767,7 +1798,7 @@
     const ratio5h = renderMetricUnit(
       quotaState.fiveHour,
       false,
-      "5H (5小时窗口)",
+      "5H (会话窗口)",
       badge5hEl,
       usage5hTextEl,
       timer5hTextEl,
