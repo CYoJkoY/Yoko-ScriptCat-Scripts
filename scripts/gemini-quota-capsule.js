@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.6.1
+// @version      0.7.0
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -22,7 +22,8 @@
   // 1. 常量与持久化配置
   // =========================================================================
   const STORAGE_KEY_CFG = "__gemini_quota_capsule_cfg_v5__";
-  const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v5__";
+  // v6 缓存与旧版语义不兼容：percentageUsed 曾被误当作剩余额度。
+  const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v6__";
 
   const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000;
 
@@ -34,8 +35,6 @@
 
   // 数据置信度：结构化 pools > 官方 /usage 页面 > 标签启发式
   const CONFIDENCE = { heuristic: 1, dom: 2, pools: 3 };
-
-  const DURATION_SENTINELS = new Set([18000, 604800, 86400, 3600, 300, 60, 30, 24, 7, 5]);
 
   const DEFAULT_CONFIG = {
     styleMode: "bar", // 'bar' | 'ring' | 'disk' | 'decay'
@@ -124,14 +123,18 @@
   // =========================================================================
   // 3. 官方配额状态机与数据解析器
   // =========================================================================
+  // 语义约定（全链路统一）：pct = 剩余百分比，usedPct = 已用百分比。
+  // 官方接口给的通常就是「已用比例」（percentageUsed / "34% used"），
+  // 所有数据源都必须在解析阶段换算成剩余，显示层不再做任何方向假设。
   const quotaState = {
     source: "init", // 'init' | 'rpc' | 'usage-page' | 'cache' | 'error'
     isSyncing: false,
     lastSyncTime: 0,
     lastError: "",
     fiveHour: {
-      pct: null, // 0 ~ 100
-      used: null,
+      pct: null, // 剩余 0 ~ 100
+      usedPct: null, // 已用 0 ~ 100
+      used: null, // 频次用量（若官方给出 used/limit 对）
       limit: null,
       resetAt: null, // 真实官方重置时间戳 (ms)
       rawResetText: "",
@@ -139,7 +142,8 @@
       updatedAt: 0, // 该指标最后一次被刷新到的时间，用于置信度保护
     },
     weekly: {
-      pct: null, // 0 ~ 100
+      pct: null, // 剩余 0 ~ 100
+      usedPct: null,
       used: null,
       limit: null,
       resetAt: null, // 真实官方重置时间戳 (ms)
@@ -247,6 +251,33 @@
       }
     }
 
+    // 1b. 中文日期：10 月 18 日 20:00 / 2026 年 10 月 18 日
+    const cnDateMatch = clean.match(
+      /(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日(?:\s*(上午|下午|晚上|凌晨)?\s*(\d{1,2}):(\d{2}))?/,
+    );
+    if (cnDateMatch) {
+      const explicitYear = cnDateMatch[1] ? Number(cnDateMatch[1]) : null;
+      const month = Number(cnDateMatch[2]);
+      const day = Number(cnDateMatch[3]);
+      const half = cnDateMatch[4] || "";
+      let hour = cnDateMatch[5] === undefined ? 0 : Number(cnDateMatch[5]);
+      const minute = cnDateMatch[6] === undefined ? 0 : Number(cnDateMatch[6]);
+      if ((half === "下午" || half === "晚上") && hour < 12) hour += 12;
+      if (half === "凌晨" && hour === 12) hour = 0;
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && hour <= 23 && minute <= 59) {
+        const year = explicitYear === null ? new Date(nowMs).getFullYear() : explicitYear;
+        let absolute = new Date(year, month - 1, day, hour, minute, 0, 0).getTime();
+        // 未写年份且已过期一天以上 → 视为次年的同一时刻
+        if (explicitYear === null && absolute < nowMs - 86400 * 1000) {
+          absolute = new Date(year + 1, month - 1, day, hour, minute, 0, 0).getTime();
+        }
+        if (absolute >= minMs && absolute <= maxMs) return absolute;
+        // 中文日期本身是权威信息：解析到过去/过远的日期就直接放弃，
+        // 不能落回「钟点」分支把 20:00 解释成今天 20:00。
+        return null;
+      }
+    }
+
     // 2. 12 小时制 / 中文钟点：Resets at 5:30 PM / 将于明天 14:00 重置 / 3:15 下午重置
     const clockMatch = clean.match(
       /(?:(tomorrow|明天|明日|today|今天|今日)\s*)?(?:at\s*|于\s*|於\s*)?(上午|下午|早上|晚上|凌晨)?\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i,
@@ -283,51 +314,66 @@
       }
     }
 
-    // 3. 相对倒计时：Resets in 3 hr 12 min / 5 小时后重置 / 1 week 2 days / 3 天 4 小时
-    const hasRelativeKeyword =
-      /(?:reset(?:s|ting)?\s+in|in\s+\d|后重置|後重置|重置于|剩余|後にリセット|あと)/i.test(
-        clean,
-      ) ||
-      /(?:\d+\s*(?:d|day|days|天|日|h|hr|hrs|hour|hours|小时|小時|時間|m|min|mins|minute|minutes|分钟|分鐘|分|w|week|weeks|周|週)\b)/i.test(
-        clean,
-      );
-
-    if (hasRelativeKeyword) {
-      const weekMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:weeks?|w\b|周|週間|週)/i,
-      );
-      const dayMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:days?|d\b|天|日(?![期曜]))/i,
-      );
-      const hrMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h\b|个?小时|個?小時|時間)/i,
-      );
-      const minMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m\b|分钟|分鐘|分(?!钟|鐘|析|辨))/i,
-      );
-      const secMatch = clean.match(
-        /(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s\b|秒)/i,
-      );
-
-      if (weekMatch || dayMatch || hrMatch || minMatch || secMatch) {
-        const w = weekMatch ? parseFloat(weekMatch[1]) : 0;
-        const d = dayMatch ? parseFloat(dayMatch[1]) : 0;
-        const h = hrMatch ? parseFloat(hrMatch[1]) : 0;
-        const m = minMatch ? parseFloat(minMatch[1]) : 0;
-        const s = secMatch ? parseFloat(secMatch[1]) : 0;
-        const totalDays = w * 7 + d;
-        const deltaMs = ((totalDays * 24 + h) * 3600 + m * 60 + s) * 1000;
-        if (deltaMs > 0 && deltaMs <= 30 * 24 * 3600 * 1000) {
-          return Math.round(nowMs + deltaMs);
-        }
+    // 3. 相对倒计时：Resets in 3 hr 12 min / 4 小时 53 分钟后重置 / 剩余 2 天 3 小时
+    //    必须与「重置 / 剩余」语义邻接才可信任。
+    //    旧实现只要文本里出现「5 小时」（窗口标签）就会拼出 now + 5h，
+    //    导致 5H 倒计时恒为满窗口、7D 倒计时抓到「5 天」之类的标签数字。
+    for (const pattern of RELATIVE_RESET_PATTERNS) {
+      const match = clean.match(pattern);
+      if (!match) continue;
+      const deltaMs = sumTrailingDurations(match[1]);
+      if (deltaMs !== null && deltaMs > 0 && deltaMs <= 30 * 24 * 3600 * 1000) {
+        return Math.round(nowMs + deltaMs);
       }
     }
 
     return null;
   }
 
+  // 相对时间必须由「重置 / 刷新 / 剩余」锚点短语引出，单独的时间片段不作数
+  const RELATIVE_RESET_PATTERNS = [
+    /(?:reset(?:s|ting)?|restor(?:e|es|ing)|renew(?:s|ed|ing)?)\s+(?:in|after)\s+([^.;,，。!?]{1,40})/i,
+    /([^.;,，。!?]{1,40}?)\s+(?:until|before)\s+(?:the\s+)?(?:next\s+)?(?:reset|refill|renew)/i,
+    /([^.;,，。!?]{1,40}?)\s*(?:后|後)\s*(?:重置|刷新|恢复|恢復|重設|リセット)/,
+    /(?:剩余|剩餘|还剩|還剩|尚有|还有|還有)\s*([^.;,，。!?]{1,40})/,
+    /あと\s*([^。!?]{1,40})/,
+  ];
+
+  const DURATION_TOKEN_RE =
+    /(\d+(?:\.\d+)?)\s*(weeks?|w|週間|週|周|days?|d|天|日|hours?|hrs?|hr|h|个?小时|個?小時|時間|minutes?|mins?|min|m|分钟|分鐘|分(?!钟|鐘|析|辨|部)|seconds?|secs?|sec|s|秒)\s*$/i;
+
+  function durationUnitToMs(unit) {
+    const u = unit.toLowerCase();
+    if (/^(w|weeks?|周|週|週間)$/.test(u)) return 7 * 86400 * 1000;
+    if (/^(d|days?|天|日)$/.test(u)) return 86400 * 1000;
+    if (/^(h|hr|hrs|hours?|小时|小時|時間)$/.test(u)) return 3600 * 1000;
+    if (/^(m|min|mins|minutes?|分钟|分鐘|分)$/.test(u)) return 60 * 1000;
+    if (/^(s|sec|secs|seconds?|秒)$/.test(u)) return 1000;
+    return null;
+  }
+
+  /**
+   * 从片段尾部连续剥离时间令牌并求和。
+   * 「4 小时 53 分」→ 4h53m；「5 小时限额将于 3 小时」只取紧邻锚点的「3 小时」。
+   */
+  function sumTrailingDurations(fragment) {
+    if (typeof fragment !== "string") return null;
+    let rest = fragment.trim().replace(/[)）\]】]$/, "").trim();
+    let total = 0;
+    for (let guard = 0; guard < 4; guard += 1) {
+      const match = rest.match(DURATION_TOKEN_RE);
+      if (!match) break;
+      const unitMs = durationUnitToMs(match[2]);
+      if (unitMs === null) break;
+      total += parseFloat(match[1]) * unitMs;
+      rest = rest.slice(0, match.index).trim();
+    }
+    return total > 0 ? total : null;
+  }
+
   /**
    * 把单个窗口的解析结果整理成可信状态：百分比取整、重置时间归一化并做“窗口长度”校验。
+   * 语义约定：pct = **剩余**百分比，usedPct = 已用百分比，两者互补。
    * 5 小时窗口一旦拿到的重置时间超过 5.5 小时，就说明抓到了周额度的字段：
    * 该条数据整体作废（返回 null），绝不让 5H 槽位显示 7D 的用量或倒计时。
    */
@@ -340,6 +386,11 @@
       pct = Math.min(100, Math.max(0, Math.round(metric.pct)));
     }
     if (pct === null) return null;
+
+    const usedPct =
+      typeof metric.usedPct === "number" && Number.isFinite(metric.usedPct)
+        ? Math.min(100, Math.max(0, Math.round(metric.usedPct)))
+        : 100 - pct;
 
     let resetAt = toEpochMs(metric.resetAt, nowMs);
     let rawResetText =
@@ -358,6 +409,7 @@
 
     return {
       pct,
+      usedPct,
       used:
         typeof metric.used === "number" && Number.isFinite(metric.used)
           ? metric.used
@@ -400,6 +452,8 @@
 
   const POOL_KIND_KEY_RE =
     /^(pool_?type|pool_?id|pool_?name|poolType|poolId|bucket|bucket_?type|type|kind|window_?type|quota_?type|limit_?type|id|name)$/i;
+  const USED_PCT_KEY_RE = /(?:percentage|percent|pct|ratio|utiliz).*used|used.*(?:percentage|percent|pct|ratio|utiliz)/i;
+  const REMAINING_PCT_KEY_RE = /(?:remaining|available|left|unused).*(?:percentage|percent|pct|ratio)|(?:percentage|percent|pct|ratio).*(?:remaining|available|left|unused)/i;
   const PCT_KEY_RE = /(percent|pct|ratio|utiliz)/i;
   const USED_KEY_RE = /^(used|used_?count|used_?amount|consumed|count|requests|messages)$/i;
   const LIMIT_KEY_RE = /^(limit|max|maximum|quota|capacity|total|cap)$/i;
@@ -455,32 +509,68 @@
     return Math.min(100, Math.round(raw));
   }
 
-  function findResetAt(record, nowMs, depth = 0) {
-    if (!record || typeof record !== "object" || depth > 2) return null;
+  const QUOTA_SCOPE_KEY_RE = /^(gxu|pool|window|quota|limit|usage|refresh|billing|rate)/i;
+
+  /**
+   * 收集记录内所有「重置时刻」候选。
+   * 旧实现返回第一个命中的值，父容器一旦把周额度的时间先遍历到，5H 就会显示 7D 的倒计时。
+   */
+  function collectResetCandidates(record, nowMs, depth = 0, out = []) {
+    if (!record || typeof record !== "object" || depth > 2) return out;
     for (const [key, value] of Object.entries(record)) {
-      if (!RESET_KEY_RE.test(key)) continue;
-      const direct = toEpochMs(value, nowMs);
-      if (direct !== null) return direct;
-      if (typeof value === "string") {
-        const parsed = parseOfficialResetTextToTimestamp(value, nowMs);
-        if (parsed !== null) return parsed;
+      if (RESET_KEY_RE.test(key)) {
+        const direct = toEpochMs(value, nowMs);
+        if (direct !== null) {
+          out.push(direct);
+          continue;
+        }
+        if (typeof value === "string") {
+          const parsed = parseOfficialResetTextToTimestamp(value, nowMs);
+          if (parsed !== null) out.push(parsed);
+        }
       }
       if (value && typeof value === "object") {
-        const nested = findResetAt(value, nowMs, depth + 1);
-        if (nested !== null) return nested;
+        collectResetCandidates(value, nowMs, depth + 1, out);
       }
     }
-    for (const [key, value] of Object.entries(record)) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      if (!/^(gxu|pool|window|quota|limit|usage|refresh|billing)/i.test(key)) continue;
-      const nested = findResetAt(value, nowMs, depth + 1);
-      if (nested !== null) return nested;
+    return out;
+  }
+
+  /**
+   * 在候选重置时刻中挑出与本窗口长度相符的那一个。
+   * - 存在「超出窗口长度」的候选且没有相符候选 → 该记录属于另一个窗口，整体作废
+   * - 相符候选多于一个 → 无法确定，放弃倒计时（保留百分比），绝不猜
+   */
+  function pickResetAt(candidates, kind, nowMs) {
+    const windowMs = kind === "fiveHour" ? FIVE_HOUR_MS : WEEK_MS;
+    const unique = [...new Set(candidates)].sort((a, b) => a - b);
+    if (!unique.length) return { resetAt: null, misbound: false };
+
+    const fitting = unique.filter(
+      (ts) => ts > nowMs && ts - nowMs <= windowMs + RESET_SLACK_MS,
+    );
+    const beyondWindow = unique.filter((ts) => ts - nowMs > windowMs + RESET_SLACK_MS);
+
+    if (!fitting.length) {
+      return { resetAt: null, misbound: beyondWindow.length > 0 };
+    }
+    if (fitting.length > 1) return { resetAt: null, misbound: false };
+    return { resetAt: fitting[0], misbound: false };
+  }
+
+  function findNumberByKey(scope, regex) {
+    if (!scope || typeof scope !== "object") return null;
+    for (const [key, value] of Object.entries(scope)) {
+      if (!regex.test(key)) continue;
+      const number = toFiniteNumber(value);
+      if (number !== null) return number;
     }
     return null;
   }
 
   /**
    * 结构化对象：{ poolType: "GXU_FIVE_HOURLY", percentageUsed: 0.12, gxu: { windowRefreshesAt } }
+   * 语义：percentageUsed 是已用比例 → 剩余 = 100 - 已用。
    */
   function readMetricFromRecord(record, kind, nowMs) {
     if (!record || typeof record !== "object" || Array.isArray(record)) return null;
@@ -488,22 +578,68 @@
     const scopes = [record];
     for (const [key, value] of Object.entries(record)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      if (/^(gxu|pool|window|quota|limit|usage|bucket)/i.test(key)) scopes.push(value);
+      if (QUOTA_SCOPE_KEY_RE.test(key)) scopes.push(value);
     }
 
-    const pctField = findNumericField(scopes, PCT_KEY_RE);
-    const usedField = findNumericField(scopes, USED_KEY_RE);
-    const limitField = findNumericField(scopes, LIMIT_KEY_RE);
+    const remainingPctField = findNumericField(scopes, REMAINING_PCT_KEY_RE);
+    const usedPctField = findNumericField(scopes, USED_PCT_KEY_RE);
+    const ambiguousPctField = findNumericField(scopes, PCT_KEY_RE);
 
-    let pct = pctField ? normalizePctValue(pctField.number) : null;
-    const used = usedField ? usedField.number : null;
-    const limit = limitField ? limitField.number : null;
-    if (pct === null && used !== null && limit !== null && limit > 0) {
-      pct = Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
+    let pct = null;
+    let usedPct = null;
+
+    if (remainingPctField) {
+      pct = normalizePctValue(remainingPctField.number);
+      if (pct !== null) usedPct = 100 - pct;
+    } else if (usedPctField) {
+      const value = normalizePctValue(usedPctField.number);
+      if (value !== null) {
+        usedPct = value;
+        pct = 100 - value;
+      }
+    } else if (ambiguousPctField) {
+      // 裸 percent / pct 字段在官方结构里表示「已用比例」，按已用处理
+      const value = normalizePctValue(ambiguousPctField.number);
+      if (value !== null) {
+        usedPct = value;
+        pct = 100 - value;
+      }
     }
+
+    let used = null;
+    let limit = null;
+
+    if (pct === null) {
+      // 只有同一个 scope 内同时拿到 used 与 limit 才能换算，跨 scope 拼接等于造数据
+      for (const scope of scopes) {
+        const u = findNumberByKey(scope, USED_KEY_RE);
+        const l = findNumberByKey(scope, LIMIT_KEY_RE);
+        if (u !== null && l !== null && l > 0 && u >= 0 && u <= l) {
+          used = u;
+          limit = l;
+          usedPct = Math.min(100, Math.max(0, Math.round((u / l) * 100)));
+          pct = 100 - usedPct;
+          break;
+        }
+      }
+    } else {
+      used = findNumberByKey(record, USED_KEY_RE);
+      limit = findNumberByKey(record, LIMIT_KEY_RE);
+    }
+
     if (pct === null) return null;
 
-    return { pct, used, limit, resetAt: findResetAt(record, nowMs), rawResetText: "" };
+    const resetPick = pickResetAt(collectResetCandidates(record, nowMs), kind, nowMs);
+    if (resetPick.misbound) return null;
+
+    return {
+      pct,
+      usedPct,
+      used,
+      limit,
+      resetAt: resetPick.resetAt,
+      rawResetText: "",
+    };
   }
 
   function flattenShallow(node, depth = 0) {
@@ -519,51 +655,49 @@
   }
 
   /**
-   * 元组形态：["GXU_FIVE_HOURLY", 0.12, 1761000000] / ["5 小时限额", "12%", "..."]
-   * 只接受 <= 100 的数值作为百分比，因此 18000 / 604800 这类窗口秒数天然被排除。
+   * 元组形态：["GXU_FIVE_HOURLY", "12% used", 1761000000]
+   * 只从**带百分号的字符串**取百分比，并按上下文判定「已用 / 剩余」；
+   * 裸数字一律不参与百分比推断（18000 / 604800 / 计数 / 上限都无法区分），
+   * 否则就会像旧版那样把上限或窗口长度当成用量。
    */
   function readMetricFromArrayTuple(node, kind, nowMs) {
     const items = flattenShallow(node);
-    const numbers = [];
-    let resetAt = null;
-    let pct = null;
+    const candidates = [];
+    let pctInfo = null;
 
     for (const item of items) {
       if (typeof item === "number") {
         const timestamp = toEpochMs(item, nowMs);
-        if (timestamp !== null) {
-          if (!resetAt) resetAt = timestamp;
-          continue;
-        }
-        if (item >= 0 && item <= 100) numbers.push(item);
+        if (timestamp !== null) candidates.push(timestamp);
         continue;
       }
       if (typeof item === "string") {
-        const pctMatch = item.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
-        if (pctMatch && pct === null) {
-          pct = Math.min(100, Math.max(0, Math.round(parseFloat(pctMatch[1]))));
-          continue;
+        if (!pctInfo) {
+          const info = pctFromTextWithContext(item);
+          if (info) {
+            pctInfo = info;
+            continue;
+          }
         }
-        if (!resetAt) {
-          const timestamp =
-            toEpochMs(item, nowMs) || parseOfficialResetTextToTimestamp(item, nowMs);
-          if (timestamp !== null) resetAt = timestamp;
-        }
+        const timestamp =
+          toEpochMs(item, nowMs) || parseOfficialResetTextToTimestamp(item, nowMs);
+        if (timestamp !== null) candidates.push(timestamp);
       }
     }
 
-    if (pct === null && numbers.length) {
-      const ratio = numbers.find((n) => n > 0 && n <= 1);
-      if (ratio !== undefined) {
-        pct = Math.round(ratio * 100);
-      } else {
-        const integer = numbers.find((n) => Number.isInteger(n));
-        pct = integer === undefined ? Math.round(numbers[0]) : integer;
-      }
-    }
-    if (pct === null) return null;
+    if (!pctInfo) return null;
 
-    return { pct, used: null, limit: null, resetAt, rawResetText: "" };
+    const resetPick = pickResetAt(candidates, kind, nowMs);
+    if (resetPick.misbound) return null;
+
+    return {
+      pct: pctInfo.pct,
+      usedPct: pctInfo.usedPct,
+      used: null,
+      limit: null,
+      resetAt: resetPick.resetAt,
+      rawResetText: "",
+    };
   }
 
   /**
@@ -782,42 +916,89 @@
   }
 
   /**
-   * 从卡片文本中解析百分比、请求数比率及官方真实重置时间
+   * 官方 /usage 页面与 RPC 文本里的百分比是「已用」比例（例如 "34% used"），
+   * 胶囊显示的是「剩余」，因此必须做语义判定再换算——旧实现直接把数字当剩余，
+   * 于是 100% 已用会被显示成「剩余 100%」。
+   */
+  function pctFromTextWithContext(text) {
+    if (typeof text !== "string" || !text) return null;
+    const re = /(\d{1,3}(?:\.\d+)?)\s*%/g;
+    let match;
+    let usedPct = null;
+    let remainingPct = null;
+
+    const directionOf = (fragment) => {
+      if (/(剩余|剩餘|可用|余量|餘量|remaining|available|left)/i.test(fragment)) {
+        return "remaining";
+      }
+      if (/(已用|已使用|使用量|用量|used|consumed|utiliz)/i.test(fragment)) {
+        return "used";
+      }
+      return null;
+    };
+
+    while ((match = re.exec(text)) !== null) {
+      const value = Math.min(100, Math.max(0, Math.round(parseFloat(match[1]))));
+      // 只在本行内看方向词，且优先看紧邻的前文：
+      // 「已用 12%\n剩余 88%」里的 12% 不能被下一行的「剩余」抢走方向。
+      const lineStart = text.lastIndexOf("\n", match.index);
+      const lineEndIdx = text.indexOf("\n", match.index);
+      const lineEnd = lineEndIdx === -1 ? text.length : lineEndIdx;
+      const before = text.slice(Math.max(lineStart + 1, match.index - 12), match.index);
+      const line = text.slice(lineStart + 1, lineEnd);
+      const after = text.slice(match.index, Math.min(lineEnd, match.index + 12));
+      const direction = directionOf(before) || directionOf(line) || directionOf(after);
+
+      if (direction === "remaining") {
+        if (remainingPct === null) remainingPct = value;
+      } else if (direction === "used") {
+        if (usedPct === null) usedPct = value;
+      } else if (usedPct === null && remainingPct === null) {
+        // 官方页面没有方向词时默认标注的是「N% used」
+        usedPct = value;
+      }
+    }
+
+    if (remainingPct !== null) return { pct: remainingPct, usedPct: 100 - remainingPct };
+    if (usedPct !== null) return { pct: 100 - usedPct, usedPct };
+    return null;
+  }
+
+  /**
+   * 从卡片文本中解析剩余百分比、请求数比率及官方真实重置时间
    */
   function extractMetricFromCardText(cardText, windowType, nowMs) {
     if (!cardText || typeof cardText !== "string") return null;
 
-    let pct = null;
+    let pctInfo = pctFromTextWithContext(cardText);
     let used = null;
     let limit = null;
 
-    // 1. 匹配标准百分比
-    const pctMatch = cardText.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
-    if (pctMatch) {
-      pct = Math.min(100, Math.max(0, Math.round(parseFloat(pctMatch[1]))));
-    } else {
-      // 2. 匹配频次比率（例如 "15 / 50" 或 "15 of 50" 或 "15/50 请求"）
+    if (!pctInfo) {
+      // 2. 频次比率（例如 "15 / 50" 或 "15 of 50" 或 "15/50 请求"）：比率本身也是「已用」
       const ratioMatch = cardText.match(
         /(\d+(?:\.\d+)?)\s*(?:\/|of|共|之)\s*(\d+(?:\.\d+)?)/i,
       );
       if (ratioMatch) {
         const u = parseFloat(ratioMatch[1]);
         const l = parseFloat(ratioMatch[2]);
-        if (l > 0) {
+        if (l > 0 && u >= 0 && u <= l) {
           used = u;
           limit = l;
-          pct = Math.min(100, Math.max(0, Math.round((u / l) * 100)));
+          const usedPct = Math.min(100, Math.max(0, Math.round((u / l) * 100)));
+          pctInfo = { pct: 100 - usedPct, usedPct };
         }
       } else if (
         /(?:已达上限|已用尽|配额耗尽|limit\s*reached|quota\s*exceeded|exhausted)/i.test(
           cardText,
         )
       ) {
-        pct = 100;
+        // 明确「已用尽」时剩余为 0，而不是 100
+        pctInfo = { pct: 0, usedPct: 100 };
       }
     }
 
-    if (pct === null) return null;
+    if (!pctInfo) return null;
 
     // 仅剔除行首的标签头部（例如 "5H: " 或 "当前会话: "），绝不剔除倒计时本身所含的时长单位
     const cleanHeaderPattern =
@@ -857,7 +1038,14 @@
       resetAt = parseOfficialResetTextToTimestamp(cardText, nowMs);
     }
 
-    return { pct, used, limit, resetAt, rawResetText };
+    return {
+      pct: pctInfo.pct,
+      usedPct: pctInfo.usedPct,
+      used,
+      limit,
+      resetAt,
+      rawResetText,
+    };
   }
 
   /**
@@ -898,6 +1086,9 @@
         /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i;
       const strictlyWeekRegex =
         /(?:week(?:ly)?|每周|每週|週間|7\s*-?\s*(?:day|days|天))/i;
+      // 严格 5H 标签：不能只用 \dh，否则会误伤日期与普通数字
+      const strictlyFiveRegex =
+        /(?:5\s*-?\s*(?:hour|hours|hr|hrs|h|小时|小時)|five\s*-?\s*hour|current\s*session|当前会话)/i;
 
       // 2. 扫描独立容器
       const blocks = Array.from(
@@ -924,13 +1115,20 @@
         }
       }
 
-      // 3. 全文按上下文切片回退提取（前后双向拓展捕获窗口）
+      // 3. 全文按上下文切片回退提取：切片必须在「下一个窗口标签」处截断，
+      //    否则 5H 切片会把紧随其后的 7D 卡片的百分比和倒计时一起吃进来。
       const fullText = doc.body.innerText || doc.body.textContent || "";
+      const sliceUntilNextLabel = (startIdx, stopRegex, maxLen) => {
+        const tail = fullText.slice(startIdx, startIdx + maxLen);
+        const stop = tail.search(stopRegex);
+        return stop > 0 ? tail.slice(0, stop) : tail;
+      };
+
       if (!fiveHour) {
         const idx5 = fullText.search(fiveRegex);
         if (idx5 !== -1) {
           fiveHour = extractMetricFromCardText(
-            fullText.slice(Math.max(0, idx5 - 120), idx5 + 360),
+            sliceUntilNextLabel(idx5, strictlyWeekRegex, 400),
             "5h",
             nowMs,
           );
@@ -940,7 +1138,7 @@
         const idx7 = fullText.search(weekRegex);
         if (idx7 !== -1) {
           weekly = extractMetricFromCardText(
-            fullText.slice(Math.max(0, idx7 - 120), idx7 + 360),
+            sliceUntilNextLabel(idx7, strictlyFiveRegex, 400),
             "7d",
             nowMs,
           );
@@ -969,6 +1167,8 @@
   function commitOfficialQuota(extracted, sourceTag, saveStorage = true) {
     if (!extracted) return false;
     const nowMs = Date.now();
+    // 缓存只用于首屏兜底：不得伪装成「刚刚更新」，否则会挡住后续真实数据
+    const fromCache = sourceTag === "cache";
 
     const applyMetric = (kind, incoming) => {
       const clean = sanitizeMetric(incoming, kind, nowMs);
@@ -993,7 +1193,7 @@
         ...clean,
         resetAt,
         rawResetText: clean.rawResetText || (resetAt ? prev.rawResetText : ""),
-        updatedAt: nowMs,
+        updatedAt: fromCache ? 0 : nowMs,
       };
       return true;
     };
@@ -1002,29 +1202,14 @@
     const ok7d = applyMetric("weekly", extracted.weekly);
     if (!ok5h && !ok7d) return false;
 
-    // 启发式分支最容易把同一个窗口同时写进两个槽位：数值与重置时刻完全一致时保留 7D、丢弃 5H
-    if (
-      extracted.strategy === "labels" &&
-      quotaState.fiveHour.pct !== null &&
-      quotaState.weekly.pct !== null &&
-      quotaState.fiveHour.pct === quotaState.weekly.pct &&
-      quotaState.fiveHour.resetAt !== null &&
-      quotaState.fiveHour.resetAt === quotaState.weekly.resetAt
-    ) {
-      quotaState.fiveHour = {
-        pct: null,
-        used: null,
-        limit: null,
-        resetAt: null,
-        rawResetText: "",
-        confidence: 0,
-        updatedAt: 0,
-      };
-    }
+    // 注意：两个窗口的剩余比例相同是完全合法的（例如都没用过），
+    // 因此不再像旧版那样「数值相同就丢弃 5H」——串窗由 pickResetAt 的
+    // 窗口长度校验负责拦截，不靠数值巧合推断。
 
     quotaState.source = sourceTag;
     quotaState.lastSyncTime = extracted.timestamp || nowMs;
-    quotaState.lastError = "";
+    // 缓存只是兜底，不能清除「未拿到官方数据」的错误状态
+    if (!fromCache) quotaState.lastError = "";
 
     if (saveStorage) {
       try {
@@ -1053,6 +1238,12 @@
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return;
 
+      // 实时数据比缓存新时，缓存绝不能回写覆盖（storage 事件会重复触发本函数）
+      const hasLiveData =
+        quotaState.source !== "cache" &&
+        (quotaState.fiveHour.pct !== null || quotaState.weekly.pct !== null);
+      if (hasLiveData && quotaState.lastSyncTime >= (parsed.timestamp || 0)) return;
+
       const now = Date.now();
       const restoreMetric = (metric, kind) => {
         const windowMs = kind === "fiveHour" ? FIVE_HOUR_MS : WEEK_MS;
@@ -1064,7 +1255,11 @@
         const clean = sanitizeMetric(metric, kind, now);
         if (!clean) return null;
         if (clean.resetAt !== null && clean.resetAt <= now) {
-          clean.pct = 0;
+          // 缓存里的窗口已经翻篇：旧百分比属于上一个窗口，必须作废而不是显示 0%
+          clean.pct = null;
+          clean.usedPct = null;
+          clean.used = null;
+          clean.limit = null;
           clean.resetAt = null;
           clean.rawResetText = "";
         }
@@ -1078,18 +1273,9 @@
         : null;
       const weeklyRaw = parsed.weekly ? { confidence: 0, ...parsed.weekly } : null;
 
-      let fiveHour = restoreMetric(fiveHourRaw, "fiveHour");
-      let weekly = restoreMetric(weeklyRaw, "weekly");
+      const fiveHour = restoreMetric(fiveHourRaw, "fiveHour");
+      const weekly = restoreMetric(weeklyRaw, "weekly");
 
-      // 两个槽位完全一致 → 串窗期间写入的脏缓存，直接丢弃 5H
-      if (
-        fiveHour &&
-        weekly &&
-        fiveHour.pct === weekly.pct &&
-        fiveHour.resetAt === weekly.resetAt
-      ) {
-        fiveHour = null;
-      }
       if (!fiveHour && !weekly) return;
 
       commitOfficialQuota(
@@ -1114,6 +1300,24 @@
   const RAW_FRAME_LIMIT = 6;
   const RAW_FRAME_MAX_CHARS = 24000;
   const rawFrameRing = [];
+
+  /**
+   * 轻量观测计数（只存 rpcId 与数量，不保存响应正文）。
+   * 用来区分「拦截根本没生效」和「拦到了但没有配额字段」两种完全不同的故障。
+   */
+  const obsDiag = {
+    batchExecSeen: 0,
+    batchFrames: 0,
+    quotaHits: 0,
+    lastRpcIds: [],
+  };
+  function noteDiag(rpcId) {
+    obsDiag.batchFrames += 1;
+    if (rpcId && !obsDiag.lastRpcIds.includes(rpcId)) {
+      obsDiag.lastRpcIds.push(rpcId);
+      if (obsDiag.lastRpcIds.length > 12) obsDiag.lastRpcIds.shift();
+    }
+  }
 
   /**
    * 环形缓存最近几帧原始响应，供 __gqc.dump() 回传排查。
@@ -1169,14 +1373,17 @@
     }
 
     if (url.includes("/batchexecute") && responseText) {
+      obsDiag.batchExecSeen += 1;
       const frames = parseBatchExecuteResponse(responseText);
       for (const frame of frames) {
+        noteDiag(frame.rpcId);
         rememberRawFrame(url, frame.rpcId, frame.payload);
         const extracted = extractQuotaFromWizStructure(
           frame.payload,
           Date.now(),
         );
         if (extracted) {
+          obsDiag.quotaHits += 1;
           if (reqBody && typeof reqBody === "string") {
             quotaState.capturedQuotaRpc = {
               url,
@@ -1507,7 +1714,11 @@
     if (!metric || metric.pct === null) {
       return `${label}: 等待从官方同步数据...`;
     }
-    const lines = [`${label} 官方已用: ${metric.pct}%`];
+    const usedPct =
+      typeof metric.usedPct === "number" && Number.isFinite(metric.usedPct)
+        ? metric.usedPct
+        : 100 - metric.pct;
+    const lines = [`${label} 剩余: ${metric.pct}% (官方已用 ${usedPct}%)`];
     if (metric.used !== null && metric.limit !== null) {
       lines.push(`频次用量: ${metric.used} / ${metric.limit}`);
     }
@@ -2105,10 +2316,14 @@
     if (!headSlotEl) return;
     headSlotEl.textContent = "";
 
+    const used5h = 1 - Math.max(0, Math.min(1, ratio5h));
+    const used7d = 1 - Math.max(0, Math.min(1, ratio7d));
+    // 填充量取「剩余」，颜色与临界判定取「已用」
     const dominantRatio = Math.max(ratio5h, ratio7d);
-    const color = getProgressColor(dominantRatio);
-    const color5h = getProgressColor(ratio5h);
-    const color7d = getProgressColor(ratio7d);
+    const dominantUsed = Math.max(used5h, used7d);
+    const color = getProgressColor(dominantUsed);
+    const color5h = getProgressColor(used5h);
+    const color7d = getProgressColor(used7d);
 
     if (mode === "bar") {
       track5hEl.style.display = "inline-block";
@@ -2181,7 +2396,7 @@
     }
 
     if (mode === "decay") {
-      const r = Math.min(1.2, dominantRatio);
+      const r = Math.min(1.2, dominantUsed);
       const isCritical = r >= 0.88;
       const drift = r * 4;
       const rot = r * 24;
@@ -2251,8 +2466,9 @@
     }
 
     const pct = metric.pct;
+    // 填充量 = 剩余比例；颜色/告警按「已用」比例计算，否则剩余 100% 会被涂成红色
     const ratio = pct / 100;
-    const color = getProgressColor(ratio);
+    const color = getProgressColor(1 - ratio);
 
     badgeNode.style.color = color.hex;
     usageNode.textContent = `${pct}%`;
@@ -2275,8 +2491,9 @@
       timerNode.style.color = color.hex;
       timerNode.title = metric.rawResetText;
     } else if (pct === 0) {
-      timerNode.textContent = "已重置";
-      timerNode.style.color = "#10b981";
+      // pct 是「剩余」比例：0 表示已用尽，不是「已重置」
+      timerNode.textContent = "已用尽";
+      timerNode.style.color = "#f43f5e";
     } else {
       timerNode.textContent = "官方实时";
       timerNode.style.color = "#94a3b8";
@@ -2294,10 +2511,15 @@
     for (const kind of ["fiveHour", "weekly"]) {
       const metric = quotaState[kind];
       if (metric.resetAt && metric.resetAt <= now) {
-        metric.pct = 0;
+        // 窗口已翻篇：旧窗口的百分比与倒计时全部失效。
+        // 新窗口用量未知，宁可不显示，也不要沿用旧值或伪造 100%。
+        metric.pct = null;
+        metric.usedPct = null;
+        metric.used = null;
+        metric.limit = null;
         metric.resetAt = null;
         metric.rawResetText = "";
-        metric.updatedAt = now;
+        metric.updatedAt = 0;
         expired = true;
       }
     }
@@ -2418,7 +2640,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.6.1",
+    version: "0.7.0",
     get state() {
       return quotaState;
     },
@@ -2434,7 +2656,7 @@
     },
     dump() {
       return {
-        version: "0.6.1",
+        version: "0.7.0",
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },
@@ -2453,11 +2675,21 @@
             : null,
         },
         frames: rawFrameRing.slice(),
+        diagnostics: {
+          batchExecSeen: obsDiag.batchExecSeen,
+          batchFrames: obsDiag.batchFrames,
+          quotaHits: obsDiag.quotaHits,
+          lastRpcIds: obsDiag.lastRpcIds.slice(),
+          rawFrames: rawFrameRing.length,
+        },
       };
     },
     _test: {
       toEpochMs,
       parseOfficialResetTextToTimestamp,
+      pctFromTextWithContext,
+      pickResetAt,
+      collectResetCandidates,
       sanitizeMetric,
       poolKindFromLabel,
       readMetricFromArrayTuple,
