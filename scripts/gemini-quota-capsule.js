@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.1
+// @version      0.8.2
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -160,6 +160,9 @@
       updatedAt: 0,
     },
     capturedQuotaRpc: null,
+    // /usage 通道体检结果：{ url, status, finalUrl, redirected, ok }
+    // 官方若没有该页面，GET 会被 302 到 /app，此时必须停用该通道而不是拿 app 的 blob 当配额。
+    usagePageStatus: null,
   };
 
   function getAccountPrefix() {
@@ -1569,6 +1572,74 @@
     }
   }
 
+  // -------------------------------------------------------------------------
+  // 取证环：配额字段名没人验证过，只能从真实响应里找。
+  // 这里只保留「关键字附近 ±90/110 字符」的片段（每帧最多 2 条），既不落整个报文，
+  // 也不落整段聊天，足够看清字段名与 RPC。
+  // -------------------------------------------------------------------------
+  const SNIPPET_LIMIT = 12;
+  const SNIPPET_RADIUS_BEFORE = 90;
+  const SNIPPET_RADIUS_AFTER = 110;
+  const snippetRing = [];
+  const QUOTA_HINT_RE =
+    /(quota|rate.?limit|usage.?limit|remaining|percentUsed|percentage|reset|GXU_|限额|限額|额度|額度|用量|剩余|剩餘|已用|重置)/i;
+
+  function shortenUrl(url) {
+    if (typeof url !== "string") return "";
+    return url.length > 140 ? `${url.slice(0, 140)}…` : url;
+  }
+
+  function rememberQuotaSnippets(kind, rpcId, url, text) {
+    if (typeof text !== "string" || text.length < 8) return;
+    const seen = new Set(snippetRing.map((item) => item.text));
+    const re = new RegExp(QUOTA_HINT_RE.source, "gi");
+    let match;
+    let added = 0;
+    while ((match = re.exec(text)) !== null && added < 2) {
+      const start = Math.max(0, match.index - SNIPPET_RADIUS_BEFORE);
+      const end = Math.min(text.length, match.index + SNIPPET_RADIUS_AFTER);
+      const snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
+      if (!snippet || seen.has(snippet)) continue;
+      seen.add(snippet);
+      snippetRing.push({
+        at: new Date().toISOString(),
+        kind,
+        rpcId: rpcId || null,
+        url: shortenUrl(url),
+        size: text.length,
+        text: snippet,
+      });
+      while (snippetRing.length > SNIPPET_LIMIT) snippetRing.shift();
+      added += 1;
+    }
+  }
+
+  /**
+   * 当前页面里与「限额 / 用量」有关的可见文本行，最多 8 行。
+   * 用户打开 Gemini 自己的限额弹窗后调用，就能看到官方到底怎么表述这两组数字。
+   */
+  function collectQuotaDomHints() {
+    const hints = [];
+    try {
+      const body = document.body;
+      const text = body ? body.innerText || body.textContent || "" : "";
+      const lines = text.split(/\n+/);
+      const seen = new Set();
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line || line.length > 160) continue;
+        if (!QUOTA_HINT_RE.test(line)) continue;
+        if (seen.has(line)) continue;
+        seen.add(line);
+        hints.push(line);
+        if (hints.length >= 8) break;
+      }
+    } catch {
+      // 诊断失败不影响主流程
+    }
+    return hints;
+  }
+
   const origFetch = window.fetch;
   const origXhrOpen = XMLHttpRequest.prototype.open;
   const origXhrSend = XMLHttpRequest.prototype.send;
@@ -1584,10 +1655,13 @@
   function inspectNetworkTraffic(url, reqBody, responseText) {
     if (!url || typeof url !== "string") return;
 
+    // 聊天响应也取样：配额元数据很可能就挂在 StreamGenerateContent 的返回里，
+    // 旧版在这里直接 return，等于放弃了最可能的数据源。
     if (
       url.includes("StreamGenerateContent") ||
       url.includes("assistant.vertical.chat")
     ) {
+      rememberQuotaSnippets("chat", null, url, responseText);
       scheduleSyncAfterResponse();
       return;
     }
@@ -1598,6 +1672,16 @@
       for (const frame of frames) {
         noteDiag(frame.rpcId);
         rememberRawFrame(url, frame.rpcId, frame.payload);
+        try {
+          rememberQuotaSnippets(
+            "rpc",
+            frame.rpcId,
+            url,
+            JSON.stringify(frame.payload),
+          );
+        } catch {
+          // 无法序列化就跳过取样
+        }
         const extracted = extractQuotaFromWizStructure(
           frame.payload,
           Date.now(),
@@ -1850,13 +1934,30 @@
 
         // 2. GET 同源 /usage 页面 SSR 与内嵌 AF_initDataCallback
         const usageUrl = getOfficialUsageUrl();
+        let usagePageMissing = false;
         try {
           const resp = await origFetch.call(window, usageUrl, {
             method: "GET",
             credentials: "include",
             cache: "no-store",
           });
-          if (resp.ok) {
+          const finalPath = (() => {
+            try {
+              return new URL(resp.url || usageUrl, window.location.href).pathname;
+            } catch {
+              return "";
+            }
+          })();
+          // /usage 不存在时会被 302 到 /app；继续解析只会拿 app 的 blob 当配额
+          usagePageMissing = !!resp.redirected && !/\/usage\/?$/.test(finalPath);
+          quotaState.usagePageStatus = {
+            url: usageUrl,
+            status: resp.status,
+            finalUrl: shortenUrl(resp.url || ""),
+            redirected: !!resp.redirected,
+            missing: usagePageMissing,
+          };
+          if (resp.ok && !usagePageMissing) {
             const rawHtml = await resp.text();
             const parser = new DOMParser();
             const doc = parser.parseFromString(rawHtml, "text/html");
@@ -1873,10 +1974,12 @@
           // 继续走探针
         }
 
-        // 3. 同源隐藏 Iframe 等待 CSR 异步节点加载
-        const fromIframe = await extractViaSameOriginUsageIframe(usageUrl);
-        if (fromIframe && commitOfficialQuota(fromIframe, "usage-page", true)) {
-          return true;
+        // 3. 同源隐藏 Iframe 等待 CSR 异步节点加载（/usage 不存在时直接跳过）
+        if (!usagePageMissing) {
+          const fromIframe = await extractViaSameOriginUsageIframe(usageUrl);
+          if (fromIframe && commitOfficialQuota(fromIframe, "usage-page", true)) {
+            return true;
+          }
         }
 
         // 4. 最后才看全局 WIZ_global_data：它是整页 bootstrap blob，包含海量与配额
@@ -1893,7 +1996,9 @@
           }
         }
 
-        quotaState.lastError = "暂未从官方接口获取到配额数据";
+        quotaState.lastError = usagePageMissing
+          ? "官方 /usage 页面不存在（已重定向到 /app），等待网络探针取证"
+          : "暂未从官方接口获取到配额数据";
         return false;
       } catch (err) {
         quotaState.lastError =
@@ -2873,7 +2978,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.8.1",
+    version: "0.8.2",
     get state() {
       return quotaState;
     },
@@ -2890,6 +2995,10 @@
     /**
      * 单条命令自检：直连 /usage，回报状态码、AF_initDataCallback 块数与解析结果。
      * 排查「拿不到 5 小时 / 每周用量」时先跑这个，比翻 DOM 快。
+     *
+     * 注意：本方法返回 Promise。直接 copy(JSON.stringify(__gqc.probeUsage())) 只会
+     * 得到 {}（Promise 无法序列化）。结果已自动 console.log，并在 __gqc.lastProbe 留档，
+     * 因此正确用法是直接调用：__gqc.probeUsage()
      */
     async probeUsage() {
       const url = getOfficialUsageUrl();
@@ -2899,8 +3008,17 @@
         cache: "no-store",
       });
       const rawHtml = resp.ok ? await resp.text() : "";
+      const finalUrl = resp.url || "";
+      const finalPath = (() => {
+        try {
+          return new URL(finalUrl || url, window.location.href).pathname;
+        } catch {
+          return "";
+        }
+      })();
+      const redirectedAway = !!resp.redirected && !/\/usage\/?$/.test(finalPath);
       let parsed = null;
-      if (rawHtml) {
+      if (rawHtml && !redirectedAway) {
         try {
           const domParser = new DOMParser();
           parsed = parseUsageDocument(
@@ -2911,27 +3029,90 @@
           parsed = { error: err instanceof Error ? err.message : "解析失败" };
         }
       }
-      return {
-        version: "0.8.1",
+      const result = {
+        version: "0.8.2",
+        url,
         status: resp.status,
+        finalUrl: shortenUrl(finalUrl),
+        redirectedAway,
+        note: redirectedAway ? "官方没有 /usage 页面，该通道不可用" : "",
         len: rawHtml.length,
         blocks: usageParseDiag.blocks,
         initHit: usageParseDiag.initHit,
-        blockHits: extractInitDataBlocks(rawHtml)
-          .filter((block) => /hourly|weekly|quota|percent|usage|limit|gxu/i.test(block))
-          .slice(0, 5)
-          .map((block) => ({
-            size: block.length,
-            // 只截取片段用于确认字段名，不含会话内容
-            excerpt: block.length > 600 ? `${block.slice(0, 600)}…` : block,
-          })),
+        blockHits: redirectedAway
+          ? []
+          : extractInitDataBlocks(rawHtml)
+              .filter((block) =>
+                /hourly|weekly|quota|percent|usage|limit|gxu/i.test(block),
+              )
+              .slice(0, 5)
+              .map((block) => ({
+                size: block.length,
+                // 只截取片段用于确认字段名，不含会话内容
+                excerpt: block.length > 600 ? `${block.slice(0, 600)}…` : block,
+              })),
         fiveHour: parsed ? parsed.fiveHour : null,
         weekly: parsed ? parsed.weekly : null,
       };
+      this.lastProbe = result;
+      try {
+        console.log("[Gemini Quota] probeUsage", JSON.stringify(result));
+      } catch {
+        // 忽略日志异常
+      }
+      return result;
+    },
+    /**
+     * 一键取证：把「官方到底把这两组数字放在哪里」一次性问清楚。
+     * 用法：打开 Gemini 的限额/用量弹窗，再发一条消息，然后在控制台执行
+     *   __gqc.report()
+     * 结果会自动 console.log 并存入 __gqc.lastReport（只含关键字附近片段，
+     * 每帧最多 2 条、每页最多 8 行，不含整段会话）。
+     */
+    report() {
+      const result = {
+        version: "0.8.2",
+        at: new Date().toISOString(),
+        href: shortenUrl(window.location.href),
+        path: window.location.pathname,
+        state: {
+          source: quotaState.source,
+          lastError: quotaState.lastError,
+          fiveHour: {
+            pct: quotaState.fiveHour.pct,
+            usedPct: quotaState.fiveHour.usedPct,
+            confidence: quotaState.fiveHour.confidence,
+          },
+          weekly: {
+            pct: quotaState.weekly.pct,
+            usedPct: quotaState.weekly.usedPct,
+            confidence: quotaState.weekly.confidence,
+          },
+        },
+        usagePage: quotaState.usagePageStatus,
+        domHints: collectQuotaDomHints(),
+        captured: {
+          batchExecSeen: obsDiag.batchExecSeen,
+          batchFrames: obsDiag.batchFrames,
+          quotaHits: obsDiag.quotaHits,
+          rpcIds: obsDiag.lastRpcIds.slice(),
+          rawFrames: rawFrameRing.length,
+          snippets: snippetRing.length,
+        },
+        endpoints: netRing.slice(),
+        snippets: snippetRing.slice(),
+      };
+      this.lastReport = result;
+      try {
+        console.log("[Gemini Quota] report", JSON.stringify(result, null, 2));
+      } catch {
+        // 忽略日志异常
+      }
+      return result;
     },
     dump() {
       return {
-        version: "0.8.1",
+        version: "0.8.2",
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },
@@ -2961,10 +3142,15 @@
           usageInitHit: usageParseDiag.initHit,
           // 拒绝计数：解释「为什么这次没数字」，避免再去猜官方字段
           rejected: { ...parseRejectDiag },
+          usagePage: quotaState.usagePageStatus,
+          quotaSnippets: snippetRing.length,
         },
       };
     },
     _test: {
+      collectQuotaDomHints,
+      rememberQuotaSnippets,
+      shortenUrl,
       toEpochMs,
       parseOfficialResetTextToTimestamp,
       pctFromTextWithContext,
