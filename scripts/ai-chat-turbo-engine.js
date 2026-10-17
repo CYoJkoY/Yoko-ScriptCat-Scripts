@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.13.5
+// @version      0.13.6
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.5";
+  const VERSION = "0.13.6";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -105,6 +105,21 @@
   const VF_REGEX =
     /\[\[TURBO_VFILE_START:([^|\r\n]+)\|(\d+)\|(\d+):TURBO_VFILE_END\]\]/;
   const HANDOFF_STORAGE_KEY = "ai_turbo_handoff_restore";
+  const PLAIN_HANDOFF_START = "[META]";
+  const PLAIN_HANDOFF_END = "[END]";
+  const PLAIN_HANDOFF_SECTIONS = [
+    "[META]",
+    "[TASK]",
+    "[DECISIONS]",
+    "[PROGRESS]",
+    "[ROLE]",
+    "[CONTEXT]",
+    "[OPEN_ISSUES]",
+    "[KEY_ENTITIES]",
+    "[HANDOFF_NOTES]",
+    "[END]",
+  ];
+  const PLAIN_HANDOFF_TOLERANCE = 1;
   const REASONING_SELECTOR = [
     "model-thoughts",
     ".thoughts-container",
@@ -4508,78 +4523,85 @@
 
   function buildHandoffGenerationPrompt() {
     return [
-      "你即将结束当前对话。请对迄今全部对话进行深度复盘，生成一份 YAML 格式的“上下文交接包”，用于在新会话中无缝恢复工作。",
+      "请对本次对话做一次完整复盘，然后严格按照下面的纯文本格式输出交接包。",
+      "严格规则：",
+      "1. 不要使用 Markdown 代码块，不要添加任何解释、客套话或标题。",
+      "2. 从 [META] 开始，到 [END] 结束；顺序不得调整。",
+      "3. 每个字段形如 `字段名: 内容`；内容如有多项，用 | 分隔；没有内容的字段写「无」。",
+      "4. 信息必须准确、自包含，不要编造。内容尽量精炼。",
       "",
-      "要求：",
-      "1. 只输出一个 YAML 代码块，不要添加解释、客套话或 Markdown 标题。",
-      "2. YAML 必须语法正确；字符串包含冒号、引号、换行时使用双引号并转义，或使用 | 块。",
-      "3. 信息必须自包含、准确，不编造。没有内容的字段用 [] 或 null。",
-      "4. 若内容过长，优先压缩为关键点，但必须保证 YAML 完整闭合。",
-      "5. 严格使用以下结构和字段，不得省略顶层字段：",
+      "[META]",
+      "version: 1.0",
+      "generated_at: <当前时间>",
+      "source_model: <模型名>",
+      "language: zh-CN",
       "",
-      CODE_FENCE + "yaml",
-      "meta:",
-      '  version: "1.0"',
-      '  generated_at: ""',
-      '  source_model: ""',
-      '  language: "zh-CN"',
-      "task:",
-      '  objective: ""',
-      "  success_criteria: []",
-      '  current_status: ""',
-      "decisions:",
-      "  confirmed: []",
-      "  rejected: []",
-      "  assumptions: []",
-      "progress:",
-      "  done: []",
-      "  in_progress: []",
-      "  next_actions: []",
-      "role:",
-      '  persona: ""',
-      '  tone: ""',
-      "  response_format: []",
-      "  boundaries: []",
-      "context:",
-      "  tools: []",
-      "  tech_stack: []",
-      "  files: []",
-      "  data: []",
-      "  constraints: []",
-      "open_issues:",
-      "  questions: []",
-      "  risks: []",
-      "  blockers: []",
-      "key_entities:",
-      "  people: []",
-      "  projects: []",
-      "  terms: []",
-      "handoff_notes: []",
-      CODE_FENCE,
+      "[TASK]",
+      "objective: <任务目标，一句话>",
+      "success_criteria: <成功标准>",
+      "current_status: <当前状态>",
+      "",
+      "[DECISIONS]",
+      "confirmed: <已确认决策>",
+      "rejected: <已否决方案>",
+      "assumptions: <关键假设>",
+      "",
+      "[PROGRESS]",
+      "done: <已完成事项>",
+      "in_progress: <进行中事项>",
+      "next_actions: <下一步行动>",
+      "",
+      "[ROLE]",
+      "persona: <角色设定>",
+      "tone: <语气风格>",
+      "response_format: <回复格式>",
+      "boundaries: <边界>",
+      "",
+      "[CONTEXT]",
+      "tools: <工具>",
+      "tech_stack: <技术栈>",
+      "files: <文件>",
+      "data: <数据>",
+      "constraints: <约束>",
+      "",
+      "[OPEN_ISSUES]",
+      "questions: <待确认问题>",
+      "risks: <风险>",
+      "blockers: <阻碍>",
+      "",
+      "[KEY_ENTITIES]",
+      "people: <人物>",
+      "projects: <项目>",
+      "terms: <术语>",
+      "",
+      "[HANDOFF_NOTES]",
+      "<自由补充信息>",
+      "",
+      "[END]",
     ].join("\n");
   }
 
-  function buildHandoffRestorePrompt(yamlText) {
-    return [
-      "你将接收一份 YAML 格式的“上下文交接包”，用于恢复此前会话的工作状态。请按以下步骤操作：",
+  function buildHandoffRestorePrompt(handoffText, kind = "plain") {
+    const intro = [
+      "你将接收一份「上下文交接包」，用于恢复此前会话的工作状态。请按以下步骤操作：",
       "",
-      "1. 解析并校验以下 YAML 的语法。",
-      "2. 如果 YAML 不完整或语法错误，只指出问题，不要猜测，也不要开始工作。",
-      "3. 如果 YAML 有效，用简短摘要确认：",
-      "   - 任务目标：",
-      "   - 当前状态：",
-      "   - 已确认决策：",
-      "   - 已排除方案：",
-      "   - 下一步行动：",
-      "   - 你的角色/风格：",
-      "4. 确认后，直接进入该角色，从 next_actions 的第一项开始继续工作。不要重新询问 YAML 中已有的信息，也不要重新讨论已确认或已排除的决策。",
-      "5. 若 YAML 中有 open_issues.questions，先按优先级列出，并询问我需要先处理哪一个；若没有，直接执行下一步。",
+      "1. 直接读取下面交接包的全部字段（这是纯文本格式，不是代码，无需当作代码解析）。",
+      "2. 用简短摘要确认：任务目标 / 当前状态 / 已确认决策 / 已排除方案 / 下一步 / 你的角色。",
+      "3. 确认后直接进入该角色，从 [PROGRESS].next_actions 的第一项开始继续工作，不要重新询问已有信息。",
+      "4. 若 [OPEN_ISSUES].questions 非空，先按优先级列出并询问先处理哪一个；否则直接执行下一步。",
+      "5. 字段值为「无」或空时表示该项无内容，不要追问。",
       "",
-      "现在准备接收 YAML，这是你的YAML信息：",
-      CODE_FENCE + "yaml",
-      yamlText.trim(),
-      CODE_FENCE,
-    ].join("\n");
+    ];
+    if (kind === "yaml") {
+      intro.push(
+        "（注：以下是旧版 YAML 交接包，可直接当作纯文本阅读，无需严格 YAML 解析。）",
+      );
+      intro.push("");
+    }
+    intro.push("===== 交接包开始 =====");
+    intro.push(String(handoffText || "").trim());
+    intro.push("===== 交接包结束 =====");
+    return intro.join("\n");
   }
 
   function getComposerText(inputElement) {
@@ -4615,17 +4637,25 @@
     );
   }
 
-  function normalizeHandoffYaml(candidate) {
-    if (!candidate) return null;
-    const yaml = String(candidate)
-      .trim()
-      .replace(/^```(?:yaml|yml)\s*/i, "")
-      .replace(/\s*```\s*$/, "")
-      .trim();
-    return isHandoffYamlShape(yaml) ? yaml : null;
+  function isPlainHandoffShape(text) {
+    const t = String(text || "").trim();
+    if (!t.includes(PLAIN_HANDOFF_START)) return false;
+    if (!t.includes(PLAIN_HANDOFF_END)) return false;
+    const hitCount = PLAIN_HANDOFF_SECTIONS.filter((s) => t.includes(s)).length;
+    return hitCount >= PLAIN_HANDOFF_SECTIONS.length - PLAIN_HANDOFF_TOLERANCE;
   }
 
-  function extractLatestHandoffYaml() {
+  function normalizePlainHandoff(candidate) {
+    if (!candidate) return null;
+    const text = String(candidate)
+      .trim()
+      .replace(/^```(?:yaml|yml|txt|text|markdown|md|plain)?\s*/i, "")
+      .replace(/\s*```\s*$/, "")
+      .trim();
+    return isPlainHandoffShape(text) ? text : null;
+  }
+
+  function extractLatestHandoffText() {
     const turns = getTurns();
     let latestAssistantTurn = null;
 
@@ -4637,34 +4667,47 @@
     }
     if (!latestAssistantTurn) return null;
 
+    // 1) 优先检查代码块（有些平台仍会自动包裹，即使要求不用）
     const codeElements = Array.from(
-      latestAssistantTurn.querySelectorAll("pre code, pre, code"),
+      latestAssistantTurn.querySelectorAll("pre code, pre, code, code-block"),
     );
     for (const codeElement of codeElements) {
       if (isReasoningElement(codeElement)) continue;
-      const languageHint = [
-        codeElement.className || "",
-        codeElement.getAttribute("data-language") || "",
-        codeElement.parentElement?.className || "",
-        codeElement.parentElement?.getAttribute("data-language") || "",
-      ].join(" ");
       const codeText = codeElement.textContent || "";
-      if (/ya?ml/i.test(languageHint) || codeText.trim().startsWith("meta:")) {
-        const candidate = normalizeHandoffYaml(codeText);
-        if (candidate) return candidate;
-      }
+      const plain = normalizePlainHandoff(codeText);
+      if (plain) return { kind: "plain", text: plain };
+      const yaml = normalizeHandoffYaml(codeText);
+      if (yaml) return { kind: "yaml", text: yaml };
     }
 
+    // 2) 完整消息文本（先按 fenced 代码块切，再做整体兜底）
     const fullText = extractTurnText(latestAssistantTurn);
-    const fencedCandidates = Array.from(
-      fullText.matchAll(/\`\`\`(?:yaml|yml)\s*([\s\S]*?)\s*\`\`\`/gi),
+
+    const fencedMatches = Array.from(
+      fullText.matchAll(
+        /```(?:yaml|yml|txt|text|markdown|md)?\s*([\s\S]*?)\s*```/gi,
+      ),
     );
-    for (const match of fencedCandidates) {
-      const candidate = normalizeHandoffYaml(match[1]);
-      if (candidate) return candidate;
+    for (const match of fencedMatches) {
+      const plain = normalizePlainHandoff(match[1]);
+      if (plain) return { kind: "plain", text: plain };
+      const yaml = normalizeHandoffYaml(match[1]);
+      if (yaml) return { kind: "yaml", text: yaml };
     }
 
-    return normalizeHandoffYaml(fullText);
+    // 3) 整体文本兜底（处理 AI 直接把标记铺在消息里、没有任何代码块的情况）
+    const plain = normalizePlainHandoff(fullText);
+    if (plain) return { kind: "plain", text: plain };
+    const yaml = normalizeHandoffYaml(fullText);
+    if (yaml) return { kind: "yaml", text: yaml };
+
+    return null;
+  }
+
+  // 保留旧函数名，兼容内部旧调用；内部转为提取纯文本
+  function extractLatestHandoffYaml() {
+    const result = extractLatestHandoffText();
+    return result ? result.text : null;
   }
 
   function copyHandoffText(text, successMessage) {
@@ -4704,19 +4747,42 @@
     );
   }
 
-  function copyLatestRestorePrompt() {
-    const yamlText = extractLatestHandoffYaml();
-    if (!yamlText) {
-      setHandoffStatus("尚未检测到最新助手回答中的完整 YAML。");
+  function copyLatestHandoffText() {
+    const result = extractLatestHandoffText();
+    if (!result) {
+      setHandoffStatus("尚未检测到最新助手回答中的完整交接包。");
       window.alert(
-        "未找到符合交接包结构的 YAML。请等待助手回答完整结束后重试。",
+        "未找到可识别的交接包。\n\n" +
+          "请确认：\n" +
+          "1. AI 回答已完整结束；\n" +
+          "2. 内容中同时包含 [META] 与 [END]。\n\n" +
+          "若缺失，请点「发送 YAML 交接指令」让 AI 重新生成。",
       );
       return;
     }
-    const restoreText = buildHandoffRestorePrompt(yamlText);
+    const kindLabel = result.kind === "yaml" ? "旧版 YAML" : "纯文本";
+    copyHandoffText(
+      result.text,
+      `已复制交接包（${kindLabel}，${result.text.length.toLocaleString()} 字符）。`,
+    );
+  }
+
+  // 兼容旧函数名（面板按钮仍叫 copyLatestHandoffYaml）
+  function copyLatestHandoffYaml() {
+    copyLatestHandoffText();
+  }
+
+  function copyLatestRestorePrompt() {
+    const result = extractLatestHandoffText();
+    if (!result) {
+      setHandoffStatus("尚未检测到完整交接包。");
+      window.alert("未找到可识别的交接包。请等待回答完整结束后重试。");
+      return;
+    }
+    const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
     copyHandoffText(
       restoreText,
-      `已复制完整的新对话恢复指令（${restoreText.length.toLocaleString()} 字符）。`,
+      `已复制新对话恢复指令（${restoreText.length.toLocaleString()} 字符）。`,
     );
   }
 
@@ -4874,6 +4940,7 @@
   function startHandoffGeneration() {
     const prompt = buildHandoffGenerationPrompt();
     const input = getChatInput();
+
     if (!input) {
       navigator.clipboard
         .writeText(prompt)
@@ -4900,43 +4967,118 @@
       return;
     }
 
+    // 插入指令
     insertTextAtomic(input, prompt);
-    isSubmitting = true;
-    setHandoffStatus("已填入生成指令，正在发送……");
-    sendWithRetry(input, (sent) => {
-      isSubmitting = false;
-      setHandoffStatus(
-        sent
-          ? "已发送 YAML 交接指令；等待回答完成后，点击“恢复到新对话”。"
-          : "指令已填入但未确认发送，请检查输入框后手动发送。",
-      );
-    });
+
+    // ★ 关键改造：插入后验证平台是否过滤了关键标记
+    window.setTimeout(() => {
+      const actual = getComposerText(input);
+      const mustSurvive = [
+        PLAIN_HANDOFF_START,
+        "[TASK]",
+        "[PROGRESS]",
+        PLAIN_HANDOFF_END,
+      ];
+      const survived = mustSurvive.every((marker) => actual.includes(marker));
+
+      if (!survived) {
+        // 平台过滤 / 截断 —— 自动复制到剪贴板并详细提示
+        navigator.clipboard
+          .writeText(prompt)
+          .then(() => {
+            setHandoffStatus("检测到平台过滤了交接指令，已复制到剪贴板。");
+            window.alert(
+              "检测到当前平台可能过滤了交接指令内容。\n\n" +
+                "生成指令已完整复制到剪贴板。请手动粘贴并发送。\n\n" +
+                "若仍然发不出去，请尝试以下方式：\n" +
+                "1. 分两次发送：先粘贴到 [PROGRESS] 结尾，发送后再补发其余部分；\n" +
+                "2. 检查输入框是否有长度限制；\n" +
+                "3. 用一句中文描述让 AI 先复述格式，再粘贴具体字段。",
+            );
+          })
+          .catch(() => {
+            window.alert(
+              "检测到平台过滤了交接指令，且无法写入剪贴板。请手动重试。",
+            );
+          });
+        return;
+      }
+
+      // 插入成功，执行发送
+      isSubmitting = true;
+      setHandoffStatus("已填入生成指令，正在发送……");
+      const baselineTurns = getTurns().length;
+
+      sendWithRetry(input, (sent) => {
+        isSubmitting = false;
+
+        if (!sent) {
+          setHandoffStatus(
+            "发送未确认，请检查输入框。若未发出，可从剪贴板重新粘贴。",
+          );
+          navigator.clipboard.writeText(prompt).catch(() => {});
+          return;
+        }
+
+        setHandoffStatus(
+          "已发送生成指令；等待回答完成后点击「恢复到新对话」。",
+        );
+        verifyHandoffSent(baselineTurns, prompt);
+      });
+    }, 120);
+  }
+
+  // ★ 新增：发送后轮次校验，确认消息真的进入了对话
+  function verifyHandoffSent(baselineTurns, prompt) {
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts++;
+      const currentTurns = getTurns().length;
+
+      if (currentTurns > baselineTurns) {
+        window.clearInterval(timer);
+        return;
+      }
+
+      if (attempts >= 20) {
+        window.clearInterval(timer);
+        navigator.clipboard
+          .writeText(prompt)
+          .then(() => {
+            setHandoffStatus("检测到消息可能未发出，已重新复制到剪贴板。");
+          })
+          .catch(() => {});
+      }
+    }, 500);
   }
 
   function prepareNewConversationFromYaml() {
-    const yamlText = extractLatestHandoffYaml();
-    if (!yamlText) {
+    const result = extractLatestHandoffText();
+    if (!result) {
       window.alert(
-        "未在最近的助手回答中找到符合交接包结构的 YAML 代码块。请等待回答完整结束，或手动复制 YAML。",
+        "未在最近的助手回答中找到可识别的交接包。\n\n" +
+          "请等待回答完整结束后重试。\n\n" +
+          "若 AI 未按格式输出，可点击「发送 YAML 交接指令」重新生成。",
       );
-      setHandoffStatus("尚未检测到完整交接 YAML。");
+      setHandoffStatus("尚未检测到完整交接包。");
       return;
     }
 
-    const restoreText = buildHandoffRestorePrompt(yamlText);
+    const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
     const newChatControl = findNewChatControl();
+
     if (!newChatControl) {
       navigator.clipboard
         .writeText(restoreText)
         .then(() => {
           setHandoffStatus("未识别新对话入口；完整恢复指令已复制。");
           window.alert(
-            "已提取 YAML 并复制完整恢复指令。此网站的新对话按钮未能可靠识别，请手动打开新对话并粘贴。",
+            "已提取交接包并复制完整恢复指令。此网站的新对话按钮未能可靠识别，请手动打开新对话并粘贴。",
           );
         })
         .catch(() => {
           window.alert(
-            "已找到 YAML，但无法识别新对话入口或写入剪贴板。请手动复制 YAML 后恢复。",
+            "已找到交接包，但无法识别新对话入口或写入剪贴板。请手动复制交接包后恢复。",
           );
         });
       return;
@@ -4955,16 +5097,18 @@
     } catch (_) {
       navigator.clipboard
         .writeText(restoreText)
-        .then(() =>
+        .then(() => {
           window.alert(
             "无法暂存跨页面恢复状态，已复制完整恢复指令，请手动打开新对话并粘贴。",
-          ),
-        )
-        .catch(() => window.alert("无法暂存或复制恢复指令，请手动复制 YAML。"));
+          );
+        })
+        .catch(() => {
+          window.alert("无法暂存或复制恢复指令，请手动复制交接包。");
+        });
       return;
     }
 
-    setHandoffStatus("已识别 YAML，正在打开新对话并准备填入恢复指令……");
+    setHandoffStatus("已识别交接包，正在打开新对话并准备填入恢复指令……");
     newChatControl.click();
     resumePendingHandoffPrompt();
   }
