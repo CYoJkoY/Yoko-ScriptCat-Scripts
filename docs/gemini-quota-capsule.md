@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：0.7.0
+- 版本：0.8.1
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -18,10 +18,10 @@
 
 | 优先级 | 通道 | 说明 |
 | --- | --- | --- |
-| 1 | 捕获并重放 `batchexecute`（`wrb.fr` 帧） | document-start 包装 `fetch` / `XMLHttpRequest`，命中配额帧后保存请求模板，后续直接重放 |
-| 2 | 同源 `GET /usage` | 解析服务端渲染 HTML 中的 `AF_initDataCallback` 数据块（按括号配对提取，正则截取已废弃）与 DOM 卡片文本 |
+| 1 | 捕获并重放 `batchexecute`（`wrb.fr` 帧） | document-start 包装 `fetch` / `XMLHttpRequest`，命中配额帧后保存请求模板，后续直接重放。帧内只认结构化 `GXU_*` 池，不做标签猜测 |
+| 2 | 同源 `GET /usage` | 先读可见 DOM 卡片文本，再回退到服务端 HTML 中的 `AF_initDataCallback`（括号配对提取） |
 | 3 | 隐藏 iframe 探测 `/usage` | 需要真实渲染结果时以 1×1 iframe 加载页面，读取 `contentDocument` 并按 300ms 轮询 + `MutationObserver` 提取 |
-| 4 | `window.WIZ_global_data` | 首屏预置数据的兜底扫描 |
+| 4 | `window.WIZ_global_data` | 仅兜底，且禁用标签启发式：它是整页 bootstrap blob，与配额无关的 `session` / `week` / 样式文本极多 |
 | 5 | 本地缓存 | 仅用于首屏回显，恢复时 `updatedAt = 0`，会被任何新数据立即覆盖 |
 
 自动同步间隔 3 分钟；聊天响应返回后 1.8 秒追加一次静默同步；窗口到期瞬间再补一次。
@@ -48,6 +48,7 @@
 ```
 
 - `poolType` / `pool_id` / `bucket` 等键上出现 `GXU_FIVE_HOURLY`（或 `5H`、`HOURLY`、`per_hour`、`18000`）→ 5 小时池；出现 `GXU_WEEKLY`（或 `WEEK`、`7D`、`604800`）→ 每周池。
+- 数组元组必须自带 `GXU_*` 池枚举（`strictPoolKindFromLabel`）才被当作结构化数据；宽松标签（`session` / `week` / `18000` / `604800`）只用于置信度 1 的启发式，且不得在整页 blob 或聊天 RPC 帧上启用。
 - 百分比分三类读取，优先级为 `剩余字段 > 已用字段 > 裸 percent`：
   - 剩余：`remainingPercent` / `percentRemaining` / `availablePct` / `leftRatio` / `remainingFraction` 等，直接使用；
   - 已用：`percentageUsed` / `usedPercent` / `usagePercent` / `usedFraction` 等，`pct = 100 − x`；
@@ -59,17 +60,20 @@
 
 ### 3.2 第二层：标签启发式（置信度 1）
 
-结构化层与启发式层**各跑一遍、按窗口合并**：如果服务端只在 `pools` 里给出周额度，而 5H 仍以元组形式存在于其他字段，5H 依然能被补齐。启发式递归扫描响应数组，用标签和窗口秒数（18000 / 604800）给元组归类。三条关键规则：
+结构化层与启发式层**各跑一遍、按窗口合并**：如果服务端只在 `pools` 里给出周额度，而 5H 仍以元组形式存在于其他字段，5H 依然能被补齐。启发式递归扫描响应数组，用标签和窗口秒数（18000 / 604800）给元组归类。四条关键规则：
 
 1. **父容器不参与取值。** 同一个数组节点同时命中 5H 与 7D 标签时，只递归子节点；旧版本正是因为父容器先抢到「第一个数字」，才把周额度写进了 5H。
 2. **无法归属就放弃。** 标签并排出现在同一层、没有子节点可下钻时不产出数据，避免猜错。
 3. **裸数字不算百分比。** 元组里的数字既可能是 `used`、`limit`、窗口秒数或计数，方向也无从判定；只有带 `%` 的文本才会被采信。
+4. **裸百分比也不采信。** 元组里的 `"100%"` 没有方向词，无法区分「剩余 / 已用」；旧版按「已用」解释，于是任意 `width:100%` 之类的文本都会变成「已用 100%」。元组与 RPC 帧路径只接受带 `剩余 / 已用 / used / remaining` 方向词的百分比，`{…}`、`<>`、`width:` 等样式或模板片段直接丢弃。
 
 ### 3.3 第三层：官方 `/usage` 页面（置信度 2）
 
 按卡片文本解析百分比与重置提示：
 
-- 百分比必须结合上下文判定方向：`100% used` / `100% 已用` → 剩余 0%；`剩余 34%` / `66% remaining` 直接使用；没有任何方向词时按官方页面的默认口径「已用」处理。
+- 百分比必须结合上下文判定方向：`100% used` / `100% 已用` → 剩余 0%；`剩余 34%` / `66% remaining` 直接使用；没有任何方向词时按官方页面的默认口径「已用」处理——**该口径只对可见卡片文本生效**，全文切片与结构体一律不许裸百分比。
+- 同一窗口会被多级容器同时命中，取文本最短（最贴近卡片本身）的节点解析，避免祖先节点夹带别的数字。
+- 可见 DOM 的结果**优先于** HTML 内嵌 `AF_initDataCallback`；blob 只用于补齐 DOM 缺失的窗口。
 - 明确出现「已达上限 / 已用尽 / limit reached」时剩余为 0%。
 - 全文回退切片会在**下一个窗口标签**处截断，5H 切片不会吃掉紧随其后的 7D 卡片数字；「重置于 10 月 7 日」这类日期里的「7」不会被当成周窗口标签。
 
@@ -97,6 +101,7 @@
 | 记录里出现「超出本窗口长度」的重置候选，且没有相符候选 | 该记录属于另一个窗口 → 整条作废（`pickResetAt`） |
 | 记录里有多个相符的重置候选 | 无法确定 → 只放弃倒计时，保留百分比，绝不猜 |
 | 低置信度数据试图覆盖 10 分钟内的高置信度数据 | 拒绝写入（结构化 pools / 官方页面优先） |
+| 低置信度数据声称「已用 100%」但拿不到任何官方重置时刻 | 判定为扫到了无关的 `100%` 文本 → **整条丢弃**，显示 `--%`，绝不伪造满载 |
 | 缓存中 5H 的重置时刻超出 5.5 小时 | 历史脏缓存 → 启动时直接丢弃 5H |
 | 缓存里的窗口已经翻篇 | 旧窗口百分比作废，显示 `--%` 并等待同步 |
 | 两个窗口的剩余百分比 / 重置时刻恰好相同 | **允许**（都没用过就是合法情形）；串窗只由窗口长度校验拦截，不靠数值巧合 |
@@ -114,7 +119,7 @@
 | Key | 用途 |
 | --- | --- |
 | `__gemini_quota_capsule_cfg_v5__` | 形态、拖拽位置、调试开关 |
-| `__gemini_quota_official_cache_v6__` | 最近一次官方配额快照（含 `pct` 剩余 / `usedPct` 已用 / `confidence` / `updatedAt`） |
+| `__gemini_quota_official_cache_v7__` | 最近一次官方配额快照（含 `pct` 剩余 / `usedPct` 已用 / `confidence` / `updatedAt`） |
 
 源码顶部常量：
 
@@ -150,14 +155,25 @@ __gqc.setDebug(true)   // 打开调试日志
 | `batchFrames` | 解析出的 `wrb.fr` 帧数量 |
 | `quotaHits` | 其中被判定为配额帧的数量，长期为 0 说明字段命名/结构变了 |
 | `lastRpcIds` | 最近出现过的 `rpcId`，便于定位真正的配额 RPC |
+| `rejected` | 解析拒绝计数：`cssLike`（样式/模板片段）、`barePercent`（无方向词裸百分比）、`unverifiedFull`（无重置时刻的 100% 已用） |
 
-## 九、测试
+## 九、回归验证
 
-```bash
-node --test tests/*.test.mjs
+仓库内 `tests/` 已移除（见 5579b8d）。当前验证方式：
+
+1. 语法检查：`node --check scripts/gemini-quota-capsule.js`
+2. 语义自测：在页面控制台用 `__gqc._test` 直接调用纯函数，例如
+
+```js
+const t = __gqc._test;
+t.pctFromTextWithContext("width:100%;height:100%");        // null（样式文本不参与）
+t.pctFromTextWithContext("100%");                          // null（结构体里裸百分比不可信）
+t.pctFromTextWithContext("100%", { allowBare: true });     // { pct: 0, usedPct: 100 }（官方卡片口径）
+t.pctFromTextWithContext("34% used");                      // { pct: 66, usedPct: 34 }
+t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now()); // null
 ```
 
-覆盖：百分比方向（`100% used` → 剩余 0）、同一卡片里已用 / 剩余的方向判定、5H / 7D 卡片文本与切片、窗口标签不参与相对时长、锚点邻接的相对时长、中文绝对日期、`percentageUsed` 换算、`used`/`limit` 同作用域配对、周额度不得进入 5H、多候选重置时刻放弃倒计时、元组裸数字不猜百分比、提交链路端到端、倒计时格式化。当前 15 例全部通过。
+3. 线上核对：`__gqc.dump().diagnostics.rejected` 若持续增长，说明拒绝逻辑正在拦截脏数据；`blocks` / `initHit` 用于判断官方页面结构是否又变了。
 
 ## 十、已知限制
 
@@ -169,6 +185,17 @@ node --test tests/*.test.mjs
 - `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
 
 ## 十一、版本历史
+
+### v0.8.1
+
+修掉「5 小时与每周都显示已用 100%」的假数据链路，根因是**把无关文本当成了配额**：
+
+1. **整页 blob 被当成配额源**：`window.WIZ_global_data`（bootstrap 数据 + 聊天 `batchexecute` 帧）里充斥着 `session` / `week` / 样式文本，宽松标签一旦命中，`width:100%` 这类字符串就被读成「已用 100%」，两个窗口于是同时满载。现在 blob 只作最后兜底，且 RPC 帧与 blob 一律禁用标签启发式。
+2. **结构化层滥用了宽松标签**：`collectStructuredPools` 原先用 `session` / `week` / `18000` 判池，并把结果标成最高置信度，导致假数据压过官方页面。现在元组必须自带 `GXU_*` 池枚举才算结构化。
+3. **裸百分比默认按「已用」**：无方向词的 `N%` 在结构体里无法区分剩余与已用。现在只有 `/usage` 的可见卡片文本保留该默认口径，元组、RPC、全文切片一律拒绝裸百分比；`{…}`、`<>`、`width:` 等样式/模板片段整段丢弃。
+4. **取值顺序反了**：同步原先先看 `WIZ_global_data` 并 `return true`，官方 `/usage` 页面永远跑不到；`parseUsageDocument` 也让 `AF_initDataCallback` 挡住可见 DOM。现在顺序为「捕获 RPC → `/usage` SSR → iframe → WIZ 兜底」，DOM 优先于内嵌 blob。
+5. **多了两道防线**：低置信度「已用 100%」若无任何官方重置时刻则整条丢弃（显示 `--%` 而不是假满载）；`__gqc.dump().diagnostics.rejected` 记录被拒绝的原因（`cssLike` / `barePercent` / `unverifiedFull`）。
+6. 缓存键升级到 v7，作废旧版写入的假 100% 快照。
 
 ### v0.7.0
 
