@@ -50,12 +50,12 @@
 
 前置条件：Chrome / Edge / Firefox / Safari + 任一用户脚本管理器（Tampermonkey、Violentmonkey、Greasemonkey）。
 
-1. 安装用户脚本管理器。
-2. 在管理器中新建脚本。
-3. 粘贴脚本完整内容并保存。
+1. 安装用户脚本管理器（ScriptCat 推荐）。
+2. 点击安装入口直接安装（推荐，可自动更新）：[AI Chat Turbo Engine](https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/ai-chat-turbo-engine.js)。
+3. 或在管理器中新建脚本、粘贴脚本完整内容后保存。
 4. 打开受支持的对话页面，右下角出现 `Turbo` 悬浮球即表示生效。
 
-脚本以 `@run-at document-start` 注入，`@noframes`，`@grant none`。
+脚本以 `@run-at document-start` 注入，`@noframes`，`@grant none`。头部声明了 `@updateURL`（jsDelivr）与 `@downloadURL`（ghfast 代理），不依赖在部分网络下会超时的 `raw.githubusercontent.com`；从没有这两个字段的旧版本升级需重装一次，详见仓库 README。
 
 ---
 
@@ -378,6 +378,14 @@ pointerdown → mousedown → pointerup → mouseup → click
 ---
 
 ## 版本记录
+
+### 0.13.9
+
+**修复更新链路：补全 `@updateURL` / `@downloadURL`，ScriptCat 恢复自动检测更新。**
+
+- 头部新增 `@updateURL`（`cdn.jsdelivr.net/gh/...@main/...`，检查更新）与 `@downloadURL`（`ghfast.top` 代理 raw，下载新版本）。此前两者缺失，管理器退回安装地址 `raw.githubusercontent.com`，该域名在部分网络下超时，表现为「永远检测不到更新」。
+- 新增 `.github/workflows/purge-jsdelivr.yml`：推送 `main` 后 purge CDN 缓存并校验 CDN 上的 `@version` 与仓库一致，消除 `@main` 分支最长 12 小时的缓存窗口。
+- 旧版本（无这两个字段）需重装一次才能切换通道，详见仓库 README。
 
 ### 0.13.8
 

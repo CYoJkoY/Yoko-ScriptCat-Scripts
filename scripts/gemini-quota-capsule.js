@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.6.0
+// @version      0.6.1
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
+// @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
+// @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/gemini-quota-capsule.js
 // @match        https://gemini.google.com/*
 // @match        https://bard.google.com/*
 // @run-at       document-start
@@ -2416,7 +2418,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.6.0",
+    version: "0.6.1",
     get state() {
       return quotaState;
     },
@@ -2432,7 +2434,7 @@
     },
     dump() {
       return {
-        version: "0.6.0",
+        version: "0.6.1",
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },

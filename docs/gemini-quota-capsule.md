@@ -133,6 +133,12 @@ node --test tests/*.test.js
 
 ## 十一、版本历史
 
+### v0.6.1
+
+- 修复更新链路：头部新增 `@updateURL`（jsDelivr `@main`）与 `@downloadURL`（ghfast 代理 raw），此前缺失两者，ScriptCat 只能退回安装地址 `raw.githubusercontent.com`，该域名在部分网络下超时，导致永远检测不到更新。
+- 新增 `purge-jsdelivr.yml`：推送 `main` 后主动 purge CDN 缓存并校验 CDN 上的 `@version`，消除分支最长 12 小时的缓存延迟。
+- 从旧版本升级需手动重装一次（旧记录里的更新地址无法被远端改写），详见仓库 README。
+
 ### v0.6.0
 
 - 新增结构化 `pools` 解析：按 `poolType` 精确区分 5H / 7D，作为最高优先级数据源。
