@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.5.1
-// @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，24px 超薄细长条同屏显示 5H 与 7D 真实用量及官方重置时间。
+// @version      0.6.0
+// @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @match        https://gemini.google.com/*
 // @match        https://bard.google.com/*
@@ -23,6 +23,17 @@
   const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v5__";
 
   const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000;
+
+  // 两个官方配额窗口的真实长度（5 小时 / 7 天），用于校验重置时间是否发生“串窗”
+  const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const RESET_SLACK_MS = 30 * 60 * 1000; // 允许的时钟/服务端抖动
+  const FRESH_MS = 10 * 60 * 1000; // 超过该时长未更新的数据不再受置信度保护
+
+  // 数据置信度：结构化 pools > 官方 /usage 页面 > 标签启发式
+  const CONFIDENCE = { heuristic: 1, dom: 2, pools: 3 };
+
+  const DURATION_SENTINELS = new Set([18000, 604800, 86400, 3600, 300, 60, 30, 24, 7, 5]);
 
   const DEFAULT_CONFIG = {
     styleMode: "bar", // 'bar' | 'ring' | 'disk' | 'decay'
@@ -122,6 +133,8 @@
       limit: null,
       resetAt: null, // 真实官方重置时间戳 (ms)
       rawResetText: "",
+      confidence: 0, // 0 = 未知 / 1 = 标签启发式 / 2 = 官方页面 / 3 = 结构化 pools
+      updatedAt: 0, // 该指标最后一次被刷新到的时间，用于置信度保护
     },
     weekly: {
       pct: null, // 0 ~ 100
@@ -129,6 +142,8 @@
       limit: null,
       resetAt: null, // 真实官方重置时间戳 (ms)
       rawResetText: "",
+      confidence: 0,
+      updatedAt: 0,
     },
     capturedQuotaRpc: null,
   };
@@ -143,13 +158,94 @@
   }
 
   /**
-   * 从官方自然语言重置提示中还原真实重置时间戳（毫秒）
+   * 把任意来源的时间值归一化成毫秒时间戳。
+   * 覆盖 Google Timestamp({seconds,nanos})、[秒, 纳秒] 元组、10/13 位数字串与 ISO 8601 字符串。
+   * 只接受落在 [当前时间 - 10 分钟, 当前时间 + 10 天] 内的值，越界一律视为噪声。
+   */
+  function toEpochMs(value, nowMs = Date.now()) {
+    const minMs = nowMs - 10 * 60 * 1000;
+    const maxMs = nowMs + 10 * 86400 * 1000;
+    const plausible = (ms) =>
+      typeof ms === "number" && Number.isFinite(ms) && ms >= minMs && ms <= maxMs;
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      if (plausible(value)) return Math.round(value);
+      if (plausible(value * 1000)) return Math.round(value * 1000);
+      return null;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      if (/^\d{10,13}$/.test(trimmed)) return toEpochMs(Number(trimmed), nowMs);
+      if (!/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return null;
+      const parsed = Date.parse(trimmed);
+      return plausible(parsed) ? parsed : null;
+    }
+
+    if (Array.isArray(value)) {
+      if (!value.length) return null;
+      const head = value[0];
+      if (typeof head === "number") return toEpochMs(head, nowMs);
+      if (head && typeof head === "object") return toEpochMs(head, nowMs);
+      return null;
+    }
+
+    if (value && typeof value === "object") {
+      for (const key of [
+        "seconds",
+        "second",
+        "secs",
+        "sec",
+        "epochSeconds",
+        "timestamp",
+        "millis",
+        "milliseconds",
+        "ms",
+        "epochMillis",
+      ]) {
+        if (value[key] === undefined) continue;
+        const parsed = toEpochMs(value[key], nowMs);
+        if (parsed !== null) return parsed;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 从官方重置提示中还原真实重置时间戳（毫秒）。
+   * 支持绝对时刻（ISO 8601 / 12 小时制钟点 / 明天 14:00）与相对倒计时（天/时/分/秒/周）。
    */
   function parseOfficialResetTextToTimestamp(text, nowMs = Date.now()) {
     if (!text || typeof text !== "string") return null;
     const clean = text.replace(/\s+/g, " ").trim();
+    const minMs = nowMs - 10 * 60 * 1000;
+    const maxMs = nowMs + 30 * 86400 * 1000;
 
-    // 1. 优先解析绝对时刻（例如 "Resets at 5:30 PM" / "将于明天 14:00 重置" / "3:15 下午重置"）
+    // 1. 绝对日期时间：2026-10-18T09:30:00Z / 2026-10-18 09:30 / 2026/10/18 09:30
+    const isoMatch = clean.match(
+      /(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?)?/,
+    );
+    if (isoMatch && isoMatch[4] !== undefined) {
+      const year = Number(isoMatch[1]);
+      const month = Number(isoMatch[2]);
+      const day = Number(isoMatch[3]);
+      const hour = Number(isoMatch[4]);
+      const minute = Number(isoMatch[5]);
+      const second = isoMatch[6] === undefined ? 0 : Number(isoMatch[6]);
+      const zone = isoMatch[7];
+      const pad = (n) => String(n).padStart(2, "0");
+      const absolute = zone
+        ? Date.parse(
+            `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}${zone === "Z" ? "Z" : zone.replace(/^([+-]\d{2})(\d{2})$/, "$1:$2")}`,
+          )
+        : new Date(year, month - 1, day, hour, minute, second, 0).getTime();
+      if (Number.isFinite(absolute) && absolute >= minMs && absolute <= maxMs) {
+        return absolute;
+      }
+    }
+
+    // 2. 12 小时制 / 中文钟点：Resets at 5:30 PM / 将于明天 14:00 重置 / 3:15 下午重置
     const clockMatch = clean.match(
       /(?:(tomorrow|明天|明日|today|今天|今日)\s*)?(?:at\s*|于\s*|於\s*)?(上午|下午|早上|晚上|凌晨)?\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i,
     );
@@ -180,20 +276,24 @@
         } else if (target.getTime() <= nowMs) {
           target.setDate(target.getDate() + 1);
         }
-        return target.getTime();
+        const absolute = target.getTime();
+        if (absolute >= minMs && absolute <= maxMs) return absolute;
       }
     }
 
-    // 2. 相对倒计时格式：例如 "Resets in 3 hr 12 min" / "5 小时后重置" / "4 days 6 hr"
+    // 3. 相对倒计时：Resets in 3 hr 12 min / 5 小时后重置 / 1 week 2 days / 3 天 4 小时
     const hasRelativeKeyword =
       /(?:reset(?:s|ting)?\s+in|in\s+\d|后重置|後重置|重置于|剩余|後にリセット|あと)/i.test(
         clean,
       ) ||
-      /(?:\d+\s*(?:d|day|days|天|日|h|hr|hrs|hour|hours|小时|小時|時間|m|min|mins|minute|minutes|分钟|分鐘|分)\b)/i.test(
+      /(?:\d+\s*(?:d|day|days|天|日|h|hr|hrs|hour|hours|小时|小時|時間|m|min|mins|minute|minutes|分钟|分鐘|分|w|week|weeks|周|週)\b)/i.test(
         clean,
       );
 
     if (hasRelativeKeyword) {
+      const weekMatch = clean.match(
+        /(\d+(?:\.\d+)?)\s*(?:weeks?|w\b|周|週間|週)/i,
+      );
       const dayMatch = clean.match(
         /(\d+(?:\.\d+)?)\s*(?:days?|d\b|天|日(?![期曜]))/i,
       );
@@ -207,13 +307,15 @@
         /(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s\b|秒)/i,
       );
 
-      if (dayMatch || hrMatch || minMatch || secMatch) {
+      if (weekMatch || dayMatch || hrMatch || minMatch || secMatch) {
+        const w = weekMatch ? parseFloat(weekMatch[1]) : 0;
         const d = dayMatch ? parseFloat(dayMatch[1]) : 0;
         const h = hrMatch ? parseFloat(hrMatch[1]) : 0;
         const m = minMatch ? parseFloat(minMatch[1]) : 0;
         const s = secMatch ? parseFloat(secMatch[1]) : 0;
-        const deltaMs = ((d * 24 + h) * 3600 + m * 60 + s) * 1000;
-        if (deltaMs > 0 && deltaMs <= 14 * 24 * 3600 * 1000) {
+        const totalDays = w * 7 + d;
+        const deltaMs = ((totalDays * 24 + h) * 3600 + m * 60 + s) * 1000;
+        if (deltaMs > 0 && deltaMs <= 30 * 24 * 3600 * 1000) {
           return Math.round(nowMs + deltaMs);
         }
       }
@@ -223,44 +325,322 @@
   }
 
   /**
-   * 递归扫描 Google batchexecute 或 AF_initDataCallback 结构
+   * 把单个窗口的解析结果整理成可信状态：百分比取整、重置时间归一化并做“窗口长度”校验。
+   * 5 小时窗口一旦拿到的重置时间超过 5.5 小时，就说明抓到了周额度的字段：
+   * 该条数据整体作废（返回 null），绝不让 5H 槽位显示 7D 的用量或倒计时。
    */
-  function extractQuotaFromWizStructure(rootData, nowMs = Date.now()) {
-    if (!rootData || typeof rootData !== "object") return null;
+  function sanitizeMetric(metric, kind, nowMs = Date.now()) {
+    if (!metric || typeof metric !== "object") return null;
+    const windowMs = kind === "fiveHour" ? FIVE_HOUR_MS : WEEK_MS;
 
+    let pct = null;
+    if (typeof metric.pct === "number" && Number.isFinite(metric.pct)) {
+      pct = Math.min(100, Math.max(0, Math.round(metric.pct)));
+    }
+    if (pct === null) return null;
+
+    let resetAt = toEpochMs(metric.resetAt, nowMs);
+    let rawResetText =
+      typeof metric.rawResetText === "string" ? metric.rawResetText : "";
+    if (resetAt === null) {
+      rawResetText = "";
+    } else {
+      const remaining = resetAt - nowMs;
+      // 重置时刻超出窗口长度在物理上不可能 → 说明抓到了另一个窗口的字段，整条数据作废
+      if (remaining > windowMs + RESET_SLACK_MS) return null;
+      if (remaining < 0) {
+        resetAt = null;
+        rawResetText = "";
+      }
+    }
+
+    return {
+      pct,
+      used:
+        typeof metric.used === "number" && Number.isFinite(metric.used)
+          ? metric.used
+          : null,
+      limit:
+        typeof metric.limit === "number" && Number.isFinite(metric.limit)
+          ? metric.limit
+          : null,
+      resetAt,
+      rawResetText,
+      confidence:
+        typeof metric.confidence === "number"
+          ? metric.confidence
+          : CONFIDENCE.heuristic,
+      updatedAt: 0, // 提交时再写入，缓存恢复的值保持 0 以便被新数据覆盖
+    };
+  }
+
+  /**
+   * 官方的 poolType 枚举 → 内部窗口键
+   */
+  function poolKindFromLabel(label) {
+    if (typeof label !== "string") return null;
+    const upper = label.trim().toUpperCase();
+    if (!upper) return null;
+    if (upper.includes("WEEK") || upper.includes("604800")) return "weekly";
+    if (
+      upper.includes("FIVE_HOURLY") ||
+      upper.includes("FIVE_HOUR") ||
+      upper.includes("FIVEHOUR") ||
+      upper.includes("5_HOUR") ||
+      upper.includes("5H") ||
+      upper.includes("18000")
+    ) {
+      return "fiveHour";
+    }
+    if (upper.includes("7D") || upper.includes("7_DAY")) return "weekly";
+    return null;
+  }
+
+  const POOL_KIND_KEY_RE =
+    /^(pool_?type|pool_?id|pool_?name|poolType|poolId|bucket|bucket_?type|type|kind|window_?type|quota_?type|limit_?type|id|name)$/i;
+  const PCT_KEY_RE = /(percent|pct|ratio|utiliz)/i;
+  const USED_KEY_RE = /^(used|used_?count|used_?amount|consumed|count|requests|messages)$/i;
+  const LIMIT_KEY_RE = /^(limit|max|maximum|quota|capacity|total|cap)$/i;
+  const RESET_KEY_RE = /(refresh|reset|expire|renew)/i;
+
+  function poolKindFromRecord(record) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      return null;
+    }
+    for (const [key, value] of Object.entries(record)) {
+      if (!POOL_KIND_KEY_RE.test(key)) continue;
+      const kind = poolKindFromLabel(typeof value === "string" ? value : "");
+      if (kind) return kind;
+    }
+    return null;
+  }
+
+  function toFiniteNumber(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value.trim())) {
+      return Number(value.trim());
+    }
+    if (Array.isArray(value) && typeof value[0] === "number" && Number.isFinite(value[0])) {
+      return value[0];
+    }
+    if (value && typeof value === "object") {
+      for (const key of ["value", "number", "amount", "count", "used", "percent"]) {
+        if (typeof value[key] === "number" && Number.isFinite(value[key])) {
+          return value[key];
+        }
+      }
+    }
+    return null;
+  }
+
+  function findNumericField(scopes, regex) {
+    for (const scope of scopes) {
+      for (const [key, value] of Object.entries(scope)) {
+        if (!regex.test(key)) continue;
+        const number = toFiniteNumber(value);
+        if (number !== null) return { key, number };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 0~1 视为比率，1 以上视为百分数；统一收敛到 0~100 的整数
+   */
+  function normalizePctValue(raw) {
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return null;
+    if (raw > 0 && raw <= 1) return Math.round(raw * 100);
+    return Math.min(100, Math.round(raw));
+  }
+
+  function findResetAt(record, nowMs, depth = 0) {
+    if (!record || typeof record !== "object" || depth > 2) return null;
+    for (const [key, value] of Object.entries(record)) {
+      if (!RESET_KEY_RE.test(key)) continue;
+      const direct = toEpochMs(value, nowMs);
+      if (direct !== null) return direct;
+      if (typeof value === "string") {
+        const parsed = parseOfficialResetTextToTimestamp(value, nowMs);
+        if (parsed !== null) return parsed;
+      }
+      if (value && typeof value === "object") {
+        const nested = findResetAt(value, nowMs, depth + 1);
+        if (nested !== null) return nested;
+      }
+    }
+    for (const [key, value] of Object.entries(record)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      if (!/^(gxu|pool|window|quota|limit|usage|refresh|billing)/i.test(key)) continue;
+      const nested = findResetAt(value, nowMs, depth + 1);
+      if (nested !== null) return nested;
+    }
+    return null;
+  }
+
+  /**
+   * 结构化对象：{ poolType: "GXU_FIVE_HOURLY", percentageUsed: 0.12, gxu: { windowRefreshesAt } }
+   */
+  function readMetricFromRecord(record, kind, nowMs) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+
+    const scopes = [record];
+    for (const [key, value] of Object.entries(record)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      if (/^(gxu|pool|window|quota|limit|usage|bucket)/i.test(key)) scopes.push(value);
+    }
+
+    const pctField = findNumericField(scopes, PCT_KEY_RE);
+    const usedField = findNumericField(scopes, USED_KEY_RE);
+    const limitField = findNumericField(scopes, LIMIT_KEY_RE);
+
+    let pct = pctField ? normalizePctValue(pctField.number) : null;
+    const used = usedField ? usedField.number : null;
+    const limit = limitField ? limitField.number : null;
+    if (pct === null && used !== null && limit !== null && limit > 0) {
+      pct = Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
+    }
+    if (pct === null) return null;
+
+    return { pct, used, limit, resetAt: findResetAt(record, nowMs), rawResetText: "" };
+  }
+
+  function flattenShallow(node, depth = 0) {
+    const out = [];
+    for (const item of node) {
+      if (Array.isArray(item) && depth < 2) {
+        out.push(...flattenShallow(item, depth + 1));
+      } else {
+        out.push(item);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 元组形态：["GXU_FIVE_HOURLY", 0.12, 1761000000] / ["5 小时限额", "12%", "..."]
+   * 只接受 <= 100 的数值作为百分比，因此 18000 / 604800 这类窗口秒数天然被排除。
+   */
+  function readMetricFromArrayTuple(node, kind, nowMs) {
+    const items = flattenShallow(node);
+    const numbers = [];
+    let resetAt = null;
+    let pct = null;
+
+    for (const item of items) {
+      if (typeof item === "number") {
+        const timestamp = toEpochMs(item, nowMs);
+        if (timestamp !== null) {
+          if (!resetAt) resetAt = timestamp;
+          continue;
+        }
+        if (item >= 0 && item <= 100) numbers.push(item);
+        continue;
+      }
+      if (typeof item === "string") {
+        const pctMatch = item.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+        if (pctMatch && pct === null) {
+          pct = Math.min(100, Math.max(0, Math.round(parseFloat(pctMatch[1]))));
+          continue;
+        }
+        if (!resetAt) {
+          const timestamp =
+            toEpochMs(item, nowMs) || parseOfficialResetTextToTimestamp(item, nowMs);
+          if (timestamp !== null) resetAt = timestamp;
+        }
+      }
+    }
+
+    if (pct === null && numbers.length) {
+      const ratio = numbers.find((n) => n > 0 && n <= 1);
+      if (ratio !== undefined) {
+        pct = Math.round(ratio * 100);
+      } else {
+        const integer = numbers.find((n) => Number.isInteger(n));
+        pct = integer === undefined ? Math.round(numbers[0]) : integer;
+      }
+    }
+    if (pct === null) return null;
+
+    return { pct, used: null, limit: null, resetAt, rawResetText: "" };
+  }
+
+  /**
+   * 结构化 pools 扫描：按 poolType 精确分池，最高置信度。
+   * 同一容器内同时出现两个窗口标签时一律视为父容器，只下钻不取值。
+   */
+  function collectStructuredPools(rootData, nowMs) {
+    const found = { fiveHour: null, weekly: null };
+    let hits = 0;
+
+    const record = (kind, candidate) => {
+      if (!kind || found[kind]) return;
+      const clean = sanitizeMetric(
+        { ...candidate, confidence: CONFIDENCE.pools },
+        kind,
+        nowMs,
+      );
+      if (!clean) return;
+      found[kind] = clean;
+      hits += 1;
+    };
+
+    function walk(node, depth) {
+      if (!node || depth > 20) return;
+
+      if (typeof node === "string") {
+        const trimmed = node.trim();
+        if (
+          (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+          (trimmed.startsWith("{") && trimmed.endsWith("}"))
+        ) {
+          try {
+            walk(JSON.parse(trimmed), depth + 1);
+          } catch {
+            // 忽略非合法 JSON
+          }
+        }
+        return;
+      }
+
+      if (Array.isArray(node)) {
+        const labels = new Set();
+        for (const item of flattenShallow(node)) {
+          const kind = poolKindFromLabel(item);
+          if (kind) labels.add(kind);
+        }
+        // 同时含两个窗口标签 = 父容器，交给子节点分别处理
+        if (labels.size === 1) {
+          const kind = [...labels][0];
+          const metric = readMetricFromArrayTuple(node, kind, nowMs);
+          if (metric) record(kind, metric);
+        }
+        for (const child of node) walk(child, depth + 1);
+        return;
+      }
+
+      if (typeof node === "object") {
+        const kind = poolKindFromRecord(node);
+        if (kind) {
+          const metric = readMetricFromRecord(node, kind, nowMs);
+          if (metric) record(kind, metric);
+        }
+        for (const child of Object.values(node)) walk(child, depth + 1);
+      }
+    }
+
+    walk(rootData, 0);
+    return hits > 0 ? found : null;
+  }
+
+  /**
+   * 标签启发式扫描：父容器（同时含两个窗口标签）只负责下钻，绝不参与取值。
+   */
+  function collectQuotaByLabels(rootData, nowMs) {
     let found5h = null;
     let found7d = null;
 
-    const minValidResetSec = Math.floor(nowMs / 1000) - 60;
-    const maxValidResetSec = Math.floor(nowMs / 1000) + 10 * 86400;
-
-    function normalizeTimestampToMs(val) {
-      if (typeof val === "number" && Number.isFinite(val)) {
-        if (val >= minValidResetSec && val <= maxValidResetSec) {
-          return Math.round(val * 1000);
-        }
-        if (val >= minValidResetSec * 1000 && val <= maxValidResetSec * 1000) {
-          return Math.round(val);
-        }
-      }
-      if (typeof val === "string" && /^\d{10,13}$/.test(val)) {
-        return normalizeTimestampToMs(Number(val));
-      }
-      if (
-        Array.isArray(val) &&
-        val.length >= 1 &&
-        typeof val[0] === "number" &&
-        val[0] >= minValidResetSec &&
-        val[0] <= maxValidResetSec &&
-        (val.length === 1 || typeof val[1] === "number")
-      ) {
-        return Math.round(val[0] * 1000);
-      }
-      return null;
-    }
-
     function walk(node, depth = 0) {
-      if (depth > 14 || !node) return;
+      if (depth > 16 || !node) return;
 
       if (typeof node === "string") {
         const trimmed = node.trim();
@@ -279,91 +659,88 @@
 
       if (Array.isArray(node)) {
         const flatStrings = node.filter((x) => typeof x === "string").join(" ");
-        // 全面覆盖 5H 窗口标签：含 Session、会话、18000s 等多端命名
         const has5hLabel =
-          /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|current\s*session|session|当前会话|会话|セッション|18000)/i.test(
+          /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|current\s*session|当前会话|会话|セッション)/i.test(
             flatStrings,
           ) ||
           node.includes(18000) ||
-          node.includes("18000") ||
-          node.includes("18000s");
-
+          node.includes("18000");
         const has7dLabel =
-          /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間|604800)/i.test(
+          /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i.test(
             flatStrings,
           ) ||
           node.includes(604800) ||
           node.includes("604800");
 
-        if (has5hLabel || has7dLabel) {
-          let pct = null;
-          let used = null;
-          let limit = null;
-          let resetAt = null;
-
-          // 展开当前层与直接子数组，防止配额元组嵌套断裂
-          const flatItems = node.flatMap((item) =>
-            Array.isArray(item) ? item : [item],
-          );
-
-          for (const item of flatItems) {
-            const ts = normalizeTimestampToMs(item);
-            if (ts && !resetAt) {
-              resetAt = ts;
-            } else if (typeof item === "number" && Number.isFinite(item)) {
-              if (item > 0 && item <= 1 && pct === null) {
-                // 浮点比率（例如 0.35 对应 35%）
-                pct = Math.round(item * 100);
-              } else if (
-                item >= 0 &&
-                item <= 100 &&
-                pct === null &&
-                item !== 18000 &&
-                item !== 604800
-              ) {
-                pct = Math.round(item);
-              }
-            } else if (typeof item === "string") {
-              const mPct = item.match(/(\d{1,3})\s*%/);
-              if (mPct && pct === null) {
-                pct = Math.min(100, parseInt(mPct[1], 10));
-              }
-              const parsedTs = parseOfficialResetTextToTimestamp(item, nowMs);
-              if (parsedTs && !resetAt) {
-                resetAt = parsedTs;
-              }
-            }
-          }
-
-          if (pct !== null) {
-            if (has5hLabel && !found5h) {
-              found5h = { pct, used, limit, resetAt, rawResetText: "" };
-            } else if (has7dLabel && !found7d) {
-              found7d = { pct, used, limit, resetAt, rawResetText: "" };
+        // 根因所在：同时命中两个标签的节点是父容器，必须跳过取值，否则 5H 会抓到周额度的数字
+        if (has5hLabel !== has7dLabel) {
+          const kind = has5hLabel ? "fiveHour" : "weekly";
+          const existing = kind === "fiveHour" ? found5h : found7d;
+          if (!existing) {
+            const metric = readMetricFromArrayTuple(node, kind, nowMs);
+            const clean = metric
+              ? sanitizeMetric(
+                  { ...metric, confidence: CONFIDENCE.heuristic },
+                  kind,
+                  nowMs,
+                )
+              : null;
+            if (clean) {
+              if (kind === "fiveHour") found5h = clean;
+              else found7d = clean;
             }
           }
         }
 
-        for (const child of node) {
-          walk(child, depth + 1);
-        }
+        for (const child of node) walk(child, depth + 1);
         return;
       }
 
       if (typeof node === "object") {
-        for (const val of Object.values(node)) {
-          walk(val, depth + 1);
+        const kind = poolKindFromRecord(node);
+        if (kind) {
+          const existing = kind === "fiveHour" ? found5h : found7d;
+          if (!existing) {
+            const metric = readMetricFromRecord(node, kind, nowMs);
+            const clean = metric
+              ? sanitizeMetric(
+                  { ...metric, confidence: CONFIDENCE.heuristic },
+                  kind,
+                  nowMs,
+                )
+              : null;
+            if (clean) {
+              if (kind === "fiveHour") found5h = clean;
+              else found7d = clean;
+            }
+          }
         }
+        for (const child of Object.values(node)) walk(child, depth + 1);
       }
     }
 
     walk(rootData, 0);
     if (!found5h && !found7d) return null;
+    return { fiveHour: found5h, weekly: found7d };
+  }
+
+  /**
+   * 递归扫描 Google batchexecute 或 AF_initDataCallback 结构。
+   * 结构化 pools 与标签启发式各跑一遍，逐窗口取更高置信度的结果，
+   * 因此「服务端只给结构化周额度、5H 仍在元组里」这种混合形态也能补齐。
+   */
+  function extractQuotaFromWizStructure(rootData, nowMs = Date.now()) {
+    if (!rootData || typeof rootData !== "object") return null;
+
+    const structured = collectStructuredPools(rootData, nowMs);
+    const labeled = collectQuotaByLabels(rootData, nowMs);
+    if (!structured && !labeled) return null;
 
     return {
       timestamp: nowMs,
-      fiveHour: found5h,
-      weekly: found7d,
+      fiveHour: (structured && structured.fiveHour) || (labeled && labeled.fiveHour) || null,
+      weekly: (structured && structured.weekly) || (labeled && labeled.weekly) || null,
+      strategy: structured ? "pools" : "labels",
     };
   }
 
@@ -569,42 +946,82 @@
       }
     }
 
+    const tagMetric = (metric, kind) => {
+      if (!metric) return null;
+      const confidence = Math.max(metric.confidence || 0, CONFIDENCE.dom);
+      return sanitizeMetric({ ...metric, confidence }, kind, nowMs);
+    };
+
+    fiveHour = tagMetric(fiveHour, "fiveHour");
+    weekly = tagMetric(weekly, "weekly");
+
     if (!fiveHour && !weekly) return null;
     return {
       timestamp: nowMs,
       fiveHour,
       weekly,
+      strategy: "dom",
     };
   }
 
   function commitOfficialQuota(extracted, sourceTag, saveStorage = true) {
     if (!extracted) return false;
-    const has5h =
-      extracted.fiveHour && typeof extracted.fiveHour.pct === "number";
-    const has7d = extracted.weekly && typeof extracted.weekly.pct === "number";
-    if (!has5h && !has7d) return false;
+    const nowMs = Date.now();
 
-    if (has5h) {
-      quotaState.fiveHour = {
-        pct: extracted.fiveHour.pct,
-        used: extracted.fiveHour.used ?? null,
-        limit: extracted.fiveHour.limit ?? null,
-        resetAt: extracted.fiveHour.resetAt || null,
-        rawResetText: extracted.fiveHour.rawResetText || "",
+    const applyMetric = (kind, incoming) => {
+      const clean = sanitizeMetric(incoming, kind, nowMs);
+      if (!clean) return false;
+
+      const prev = quotaState[kind];
+      const prevFresh =
+        prev.pct !== null && prev.updatedAt > 0 && nowMs - prev.updatedAt < FRESH_MS;
+
+      // 低置信度（标签启发式）不得覆盖仍在新鲜期内的高置信度数据（pools / 官方页面）
+      if (prevFresh && clean.confidence < (prev.confidence || 0)) return false;
+
+      // 重置时间只在本次解析可信时才覆盖，避免一次失败解析把倒计时清空
+      const resetAt =
+        clean.resetAt !== null
+          ? clean.resetAt
+          : prev.resetAt && prev.resetAt > nowMs
+            ? prev.resetAt
+            : null;
+
+      quotaState[kind] = {
+        ...clean,
+        resetAt,
+        rawResetText: clean.rawResetText || (resetAt ? prev.rawResetText : ""),
+        updatedAt: nowMs,
       };
-    }
-    if (has7d) {
-      quotaState.weekly = {
-        pct: extracted.weekly.pct,
-        used: extracted.weekly.used ?? null,
-        limit: extracted.weekly.limit ?? null,
-        resetAt: extracted.weekly.resetAt || null,
-        rawResetText: extracted.weekly.rawResetText || "",
+      return true;
+    };
+
+    const ok5h = applyMetric("fiveHour", extracted.fiveHour);
+    const ok7d = applyMetric("weekly", extracted.weekly);
+    if (!ok5h && !ok7d) return false;
+
+    // 启发式分支最容易把同一个窗口同时写进两个槽位：数值与重置时刻完全一致时保留 7D、丢弃 5H
+    if (
+      extracted.strategy === "labels" &&
+      quotaState.fiveHour.pct !== null &&
+      quotaState.weekly.pct !== null &&
+      quotaState.fiveHour.pct === quotaState.weekly.pct &&
+      quotaState.fiveHour.resetAt !== null &&
+      quotaState.fiveHour.resetAt === quotaState.weekly.resetAt
+    ) {
+      quotaState.fiveHour = {
+        pct: null,
+        used: null,
+        limit: null,
+        resetAt: null,
+        rawResetText: "",
+        confidence: 0,
+        updatedAt: 0,
       };
     }
 
     quotaState.source = sourceTag;
-    quotaState.lastSyncTime = extracted.timestamp || Date.now();
+    quotaState.lastSyncTime = extracted.timestamp || nowMs;
     quotaState.lastError = "";
 
     if (saveStorage) {
@@ -635,24 +1052,55 @@
       if (!parsed || typeof parsed !== "object") return;
 
       const now = Date.now();
-      if (
-        parsed.fiveHour &&
-        parsed.fiveHour.resetAt &&
-        parsed.fiveHour.resetAt <= now
-      ) {
-        parsed.fiveHour.pct = 0;
-        parsed.fiveHour.resetAt = null;
-      }
-      if (
-        parsed.weekly &&
-        parsed.weekly.resetAt &&
-        parsed.weekly.resetAt <= now
-      ) {
-        parsed.weekly.pct = 0;
-        parsed.weekly.resetAt = null;
-      }
+      const restoreMetric = (metric, kind) => {
+        const windowMs = kind === "fiveHour" ? FIVE_HOUR_MS : WEEK_MS;
+        const rawResetAt = metric ? toEpochMs(metric.resetAt, now) : null;
+        // 历史版本曾把 7D 数据写进 5H：重置时刻超出窗口长度 → 整条 5H 缓存作废
+        if (rawResetAt !== null && rawResetAt - now > windowMs + RESET_SLACK_MS) {
+          return null;
+        }
+        const clean = sanitizeMetric(metric, kind, now);
+        if (!clean) return null;
+        if (clean.resetAt !== null && clean.resetAt <= now) {
+          clean.pct = 0;
+          clean.resetAt = null;
+          clean.rawResetText = "";
+        }
+        clean.updatedAt = 0; // 缓存仅用于首屏展示，不参与置信度保护
+        return clean;
+      };
 
-      commitOfficialQuota(parsed, "cache", false);
+      // 旧版本缓存里没有 confidence 字段，补齐为 0 以便被任意新数据覆盖
+      const fiveHourRaw = parsed.fiveHour
+        ? { confidence: 0, ...parsed.fiveHour }
+        : null;
+      const weeklyRaw = parsed.weekly ? { confidence: 0, ...parsed.weekly } : null;
+
+      let fiveHour = restoreMetric(fiveHourRaw, "fiveHour");
+      let weekly = restoreMetric(weeklyRaw, "weekly");
+
+      // 两个槽位完全一致 → 串窗期间写入的脏缓存，直接丢弃 5H
+      if (
+        fiveHour &&
+        weekly &&
+        fiveHour.pct === weekly.pct &&
+        fiveHour.resetAt === weekly.resetAt
+      ) {
+        fiveHour = null;
+      }
+      if (!fiveHour && !weekly) return;
+
+      commitOfficialQuota(
+        {
+          timestamp: parsed.timestamp || 0,
+          fiveHour,
+          weekly,
+          strategy: "cache",
+        },
+        "cache",
+        false,
+      );
+      quotaState.lastSyncTime = parsed.timestamp || 0;
     } catch {
       // 忽略缓存解析错误
     }
@@ -661,6 +1109,40 @@
   // =========================================================================
   // 4. 网络观察器（document-start 拦截 XHR + Fetch）
   // =========================================================================
+  const RAW_FRAME_LIMIT = 6;
+  const RAW_FRAME_MAX_CHARS = 24000;
+  const rawFrameRing = [];
+
+  /**
+   * 环形缓存最近几帧原始响应，供 __gqc.dump() 回传排查。
+   * 仅在命中配额关键字时记录，避免把整段聊天数据留在内存里。
+   */
+  function rememberRawFrame(url, rpcId, payload) {
+    try {
+      const text = JSON.stringify(payload);
+      if (
+        !/GXU_|percentage|percentUsed|usage|quota|18000|604800|windowRefresh/i.test(
+          text,
+        )
+      ) {
+        return;
+      }
+      rawFrameRing.push({
+        url,
+        rpcId,
+        at: new Date().toISOString(),
+        size: text.length,
+        payload:
+          text.length > RAW_FRAME_MAX_CHARS
+            ? `${text.slice(0, RAW_FRAME_MAX_CHARS)}…`
+            : text,
+      });
+      while (rawFrameRing.length > RAW_FRAME_LIMIT) rawFrameRing.shift();
+    } catch {
+      // 无法序列化的载荷直接跳过
+    }
+  }
+
   const origFetch = window.fetch;
   const origXhrOpen = XMLHttpRequest.prototype.open;
   const origXhrSend = XMLHttpRequest.prototype.send;
@@ -687,6 +1169,7 @@
     if (url.includes("/batchexecute") && responseText) {
       const frames = parseBatchExecuteResponse(responseText);
       for (const frame of frames) {
+        rememberRawFrame(url, frame.rpcId, frame.payload);
         const extracted = extractQuotaFromWizStructure(
           frame.payload,
           Date.now(),
@@ -1006,6 +1489,18 @@
     return `${pad(minutes)}:${pad(seconds)}`;
   }
 
+  function formatRemainingHuman(ms) {
+    if (ms <= 0) return "已到期";
+    const totalMin = Math.floor(ms / 60000);
+    const days = Math.floor(totalMin / 1440);
+    const hours = Math.floor((totalMin % 1440) / 60);
+    const minutes = totalMin % 60;
+    if (days > 0) return `${days} 天 ${hours} 小时`;
+    if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+    if (minutes > 0) return `${minutes} 分`;
+    return "不足 1 分";
+  }
+
   function formatTooltip(label, metric) {
     if (!metric || metric.pct === null) {
       return `${label}: 等待从官方同步数据...`;
@@ -1014,12 +1509,12 @@
     if (metric.used !== null && metric.limit !== null) {
       lines.push(`频次用量: ${metric.used} / ${metric.limit}`);
     }
-    if (metric.resetAt && metric.resetAt > Date.now()) {
+    const nowMs = Date.now();
+    if (metric.resetAt && metric.resetAt > nowMs) {
       const dt = new Date(metric.resetAt);
       const pad = (n) => String(n).padStart(2, "0");
-      lines.push(
-        `官方重置时间: ${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`,
-      );
+      lines.push(`官方重置时间: ${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`);
+      lines.push(`距重置剩余: ${formatRemainingHuman(metric.resetAt - nowMs)}`);
     } else if (metric.rawResetText) {
       lines.push(`官方重置状态: ${metric.rawResetText}`);
     }
@@ -1762,16 +2257,23 @@
 
     const now = Date.now();
     if (metric.resetAt && metric.resetAt > now) {
-      timerNode.textContent = formatCompactCountdown(
-        metric.resetAt - now,
-        isWeekly,
-      );
+      // 倒计时永远 = 官方重置时刻 − 当前时间，每秒重算
+      const remaining = metric.resetAt - now;
+      timerNode.textContent = formatCompactCountdown(remaining, isWeekly);
       timerNode.style.color = color.hex;
+      timerNode.title = `距官方重置 ${formatRemainingHuman(remaining)}`;
     } else if (metric.rawResetText) {
-      timerNode.textContent = metric.rawResetText.slice(0, 8);
+      // 拿不到官方时间戳时才退化为文案：以抓取时刻为锚点解析，保证倒计时仍在递减
+      const anchor = metric.updatedAt > 0 ? metric.updatedAt : now;
+      const parsed = parseOfficialResetTextToTimestamp(metric.rawResetText, anchor);
+      timerNode.textContent =
+        parsed !== null && parsed > now
+          ? formatCompactCountdown(parsed - now, isWeekly)
+          : metric.rawResetText.slice(0, 10);
       timerNode.style.color = color.hex;
+      timerNode.title = metric.rawResetText;
     } else if (pct === 0) {
-      timerNode.textContent = "已满";
+      timerNode.textContent = "已重置";
       timerNode.style.color = "#10b981";
     } else {
       timerNode.textContent = "官方实时";
@@ -1786,13 +2288,24 @@
     if (!rootEl) return;
 
     const now = Date.now();
-    if (quotaState.fiveHour.resetAt && quotaState.fiveHour.resetAt <= now) {
-      quotaState.fiveHour.pct = 0;
-      quotaState.fiveHour.resetAt = null;
+    let expired = false;
+    for (const kind of ["fiveHour", "weekly"]) {
+      const metric = quotaState[kind];
+      if (metric.resetAt && metric.resetAt <= now) {
+        metric.pct = 0;
+        metric.resetAt = null;
+        metric.rawResetText = "";
+        metric.updatedAt = now;
+        expired = true;
+      }
     }
-    if (quotaState.weekly.resetAt && quotaState.weekly.resetAt <= now) {
-      quotaState.weekly.pct = 0;
-      quotaState.weekly.resetAt = null;
+    if (
+      expired &&
+      !quotaState.isSyncing &&
+      now - quotaState.lastSyncTime > 30 * 1000
+    ) {
+      // 窗口刚翻篇，趁早拉一次官方数据；复用响应防抖避免重置瞬间连发
+      scheduleSyncAfterResponse();
     }
 
     const ratio5h = renderMetricUnit(
@@ -1898,6 +2411,65 @@
       document.addEventListener("DOMContentLoaded", init, { once: true });
     }
   }
+
+  // =========================================================================
+  // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
+  // =========================================================================
+  window.__gqc = {
+    version: "0.6.0",
+    get state() {
+      return quotaState;
+    },
+    get config() {
+      return config;
+    },
+    sync() {
+      return syncOfficialUsage(true);
+    },
+    setDebug(enabled) {
+      config.debug = !!enabled;
+      saveConfig(config);
+    },
+    dump() {
+      return {
+        version: "0.6.0",
+        at: new Date().toISOString(),
+        href: window.location.href,
+        config: { ...config },
+        state: {
+          source: quotaState.source,
+          isSyncing: quotaState.isSyncing,
+          lastSyncTime: quotaState.lastSyncTime,
+          lastError: quotaState.lastError,
+          fiveHour: { ...quotaState.fiveHour },
+          weekly: { ...quotaState.weekly },
+          capturedRpc: quotaState.capturedQuotaRpc
+            ? {
+                url: quotaState.capturedQuotaRpc.url,
+                rpcId: quotaState.capturedQuotaRpc.rpcId,
+              }
+            : null,
+        },
+        frames: rawFrameRing.slice(),
+      };
+    },
+    _test: {
+      toEpochMs,
+      parseOfficialResetTextToTimestamp,
+      sanitizeMetric,
+      poolKindFromLabel,
+      readMetricFromArrayTuple,
+      readMetricFromRecord,
+      collectStructuredPools,
+      extractQuotaFromWizStructure,
+      parseBatchExecuteResponse,
+      parseUsageDocument,
+      extractMetricFromCardText,
+      commitOfficialQuota,
+      formatCompactCountdown,
+      formatRemainingHuman,
+    },
+  };
 
   bootstrap();
 })();

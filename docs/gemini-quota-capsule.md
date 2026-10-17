@@ -1,172 +1,159 @@
 # Gemini Quota Capsule
 
-一个面向 Google Gemini Web 端的用户脚本（UserScript），在页面右下角以可拖拽胶囊形式展示当前账号的用量配额。数据来源为 Gemini 官方 `getUsageInfo` GraphQL 接口，通过捕获页面请求中的 `query_signature` 后直接轮询获取，无需手动计数。
+面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：0.2.0
+- 版本：0.6.0
 - 许可：MIT
-- 运行环境：Tampermonkey / Violentmonkey / 同类 UserScript 管理器
+- 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
 
 ## 一、设计目标
 
-- 用量数据必须与 Gemini 官方接口保持一致，不在客户端本地估算或累计。
-- 不侵入页面交互，所有 HTTP 拦截仅做只读观察，不修改请求与响应。
-- 展示层保持最小信息密度：百分比、重置倒计时、形态切换。
-- 所有持久化数据仅保存在本地 `localStorage`，不进行任何外发。
+- 用量与重置时间全部来自官方响应，不在客户端做本地累计或线性外推。
+- 5H 与 7D 必须严格分池：宁可暂时显示 `--%`，也绝不把周额度写进 5H 槽位。
+- 倒计时只能由「官方重置时刻 − 当前时间」得出，每秒重算，不使用固定周期常量。
+- 所有网络拦截只读，不修改请求与响应；数据仅存本地 `localStorage`。
 
-## 二、功能概述
+## 二、数据来源（按优先级）
 
-### 2.1 用量自动同步
-
-脚本通过两个通道获取真实用量：
-
-1. **主通道：GraphQL 轮询。** 捕获一次 `/_/BardChatUi/graphql/schemas/GEMINI_WEB_GRAPHQL/executeQuery?query_signature=...` 请求，保存完整 URL 作为模板，之后每 60 秒以 `credentials: "include"` 重放该请求，解析响应中的 `viewer.rpcs.getUsageInfo.pools` 字段。
-2. **备用通道：隐藏 iframe。** 当本地尚无有效 signature 时，脚本会在页面中以 1×1 不可见 iframe 加载 `https://gemini.google.com/usage`，并 hook 该 iframe 内的 `window.fetch` 与 `XMLHttpRequest`，从真实请求中捕获 signature 与响应体。
-
-若 GraphQL 通道连续 3 次未能获得有效数据，脚本会自动重载 iframe 以获取新的 signature。
-
-### 2.2 配额池与刷新时间
-
-从接口响应的 `pools` 数组中读取两类配额池：
-
-| poolType | 含义 | 说明 |
+| 优先级 | 通道 | 说明 |
 | --- | --- | --- |
-| `GXU_FIVE_HOURLY` | 5 小时窗口 | 滚动窗口配额 |
-| `GXU_WEEKLY` | 每周窗口 | 7 天周期配额 |
+| 1 | 捕获并重放 `batchexecute`（`wrb.fr` 帧） | document-start 包装 `fetch` / `XMLHttpRequest`，命中配额帧后保存请求模板，后续直接重放 |
+| 2 | 同源 `GET /usage` | 解析服务端渲染 HTML 中的 `AF_initDataCallback` 数据块与 DOM 卡片文本 |
+| 3 | 隐藏 iframe 探测 `/usage` | 需要真实渲染结果时以 1×1 iframe 加载页面，读取 `contentDocument` 并按 300ms 轮询 + `MutationObserver` 提取 |
+| 4 | `window.WIZ_global_data` | 首屏预置数据的兜底扫描 |
+| 5 | 本地缓存 | 仅用于首屏回显，恢复时 `updatedAt = 0`，会被任何新数据立即覆盖 |
 
-每个池包含 `percentageUsed`（0–1 小数）与 `gxu.windowRefreshesAt`（ISO 8601 时间戳）。脚本兼容 `percentageUsed` 为 0–1 小数与 0–100 整数两种形态，并在 UI 中以整数百分比展示。
+自动同步间隔 3 分钟；聊天响应返回后 1.8 秒追加一次静默同步；窗口到期瞬间再补一次。
 
-倒计时基于 `windowRefreshesAt` 计算剩余毫秒数，每秒刷新一次，不做额外估算。
+## 三、解析策略
 
-### 2.3 温控配色
+### 3.1 第一层：结构化 pools（置信度 3）
 
-进度条/指示器按当前百分比区间着色：
+官方 `getUsageInfo.pools` 的真实形态：
 
-| 区间 | 颜色 | 语义 |
-| --- | --- | --- |
-| 0% – 50% | 翡翠绿 `#10b981` | 充裕 |
-| 50% – 75% | 琥珀金 `#f59e0b` | 平稳 |
-| 75% – 90% | 炽烈橙 `#f97316` | 接近上限 |
-| 90% – 100%+ | 崩坏猩红 `#f43f5e` | 临界 |
-
-### 2.4 四种指示形态
-
-可通过右上角按钮或设置抽屉切换：
-
-| 形态 | 标识 | 表现形式 |
-| --- | --- | --- |
-| `bar` | 横条式 | 传统水平进度条 |
-| `ring` | 圆环式 | SVG 环形进度 |
-| `disk` | 圆盘式 | `conic-gradient` 圆盘 |
-| `decay` | 崩坏式 | 六片多边形晶体，随用量增大逐步碎裂分离；比例 ≥ 88% 时进入高频震颤状态 |
-
-`decay` 形态为默认形态，其碎裂偏移量、旋转角、外发光半径均由当前比例线性推导，不使用随机数，保证同一比例下的渲染结果一致。
-
-### 2.5 交互与持久化
-
-- 胶囊整体可拖拽，拖拽结束后将 `right`/`bottom` 值写回 `localStorage`。
-- 点击左侧徽章在 `5H` 与 `7D` 之间切换。
-- 点击齿轮按钮打开设置抽屉，关闭通过页面空白处点击或再次点击齿轮按钮实现。
-- 页面刷新后自动恢复上次拖拽位置、当前视图、指示形态。
-
-## 三、安装
-
-1. 安装 Tampermonkey（或兼容的 UserScript 管理器）。
-2. 新建脚本，将源码粘贴保存。
-3. 打开 `https://gemini.google.com/`，等待胶囊出现。
-
-首次运行时，若本地无缓存的 `query_signature`，胶囊会计数区域显示 `--%`，同步状态提示「正在捕获接口 signature…」。等待 5–15 秒后完成首次同步。若长时间无法获取，可手动打开 `https://gemini.google.com/usage` 页面触发一次请求，脚本会自动捕获 signature。
-
-## 四、工作原理
-
-### 4.1 网络层
-
-```
-主页面
-  ├── window.fetch 包装：仅观察 URL，命中 executeQuery 时调用 captureSignature()
-  └── XMLHttpRequest.prototype.open 包装：同上
-
-隐藏 iframe（/usage）
-  ├── contentWindow.fetch 包装：捕获 URL 并 clone 响应读取响应体
-  └── contentWindow.XMLHttpRequest 包装：open 记录 URL，send 监听 load 读取响应体
+```jsonc
+{
+  "viewer": { "rpcs": { "getUsageInfo": { "pools": [
+    { "poolId": "…", "poolType": "GXU_FIVE_HOURLY", "percentageUsed": 0.12,
+      "gxu": { "windowRefreshesAt": "2026-10-18T09:30:00Z" } },
+    { "poolId": "…", "poolType": "GXU_WEEKLY",      "percentageUsed": 0.45,
+      "gxu": { "windowRefreshesAt": "2026-10-24T09:30:00Z" } }
+  ] } } }
+}
 ```
 
-所有包装函数均返回原始调用的返回值，不修改入参与出参。若 hook 过程中抛出异常，均以 `try/catch` 吞掉，不影响页面自身行为。
+- `poolType` / `pool_id` / `bucket` 等键上出现 `GXU_FIVE_HOURLY`（或 `5H`、`18000`）→ 5H 池；出现 `GXU_WEEKLY`（或 `WEEK`、`7D`、`604800`）→ 7D 池。
+- 百分比取 `percentageUsed` / `pct` / `ratio` / `utilization`；`0 < x ≤ 1` 视为比率，乘以 100。
+- 重置时刻取 `windowRefreshesAt` / `refreshesAt` / `resetAt` / `expiresAt`，兼容 ISO 8601、10/13 位数字串、`[秒, 纳秒]` 元组、`{seconds, nanos}` 对象。
 
-### 4.2 数据流
+### 3.2 第二层：标签启发式（置信度 1）
 
-```
-captureSignature(url)
-  ├── 提取 query_signature 并存入 usageState
-  ├── 写入 localStorage（sig / url / ts，TTL 24h）
-  └── 触发一次 fetchUsageViaGraphQL()
+结构化层与启发式层**各跑一遍、按窗口合并**：如果服务端只在 `pools` 里给出周额度，而 5H 仍以元组形式存在于其他字段，5H 依然能被补齐。启发式递归扫描响应数组，用标签和窗口秒数（18000 / 604800）给元组归类。两条关键规则：
 
-fetchUsageViaGraphQL()
-  ├── 使用缓存 URL 重放请求
-  ├── parseUsageResponse() 去掉 XSSI 前缀 )]}'
-  ├── extractUsage() 读取 pools
-  └── updateUI()
-```
+1. **父容器不参与取值。** 同一个数组节点同时命中 5H 与 7D 标签时，只递归子节点；旧版本正是因为父容器先抢到「第一个数字」，才把周额度写进了 5H。
+2. **无法归属就放弃。** 标签并排出现在同一层、没有子节点可下钻时不产出数据，避免猜错。
 
-`extractUsage` 优先走已知路径 `data.viewer.rpcs.getUsageInfo.pools`；若路径失配，`findPoolsRecursive` 在响应对象中递归查找形如 `[{poolType, percentageUsed, ...}]` 的数组作为兜底。递归深度上限 6 层，避免在异常响应中失控。
+### 3.3 第三层：官方 `/usage` 页面（置信度 2）
 
-### 4.3 UI 更新节奏
+按卡片文本解析百分比与重置提示，5H 卡片中出现的日期（如「重置于 7 日」）不会触发周窗口误判。
 
-- `updateUI()`：由数据变更事件驱动，响应态更新。
-- `setInterval(updateUI, 1000)`：仅用于刷新倒计时文本，避免整秒整点同步带来的抖动。
-- `setInterval(fetchUsageViaGraphQL, 60000)`：用量轮询。
+## 四、时间计算
 
-三者的职责分离，避免单次请求失败时导致 UI 冻结。
+1. `parseOfficialResetTextToTimestamp` 支持：
+   - 绝对时间：`2026-10-18T09:30:00Z`、`2026-10-18 09:30`、`Resets at 5:30 PM`、`将于明天 14:00 重置`；
+   - 相对倒计时：`Resets in 3 hr 12 min`、`1 week 2 days`、`5 小时后重置`、`6 天后重置`。
+2. 相对文案一律**以抓取时刻为锚点**换算成绝对时间戳，所以界面上的数字每秒都会递减，不会停在「5小时后重置」。
+3. 渲染时 `remaining = resetAt − Date.now()`，每秒重算：
+   - 7D：`3d 05h` / `12h 30m`
+   - 5H：`02:03:04`
+4. 到期判定：`remaining ≤ 0` 时把该窗口置为 0% 并清空重置时间，同时触发一次同步。
 
-## 五、配置
+## 五、防串窗校验
 
-持久化键名与用途：
+| 规则 | 行为 |
+| --- | --- |
+| 5H 的重置时刻距今 > 5.5 小时 | 物理上不可能 → **整条 5H 数据作废**，不写入状态 |
+| 7D 的重置时刻距今 > 7 天 30 分 | 同上 |
+| 5H 与 7D 的百分比和重置时刻完全一致（启发式来源） | 判定为同一窗口被写进两个槽位 → 丢弃 5H |
+| 低置信度数据试图覆盖 10 分钟内的高置信度数据 | 拒绝写入（结构化 pools / 官方页面优先） |
+| 缓存中 5H 的重置时刻超出 5.5 小时 | 历史脏缓存 → 启动时直接丢弃 5H |
 
-| Key | 用途 | 类型 |
-| --- | --- | --- |
-| `__gemini_quota_capsule_cfg_v2__` | UI 配置（视图、形态、拖拽位置） | JSON |
-| `__gemini_usage_signature__` | 缓存的 `query_signature` | string |
-| `__gemini_usage_url__` | 缓存的完整请求 URL 模板 | string |
-| `__gemini_usage_ts__` | 缓存写入时间戳（毫秒） | string |
+## 六、UI 与交互
 
-可调参数（源码顶部常量）：
+- 胶囊展示 `5H` / `7D` 两组百分比与倒计时，悬停显示官方重置时刻、剩余时长与频次用量。
+- 左侧徽章切换指示形态：横条 / 圆环 / 圆盘 / 崩坏（`bar` / `ring` / `disk` / `decay`）。
+- 进度配色：`<50%` 翡翠绿、`<75%` 琥珀金、`<90%` 炽烈橙、`≥90%` 崩坏猩红。
+- 拖拽位置、形态写入 `localStorage`，刷新后恢复。
+
+## 七、配置与存储
+
+| Key | 用途 |
+| --- | --- |
+| `__gemini_quota_capsule_cfg_v5__` | 形态、拖拽位置、调试开关 |
+| `__gemini_quota_official_cache_v5__` | 最近一次官方配额快照（含 `confidence` / `updatedAt`） |
+
+源码顶部常量：
 
 | 常量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `SIG_TTL_MS` | 24h | signature 缓存有效期 |
-| `POLL_INTERVAL_MS` | 60s | 用量轮询间隔 |
-| `IFRAME_WAIT_MS` | 15s | iframe DOM 兜底解析触发等待 |
+| `AUTO_SYNC_INTERVAL_MS` | 3 分钟 | 自动同步间隔 |
+| `FIVE_HOUR_MS` / `WEEK_MS` | 5h / 7d | 窗口长度，用于重置时间校验 |
+| `RESET_SLACK_MS` | 30 分钟 | 允许的服务端/本地时钟抖动 |
+| `FRESH_MS` | 10 分钟 | 置信度保护的有效期 |
 
-## 六、权限与隐私
+## 八、调试
 
-- `@grant none`：不申请任何 GM API 权限。
-- 所有请求均为 `credentials: "include"` 的**同源请求**，复用当前会话 Cookie，不额外读取、存储或外发。
-- 不引入任何第三方请求或统计。
-- 所有状态存储于当前站点 `localStorage`，清空对应键即可完全重置。
+控制台提供只读出口，便于核对窗口归属：
 
-## 七、已知限制
+```js
+__gqc.state            // 当前 5H / 7D 状态（含 confidence、updatedAt）
+__gqc.dump()           // 状态 + 配置 + 最近 6 帧配额原始响应
+copy(JSON.stringify(__gqc.dump(), null, 2))
+__gqc.sync()           // 立即同步一次
+__gqc.setDebug(true)   // 打开调试日志
+```
 
-- **接口稳定性依赖 Gemini 服务端未变更。** 若 Google 调整 `getUsageInfo` 的字段名或响应结构，需更新 `extractUsage` 中的解析逻辑。`findPoolsRecursive` 提供了一层兜底，但不保证覆盖所有变更情形。
-- **signature 可能随版本变化。** 当 signature 失效时，脚本会通过 iframe 重新捕获，但捕获过程依赖 `/usage` 页面自身发出符合条件的请求；若该页面在未来版本中改为一次性拉取或更换协议，捕获可能失败。
-- **首次加载存在冷启动延迟。** 无缓存情形下，需要等待隐藏 iframe 完成页面加载并触发请求，通常 3–10 秒。
-- **DOM 兜底解析精度有限。** `tryParseUsageDOM` 基于正则匹配百分比文案，仅在 GraphQL 通道完全不可用时作为最后手段，可能读到脏数据（例如页面上的其他百分比），请以 `--%` 持续显示为触发信号手工排查。
-- **多账号切换场景。** 切换 Google 账号后，`query_signature` 一般仍有效，但用量数据需要等待下一次轮询（≤60 秒）。如需立即刷新，可打开 `/usage` 页面。
-- **Bard 旧域名。** `@match` 保留 `bard.google.com` 兼容旧链接，但该域名已重定向至 `gemini.google.com`，实际行为以后者为准。
+`__gqc.dump().frames` 只保留命中配额关键字的响应帧（每帧截断 24KB），用于确认服务端字段命名是否再次变化。
 
-## 八、版本历史
+## 九、测试
+
+```bash
+node --test tests/*.test.js
+```
+
+覆盖：结构化 pools 分流、父容器防串窗、混合形态补全、ISO/元组/秒级时间戳解析、相对文案基准换算、窗口长度校验、倒计时格式、`/usage` 双卡片解析、置信度保护、渲染冒烟（胶囊倒计时文本）、脏缓存自愈。当前 13 例全部通过。
+
+## 十、已知限制
+
+- 服务端字段一旦改名（如 `percentageUsed` → 其他拼写），结构化层会失效并回退到置信度更低的启发式；此时请用 `__gqc.dump()` 回传一帧原始响应。
+- `/usage` 页面若改为纯前端渲染且不产生可捕获帧，只能依赖 iframe + DOM 文本解析。
+- 多账号切换后最多等待一个同步周期（≤3 分钟）才会刷新；可点刷新按钮或调用 `__gqc.sync()`。
+- `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
+
+## 十一、版本历史
+
+### v0.6.0
+
+- 新增结构化 `pools` 解析：按 `poolType` 精确区分 5H / 7D，作为最高优先级数据源。
+- 修复 5H 串窗根因：父容器数组不再抢占标签，5H 不会再取到周额度。
+- 重写重置时间解析：支持 ISO 8601、10/13 位数字串、`[秒, 纳秒]` 元组、`{seconds, nanos}` 与含周单位的相对文案。
+- 倒计时统一由 `resetAt − now` 每秒重算；相对文案以抓取时刻为锚点，不再显示静态字符串。
+- 新增窗口长度校验、置信度保护、脏缓存自愈与 `__gqc` 调试出口。
+- 新增 `node --test` 回归测试（13 例）与 CI 校验工作流。
+
+### v0.5.x
+
+- 拦截 `batchexecute` 帧 + `/usage` 页面双通道同步，四形态指示器。
 
 ### v0.2.0
 
-- 移除本地计数逻辑（`recordUsage` / `decrementUsage` / `clearUsage`）。
-- 新增用量自动获取：GraphQL 轮询 + 隐藏 iframe 捕获双通道。
-- 新增 `windowRefreshesAt` 驱动的精确倒计时。
-- `@namespace` 调整为带尾斜杠的目录 URL。
-- 移除设置抽屉中的额度输入框与调试按钮。
+- 移除本地计数，改为官方用量自动获取。
 
 ### v0.1.0
 
-- 初始版本，通过拦截 prompt 提交事件进行本地计数。
+- 初始版本，基于 prompt 提交事件的本地计数。
 
-## 九、许可证
+## 十二、许可证
 
 MIT License

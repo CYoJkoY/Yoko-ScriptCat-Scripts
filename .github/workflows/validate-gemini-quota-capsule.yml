@@ -1,0 +1,28 @@
+name: Validate Gemini Quota Capsule
+
+on:
+  push:
+    branches:
+      - "fix/**"
+    paths:
+      - "scripts/gemini-quota-capsule.js"
+      - ".github/workflows/validate-gemini-quota-capsule.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/gemini-quota-capsule.js"
+      - ".github/workflows/validate-gemini-quota-capsule.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    name: JavaScript syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Validate userscript syntax
+        run: node --check scripts/gemini-quota-capsule.js
