@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.7.0
+// @version      0.8.0
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -442,6 +442,9 @@
       upper.includes("FIVEHOUR") ||
       upper.includes("5_HOUR") ||
       upper.includes("5H") ||
+      upper.includes("HOURLY") ||
+      upper.includes("PER_HOUR") ||
+      upper.includes("PERHOUR") ||
       upper.includes("18000")
     ) {
       return "fiveHour";
@@ -452,8 +455,8 @@
 
   const POOL_KIND_KEY_RE =
     /^(pool_?type|pool_?id|pool_?name|poolType|poolId|bucket|bucket_?type|type|kind|window_?type|quota_?type|limit_?type|id|name)$/i;
-  const USED_PCT_KEY_RE = /(?:percentage|percent|pct|ratio|utiliz).*used|used.*(?:percentage|percent|pct|ratio|utiliz)/i;
-  const REMAINING_PCT_KEY_RE = /(?:remaining|available|left|unused).*(?:percentage|percent|pct|ratio)|(?:percentage|percent|pct|ratio).*(?:remaining|available|left|unused)/i;
+  const USED_PCT_KEY_RE = /(?:percentage|percent|pct|ratio|fraction|utiliz).*used|used.*(?:percentage|percent|pct|ratio|fraction|utiliz)/i;
+  const REMAINING_PCT_KEY_RE = /(?:remaining|available|left|unused).*(?:percentage|percent|pct|ratio|fraction)|(?:percentage|percent|pct|ratio|fraction).*(?:remaining|available|left|unused)/i;
   const PCT_KEY_RE = /(percent|pct|ratio|utiliz)/i;
   const USED_KEY_RE = /^(used|used_?count|used_?amount|consumed|count|requests|messages)$/i;
   const LIMIT_KEY_RE = /^(limit|max|maximum|quota|capacity|total|cap)$/i;
@@ -500,12 +503,29 @@
     return null;
   }
 
+  const FRACTION_KEY_RE = /(fraction|ratio|0to1|0_to_1)/i;
+
   /**
-   * 0~1 视为比率，1 以上视为百分数；统一收敛到 0~100 的整数
+   * 字段名线索：fraction / ratio 类字段是 0~1 比率，其余按 0~100 百分数处理。
    */
-  function normalizePctValue(raw) {
+  function pctHintFromKey(key) {
+    if (typeof key !== "string" || !key) return null;
+    return FRACTION_KEY_RE.test(key) ? "fraction" : "percent";
+  }
+
+  /**
+   * 把来源数值归一成 0~100 的整数。
+   * 旧实现用 `raw > 0 && raw <= 1 → raw * 100` 判断，把 `1` 这一个值同时当成
+   * 「1%」和「100%」：已用 1% 会被读成 100%，剩余 100% 反而变成 1%。判据必须来自字段名。
+   * 无字段名线索时，只把「带小数的 0~1 值」当比率（0.34 → 34%），整数 0/1 保留百分数语义。
+   */
+  function normalizePctValue(raw, hint = null) {
     if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return null;
-    if (raw > 0 && raw <= 1) return Math.round(raw * 100);
+    if (hint === "fraction") return Math.min(100, Math.round(raw * 100));
+    if (hint === "percent") return Math.min(100, Math.round(raw));
+    if (raw > 0 && raw < 1 && !Number.isInteger(raw)) {
+      return Math.min(100, Math.round(raw * 100));
+    }
     return Math.min(100, Math.round(raw));
   }
 
@@ -589,17 +609,17 @@
     let usedPct = null;
 
     if (remainingPctField) {
-      pct = normalizePctValue(remainingPctField.number);
+      pct = normalizePctValue(remainingPctField.number, pctHintFromKey(remainingPctField.key));
       if (pct !== null) usedPct = 100 - pct;
     } else if (usedPctField) {
-      const value = normalizePctValue(usedPctField.number);
+      const value = normalizePctValue(usedPctField.number, pctHintFromKey(usedPctField.key));
       if (value !== null) {
         usedPct = value;
         pct = 100 - value;
       }
     } else if (ambiguousPctField) {
       // 裸 percent / pct 字段在官方结构里表示「已用比例」，按已用处理
-      const value = normalizePctValue(ambiguousPctField.number);
+      const value = normalizePctValue(ambiguousPctField.number, pctHintFromKey(ambiguousPctField.key));
       if (value !== null) {
         usedPct = value;
         pct = 100 - value;
@@ -796,7 +816,7 @@
       if (Array.isArray(node)) {
         const flatStrings = node.filter((x) => typeof x === "string").join(" ");
         const has5hLabel =
-          /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|current\s*session|当前会话|会话|セッション)/i.test(
+          /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|hourly|per\s*hour|每小时|每小時|current\s*session|当前会话|会话|セッション)/i.test(
             flatStrings,
           ) ||
           node.includes(18000) ||
@@ -1049,6 +1069,84 @@
   }
 
   /**
+   * 解析诊断：只记录计数与结论，不含页面正文，供 __gqc.dump() 回传定位。
+   */
+  const usageParseDiag = {
+    blocks: 0,
+    initHit: false,
+    domHit: false,
+    textHit: false,
+  };
+
+  /**
+   * 从 start 处的 "[" 开始做括号配对扫描，返回对应 "]" 的下标；不匹配返回 -1。
+   * 必须跳过字符串字面量与转义，否则页面里任意一个 "]" 字符都会把结构提前截断。
+   */
+  function scanBalancedArray(text, start) {
+    let depth = 0;
+    let quote = "";
+    let escaped = false;
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i];
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === "\\") {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = "";
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        continue;
+      }
+      if (ch === "[") {
+        depth += 1;
+      } else if (ch === "]") {
+        depth -= 1;
+        if (depth === 0) return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * 提取页面内所有 AF_initDataCallback 的 data 数组字面量。
+   * 旧实现用惰性正则 `\[[^]*?\]\s*(?:,\s*sideChannel|\}\s*\))` 一次性截取：
+   * 只要 data 的多层嵌套数组不是「最后一个 ] 紧跟 sideChannel」，整块就失配。
+   * 815KB 的 /usage 页面因此一个块都解析不到，随后又静默回落到依赖错误标签的 DOM 兜底。
+   */
+  function extractInitDataBlocks(html, limit = 40) {
+    if (typeof html !== "string" || !html) return [];
+    const marker = "AF_initDataCallback(";
+    const blocks = [];
+    let cursor = 0;
+    while (blocks.length < limit) {
+      const at = html.indexOf(marker, cursor);
+      if (at === -1) break;
+      cursor = at + marker.length;
+      const dataAt = html.indexOf("data:", cursor);
+      if (dataAt === -1 || dataAt - at > 4000) break;
+      // data: 后面必须是数组，或 data:function(){return [ ... ]}。
+      // 官方页面同时存在 data:null / data:{...} 的回调，直接找下一个 "[" 会切到后面的块。
+      const tailStart = dataAt + "data:".length;
+      const head = html.slice(tailStart, tailStart + 200);
+      const arrLead = head.match(
+        /^(?:\s*function\s*\([^)]*\)\s*\{\s*(?:return\s*)?)?\s*\[/,
+      );
+      if (!arrLead) continue;
+      const arrStart = tailStart + arrLead[0].length - 1;
+      const arrEnd = scanBalancedArray(html, arrStart);
+      if (arrEnd === -1) break;
+      blocks.push(html.slice(arrStart, arrEnd + 1));
+      cursor = arrEnd + 1;
+    }
+    return blocks;
+  }
+
+  /**
    * 从官方 /usage 页面 DOM 或 HTML 中提取配额指标
    */
   function parseUsageDocument(doc, rawHtml = "") {
@@ -1056,16 +1154,16 @@
     let fiveHour = null;
     let weekly = null;
 
-    // 1. 先检查 HTML 源码内的 AF_initDataCallback
+    // 1. 先检查 HTML 源码内的 AF_initDataCallback（括号配对提取，替代脆弱的惰性正则）
     if (rawHtml) {
-      const initCallbackRegex =
-        /AF_initDataCallback\s*\(\s*\{[^]*?data\s*:\s*(\[[^]*?\])\s*(?:,\s*sideChannel|\}\s*\))/g;
-      let match;
-      while ((match = initCallbackRegex.exec(rawHtml)) !== null) {
+      const rawBlocks = extractInitDataBlocks(rawHtml);
+      usageParseDiag.blocks = rawBlocks.length;
+      for (const rawBlock of rawBlocks) {
         try {
-          const dataArr = JSON.parse(match[1]);
+          const dataArr = JSON.parse(rawBlock);
           const wizExtracted = extractQuotaFromWizStructure(dataArr, nowMs);
           if (wizExtracted) {
+            usageParseDiag.initHit = true;
             if (wizExtracted.fiveHour && !fiveHour) {
               fiveHour = wizExtracted.fiveHour;
             }
@@ -1081,14 +1179,14 @@
 
     if (doc && doc.body) {
       const fiveRegex =
-        /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|current\s*session|session|当前会话|会话(?:配额|限额|用量)?|セッション)/i;
+        /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|hourly|per\s*hour|每小时|每小時|current\s*session|session|当前会话|会话(?:配额|限额|用量)?|セッション)/i;
       const weekRegex =
         /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i;
       const strictlyWeekRegex =
         /(?:week(?:ly)?|每周|每週|週間|7\s*-?\s*(?:day|days|天))/i;
       // 严格 5H 标签：不能只用 \dh，否则会误伤日期与普通数字
       const strictlyFiveRegex =
-        /(?:5\s*-?\s*(?:hour|hours|hr|hrs|h|小时|小時)|five\s*-?\s*hour|current\s*session|当前会话)/i;
+        /(?:5\s*-?\s*(?:hour|hours|hr|hrs|h|小时|小時)|five\s*-?\s*hour|hourly|per\s*hour|每小时|每小時|current\s*session|当前会话)/i;
 
       // 2. 扫描独立容器
       const blocks = Array.from(
@@ -1311,6 +1409,29 @@
     quotaHits: 0,
     lastRpcIds: [],
   };
+  /**
+   * 端点发现环：记录所有 URL 命中 usage/quota/limit 的请求，用来确认配额到底由哪个接口返回。
+   * 只存 URL / 状态码 / 长度，不存正文。
+   */
+  const NET_RING_LIMIT = 24;
+  const netRing = [];
+  const NET_INTEREST_RE = /(batchexecute|usage|quota|limit|entitle|billing|gxu|tier)/i;
+  function noteNetwork(url, status, len) {
+    try {
+      const text = typeof url === "string" ? url : "";
+      if (!text || !NET_INTEREST_RE.test(text)) return;
+      netRing.push({
+        at: new Date().toISOString(),
+        url: text.length > 180 ? `${text.slice(0, 180)}…` : text,
+        status,
+        len,
+      });
+      while (netRing.length > NET_RING_LIMIT) netRing.shift();
+    } catch {
+      // 诊断失败不影响主流程
+    }
+  }
+
   function noteDiag(rpcId) {
     obsDiag.batchFrames += 1;
     if (rpcId && !obsDiag.lastRpcIds.includes(rpcId)) {
@@ -1408,6 +1529,7 @@
     const response = await origFetch.apply(this, args);
 
     try {
+      noteNetwork(url, response.status, 0);
       if (
         url.includes("/batchexecute") ||
         url.includes("StreamGenerateContent")
@@ -1439,6 +1561,11 @@
       const reqBody = typeof body === "string" ? body : "";
       this.addEventListener("load", function () {
         try {
+          noteNetwork(
+            url,
+            this.status,
+            typeof this.responseText === "string" ? this.responseText.length : 0,
+          );
           if (
             typeof this.responseText === "string" &&
             this.responseText.length > 0
@@ -1718,7 +1845,7 @@
       typeof metric.usedPct === "number" && Number.isFinite(metric.usedPct)
         ? metric.usedPct
         : 100 - metric.pct;
-    const lines = [`${label} 剩余: ${metric.pct}% (官方已用 ${usedPct}%)`];
+    const lines = [`${label} 已用: ${usedPct}% (剩余 ${metric.pct}%)`];
     if (metric.used !== null && metric.limit !== null) {
       lines.push(`频次用量: ${metric.used} / ${metric.limit}`);
     }
@@ -2076,7 +2203,7 @@
       },
     });
 
-    badge5hEl = el("span", { className: "gc-pill-badge" }, ["5H"]);
+    badge5hEl = el("span", { className: "gc-pill-badge" }, ["5小时"]);
     usage5hTextEl = el("span", { className: "gc-pill-counter" }, ["--%"]);
     fill5hEl = el("div", { className: "gc-inline-fill" });
     track5hEl = el("div", { className: "gc-inline-track" }, [fill5hEl]);
@@ -2088,7 +2215,7 @@
       timer5hTextEl,
     ]);
 
-    badge7dEl = el("span", { className: "gc-pill-badge" }, ["7D"]);
+    badge7dEl = el("span", { className: "gc-pill-badge" }, ["每周"]);
     usage7dTextEl = el("span", { className: "gc-pill-counter" }, ["--%"]);
     fill7dEl = el("div", { className: "gc-inline-fill" });
     track7dEl = el("div", { className: "gc-inline-track" }, [fill7dEl]);
@@ -2312,26 +2439,26 @@
     });
   }
 
-  function renderIndicatorHead(mode, ratio5h, ratio7d) {
+  function renderIndicatorHead(mode, usedRatio5h, usedRatio7d) {
     if (!headSlotEl) return;
     headSlotEl.textContent = "";
 
-    const used5h = 1 - Math.max(0, Math.min(1, ratio5h));
-    const used7d = 1 - Math.max(0, Math.min(1, ratio7d));
-    // 填充量取「剩余」，颜色与临界判定取「已用」
-    const dominantRatio = Math.max(ratio5h, ratio7d);
-    const dominantUsed = Math.max(used5h, used7d);
+    const used5h = Math.max(0, Math.min(1, usedRatio5h));
+    const used7d = Math.max(0, Math.min(1, usedRatio7d));
+    // 入参即「已用」比例：填充量与颜色同向，用得越多条越满
+    const dominantRatio = Math.max(used5h, used7d);
+    const dominantUsed = dominantRatio;
     const color = getProgressColor(dominantUsed);
     const color5h = getProgressColor(used5h);
     const color7d = getProgressColor(used7d);
 
     if (mode === "bar") {
       track5hEl.style.display = "inline-block";
-      fill5hEl.style.width = `${Math.min(100, Math.round(ratio5h * 100))}%`;
+      fill5hEl.style.width = `${Math.min(100, Math.round(used5h * 100))}%`;
       fill5hEl.style.backgroundColor = color5h.hex;
 
       track7dEl.style.display = "inline-block";
-      fill7dEl.style.width = `${Math.min(100, Math.round(ratio7d * 100))}%`;
+      fill7dEl.style.width = `${Math.min(100, Math.round(used7d * 100))}%`;
       fill7dEl.style.backgroundColor = color7d.hex;
 
       const miniPill = el("div", {
@@ -2465,13 +2592,17 @@
       return 0;
     }
 
-    const pct = metric.pct;
-    // 填充量 = 剩余比例；颜色/告警按「已用」比例计算，否则剩余 100% 会被涂成红色
-    const ratio = pct / 100;
-    const color = getProgressColor(1 - ratio);
+    // 主指标 = 已用百分比（用户语义：百分比越高表示用得越多）。
+    // metric.pct 仍是「剩余」，这里只做派生，避免缓存与既有判断逻辑失效。
+    const usedPct =
+      typeof metric.usedPct === "number" && Number.isFinite(metric.usedPct)
+        ? metric.usedPct
+        : Math.max(0, Math.min(100, 100 - metric.pct));
+    const usedRatio = usedPct / 100;
+    const color = getProgressColor(usedRatio);
 
     badgeNode.style.color = color.hex;
-    usageNode.textContent = `${pct}%`;
+    usageNode.textContent = `${usedPct}%`;
 
     const now = Date.now();
     if (metric.resetAt && metric.resetAt > now) {
@@ -2490,8 +2621,8 @@
           : metric.rawResetText.slice(0, 10);
       timerNode.style.color = color.hex;
       timerNode.title = metric.rawResetText;
-    } else if (pct === 0) {
-      // pct 是「剩余」比例：0 表示已用尽，不是「已重置」
+    } else if (usedPct >= 100) {
+      // 已用 100% 表示额度耗尽，不是「已重置」
       timerNode.textContent = "已用尽";
       timerNode.style.color = "#f43f5e";
     } else {
@@ -2500,7 +2631,7 @@
     }
 
     groupNode.title = formatTooltip(label, metric);
-    return ratio;
+    return usedRatio;
   }
 
   function updateUI() {
@@ -2535,7 +2666,7 @@
     const ratio5h = renderMetricUnit(
       quotaState.fiveHour,
       false,
-      "5H (会话窗口)",
+      "5 小时窗口",
       badge5hEl,
       usage5hTextEl,
       timer5hTextEl,
@@ -2545,7 +2676,7 @@
     const ratio7d = renderMetricUnit(
       quotaState.weekly,
       true,
-      "7D (7天周窗口)",
+      "每周窗口",
       badge7dEl,
       usage7dTextEl,
       timer7dTextEl,
@@ -2640,7 +2771,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.7.0",
+    version: "0.8.0",
     get state() {
       return quotaState;
     },
@@ -2654,9 +2785,51 @@
       config.debug = !!enabled;
       saveConfig(config);
     },
+    /**
+     * 单条命令自检：直连 /usage，回报状态码、AF_initDataCallback 块数与解析结果。
+     * 排查「拿不到 5 小时 / 每周用量」时先跑这个，比翻 DOM 快。
+     */
+    async probeUsage() {
+      const url = getOfficialUsageUrl();
+      const resp = await origFetch.call(window, url, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
+      const rawHtml = resp.ok ? await resp.text() : "";
+      let parsed = null;
+      if (rawHtml) {
+        try {
+          const domParser = new DOMParser();
+          parsed = parseUsageDocument(
+            domParser.parseFromString(rawHtml, "text/html"),
+            rawHtml,
+          );
+        } catch (err) {
+          parsed = { error: err instanceof Error ? err.message : "解析失败" };
+        }
+      }
+      return {
+        version: "0.8.0",
+        status: resp.status,
+        len: rawHtml.length,
+        blocks: usageParseDiag.blocks,
+        initHit: usageParseDiag.initHit,
+        blockHits: extractInitDataBlocks(rawHtml)
+          .filter((block) => /hourly|weekly|quota|percent|usage|limit|gxu/i.test(block))
+          .slice(0, 5)
+          .map((block) => ({
+            size: block.length,
+            // 只截取片段用于确认字段名，不含会话内容
+            excerpt: block.length > 600 ? `${block.slice(0, 600)}…` : block,
+          })),
+        fiveHour: parsed ? parsed.fiveHour : null,
+        weekly: parsed ? parsed.weekly : null,
+      };
+    },
     dump() {
       return {
-        version: "0.7.0",
+        version: "0.8.0",
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },
@@ -2675,12 +2848,15 @@
             : null,
         },
         frames: rawFrameRing.slice(),
+        endpoints: netRing.slice(),
         diagnostics: {
           batchExecSeen: obsDiag.batchExecSeen,
           batchFrames: obsDiag.batchFrames,
           quotaHits: obsDiag.quotaHits,
           lastRpcIds: obsDiag.lastRpcIds.slice(),
           rawFrames: rawFrameRing.length,
+          usageBlocks: usageParseDiag.blocks,
+          usageInitHit: usageParseDiag.initHit,
         },
       };
     },
@@ -2698,6 +2874,10 @@
       extractQuotaFromWizStructure,
       parseBatchExecuteResponse,
       parseUsageDocument,
+      extractInitDataBlocks,
+      scanBalancedArray,
+      normalizePctValue,
+      pctHintFromKey,
       extractMetricFromCardText,
       commitOfficialQuota,
       formatCompactCountdown,
