@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.13.4
+// @version      0.13.5
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.4";
+  const VERSION = "0.13.5";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -964,6 +964,15 @@
   let virtualFileTrayAnchor = null;
   let virtualFileTrayResizeObserver = null;
   let virtualFileTrayPositionFrame = 0;
+
+  let virtualFileTraySyncRaf = 0;
+  let virtualFileTraySyncLastTs = 0;
+  let virtualFileTrayLastSignature = "";
+  let virtualFileTrayCachedInput = null;
+
+  const VF_TRAY_SYNC_INTERVAL = 90; // ms
+  const COMPOSER_VISUAL_GAP = 48;
+  const COMPOSER_VISUAL_MAX_DEPTH = 5;
   let searchDebounceTimer = null;
   let observer = null;
   let codeResizeObserver = null;
@@ -2433,8 +2442,12 @@
     ];
 
     const inputRect = input.getBoundingClientRect();
+    if (!inputRect.width || !inputRect.height) {
+      return input.parentElement;
+    }
+
     let best = null;
-    let bestTop = Infinity;
+    let bestArea = Infinity;
 
     for (const selector of candidates) {
       let matched;
@@ -2443,21 +2456,101 @@
       } catch (_) {
         continue;
       }
-      if (!matched) continue;
+      if (!matched || matched === input) continue;
 
       const rect = matched.getBoundingClientRect();
-      if (rect.height < 20) continue;
+      if (rect.height < 20 || rect.width < 40) continue;
+      if (rect.top > inputRect.top + 2) continue;
+      if (rect.bottom < inputRect.bottom - 2) continue;
+      if (rect.width < inputRect.width * 0.75) continue;
 
-      const extendsAbove = inputRect.top - rect.top;
-      if (extendsAbove > 360) continue;
-
-      if (rect.top < bestTop) {
-        bestTop = rect.top;
+      const area = rect.width * rect.height;
+      if (area < bestArea) {
+        bestArea = area;
         best = matched;
       }
     }
 
     return best || input.parentElement;
+  }
+
+  /**
+   * Calculate the composer's "visual boundary":
+   * Include the native attachment / preview / toolbar sibling nodes immediately above the input container
+   * as part of the top boundary, as long as they are vertically adjacent to the current area and horizontally overlap it.
+   * This way, when uploading real files causes the input box to deform (the attachment area floats upward),
+   * the pseudo file tray will automatically follow above the attachment area instead of covering the native attachments.
+   */
+  function getComposerVisualBounds(input, anchor) {
+    const baseRect = (anchor || input).getBoundingClientRect();
+    const bounds = {
+      top: baseRect.top,
+      left: baseRect.left,
+      right: baseRect.right,
+      width: baseRect.width,
+    };
+
+    let node = anchor || input;
+    let depth = 0;
+
+    while (node && depth < COMPOSER_VISUAL_MAX_DEPTH) {
+      const nodeRect = node.getBoundingClientRect();
+      let cursorTop = Math.min(nodeRect.top, bounds.top);
+
+      let sibling = node.previousElementSibling;
+      let guard = 0;
+
+      while (sibling && guard < 24) {
+        guard++;
+
+        if (
+          sibling.id === "ai-turbo-vf-tray" ||
+          sibling.id === HUD_ID ||
+          sibling.id === "ai-turbo-vf-preview-modal"
+        ) {
+          sibling = sibling.previousElementSibling;
+          continue;
+        }
+
+        const siblingRect = sibling.getBoundingClientRect();
+        const isVisible = siblingRect.width > 0 && siblingRect.height > 0;
+        if (!isVisible) {
+          sibling = sibling.previousElementSibling;
+          continue;
+        }
+
+        const overlap =
+          Math.min(bounds.right, siblingRect.right) -
+          Math.max(bounds.left, siblingRect.left);
+        const minOverlap = Math.min(bounds.width, siblingRect.width) * 0.35;
+        const gap = cursorTop - siblingRect.bottom;
+
+        if (overlap > minOverlap && gap >= -1 && gap <= COMPOSER_VISUAL_GAP) {
+          bounds.top = Math.min(bounds.top, siblingRect.top);
+          bounds.left = Math.min(bounds.left, siblingRect.left);
+          bounds.right = Math.max(bounds.right, siblingRect.right);
+          bounds.width = bounds.right - bounds.left;
+          cursorTop = siblingRect.top;
+          sibling = sibling.previousElementSibling;
+          continue;
+        }
+
+        break;
+      }
+
+      const parent = node.parentElement;
+      if (
+        !parent ||
+        parent === document.body ||
+        parent === document.documentElement
+      ) {
+        break;
+      }
+      node = parent;
+      depth++;
+    }
+
+    return bounds;
   }
 
   function createUiIcon(name, size = 14) {
@@ -2495,12 +2588,16 @@
   }
 
   function stopVirtualFileTrayTracking() {
+    stopVirtualFileTraySyncLoop();
+
     if (virtualFileTrayResizeObserver) {
       virtualFileTrayResizeObserver.disconnect();
       virtualFileTrayResizeObserver = null;
     }
 
     virtualFileTrayAnchor = null;
+    virtualFileTrayCachedInput = null;
+    virtualFileTrayLastSignature = "";
 
     if (virtualFileTrayPositionFrame) {
       window.cancelAnimationFrame(virtualFileTrayPositionFrame);
@@ -2508,9 +2605,43 @@
     }
   }
 
+  function resetVirtualFileTraySignature() {
+    virtualFileTrayLastSignature = "";
+  }
+
+  function startVirtualFileTraySyncLoop() {
+    if (virtualFileTraySyncRaf) return;
+    virtualFileTraySyncLastTs = 0;
+
+    const tick = (ts) => {
+      virtualFileTraySyncRaf = 0;
+
+      const tray = document.getElementById("ai-turbo-vf-tray");
+      if (!tray || !tray.isConnected || !activeVirtualFiles.length) {
+        return;
+      }
+
+      if (ts - virtualFileTraySyncLastTs >= VF_TRAY_SYNC_INTERVAL) {
+        virtualFileTraySyncLastTs = ts;
+        positionVirtualFileTray();
+      }
+
+      virtualFileTraySyncRaf = window.requestAnimationFrame(tick);
+    };
+
+    virtualFileTraySyncRaf = window.requestAnimationFrame(tick);
+  }
+
+  function stopVirtualFileTraySyncLoop() {
+    if (virtualFileTraySyncRaf) {
+      window.cancelAnimationFrame(virtualFileTraySyncRaf);
+      virtualFileTraySyncRaf = 0;
+    }
+    virtualFileTraySyncLastTs = 0;
+  }
+
   function scheduleVirtualFileTrayPosition() {
     if (!activeVirtualFiles.length) return;
-
     if (virtualFileTrayPositionFrame) return;
 
     virtualFileTrayPositionFrame = window.requestAnimationFrame(() => {
@@ -2519,53 +2650,81 @@
     });
   }
 
+  function bindVirtualFileTrayObservers(anchor, input) {
+    if (virtualFileTrayResizeObserver) {
+      virtualFileTrayResizeObserver.disconnect();
+    }
+    virtualFileTrayAnchor = anchor;
+
+    if (!("ResizeObserver" in window)) return;
+
+    virtualFileTrayResizeObserver = new ResizeObserver(() => {
+      resetVirtualFileTraySignature();
+      scheduleVirtualFileTrayPosition();
+    });
+
+    const observed = new Set();
+    const observeNode = (node) => {
+      if (!(node instanceof Element)) return;
+      if (node === document.body || node === document.documentElement) return;
+      if (observed.has(node)) return;
+      observed.add(node);
+      try {
+        virtualFileTrayResizeObserver.observe(node);
+      } catch (_) {}
+    };
+
+    observeNode(input);
+    let node = anchor;
+    let depth = 0;
+    while (node && depth < COMPOSER_VISUAL_MAX_DEPTH) {
+      observeNode(node);
+      observeNode(node.parentElement);
+      node = node.parentElement;
+      depth++;
+    }
+  }
+
   function positionVirtualFileTray() {
     const tray = document.getElementById("ai-turbo-vf-tray");
     if (!tray || !tray.isConnected || !activeVirtualFiles.length) return;
 
-    const input = getChatInput();
-    const anchor = getInputContainer(input);
+    let input = virtualFileTrayCachedInput;
+    if (!input || !input.isConnected || input.getClientRects().length === 0) {
+      input = getChatInput();
+      virtualFileTrayCachedInput = input;
+    }
 
-    if (!input || !anchor || !input.isConnected || !anchor.isConnected) {
+    if (!input || !input.isConnected) {
       tray.classList.remove("is-positioned");
+      resetVirtualFileTraySignature();
+      return;
+    }
+
+    const anchor = getInputContainer(input);
+    if (!anchor || !anchor.isConnected) {
+      tray.classList.remove("is-positioned");
+      resetVirtualFileTraySignature();
       return;
     }
 
     if (anchor !== virtualFileTrayAnchor) {
-      if (virtualFileTrayResizeObserver) {
-        virtualFileTrayResizeObserver.disconnect();
-      }
-      virtualFileTrayAnchor = anchor;
-
-      if ("ResizeObserver" in window) {
-        virtualFileTrayResizeObserver = new ResizeObserver(() => {
-          scheduleVirtualFileTrayPosition();
-        });
-
-        virtualFileTrayResizeObserver.observe(anchor);
-        if (input !== anchor) virtualFileTrayResizeObserver.observe(input);
-
-        // ★ 新增：观察父节点 —— 有些平台附件插入会扩展外层 wrapper，而
-        // input 与 anchor 都未必直接变化
-        const anchorParent = anchor.parentElement;
-        if (anchorParent && anchorParent !== document.body) {
-          virtualFileTrayResizeObserver.observe(anchorParent);
-        }
-      }
+      bindVirtualFileTrayObservers(anchor, input);
     }
 
-    const anchorRect = anchor.getBoundingClientRect();
     const inputRect = input.getBoundingClientRect();
-
-    if (
-      !anchorRect.width ||
-      !anchorRect.height ||
-      !inputRect.width ||
-      !inputRect.height
-    ) {
+    if (!inputRect.width || !inputRect.height) {
       tray.classList.remove("is-positioned");
+      resetVirtualFileTraySignature();
       return;
     }
+
+    const bounds = getComposerVisualBounds(input, anchor);
+
+    const visualTop =
+      Number.isFinite(bounds.top) && bounds.top <= inputRect.top + 1
+        ? Math.max(0, bounds.top)
+        : inputRect.top;
 
     const viewportPadding = 18;
     const verticalGap = 16;
@@ -2573,41 +2732,49 @@
     const viewportHeight = window.innerHeight;
     const availableWidth = Math.max(0, viewportWidth - viewportPadding * 2);
 
-    const trayWidth = Math.min(Math.max(anchorRect.width, 280), availableWidth);
+    const baseWidth = Math.max(inputRect.width, bounds.width || 0);
+    const trayWidth = Math.min(Math.max(baseWidth, 280), availableWidth);
 
+    const anchorLeft = Math.min(inputRect.left, bounds.left);
     const left = Math.min(
-      Math.max(viewportPadding, anchorRect.left),
+      Math.max(viewportPadding, anchorLeft),
       Math.max(viewportPadding, viewportWidth - trayWidth - viewportPadding),
     );
 
-    // ★ 核心修复：真正的"视觉顶部"= min(容器 top, 输入框 top)
-    //   - 有原生文件时，anchorRect.top 会比 inputRect.top 更高
-    //   - 若 anchor 延伸得过远（>360px，疑似误选整页 wrapper），降级用 inputRect.top
-    const anchorExtendsAboveInput = inputRect.top - anchorRect.top;
-    const MAX_ATTACHMENT_EXTENSION = 360;
-    const visualTop =
-      anchorExtendsAboveInput >= 0 &&
-      anchorExtendsAboveInput <= MAX_ATTACHMENT_EXTENSION
-        ? anchorRect.top
-        : inputRect.top;
+    const finalBottom = Math.max(
+      viewportPadding,
+      viewportHeight - visualTop + verticalGap,
+    );
+    const maxTrayHeight = Math.max(
+      72,
+      visualTop - viewportPadding - verticalGap,
+    );
 
-    const bottom = viewportHeight - visualTop + verticalGap;
+    const signature = [
+      Math.round(left * 10) / 10,
+      Math.round(finalBottom * 10) / 10,
+      Math.round(trayWidth * 10) / 10,
+      Math.round(maxTrayHeight * 10) / 10,
+    ].join("|");
+
+    const isPositioned = tray.classList.contains("is-positioned");
+
+    if (signature === virtualFileTrayLastSignature && isPositioned) {
+      return;
+    }
+    virtualFileTrayLastSignature = signature;
 
     tray.style.width = `${trayWidth}px`;
     tray.style.left = `${left}px`;
     tray.style.top = "auto";
-    tray.style.bottom = `${Math.max(viewportPadding, bottom)}px`;
-
-    // ★ maxHeight 也必须基于 visualTop 计算，否则高输入框场景下 max-height 会被压缩得过小
-    const maxTrayHeight = Math.max(
-      48,
-      visualTop - viewportPadding - verticalGap,
-    );
+    tray.style.bottom = `${finalBottom}px`;
     tray.style.maxHeight = `${maxTrayHeight}px`;
     tray.style.overflowY = "auto";
-
     tray.dataset.placement = "top";
-    tray.classList.add("is-positioned");
+
+    if (!isPositioned) {
+      tray.classList.add("is-positioned");
+    }
   }
 
   function removeVirtualFile(id) {
@@ -2713,6 +2880,8 @@
 
   function renderVirtualFileTray() {
     let tray = document.getElementById("ai-turbo-vf-tray");
+
+    resetVirtualFileTraySignature();
 
     if (!activeVirtualFiles.length) {
       if (tray) {
@@ -2899,8 +3068,9 @@
       trayIsDirty = false;
     });
 
+    resetVirtualFileTraySignature();
     positionVirtualFileTray();
-    window.requestAnimationFrame(positionVirtualFileTray);
+    startVirtualFileTraySyncLoop();
     updateHudDashboard();
   }
 
@@ -3306,12 +3476,13 @@
         transform: translateY(3px) !important;
         /* 平滑浮动动画，彻底消除文本框高度变动时的跳闪 */
         transition:
-          bottom 160ms cubic-bezier(0.16, 1, 0.3, 1),
-          left 160ms cubic-bezier(0.16, 1, 0.3, 1),
-          max-height 100ms ease-out,   /* 120ms → 100ms，稍微紧凑一点 */
+          bottom 120ms cubic-bezier(0.22, 1, 0.36, 1),
+          left 120ms cubic-bezier(0.22, 1, 0.36, 1),
+          max-height 90ms ease-out,
           opacity 120ms ease,
           transform 120ms ease,
           visibility 120ms ease !important;
+        will-change: bottom, left, max-height !important;
       }
 
       .ai-turbo-vf-tray.is-positioned {
