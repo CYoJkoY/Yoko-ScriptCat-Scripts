@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.2
+// @version      0.8.3
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -1615,6 +1615,49 @@
   }
 
   /**
+   * 进度条取证：官方若用 meter / progressbar 画那两根条，数字会落在 aria-valuenow
+   * 或 <progress value> 上，比文本更可靠。这里只读取，不做语义假设。
+   */
+  function collectProgressbarHints() {
+    const out = [];
+    try {
+      const nodes = document.querySelectorAll(
+        "[role='progressbar'], progress, [aria-valuenow]",
+      );
+      for (const node of Array.from(nodes).slice(0, 10)) {
+        const attrNow = node.getAttribute("aria-valuenow");
+        const attrMax = node.getAttribute("aria-valuemax");
+        let cardText = "";
+        try {
+          const card = node.closest
+            ? node.closest("section, article, li, tr, div")
+            : null;
+          cardText = card ? (card.innerText || card.textContent || "").trim() : "";
+        } catch {
+          cardText = "";
+        }
+        out.push({
+          tag: String(node.tagName || "").toLowerCase(),
+          now: attrNow !== null ? attrNow : node.value !== undefined ? node.value : null,
+          max: attrMax !== null ? attrMax : node.max !== undefined ? node.max : null,
+          label: (
+            node.getAttribute("aria-valuetext") ||
+            node.getAttribute("aria-label") ||
+            node.innerText ||
+            ""
+          )
+            .replace(/\s+/g, " ")
+            .slice(0, 80),
+          card: cardText.replace(/\s+/g, " ").slice(0, 140),
+        });
+      }
+    } catch {
+      // 诊断失败不影响主流程
+    }
+    return out;
+  }
+
+  /**
    * 当前页面里与「限额 / 用量」有关的可见文本行，最多 8 行。
    * 用户打开 Gemini 自己的限额弹窗后调用，就能看到官方到底怎么表述这两组数字。
    */
@@ -2957,6 +3000,14 @@
         syncOfficialUsage(false);
       }, 500);
 
+      // /usage 是纯前端渲染：500ms 时数字往往还没画出来，补几次重试。
+      // 这三个时间点覆盖「首屏骨架 → 数据到达 → 图表动画结束」。
+      if (/\/usage\/?$/.test(window.location.pathname)) {
+        for (const delay of [1500, 5000, 12000]) {
+          setTimeout(() => syncOfficialUsage(false), delay);
+        }
+      }
+
       setInterval(() => {
         syncOfficialUsage(false);
       }, AUTO_SYNC_INTERVAL_MS);
@@ -2978,7 +3029,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.8.2",
+    version: "0.8.3",
     get state() {
       return quotaState;
     },
@@ -3030,7 +3081,7 @@
         }
       }
       const result = {
-        version: "0.8.2",
+        version: "0.8.3",
         url,
         status: resp.status,
         finalUrl: shortenUrl(finalUrl),
@@ -3071,7 +3122,7 @@
      */
     report() {
       const result = {
-        version: "0.8.2",
+        version: "0.8.3",
         at: new Date().toISOString(),
         href: shortenUrl(window.location.href),
         path: window.location.pathname,
@@ -3091,6 +3142,7 @@
         },
         usagePage: quotaState.usagePageStatus,
         domHints: collectQuotaDomHints(),
+        progressbars: collectProgressbarHints(),
         captured: {
           batchExecSeen: obsDiag.batchExecSeen,
           batchFrames: obsDiag.batchFrames,
@@ -3112,7 +3164,7 @@
     },
     dump() {
       return {
-        version: "0.8.2",
+        version: "0.8.3",
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },
@@ -3149,6 +3201,7 @@
     },
     _test: {
       collectQuotaDomHints,
+      collectProgressbarHints,
       rememberQuotaSnippets,
       shortenUrl,
       toEpochMs,
