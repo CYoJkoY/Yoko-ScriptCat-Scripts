@@ -165,6 +165,17 @@ test("scanBalancedArray / extractInitDataBlocks: 跳过字符串内的括号", (
   assert.deepEqual(JSON.parse(blocks[1]), [[1, 2], [3, 4]]);
 });
 
+test("extractInitDataBlocks: 跳过 data:null 回调且不误切后续块", () => {
+  const html = [
+    '<script>AF_initDataCallback({key:\'ds:1\', data:null, sideChannel:{}});</script>',
+    '<script>AF_initDataCallback({key:\'ds:2\', data:function(){return [[7,8]]}, sideChannel:{}});</script>',
+  ].join("\n");
+
+  const blocks = t.extractInitDataBlocks(html);
+  assert.equal(blocks.length, 1, "只应提取到真正的数组块");
+  assert.deepEqual(JSON.parse(blocks[0]), [[7, 8]]);
+});
+
 test("poolKindFromLabel: hourly 归到 5 小时窗口", () => {
   assert.equal(t.poolKindFromLabel("hourly"), "fiveHour");
   assert.equal(t.poolKindFromLabel("FIVE_HOURLY"), "fiveHour");

@@ -1129,8 +1129,15 @@
       cursor = at + marker.length;
       const dataAt = html.indexOf("data:", cursor);
       if (dataAt === -1 || dataAt - at > 4000) break;
-      const arrStart = html.indexOf("[", dataAt);
-      if (arrStart === -1) break;
+      // data: 后面必须是数组，或 data:function(){return [ ... ]}。
+      // 官方页面同时存在 data:null / data:{...} 的回调，直接找下一个 "[" 会切到后面的块。
+      const tailStart = dataAt + "data:".length;
+      const head = html.slice(tailStart, tailStart + 200);
+      const arrLead = head.match(
+        /^(?:\s*function\s*\([^)]*\)\s*\{\s*(?:return\s*)?)?\s*\[/,
+      );
+      if (!arrLead) continue;
+      const arrStart = tailStart + arrLead[0].length - 1;
       const arrEnd = scanBalancedArray(html, arrStart);
       if (arrEnd === -1) break;
       blocks.push(html.slice(arrStart, arrEnd + 1));
