@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：0.8.1
+- 版本：0.8.2
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -19,8 +19,8 @@
 | 优先级 | 通道 | 说明 |
 | --- | --- | --- |
 | 1 | 捕获并重放 `batchexecute`（`wrb.fr` 帧） | document-start 包装 `fetch` / `XMLHttpRequest`，命中配额帧后保存请求模板，后续直接重放。帧内只认结构化 `GXU_*` 池，不做标签猜测 |
-| 2 | 同源 `GET /usage` | 先读可见 DOM 卡片文本，再回退到服务端 HTML 中的 `AF_initDataCallback`（括号配对提取） |
-| 3 | 隐藏 iframe 探测 `/usage` | 需要真实渲染结果时以 1×1 iframe 加载页面，读取 `contentDocument` 并按 300ms 轮询 + `MutationObserver` 提取 |
+| 2 | 同源 `GET /usage` | **实测该页面并不存在**：未登录/普通会话都会被 302 到 `/app`，因此会先做重定向体检，一旦跳走就整条通道停用，绝不再拿 app 的 blob 当配额 |
+| 3 | 隐藏 iframe 探测 `/usage` | 同上，仅在 `GET /usage` 未发生重定向时才执行 |
 | 4 | `window.WIZ_global_data` | 仅兜底，且禁用标签启发式：它是整页 bootstrap blob，与配额无关的 `session` / `week` / 样式文本极多 |
 | 5 | 本地缓存 | 仅用于首屏回显，恢复时 `updatedAt = 0`，会被任何新数据立即覆盖 |
 
@@ -138,11 +138,14 @@
 __gqc.state            // 当前 5 小时 / 每周状态（含 confidence、updatedAt）
 __gqc.dump()           // 状态 + 配置 + 最近 6 帧配额原始响应 + 端点发现环
 copy(JSON.stringify(__gqc.dump(), null, 2))
-__gqc.probeUsage()     // 直连 /usage：状态码、initData 块数、命中块片段、解析结果
+__gqc.probeUsage()     // 直连 /usage：状态码、是否被重定向、initData 块数、命中块片段
+__gqc.report()         // 一键取证：DOM 限额文本 + 端点 + 关键字附近片段
 __gqc.sync()           // 立即同步一次
 __gqc.setDebug(true)   // 打开调试日志
 ```
 
+- `probeUsage()` 返回 Promise：`JSON.stringify(__gqc.probeUsage())` 只会得到 `{}`（旧版排查时踩过这个坑）。现在它会自动 `console.log` 结果并留档到 `__gqc.lastProbe`，直接调用即可。
+- `report()` 是「官方把数字放在哪」的取证入口：先打开 Gemini 自己的限额/用量弹窗、再发一条消息，然后执行它。返回内容只含**关键字附近片段**（每帧 ≤2 条、每页 ≤8 行，单条 ≤200 字符），不落整段会话；同时记录 `/usage` 体检结果、`batchexecute` 的 `rpcId` 列表与端点环。
 - `__gqc.dump().frames` 只保留命中配额关键字的响应帧（每帧截断 24KB），用于确认服务端字段命名是否再次变化。
 - `__gqc.dump().endpoints` 是端点发现环：最近 24 条 URL 命中 `batchexecute` / `usage` / `quota` / `limit` 等的请求（只记 URL、状态码与长度），用来确认配额到底由哪个接口返回。
 - `__gqc.probeUsage()` 是排查「拿不到 5 小时 / 每周用量」的第一步：`blocks` 为 0 说明页面里没有 `AF_initDataCallback`（数据只走 XHR），`blocks > 0` 但 `initHit` 为 false 说明字段结构与解析器不匹配，此时看 `blockHits[].excerpt` 就能核对真实字段名。
@@ -177,6 +180,7 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 
 ## 十、已知限制
 
+- **当前没有已验证的官方数据源。** `GXU_*` 字段、`getUsageInfo.pools`、`/usage` 页面都没有任何一份真实抓包佐证；在拿到真实字段名之前，脚本会如实显示 `--%`，而不是拿 bootstrap blob 里的 `100%` 充数。取证方式见「八、调试」的 `__gqc.report()`。
 - 服务端字段一旦改名（如 `percentageUsed` → 其他拼写），结构化层会失效并回退到置信度更低的启发式；此时请用 `__gqc.dump()` 回传一帧原始响应，并先看 `diagnostics` 判断是「没拦到」还是「拦到了但结构变了」。
 - 百分比若是无方向词的裸数字（既非 `used` 也非 `remaining`），只能按官方页面默认口径「已用」解释；这类来源不会被当成高置信度数据。
 - `/usage` 页面若改为纯前端渲染且不产生可捕获帧，只能依赖 iframe + DOM 文本解析。
@@ -185,6 +189,13 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
 
 ## 十一、版本历史
+
+### v0.8.2
+
+- **确认 `/usage` 页面不存在**：`GET https://gemini.google.com/usage` 会被 302 到 `/app`（未登录实测）。v0.8.1 之前「官方页面」这条通道从来没有产出过真数据，旧版显示的数字全部来自 `WIZ_global_data` 的标签启发式。现在同步会先做重定向体检，跳走就停用该通道，不再解析 app 的 blob。
+- **`probeUsage()` 的 `{}` 是使用姿势问题**：它是 `async`，`JSON.stringify(promise)` 恒为 `{}`。现在结果自动 `console.log` 并留档 `__gqc.lastProbe`，且新增 `redirectedAway` / `note` 字段直接说明通道是否可用。
+- **新增 `__gqc.report()` 取证入口**：采样聊天 `StreamGenerateContent` 响应（旧版在这里直接 `return`，把最可能的数据源排除在外）、`batchexecute` 帧、以及页面里含「限额/剩余/用量」的可见行，只保留关键字附近片段，用来定位官方真实的字段名与 `rpcId`。
+- `__gqc.dump().diagnostics` 新增 `usagePage` 体检结果与 `quotaSnippets` 计数。
 
 ### v0.8.1
 
