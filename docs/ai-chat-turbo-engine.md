@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.13.5**
+当前版本：**0.13.7**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -14,6 +14,7 @@
 - **视口脱水**：对超过保留轮次的旧消息冻结渲染，降低长对话开销
 - **长代码折叠**：超过阈值的助手代码块自动折叠，保留语言与行数
 - **长文本伪文件**：粘贴超长文本时转为悬浮托盘中的"虚拟文件"，发送时合并附加
+- **发送鲁棒性**：多级发送按钮查找 + pointer 序列模拟 + form 兜底提交
 - **上下文交接**：生成结构化纯文本交接包，一键恢复到新对话
 - **会话历史检索**：当前会话全文检索，命中后定位并高亮
 - **原始上下文导出**：把整段对话提取为 Markdown 复制到剪贴板
@@ -122,7 +123,7 @@ ChatGPT 的代码卡片结构较特殊，脚本会向上最多追溯 10 层祖�
 - **预览**：独立弹层，最多展示前 8,000 字符（发送时提交完整全文）
 - **删除**：从托盘移除
 
-#### 输入框变形下的托盘定位（0.13.5）
+#### 输入框变形下的托盘定位
 
 平台原生附件预览插在输入框上方时，会撑高 composer 并上移输入框。为了让伪文件托盘贴合包含原生附件在内的整体视觉上缘，脚本做了以下处理：
 
@@ -132,6 +133,52 @@ ChatGPT 的代码卡片结构较特殊，脚本会向上最多追溯 10 层祖�
 - **位置签名去重**：每帧计算 `left|bottom|width|maxHeight` 组合签名，未变化时不写样式，避免打断 CSS 过渡。
 - **输入框引用缓存**：仅在失效时才走完整 `getChatInput()`，避免每帧全量查询。
 - **`ResizeObserver` 扩展**：同时观察输入框、anchor、以及向上 5 层的祖先及其父节点，覆盖"祖先 wrapper 被附件撑高"的场景。
+
+### 发送按钮查找与触发
+
+0.13.7 引入了完整的"发送意图识别 → 按钮查找 → 事件模拟 → 兜底提交"链路，解决平台改版或按钮不在预期位置时消息发不出去的问题。
+
+#### 多级查找 `findSendControl`
+
+按以下顺序尝试，命中即返回：
+
+1. **平台选择器**：当前平台 `sendButtonSelectors` 中任一选择器命中的可用按钮（且与输入框共享 composer 容器）。
+2. **输入框所在 `form`**：先找 `button[type="submit"]` 与非 `type="button"` 的按钮，再在所有按钮中按 `isSendLikeButton` 过滤。
+3. **composer 容器**：在 `[data-chatgpt-composer]`、`.input-area-container`、`[class*='composer']`、`[class*='input-area']`、`[class*='input-container']`、`[class*='query-bar']`、`rich-textarea`、`fieldset` 中按 `isSendLikeButton` 查找。
+4. **向上 8 层**：从输入框向上遍历最多 8 层祖先，按 `isSendLikeButton` 查找。
+
+`isSendLikeButton` 基于 `aria-label` / `title` / `data-testid` / `data-tooltip` 判断，命中 `send`、`submit`、`发送`、`提交`、`prompt`、`ask`；显式排除 `stop`、`停止`、`cancel`、`abort`、`中止`、`取消`，避免 AI 生成中误触停止按钮。
+
+`isButtonUsable` 还会过滤掉隐藏、零尺寸、以及挂在脚本自身 UI 内的按钮。
+
+#### 事件模拟 `triggerSendButton`
+
+现代前端框架的发送按钮多绑定 `onPointerDown` / `onMouseDown`，直接 `btn.click()` 往往无效。`triggerSendButton` 依次派发：
+
+```
+pointerdown → mousedown → pointerup → mouseup → click
+```
+
+并携带 `bubbles: true, cancelable: true, view: window, button: 0, pointerId: 1, pointerType: "mouse", isPrimary: true`，确保 React 与 Pointer Events 监听都能识别为一次真实点击。
+
+#### 重试与兜底 `sendWithRetry`
+
+以 50ms 间隔最多轮询 **40 次（约 2 秒）**：
+
+1. **前 15 次（约 750ms）**：只接受**可用且未 disabled** 的发送按钮。
+2. **第 16 次起（约 800ms）**：允许命中的按钮处于 `disabled` 或 `aria-disabled="true"`，此时脚本会先 `removeAttribute("disabled")` 并置 `aria-disabled="false"`，再调用 `triggerSendButton`。
+3. **第 40 次兜底 `fallbackKeyboardSubmit`**：先尝试 `form.requestSubmit()`；若无 form 或该方法不可用，则派发带 `keyCode / which = 13` 的 `keydown` + `keyup` Enter 事件。
+
+这套分级策略的目标：绝大多数正常场景在第 1~5 次轮询内命中；输入框受控状态暂未同步导致按钮 disabled 的场景，800ms 后强点成功；完全无法识别按钮的极端场景，通过 form 或键盘事件保底。
+
+#### 发送拦截 `handleSendIntercept`
+
+- **Enter 键**：存在虚拟文件且未处于提交中时，拦截 `Enter`（不含 `Shift`、非输入法组合状态），合并虚拟文件并触发 `sendWithRetry`。
+- **点击**：判断用户是否点击了"发送按钮"时，**不再强制依赖 `isSendControlForInput`**，而是：
+  1. 先用 `currentPlatform.sendButtonSelectors` 做 `closest()` 匹配；
+  2. 未命中时向上最多 4 层，按 `isSendLikeButton` 兜底识别。
+
+  命中即视为发送意图，`preventDefault + stopPropagation` 后合并虚拟文件并触发 `sendWithRetry`。这样即使平台把发送按钮移出了 `form[data-chatgpt-composer]`，或与输入的最近公共祖先超过 5 层，也不会因为 `isSendControlForInput` 返回 false 而"点了没反应"。
 
 ### 上下文交接
 
@@ -242,6 +289,11 @@ ChatGPT 的代码卡片结构较特殊，脚本会向上最多追溯 10 层祖�
 
 两者都通过 requestAnimationFrame 合并到同一入口 `positionVirtualFileTray`，配合位置签名去重，避免重复写入与抖动。
 
+### 输入框写入 `insertTextAtomic`
+
+- **`textarea` / `input`**：使用 `Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype | HTMLInputElement.prototype, "value").set` 调用原生 setter 写入，保证 React 受控组件能感知变化，然后派发 `input` + `change` 事件。
+- **`contenteditable`（ProseMirror 等）**：优先用 `document.createRange()` + `Selection` 选中编辑器全部内容，再 `document.execCommand("insertHTML", ...)` 插入，最后补派一次 `InputEvent`。`execCommand` 失败时回退为 `textContent = text`。相比仅用 `selectAll`，Range 选中在焦点不在编辑器内时更可靠。
+
 ### 失败即回退
 
 凡是涉及改写平台原生结构的操作（代码折叠、新建对话、发送按钮定位、消息回显胶囊）都遵循同一原则：**无法可靠识别目标时不做修改，保持原生行为，并通过状态提示告知用户**。
@@ -259,23 +311,41 @@ ChatGPT 的代码卡片结构较特殊，脚本会向上最多追溯 10 层祖�
 | `contentSelectors` | 助手消息内容容器 |
 | `codeSelectors` | 代码块选择器 |
 | `inputSelectors` | 输入框选择器 |
-| `sendButtonSelectors` | 发送按钮选择器 |
+| `sendButtonSelectors` | 发送按钮选择器（会被 `findSendControl` 优先使用，未命中则走通用兜底） |
+
+`findSendControl` 的通用兜底对所有平台生效，因此新平台未提供精确的 `sendButtonSelectors` 也可能通过 `form` / composer 容器 / 向上 8 层的 `isSendLikeButton` 命中。
 
 ---
 
 ## 已知限制
 
-- 平台前端改版会导致选择器失效，需等待脚本更新。
+- 平台前端改版会导致选择器失效，需等待脚本更新；`findSendControl` 的多级兜底可覆盖部分小规模改版，但无法覆盖彻底重构的 DOM 结构。
 - 脚本不申请 GM 权限，剪贴板写入依赖浏览器授权。
 - 负载环仅按消息数量估算，与模型实际上下文容量无关。
 - 伪文件只覆盖文本粘贴路径，不接管平台原生的图片与文档上传流程。
 - 脱水消息内的交互元素不可点击，命中检索时会临时恢复。
 - 代码折叠与新建对话的自动化在平台结构大改时可能降级为无操作，属于预期行为。
 - 伪文件托盘的 rAF 追踪仅在存在虚拟文件时运行；页面极度繁忙（大量流式输出 + 频繁重排）时，托盘跟随可能出现一帧延迟，属于权衡选择。
+- AI 生成中若平台将发送按钮替换为"停止生成"按钮，脚本会通过 `isSendLikeButton` 的排除规则跳过；请等生成结束后再发送。
 
 ---
 
 ## 版本记录
+
+### 0.13.7
+
+修复 0.13.6 中"点击发送按钮后消息发不出去"的问题。根因是 `handleSendIntercept` 的 click 分支过度依赖 `isSendControlForInput`，以及 `sendWithRetry` 的发送按钮查找缺少兜底。
+
+- **`sendButtonSelectors`（ChatGPT）扩展**：新增 `composer-send-button`、`button[data-testid*="send" i]`、`button[aria-label*="Send prompt" i]`、`button[title*="Send" i]` 等，覆盖新旧结构
+- **新增 `isSendLikeButton`**：基于 `aria-label` / `title` / `data-testid` / `data-tooltip` 识别发送意图，显式排除 `stop` / `取消` 等停止按钮
+- **新增 `isButtonUsable` / `isButtonDisabled`**：统一过滤隐藏、零尺寸、脚本自身 UI 内的按钮，并集中判断 disabled 状态
+- **新增 `findSendControl`**：四级查找（平台选择器 → form → composer 容器 → 向上 8 层），可指定 `allowDisabled` 用于强制点击
+- **新增 `triggerSendButton`**：模拟完整的 `pointerdown → mousedown → pointerup → mouseup → click` 序列，兼容 React `onPointerDown` 与 Pointer Events
+- **新增 `fallbackKeyboardSubmit`**：优先 `form.requestSubmit()`，再派发带 `keyCode / which = 13` 的 `keydown` + `keyup`
+- **重写 `sendWithRetry`**：40 次轮询（约 2 秒），前 15 次只接受可用按钮，第 16 次起允许 disabled 并先清除 disabled 属性再点击，第 40 次走键盘兜底
+- **重写 `handleSendIntercept` 的 click 分支**：选择器未命中时向上 4 层按 `isSendLikeButton` 识别；命中即视为发送意图，不再强制 `isSendControlForInput` 通过
+- **改进 `insertTextAtomic`**：`textarea` / `input` 使用原生 setter 写值以兼容 React 受控组件；`contenteditable` 用 `Range` + `Selection` 选中全部内容，再 `execCommand("insertHTML")`，补派 `InputEvent`
+- **`cleanupAndResume` 后置重置 `isSubmitting`**：避免 `sendWithRetry` 异常导致后续发送永久被锁
 
 ### 0.13.5
 

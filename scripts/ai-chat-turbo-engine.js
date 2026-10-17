@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.13.6
+// @version      0.13.7
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.6";
+  const VERSION = "0.13.7";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -253,13 +253,22 @@
       ],
       sendButtonSelectors: [
         'form[data-chatgpt-composer] button[type="submit"]',
-        'form[data-chatgpt-composer] button[data-testid*="send"]',
-        'form[data-chatgpt-composer] button[aria-label*="Send"]',
+        'form[data-chatgpt-composer] button[data-testid*="send" i]',
+        'form[data-chatgpt-composer] button[aria-label*="Send" i]',
         'form[data-chatgpt-composer] button[aria-label*="发送"]',
+        '[data-chatgpt-composer] button[data-testid*="send" i]',
+        '[data-chatgpt-composer] button[aria-label*="Send" i]',
         'button[data-testid="send-button"]',
         'button[data-testid="fruitjuice-send-button"]',
-        'button[aria-label*="Send"]',
+        'button[data-testid="composer-send-button"]',
+        'button[data-testid*="send-button" i]',
+        'button[data-testid*="send" i]',
+        'button[aria-label="Send prompt"]',
+        'button[aria-label*="Send prompt" i]',
+        'button[aria-label*="Send message" i]',
+        'button[aria-label*="Send" i]',
         'button[aria-label*="发送"]',
+        'button[title*="Send" i]',
         'button[type="submit"]',
       ],
     },
@@ -2439,6 +2448,205 @@
     return false;
   }
 
+  function isSendLikeButton(btn) {
+    if (!(btn instanceof HTMLElement) || btn.tagName !== "BUTTON") return false;
+    const label = [
+      btn.getAttribute("aria-label") || "",
+      btn.getAttribute("title") || "",
+      btn.getAttribute("data-testid") || "",
+      btn.getAttribute("data-tooltip") || "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    // 排除停止/取消类按钮（ChatGPT 生成中会替换发送按钮为"Stop streaming"）
+    if (/\bstop\b|停止|cancel|abort|中止|取消/.test(label)) return false;
+    return /send|submit|发送|提交|prompt|ask/.test(label);
+  }
+
+  function isButtonUsable(btn) {
+    if (!(btn instanceof HTMLElement) || !btn.isConnected) return false;
+    if (
+      btn.closest(`#${HUD_ID}, #ai-turbo-vf-tray, #ai-turbo-vf-preview-modal`)
+    )
+      return false;
+    const style = window.getComputedStyle(btn);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    return btn.getClientRects().length > 0;
+  }
+
+  function isButtonDisabled(btn) {
+    if (!(btn instanceof HTMLElement)) return true;
+    if (btn.hasAttribute("disabled")) return true;
+    if (btn.disabled === true) return true;
+    if (btn.getAttribute("aria-disabled") === "true") return true;
+    return false;
+  }
+
+  /**
+   * 集中查找发送按钮。
+   * 1) 平台选择器
+   * 2) input 所在 form 内的 submit / send-like
+   * 3) input 的 composer 容器内的 send-like
+   * 4) 从 input 向上 8 层内的 send-like
+   */
+  function findSendControl(inputElement, { allowDisabled = false } = {}) {
+    if (!inputElement) return null;
+
+    const usable = (btn) =>
+      isButtonUsable(btn) && (allowDisabled || !isButtonDisabled(btn));
+
+    // 1) 平台选择器
+    for (const sel of currentPlatform.sendButtonSelectors || []) {
+      let matches;
+      try {
+        matches = document.querySelectorAll(sel);
+      } catch (_) {
+        continue;
+      }
+      for (const btn of matches) {
+        if (usable(btn) && isSendControlForInput(btn, inputElement)) {
+          return btn;
+        }
+      }
+    }
+
+    // 2) input 所在 form
+    const form = inputElement.closest("form");
+    if (form) {
+      for (const btn of form.querySelectorAll(
+        'button[type="submit"], button:not([type="button"]):not([type="reset"])',
+      )) {
+        if (usable(btn) && isSendLikeButton(btn)) return btn;
+      }
+      for (const btn of form.querySelectorAll("button")) {
+        if (usable(btn) && isSendLikeButton(btn)) return btn;
+      }
+    }
+
+    // 3) composer 容器
+    const composerSelectors = [
+      "[data-chatgpt-composer]",
+      ".input-area-container",
+      "[class*='composer']",
+      "[class*='input-area']",
+      "[class*='input-container']",
+      "[class*='query-bar']",
+      "rich-textarea",
+      "fieldset",
+    ];
+    for (const sel of composerSelectors) {
+      let container;
+      try {
+        container = inputElement.closest(sel);
+      } catch (_) {}
+      if (!container) continue;
+      for (const btn of container.querySelectorAll("button")) {
+        if (usable(btn) && isSendLikeButton(btn)) return btn;
+      }
+    }
+
+    // 4) 从 input 向上 8 层找
+    let ancestor = inputElement.parentElement;
+    let depth = 0;
+    while (
+      ancestor &&
+      depth < 8 &&
+      ancestor !== document.body &&
+      ancestor !== document.documentElement
+    ) {
+      for (const btn of ancestor.querySelectorAll("button")) {
+        if (usable(btn) && isSendLikeButton(btn)) return btn;
+      }
+      ancestor = ancestor.parentElement;
+      depth++;
+    }
+
+    return null;
+  }
+
+  /** 完整模拟 pointer + mouse 序列，兼容 React onPointerDown / onMouseDown */
+  function triggerSendButton(btn) {
+    if (!(btn instanceof HTMLElement)) return false;
+    try {
+      btn.focus({ preventScroll: true });
+    } catch (_) {}
+
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      button: 0,
+    };
+    try {
+      btn.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          ...opts,
+          buttons: 1,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+        }),
+      );
+    } catch (_) {}
+    try {
+      btn.dispatchEvent(new MouseEvent("mousedown", { ...opts, buttons: 1 }));
+    } catch (_) {}
+    try {
+      btn.dispatchEvent(
+        new PointerEvent("pointerup", {
+          ...opts,
+          buttons: 0,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+        }),
+      );
+    } catch (_) {}
+    try {
+      btn.dispatchEvent(new MouseEvent("mouseup", { ...opts, buttons: 0 }));
+    } catch (_) {}
+    try {
+      btn.click();
+    } catch (_) {
+      return false;
+    }
+    return true;
+  }
+
+  /** 兜底：键盘 Enter + form.requestSubmit */
+  function fallbackKeyboardSubmit(inputElement) {
+    if (!inputElement) return false;
+    try {
+      inputElement.focus({ preventScroll: true });
+    } catch (_) {}
+
+    const form = inputElement.closest("form");
+    if (form && typeof form.requestSubmit === "function") {
+      try {
+        form.requestSubmit();
+        return true;
+      } catch (_) {}
+    }
+
+    const enterOpts = {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    };
+    const enterEvt = new KeyboardEvent("keydown", enterOpts);
+    try {
+      Object.defineProperty(enterEvt, "keyCode", { get: () => 13 });
+      Object.defineProperty(enterEvt, "which", { get: () => 13 });
+    } catch (_) {}
+    inputElement.dispatchEvent(enterEvt);
+    inputElement.dispatchEvent(new KeyboardEvent("keyup", enterOpts));
+    return true;
+  }
+
   function getInputContainer(input) {
     if (!input) return null;
 
@@ -3139,7 +3347,14 @@
       inputElement instanceof HTMLTextAreaElement ||
       inputElement instanceof HTMLInputElement
     ) {
-      inputElement.value = text;
+      // 用原生 setter，确保 React 受控组件能感知变化
+      const proto =
+        inputElement instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) setter.call(inputElement, text);
+      else inputElement.value = text;
       inputElement.dispatchEvent(new Event("input", { bubbles: true }));
       inputElement.dispatchEvent(new Event("change", { bubbles: true }));
       return;
@@ -3147,9 +3362,20 @@
 
     inputElement.focus();
 
-    const singleContainer = `<div style="white-space:pre-wrap;">${escapeHtml(text)}</div>`;
+    // 用 Range 选中整个编辑器内容（比 execCommand("selectAll") 更可靠）
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(inputElement);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    } catch (_) {
+      try {
+        document.execCommand("selectAll", false, null);
+      } catch (_) {}
+    }
 
-    document.execCommand("selectAll", false, null);
+    const singleContainer = `<div style="white-space:pre-wrap;">${escapeHtml(text)}</div>`;
     let success = false;
     try {
       success = document.execCommand("insertHTML", false, singleContainer);
@@ -3159,11 +3385,15 @@
       inputElement.textContent = text;
     }
 
+    // 派发 input 事件；如果 execCommand 成功，ProseMirror 通常已经派发过，
+    // 这里补派一次保证 React 侧同步（幂等）。
     inputElement.dispatchEvent(
       new InputEvent("input", {
         bubbles: true,
         cancelable: true,
+        composed: true,
         inputType: "insertFromPaste",
+        data: text,
       }),
     );
     inputElement.dispatchEvent(new Event("change", { bubbles: true }));
@@ -3207,69 +3437,43 @@
 
   function sendWithRetry(inputElement, onComplete) {
     let attempts = 0;
-    const maxAttempts = 30;
+    const maxAttempts = 40; // 50ms * 40 ≈ 2000ms
+    let forcedSubmitTried = false;
 
     const timer = setInterval(() => {
       attempts++;
 
-      let sendBtn = null;
-      for (const sel of currentPlatform.sendButtonSelectors || []) {
-        const candidates = document.querySelectorAll(sel);
-        for (const btn of candidates) {
-          if (
-            btn instanceof HTMLElement &&
-            btn.isConnected &&
-            (btn.offsetParent !== null || btn.getClientRects().length > 0) &&
-            isSendControlForInput(btn, inputElement) &&
-            !btn.hasAttribute("disabled") &&
-            btn.getAttribute("aria-disabled") !== "true"
-          ) {
-            sendBtn = btn;
-            break;
-          }
-        }
-        if (sendBtn) break;
-      }
-
+      // 第一轮：只接受可用的发送按钮
+      const sendBtn = findSendControl(inputElement);
       if (sendBtn) {
         clearInterval(timer);
-        sendBtn.click();
+        triggerSendButton(sendBtn);
         cleanupAndResume(onComplete, true);
         return;
       }
 
-      if (attempts >= 8) {
-        for (const sel of currentPlatform.sendButtonSelectors || []) {
-          const btn = document.querySelector(sel);
-          if (
-            btn instanceof HTMLElement &&
-            btn.isConnected &&
-            (btn.offsetParent !== null || btn.getClientRects().length > 0) &&
-            isSendControlForInput(btn, inputElement)
-          ) {
-            clearInterval(timer);
-            btn.removeAttribute("disabled");
-            btn.setAttribute("aria-disabled", "false");
-            btn.click();
-            cleanupAndResume(onComplete, true);
-            return;
-          }
+      // 约 800ms 后：允许 disabled 按钮，尝试强行点击
+      if (attempts >= 16 && !forcedSubmitTried) {
+        const disabledBtn = findSendControl(inputElement, {
+          allowDisabled: true,
+        });
+        if (disabledBtn) {
+          forcedSubmitTried = true;
+          clearInterval(timer);
+          try {
+            disabledBtn.removeAttribute("disabled");
+            disabledBtn.setAttribute("aria-disabled", "false");
+          } catch (_) {}
+          triggerSendButton(disabledBtn);
+          cleanupAndResume(onComplete, true);
+          return;
         }
       }
 
+      // 最终兜底
       if (attempts >= maxAttempts) {
         clearInterval(timer);
-        if (inputElement) {
-          inputElement.dispatchEvent(
-            new KeyboardEvent("keydown", {
-              key: "Enter",
-              code: "Enter",
-              keyCode: 13,
-              which: 13,
-              bubbles: true,
-            }),
-          );
-        }
+        fallbackKeyboardSubmit(inputElement);
         cleanupAndResume(onComplete, false);
       }
     }, 50);
@@ -3315,14 +3519,39 @@
       const eventTarget = event.target;
       if (!(eventTarget instanceof Element)) return;
 
-      const sendControl = eventTarget.closest(
-        (currentPlatform.sendButtonSelectors || []).join(","),
-      );
+      // 1) 选择器匹配
+      let sendControl = null;
+      try {
+        sendControl = eventTarget.closest(
+          (currentPlatform.sendButtonSelectors || []).join(","),
+        );
+      } catch (_) {}
+
+      // 2) 兜底：向上 4 层按 aria-label / title / data-testid 识别
+      if (!sendControl) {
+        let node = eventTarget;
+        let depth = 0;
+        while (node && depth < 4 && node !== document.body) {
+          if (
+            node instanceof HTMLElement &&
+            node.tagName === "BUTTON" &&
+            isSendLikeButton(node)
+          ) {
+            sendControl = node;
+            break;
+          }
+          node = node.parentElement;
+          depth++;
+        }
+      }
+
       if (!sendControl) return;
 
       const input = getChatInput();
-      if (!input || !isSendControlForInput(sendControl, input)) return;
+      if (!input) return;
 
+      // 用户点击了发送按钮本身就是"发送意图"，
+      // 不再强依赖 isSendControlForInput，避免误判导致消息发不出去。
       event.preventDefault();
       event.stopPropagation();
       isSubmitting = true;
