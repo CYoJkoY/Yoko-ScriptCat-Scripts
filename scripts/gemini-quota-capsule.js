@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.0
-// @description  专为 Google Gemini 定制的超薄细长条用量监控胶囊：原生 DOM 构造免疫 CSP Trusted Types，后台直连官方 /usage 实时同步 5H 与 7D 双维真实用量及重置时间，支持横条、圆环、圆盘、晶体崩坏 4 种形态。
+// @version      0.5.0
+// @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，24px 超薄细长条同屏显示 5H 与 7D 真实用量及官方重置时间。
 // @author       Yoko
 // @match        https://gemini.google.com/*
 // @match        https://bard.google.com/*
@@ -19,19 +19,16 @@
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
-  const STORAGE_KEY_CFG = "__gemini_quota_capsule_cfg_v4__";
-  const STORAGE_KEY_SHARED_DATA = "__gemini_quota_shared_metrics_v4__";
-  const STORAGE_KEY_LOCAL_LOGS = "__gemini_quota_local_timestamps_v4__";
+  const STORAGE_KEY_CFG = "__gemini_quota_capsule_cfg_v5__";
+  const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v5__";
 
   const TIME_5H_MS = 5 * 60 * 60 * 1000;
   const TIME_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-  const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000; // 每 3 分钟自动静默同步一次官方数据
+  const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000;
 
   const DEFAULT_CONFIG = {
-    limit5h: 50,
-    limitWeekly: 500,
-    styleMode: "decay", // 'decay' | 'bar' | 'ring' | 'disk'
-    pos: { right: 24, bottom: 82 },
+    styleMode: "bar", // 'bar' | 'ring' | 'disk' | 'decay'
+    pos: { right: 20, bottom: 78 },
   };
 
   function loadConfig() {
@@ -62,14 +59,14 @@
     try {
       localStorage.setItem(STORAGE_KEY_CFG, JSON.stringify(cfg));
     } catch (err) {
-      console.warn("[Gemini Quota] 配置保存失败:", err);
+      console.warn("[Gemini Quota] 保存配置失败:", err);
     }
   }
 
   const config = loadConfig();
 
   // =========================================================================
-  // 2. 纯原生 DOM 构造器（严格零 innerHTML，完全免疫 CSP Trusted Types）
+  // 2. 纯原生 DOM 构造器（零 innerHTML，完全兼容 CSP Trusted Types）
   // =========================================================================
   function el(tag, attrs = {}, children = []) {
     const elem = document.createElement(tag);
@@ -114,104 +111,109 @@
   }
 
   // =========================================================================
-  // 3. 官方重置时间与用量解析引擎（杜绝任何硬编码假时间）
+  // 3. 官方配额状态机与数据解析器（Voyager usage-observer 核心逻辑）
   // =========================================================================
-  const usageState = {
-    isOfficial: false,
+  const quotaState = {
+    source: "init", // 'init' | 'rpc' | 'usage-page' | 'cache' | 'error'
     isSyncing: false,
     lastSyncTime: 0,
-    lastSyncError: "",
-    fiveHour: { pct: null, refreshAt: null, rawResetText: "" },
-    weekly: { pct: null, refreshAt: null, rawResetText: "" },
+    lastError: "",
+    fiveHour: {
+      pct: null, // 0 ~ 100
+      used: null,
+      limit: null,
+      resetAt: null, // 真实官方重置时间戳 (ms)
+      rawResetText: "",
+    },
+    weekly: {
+      pct: null, // 0 ~ 100
+      used: null,
+      limit: null,
+      resetAt: null, // 真实官方重置时间戳 (ms)
+      rawResetText: "",
+    },
+    // 保存捕获到的官方配额 batchexecute RPC 请求模板，支持点击刷新时毫秒级重放
+    capturedQuotaRpc: null,
   };
 
-  /**
-   * 获取当前账号对应的官方 /usage 路径（兼容 /u/0/, /u/1/ 多账号路由）
-   */
+  function getAccountPrefix() {
+    const match = window.location.pathname.match(/^(\/u\/\d+)\b/);
+    return match ? match[1] : "";
+  }
+
   function getOfficialUsageUrl() {
-    const pathMatch = window.location.pathname.match(/^(\/u\/\d+)\b/);
-    const prefix = pathMatch ? pathMatch[1] : "";
-    return `${window.location.origin}${prefix}/usage`;
+    return `${window.location.origin}${getAccountPrefix()}/usage`;
   }
 
   /**
-   * 从官方描述文本中解析真实的重置时间戳（毫秒）
-   * 支持：
-   * 1. 相对时长："Resets in 3 hr 24 min" / "3 小时 20 分钟后重置" / "4 days 12 hr" / "4 天 12 小时后重置" / "3 時間 24 分後"
-   * 2. 绝对时刻："Resets at 4:30 PM" / "将于 16:30 重置" / "将于明天 09:15 重置" / "Resets Oct 21, 9:00 AM"
+   * 从官方自然语言重置提示中还原真实重置时间戳（毫秒）
+   * 绝不使用任何硬编码假偏移量
    */
-  function parseRealResetTimestamp(text, nowMs = Date.now()) {
+  function parseOfficialResetTextToTimestamp(text, nowMs = Date.now()) {
     if (!text || typeof text !== "string") return null;
-    const normalized = text.replace(/\s+/g, " ").trim();
+    const clean = text.replace(/\s+/g, " ").trim();
 
-    // A. 解析相对时间（天 / 小时 / 分钟 / 秒）
-    const hasRelativeCue =
+    // 1. 相对倒计时格式：例如 "Resets in 3 hr 12 min" / "3 小时 12 分钟后重置" / "4 days 6 hr" / "4 天 6 小时后重置"
+    const hasRelativeKeyword =
       /(?:reset(?:s|ting)?\s+in|in\s+\d|后重置|後重置|重置于|剩余|後にリセット|あと)/i.test(
-        normalized,
+        clean,
       ) ||
-      /(?:\d+\s*(?:d|day|days|天|日|h|hr|hrs|hour|hours|小时|小時|時|時間|m|min|mins|minute|minutes|分钟|分鐘|分)\b)/i.test(
-        normalized,
+      /(?:\d+\s*(?:d|day|days|天|日|h|hr|hrs|hour|hours|小时|小時|時間|m|min|mins|minute|minutes|分钟|分鐘|分)\b)/i.test(
+        clean,
       );
 
-    if (hasRelativeCue) {
-      const dayMatch = normalized.match(
+    if (hasRelativeKeyword) {
+      const dayMatch = clean.match(
         /(\d+(?:\.\d+)?)\s*(?:days?|d\b|天|日(?![期曜]))/i,
       );
-      const hourMatch = normalized.match(
+      const hrMatch = clean.match(
         /(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h\b|个?小时|個?小時|時間)/i,
       );
-      const minMatch = normalized.match(
+      const minMatch = clean.match(
         /(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m\b|分钟|分鐘|分(?!钟|鐘|析|辨))/i,
       );
-      const secMatch = normalized.match(
+      const secMatch = clean.match(
         /(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s\b|秒)/i,
       );
 
-      if (dayMatch || hourMatch || minMatch || secMatch) {
-        const days = dayMatch ? parseFloat(dayMatch[1]) : 0;
-        const hours = hourMatch ? parseFloat(hourMatch[1]) : 0;
-        const mins = minMatch ? parseFloat(minMatch[1]) : 0;
-        const secs = secMatch ? parseFloat(secMatch[1]) : 0;
-        const deltaMs = ((days * 24 + hours) * 3600 + mins * 60 + secs) * 1000;
+      if (dayMatch || hrMatch || minMatch || secMatch) {
+        const d = dayMatch ? parseFloat(dayMatch[1]) : 0;
+        const h = hrMatch ? parseFloat(hrMatch[1]) : 0;
+        const m = minMatch ? parseFloat(minMatch[1]) : 0;
+        const s = secMatch ? parseFloat(secMatch[1]) : 0;
+        const deltaMs = ((d * 24 + h) * 3600 + m * 60 + s) * 1000;
         if (deltaMs > 0 && deltaMs <= 14 * 24 * 3600 * 1000) {
           return Math.round(nowMs + deltaMs);
         }
       }
     }
 
-    // B. 解析绝对时钟时刻（例如 "Resets at 4:30 PM", "将于明天 14:20 重置", "明日 09:00"）
-    const clockMatch = normalized.match(
+    // 2. 绝对时刻格式：例如 "Resets at 5:30 PM" / "将于明天 14:00 重置"
+    const clockMatch = clean.match(
       /(?:(tomorrow|明天|明日|today|今天|今日)\s*)?(?:at\s*|于\s*|於\s*)?(上午|下午|早上|晚上|凌晨)?\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i,
     );
     if (clockMatch) {
-      const dayHint = (clockMatch[1] || "").toLowerCase();
-      const cnMeridiem = clockMatch[2] || "";
-      let hours = parseInt(clockMatch[3], 10);
-      const minutes = parseInt(clockMatch[4], 10);
-      const enMeridiem = (clockMatch[5] || "").toUpperCase();
+      const dayWord = (clockMatch[1] || "").toLowerCase();
+      const cnHalf = clockMatch[2] || "";
+      let hr = parseInt(clockMatch[3], 10);
+      const mn = parseInt(clockMatch[4], 10);
+      const enHalf = (clockMatch[5] || "").toUpperCase();
 
-      if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      if (hr >= 0 && hr <= 23 && mn >= 0 && mn <= 59) {
         if (
-          (enMeridiem === "PM" ||
-            cnMeridiem === "下午" ||
-            cnMeridiem === "晚上") &&
-          hours < 12
+          (enHalf === "PM" || cnHalf === "下午" || cnHalf === "晚上") &&
+          hr < 12
         ) {
-          hours += 12;
-        } else if (
-          (enMeridiem === "AM" || cnMeridiem === "凌晨") &&
-          hours === 12
-        ) {
-          hours = 0;
+          hr += 12;
+        } else if ((enHalf === "AM" || cnHalf === "凌晨") && hr === 12) {
+          hr = 0;
         }
-
         const target = new Date(nowMs);
-        target.setHours(hours, minutes, 0, 0);
-
+        target.setHours(hr, mn, 0, 0);
         if (
-          dayHint === "tomorrow" ||
-          dayHint === "明天" ||
-          dayHint === "明日"
+          dayWord === "tomorrow" ||
+          dayWord === "明天" ||
+          dayWord === "明日"
         ) {
           target.setDate(target.getDate() + 1);
         } else if (target.getTime() <= nowMs) {
@@ -221,308 +223,568 @@
       }
     }
 
-    // C. 解析月日日期（如 "10月21日 09:00"）
-    const cnDateMatch = normalized.match(
-      /(\d{1,2})\s*月\s*(\d{1,2})\s*日[^\d]{0,10}?(?:(\d{1,2}):(\d{2}))?/,
-    );
-    if (cnDateMatch) {
-      const now = new Date(nowMs);
-      const month = parseInt(cnDateMatch[1], 10) - 1;
-      const day = parseInt(cnDateMatch[2], 10);
-      const hr = cnDateMatch[3] ? parseInt(cnDateMatch[3], 10) : 0;
-      const mn = cnDateMatch[4] ? parseInt(cnDateMatch[4], 10) : 0;
-      const candidate = new Date(now.getFullYear(), month, day, hr, mn, 0, 0);
-      if (candidate.getTime() < nowMs - 24 * 3600 * 1000) {
-        candidate.setFullYear(candidate.getFullYear() + 1);
-      }
-      if (candidate.getTime() > nowMs) {
-        return candidate.getTime();
-      }
-    }
-
     return null;
   }
 
   /**
-   * 从单个文本块或 DOM 卡片文本中提取百分比和真实重置时间
+   * 递归扫描 Google batchexecute (wrb.fr) 或 AF_initDataCallback 的嵌套数组结构，
+   * 识别包含 5小时 (18000s) / 7天 (604800s) 窗口、百分比或重置时间戳的官方配额元组
    */
-  function extractMetricFromSegment(segmentText, nowMs) {
-    if (!segmentText) return null;
-    const pctMatch = segmentText.match(/(\d{1,3})\s*%/);
+  function extractQuotaFromWizStructure(rootData, nowMs = Date.now()) {
+    if (!rootData || typeof rootData !== "object") return null;
+
+    let found5h = null;
+    let found7d = null;
+
+    const minValidResetSec = Math.floor(nowMs / 1000) - 60;
+    const maxValidResetSec = Math.floor(nowMs / 1000) + 10 * 86400;
+
+    function normalizeTimestampToMs(val) {
+      if (typeof val === "number" && Number.isFinite(val)) {
+        // 秒级时间戳 (例如 1776xxxxxx)
+        if (val >= minValidResetSec && val <= maxValidResetSec) {
+          return Math.round(val * 1000);
+        }
+        // 毫秒级时间戳
+        if (val >= minValidResetSec * 1000 && val <= maxValidResetSec * 1000) {
+          return Math.round(val);
+        }
+      }
+      if (typeof val === "string" && /^\d{10,13}$/.test(val)) {
+        return normalizeTimestampToMs(Number(val));
+      }
+      // Google Protobuf Timestamp tuple: [seconds, nanos]
+      if (
+        Array.isArray(val) &&
+        val.length >= 1 &&
+        typeof val[0] === "number" &&
+        val[0] >= minValidResetSec &&
+        val[0] <= maxValidResetSec &&
+        (val.length === 1 || typeof val[1] === "number")
+      ) {
+        return Math.round(val[0] * 1000);
+      }
+      return null;
+    }
+
+    function walk(node, depth = 0) {
+      if (depth > 14 || !node) return;
+
+      if (typeof node === "string") {
+        // 若字符串本身是嵌套 JSON 数组，尝试解包
+        const trimmed = node.trim();
+        if (
+          (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+          (trimmed.startsWith("{") && trimmed.endsWith("}"))
+        ) {
+          try {
+            walk(JSON.parse(trimmed), depth + 1);
+          } catch {
+            // 忽略非合法 JSON
+          }
+        }
+        return;
+      }
+
+      if (Array.isArray(node)) {
+        // 检查当前数组是否直接表达了一个配额窗口元组
+        const flatStrings = node.filter((x) => typeof x === "string").join(" ");
+        const has5hLabel =
+          /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|18000)/i.test(
+            flatStrings,
+          ) || node.includes(18000);
+        const has7dLabel =
+          /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間|604800)/i.test(
+            flatStrings,
+          ) || node.includes(604800);
+
+        if (has5hLabel || has7dLabel) {
+          let pct = null;
+          let resetAt = null;
+
+          for (const item of node) {
+            const ts = normalizeTimestampToMs(item);
+            if (ts && !resetAt) {
+              resetAt = ts;
+            } else if (
+              typeof item === "number" &&
+              item >= 0 &&
+              item <= 100 &&
+              pct === null &&
+              item !== 5 &&
+              item !== 7
+            ) {
+              pct = Math.round(item);
+            } else if (typeof item === "string") {
+              const mPct = item.match(/(\d{1,3})\s*%/);
+              if (mPct && pct === null) {
+                pct = Math.min(100, parseInt(mPct[1], 10));
+              }
+              const parsedTs = parseOfficialResetTextToTimestamp(item, nowMs);
+              if (parsedTs && !resetAt) {
+                resetAt = parsedTs;
+              }
+            }
+          }
+
+          if (pct !== null) {
+            if (has5hLabel && !has7dLabel && !found5h) {
+              found5h = { pct, resetAt, rawResetText: "" };
+            } else if (has7dLabel && !has5hLabel && !found7d) {
+              found7d = { pct, resetAt, rawResetText: "" };
+            }
+          }
+        }
+
+        for (const child of node) {
+          walk(child, depth + 1);
+        }
+        return;
+      }
+
+      if (typeof node === "object") {
+        for (const val of Object.values(node)) {
+          walk(val, depth + 1);
+        }
+      }
+    }
+
+    walk(rootData, 0);
+    if (!found5h && !found7d) return null;
+
+    return {
+      timestamp: nowMs,
+      fiveHour: found5h,
+      weekly: found7d,
+    };
+  }
+
+  /**
+   * 解析 Google batchexecute 的 `)]}'` 多帧响应体，提取所有 `wrb.fr` 载荷
+   */
+  function parseBatchExecuteResponse(rawText) {
+    if (!rawText || typeof rawText !== "string") return [];
+    const results = [];
+    const stripped = rawText.replace(/^\)\]\}'\s*/, "");
+    const lines = stripped.split(/\r?\n/);
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("[")) continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (!Array.isArray(parsed)) continue;
+        for (const entry of parsed) {
+          if (
+            Array.isArray(entry) &&
+            entry[0] === "wrb.fr" &&
+            typeof entry[1] === "string" &&
+            typeof entry[2] === "string"
+          ) {
+            const rpcId = entry[1];
+            try {
+              const payload = JSON.parse(entry[2]);
+              results.push({ rpcId, payload });
+            } catch {
+              // 忽略非 JSON 载荷
+            }
+          }
+        }
+      } catch {
+        // 忽略长度行或分片残余
+      }
+    }
+    return results;
+  }
+
+  /**
+   * 从单个文本片段（如 /usage 的卡片文本）提取百分比和真实重置时间
+   */
+  function extractMetricFromCardText(cardText, windowType, nowMs) {
+    if (!cardText) return null;
+    const pctMatch = cardText.match(/(\d{1,3})\s*%/);
     if (!pctMatch) return null;
 
     const pct = Math.min(100, Math.max(0, parseInt(pctMatch[1], 10)));
+    const stripWindowPattern =
+      windowType === "5h"
+        ? /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour)/gi
+        : /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/gi;
 
-    // 优先截取包含 reset / 重置 / リセット 的行或子句来解析时间，避免把 "5 hours" / "7 days" 标题本身误判为剩余时间
-    const lines = segmentText
+    const lines = cardText
       .split(/[\r\n]+/)
       .map((l) => l.trim())
       .filter(Boolean);
 
-    let refreshAt = null;
+    let resetAt = null;
     let rawResetText = "";
 
     for (const line of lines) {
       if (/(?:reset|重置|刷新|恢复|剩余|後|あと|available|可用)/i.test(line)) {
-        // 剔除标题中的 "5-hour" / "5 小时" / "7-day" / "7 天" 本身再解析
-        const cleanedLine = line
-          .replace(/(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間))/gi, "")
-          .replace(/(?:7\s*-?\s*(?:day|d|天|日)|weekly|每周|每週)/gi, "");
-        const parsedTs = parseRealResetTimestamp(cleanedLine, nowMs);
-        if (parsedTs) {
-          refreshAt = parsedTs;
+        const cleanedLine = line.replace(stripWindowPattern, "");
+        const ts = parseOfficialResetTextToTimestamp(cleanedLine, nowMs);
+        if (ts) {
+          resetAt = ts;
           rawResetText = line;
           break;
         }
       }
     }
 
-    // 若按行未匹配到，对剔除掉窗口名后的整段文本做二次扫描
-    if (!refreshAt) {
-      const strippedSegment = segmentText
-        .replace(/(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間))/gi, "")
-        .replace(/(?:7\s*-?\s*(?:day|d|天|日)|weekly|每周|每週)/gi, "");
-      refreshAt = parseRealResetTimestamp(strippedSegment, nowMs);
+    if (!resetAt) {
+      const cleanedAll = cardText.replace(stripWindowPattern, "");
+      resetAt = parseOfficialResetTextToTimestamp(cleanedAll, nowMs);
     }
 
-    return { pct, refreshAt, rawResetText };
+    return { pct, resetAt, rawResetText };
   }
 
   /**
-   * 从完整的 /usage 文档（真实 DOM 或 HTML 解析文档）中提取 5H 与 7D 官方指标
+   * 从官方 /usage 页面 DOM 或 HTML 中提取 5H 与 7D 数据
    */
-  function parseOfficialUsageDocument(doc) {
-    if (!doc || !doc.body) return null;
+  function parseUsageDocument(doc, rawHtml = "") {
     const nowMs = Date.now();
-    const fullText = doc.body.innerText || doc.body.textContent || "";
-    if (!fullText || fullText.trim().length < 10) return null;
-
     let fiveHour = null;
     let weekly = null;
 
-    // 1. 先尝试通过 DOM 卡片/容器节点精确分离 5H 卡片和 7D 卡片
-    const candidateNodes = Array.from(
-      doc.querySelectorAll(
-        "section, article, [role='region'], .usage-card, [class*='card'], [class*='quota'], [class*='limit'], [class*='metric'], div",
-      ),
-    );
-
-    const fiveKeyRegex =
-      /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour)/i;
-    const weekKeyRegex =
-      /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i;
-
-    for (const node of candidateNodes) {
-      const t = (node.innerText || node.textContent || "").trim();
-      if (t.length < 6 || t.length > 450) continue;
-
-      const has5h = fiveKeyRegex.test(t);
-      const has7d = weekKeyRegex.test(t);
-
-      // 仅当该容器独立描述其中一个窗口且含百分比或 progressbar 时提取
-      if (has5h && !has7d && !fiveHour) {
-        const metric = extractMetricFromSegment(t, nowMs);
-        if (metric !== null) {
-          fiveHour = metric;
-        } else {
-          const bar = node.querySelector("[aria-valuenow]");
-          if (bar) {
-            const val = parseFloat(bar.getAttribute("aria-valuenow") || "");
-            if (!Number.isNaN(val)) {
-              fiveHour = {
-                pct: Math.round(val),
-                refreshAt: parseRealResetTimestamp(
-                  t.replace(fiveKeyRegex, ""),
-                  nowMs,
-                ),
-                rawResetText: "",
-              };
+    // 1. 先检查 HTML 内的 AF_initDataCallback / WIZ_global_data 脚本块
+    if (rawHtml) {
+      const initCallbackRegex =
+        /AF_initDataCallback\s*\(\s*\{[^]*?data\s*:\s*(\[[^]*?\])\s*(?:,\s*sideChannel|\}\s*\))/g;
+      let match;
+      while ((match = initCallbackRegex.exec(rawHtml)) !== null) {
+        try {
+          const dataArr = JSON.parse(match[1]);
+          const wizExtracted = extractQuotaFromWizStructure(dataArr, nowMs);
+          if (wizExtracted) {
+            if (wizExtracted.fiveHour && !fiveHour) {
+              fiveHour = wizExtracted.fiveHour;
+            }
+            if (wizExtracted.weekly && !weekly) {
+              weekly = wizExtracted.weekly;
             }
           }
-        }
-      } else if (has7d && !has5h && !weekly) {
-        const metric = extractMetricFromSegment(t, nowMs);
-        if (metric !== null) {
-          weekly = metric;
-        } else {
-          const bar = node.querySelector("[aria-valuenow]");
-          if (bar) {
-            const val = parseFloat(bar.getAttribute("aria-valuenow") || "");
-            if (!Number.isNaN(val)) {
-              weekly = {
-                pct: Math.round(val),
-                refreshAt: parseRealResetTimestamp(
-                  t.replace(weekKeyRegex, ""),
-                  nowMs,
-                ),
-                rawResetText: "",
-              };
-            }
-          }
+        } catch {
+          // 继续尝试 DOM 提取
         }
       }
     }
 
-    // 2. 如果 DOM 节点未分离出，则按关键字窗口切片全文进行提取
-    if (!fiveHour) {
-      const idx5 = fullText.search(fiveKeyRegex);
-      if (idx5 !== -1) {
-        const slice5 = fullText.slice(Math.max(0, idx5 - 40), idx5 + 260);
-        fiveHour = extractMetricFromSegment(slice5, nowMs);
+    if (doc && doc.body) {
+      const fiveRegex =
+        /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour)/i;
+      const weekRegex =
+        /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i;
+
+      // 2. 遍历独立卡片容器精准提取
+      const blocks = Array.from(
+        doc.querySelectorAll(
+          "section, article, [role='region'], [class*='card'], [class*='quota'], [class*='usage'], [class*='limit'], div",
+        ),
+      );
+
+      for (const node of blocks) {
+        const txt = (node.innerText || node.textContent || "").trim();
+        if (txt.length < 5 || txt.length > 420) continue;
+
+        const is5h = fiveRegex.test(txt);
+        const is7d = weekRegex.test(txt);
+
+        if (is5h && !is7d && !fiveHour) {
+          const m = extractMetricFromCardText(txt, "5h", nowMs);
+          if (m) fiveHour = m;
+        } else if (is7d && !is5h && !weekly) {
+          const m = extractMetricFromCardText(txt, "7d", nowMs);
+          if (m) weekly = m;
+        }
       }
-    }
-    if (!weekly) {
-      const idx7 = fullText.search(weekKeyRegex);
-      if (idx7 !== -1) {
-        const slice7 = fullText.slice(Math.max(0, idx7 - 40), idx7 + 260);
-        weekly = extractMetricFromSegment(slice7, nowMs);
+
+      // 3. 若未匹配到独立容器，对全文按关键字切片提取
+      const fullText = doc.body.innerText || doc.body.textContent || "";
+      if (!fiveHour) {
+        const idx5 = fullText.search(fiveRegex);
+        if (idx5 !== -1) {
+          fiveHour = extractMetricFromCardText(
+            fullText.slice(Math.max(0, idx5 - 30), idx5 + 240),
+            "5h",
+            nowMs,
+          );
+        }
+      }
+      if (!weekly) {
+        const idx7 = fullText.search(weekRegex);
+        if (idx7 !== -1) {
+          weekly = extractMetricFromCardText(
+            fullText.slice(Math.max(0, idx7 - 30), idx7 + 240),
+            "7d",
+            nowMs,
+          );
+        }
       }
     }
 
     if (!fiveHour && !weekly) return null;
-
     return {
       timestamp: nowMs,
-      fiveHour: fiveHour || { pct: null, refreshAt: null, rawResetText: "" },
-      weekly: weekly || { pct: null, refreshAt: null, rawResetText: "" },
+      fiveHour,
+      weekly,
     };
   }
 
   /**
-   * 尝试从 HTML 源码内嵌的 AF_initDataCallback / WIZ JSON 数据中提取百分比与重置时间戳
+   * 将提取到的官方配额写入状态并持久化到跨标签页缓存
    */
-  function parseOfficialUsageFromRawHtml(htmlText) {
-    if (!htmlText || typeof htmlText !== "string") return null;
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlText, "text/html");
-      const fromDom = parseOfficialUsageDocument(doc);
-      if (fromDom) return fromDom;
-    } catch {
-      // 忽略 DOMParser 异常，继续尝试文本正则
-    }
-
-    // 扫描脚本内嵌数据中的时间戳（秒级 17xxxxxxxxx 或毫秒级）与百分比
-    const nowMs = Date.now();
-    const fiveMatch = htmlText.match(
-      /(?:5\s*-?\s*hour|5\s*小时)[^%]{0,120}?(\d{1,3})\s*%/i,
-    );
-    const weekMatch = htmlText.match(
-      /(?:7\s*-?\s*day|weekly|每周|7\s*天)[^%]{0,120}?(\d{1,3})\s*%/i,
-    );
-
-    if (!fiveMatch && !weekMatch) return null;
-
-    return {
-      timestamp: nowMs,
-      fiveHour: {
-        pct: fiveMatch ? parseInt(fiveMatch[1], 10) : null,
-        refreshAt: fiveMatch
-          ? parseRealResetTimestamp(fiveMatch[0], nowMs)
-          : null,
-        rawResetText: "",
-      },
-      weekly: {
-        pct: weekMatch ? parseInt(weekMatch[1], 10) : null,
-        refreshAt: weekMatch
-          ? parseRealResetTimestamp(weekMatch[0], nowMs)
-          : null,
-        rawResetText: "",
-      },
-    };
-  }
-
-  // =========================================================================
-  // 4. 后台主动同步机制（Fetch + 同源隐藏 Iframe 实时渲染探针）
-  // =========================================================================
-  let hiddenProbeIframe = null;
-  let syncPromise = null;
-
-  function applyOfficialPayload(payload, persistToStorage = true) {
-    if (!payload || typeof payload !== "object") return false;
-    const has5h = payload.fiveHour && typeof payload.fiveHour.pct === "number";
-    const has7d = payload.weekly && typeof payload.weekly.pct === "number";
+  function commitOfficialQuota(extracted, sourceTag, saveStorage = true) {
+    if (!extracted) return false;
+    const has5h =
+      extracted.fiveHour && typeof extracted.fiveHour.pct === "number";
+    const has7d = extracted.weekly && typeof extracted.weekly.pct === "number";
     if (!has5h && !has7d) return false;
 
     if (has5h) {
-      usageState.fiveHour = {
-        pct: payload.fiveHour.pct,
-        refreshAt: payload.fiveHour.refreshAt || null,
-        rawResetText: payload.fiveHour.rawResetText || "",
+      quotaState.fiveHour = {
+        pct: extracted.fiveHour.pct,
+        used: extracted.fiveHour.used ?? null,
+        limit: extracted.fiveHour.limit ?? null,
+        resetAt: extracted.fiveHour.resetAt || null,
+        rawResetText: extracted.fiveHour.rawResetText || "",
       };
     }
     if (has7d) {
-      usageState.weekly = {
-        pct: payload.weekly.pct,
-        refreshAt: payload.weekly.refreshAt || null,
-        rawResetText: payload.weekly.rawResetText || "",
+      quotaState.weekly = {
+        pct: extracted.weekly.pct,
+        used: extracted.weekly.used ?? null,
+        limit: extracted.weekly.limit ?? null,
+        resetAt: extracted.weekly.resetAt || null,
+        rawResetText: extracted.weekly.rawResetText || "",
       };
     }
 
-    usageState.lastSyncTime = payload.timestamp || Date.now();
-    usageState.isOfficial = true;
-    usageState.lastSyncError = "";
+    quotaState.source = sourceTag;
+    quotaState.lastSyncTime = extracted.timestamp || Date.now();
+    quotaState.lastError = "";
 
-    if (persistToStorage) {
+    if (saveStorage) {
       try {
         localStorage.setItem(
-          STORAGE_KEY_SHARED_DATA,
+          STORAGE_KEY_OFFICIAL_CACHE,
           JSON.stringify({
-            timestamp: usageState.lastSyncTime,
-            fiveHour: usageState.fiveHour,
-            weekly: usageState.weekly,
+            timestamp: quotaState.lastSyncTime,
+            source: sourceTag,
+            fiveHour: quotaState.fiveHour,
+            weekly: quotaState.weekly,
           }),
         );
       } catch {
-        // 忽略存储配额异常
+        // 忽略存储异常
       }
     }
+
+    updateUI();
     return true;
   }
 
-  function loadSharedOfficialData() {
+  function restoreCachedOfficialQuota() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY_SHARED_DATA);
+      const raw = localStorage.getItem(STORAGE_KEY_OFFICIAL_CACHE);
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return;
 
-      // 校验并清理已过期的官方重置时间
       const now = Date.now();
       if (
         parsed.fiveHour &&
-        parsed.fiveHour.refreshAt &&
-        parsed.fiveHour.refreshAt <= now
+        parsed.fiveHour.resetAt &&
+        parsed.fiveHour.resetAt <= now
       ) {
         parsed.fiveHour.pct = 0;
-        parsed.fiveHour.refreshAt = null;
+        parsed.fiveHour.resetAt = null;
       }
       if (
         parsed.weekly &&
-        parsed.weekly.refreshAt &&
-        parsed.weekly.refreshAt <= now
+        parsed.weekly.resetAt &&
+        parsed.weekly.resetAt <= now
       ) {
         parsed.weekly.pct = 0;
-        parsed.weekly.refreshAt = null;
+        parsed.weekly.resetAt = null;
       }
-      applyOfficialPayload(parsed, false);
+
+      commitOfficialQuota(parsed, "cache", false);
     } catch {
-      // 忽略损坏缓存
+      // 忽略缓存解析错误
     }
   }
 
+  // =========================================================================
+  // 4. Voyager 风格的网络观察器（document-start 拦截 XHR + Fetch + 响应完成）
+  // =========================================================================
+  const origFetch = window.fetch;
+  const origXhrOpen = XMLHttpRequest.prototype.open;
+  const origXhrSend = XMLHttpRequest.prototype.send;
+
+  let responseCompleteTimer = null;
+  function scheduleSyncAfterResponse() {
+    if (responseCompleteTimer) clearTimeout(responseCompleteTimer);
+    responseCompleteTimer = setTimeout(() => {
+      syncOfficialUsage(false);
+    }, 1800);
+  }
+
+  function inspectNetworkTraffic(url, reqBody, responseText) {
+    if (!url || typeof url !== "string") return;
+
+    // 1. 侦听对话流生成完毕（对应 Voyager 的 response-complete-observer.js）
+    if (
+      url.includes("StreamGenerateContent") ||
+      url.includes("assistant.vertical.chat")
+    ) {
+      scheduleSyncAfterResponse();
+      return;
+    }
+
+    // 2. 侦听 batchexecute RPC 响应（对应 Voyager 的 usage-observer.js）
+    if (url.includes("/batchexecute") && responseText) {
+      const frames = parseBatchExecuteResponse(responseText);
+      for (const frame of frames) {
+        const extracted = extractQuotaFromWizStructure(
+          frame.payload,
+          Date.now(),
+        );
+        if (extracted) {
+          // 捕获该官方配额 RPC 的请求参数，以便后续点刷新时直接重放该 RPC
+          if (reqBody && typeof reqBody === "string") {
+            quotaState.capturedQuotaRpc = {
+              url,
+              body: reqBody,
+              rpcId: frame.rpcId,
+            };
+          }
+          commitOfficialQuota(extracted, "rpc", true);
+        }
+      }
+    }
+  }
+
+  // 拦截 window.fetch
+  window.fetch = async function (...args) {
+    const url =
+      typeof args[0] === "string"
+        ? args[0]
+        : (args[0] && typeof args[0].url === "string" && args[0].url) || "";
+    const reqInit = args[1] || {};
+    const reqBody = typeof reqInit.body === "string" ? reqInit.body : "";
+
+    const response = await origFetch.apply(this, args);
+
+    try {
+      if (
+        url.includes("/batchexecute") ||
+        url.includes("StreamGenerateContent")
+      ) {
+        const cloned = response.clone();
+        cloned
+          .text()
+          .then((text) => inspectNetworkTraffic(url, reqBody, text))
+          .catch(() => {});
+      }
+    } catch {
+      // 忽略克隆异常
+    }
+
+    return response;
+  };
+
+  // 拦截 XMLHttpRequest（Google Closure / Wiz 的 batchexecute 默认走 XHR）
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    this.__gc_url = typeof url === "string" ? url : String(url || "");
+    return origXhrOpen.call(this, method, url, ...rest);
+  };
+
+  XMLHttpRequest.prototype.send = function (body) {
+    const url = this.__gc_url || "";
+    if (
+      url.includes("/batchexecute") ||
+      url.includes("StreamGenerateContent")
+    ) {
+      const reqBody = typeof body === "string" ? body : "";
+      this.addEventListener("load", function () {
+        try {
+          if (
+            typeof this.responseText === "string" &&
+            this.responseText.length > 0
+          ) {
+            inspectNetworkTraffic(url, reqBody, this.responseText);
+          }
+        } catch {
+          // 忽略 responseType 不兼容情况
+        }
+      });
+    }
+    return origXhrSend.call(this, body);
+  };
+
+  // =========================================================================
+  // 5. 主动官方同步器（RPC 重放 + 同源 /usage Fetch + 隐藏 Iframe 实时 Mutation）
+  // =========================================================================
+  let activeSyncPromise = null;
+  let probeIframeEl = null;
+
   /**
-   * 通过同源隐藏 Iframe 挂载 /usage，等待 Angular/Wiz 渲染完真实 DOM 后提取
+   * 若已捕获官方配额 batchexecute RPC 模板，直接携带最新 WIZ XSRF Token (SNlM0e) 重放
    */
-  function probeViaHiddenIframe(usageUrl, timeoutMs = 8500) {
+  async function replayCapturedQuotaRpc() {
+    const tpl = quotaState.capturedQuotaRpc;
+    if (!tpl || !tpl.url || !tpl.body) return false;
+
+    try {
+      let bodyToSend = tpl.body;
+      const wiz = window.WIZ_global_data;
+      if (wiz && typeof wiz.SNlM0e === "string") {
+        const params = new URLSearchParams(bodyToSend);
+        if (params.has("at")) {
+          params.set("at", wiz.SNlM0e);
+          bodyToSend = params.toString();
+        }
+      }
+
+      const resp = await origFetch.call(window, tpl.url, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        },
+        body: bodyToSend,
+      });
+      if (!resp.ok) return false;
+      const text = await resp.text();
+      const frames = parseBatchExecuteResponse(text);
+      for (const frame of frames) {
+        const extracted = extractQuotaFromWizStructure(
+          frame.payload,
+          Date.now(),
+        );
+        if (extracted && commitOfficialQuota(extracted, "rpc", true)) {
+          return true;
+        }
+      }
+    } catch {
+      // 重放失败时回退到 /usage 提取
+    }
+    return false;
+  }
+
+  /**
+   * 挂载同源隐藏 Iframe 并通过 MutationObserver 在 /usage 渲染出配额节点的瞬间提取
+   */
+  function extractViaSameOriginUsageIframe(usageUrl, timeoutMs = 8000) {
     return new Promise((resolve) => {
       if (!document.body) {
         resolve(null);
         return;
       }
 
-      if (hiddenProbeIframe && hiddenProbeIframe.parentNode) {
-        hiddenProbeIframe.parentNode.removeChild(hiddenProbeIframe);
+      if (probeIframeEl && probeIframeEl.parentNode) {
+        probeIframeEl.parentNode.removeChild(probeIframeEl);
       }
 
       const iframe = el("iframe", {
@@ -532,75 +794,112 @@
         style:
           "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:-9999px;border:0;",
       });
-      hiddenProbeIframe = iframe;
+      probeIframeEl = iframe;
 
-      let settled = false;
-      let pollTimer = null;
+      let finished = false;
+      let observer = null;
+      let pollId = null;
 
-      const cleanup = (result) => {
-        if (settled) return;
-        settled = true;
-        if (pollTimer) clearInterval(pollTimer);
-        if (iframe.parentNode) {
-          iframe.parentNode.removeChild(iframe);
-        }
-        if (hiddenProbeIframe === iframe) {
-          hiddenProbeIframe = null;
-        }
-        resolve(result);
+      const done = (res) => {
+        if (finished) return;
+        finished = true;
+        if (observer) observer.disconnect();
+        if (pollId) clearInterval(pollId);
+        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        if (probeIframeEl === iframe) probeIframeEl = null;
+        resolve(res);
       };
 
-      const checkIframeDom = () => {
+      const tryExtract = () => {
         try {
           const iDoc =
             iframe.contentDocument ||
             (iframe.contentWindow && iframe.contentWindow.document);
           if (!iDoc || !iDoc.body) return;
-          const extracted = parseOfficialUsageDocument(iDoc);
+          const result = parseUsageDocument(iDoc, "");
           if (
-            extracted &&
-            (extracted.fiveHour.pct !== null || extracted.weekly.pct !== null)
+            result &&
+            ((result.fiveHour && result.fiveHour.pct !== null) ||
+              (result.weekly && result.weekly.pct !== null))
           ) {
-            cleanup(extracted);
+            done(result);
           }
         } catch {
-          // 跨域或未就绪时忽略
+          // 忽略未就绪状态
         }
       };
 
       iframe.addEventListener("load", () => {
-        checkIframeDom();
-        // SPA 水合通常在 load 后 300ms ~ 3500ms 完成
-        pollTimer = setInterval(checkIframeDom, 350);
+        tryExtract();
+        try {
+          const iDoc =
+            iframe.contentDocument ||
+            (iframe.contentWindow && iframe.contentWindow.document);
+          if (iDoc && iDoc.body) {
+            observer = new MutationObserver(() => tryExtract());
+            observer.observe(iDoc.body, {
+              childList: true,
+              subtree: true,
+              characterData: true,
+            });
+          }
+        } catch {
+          // 回退到轮询
+        }
+        pollId = setInterval(tryExtract, 300);
       });
 
-      iframe.addEventListener("error", () => cleanup(null));
+      iframe.addEventListener("error", () => done(null));
       document.body.appendChild(iframe);
-      setTimeout(() => cleanup(null), timeoutMs);
+      setTimeout(() => done(null), timeoutMs);
     });
   }
 
   /**
-   * 立即与官方 /usage 同步最新用量及重置时间
+   * 立即同步官方最新 5H 与 7D 用量及重置时间
    */
-  async function syncOfficialUsage() {
-    if (syncPromise) return syncPromise;
+  async function syncOfficialUsage(isManualClick = false) {
+    if (activeSyncPromise) return activeSyncPromise;
 
-    usageState.isSyncing = true;
+    quotaState.isSyncing = true;
+    if (isManualClick) {
+      quotaState.lastError = "";
+    }
     updateUI();
 
-    syncPromise = (async () => {
-      const usageUrl = getOfficialUsageUrl();
+    activeSyncPromise = (async () => {
       try {
-        // 如果当前本身就在 /usage 页面，直接读取当前页面 DOM
+        // 0. 若当前就在官方 /usage 页面，直接解析当前 DOM
         if (window.location.pathname.endsWith("/usage")) {
-          const directDomResult = parseOfficialUsageDocument(document);
-          if (directDomResult && applyOfficialPayload(directDomResult, true)) {
+          const direct = parseUsageDocument(
+            document,
+            document.documentElement.innerHTML,
+          );
+          if (direct && commitOfficialQuota(direct, "usage-page", true)) {
             return true;
           }
         }
 
-        // 第一步：尝试轻量级同源 fetch
+        // 1. 优先尝试重放已捕获的官方 batchexecute 配额 RPC
+        const rpcOk = await replayCapturedQuotaRpc();
+        if (rpcOk) return true;
+
+        // 2. 检查当前页面全局 WIZ_global_data 是否已内嵌配额结构
+        if (window.WIZ_global_data) {
+          const fromGlobalWiz = extractQuotaFromWizStructure(
+            window.WIZ_global_data,
+            Date.now(),
+          );
+          if (
+            fromGlobalWiz &&
+            commitOfficialQuota(fromGlobalWiz, "rpc", true)
+          ) {
+            return true;
+          }
+        }
+
+        // 3. 请求同源 /usage 页面 HTML，解析内嵌 AF_initDataCallback 与 SSR 节点
+        const usageUrl = getOfficialUsageUrl();
         try {
           const resp = await origFetch.call(window, usageUrl, {
             method: "GET",
@@ -608,107 +907,50 @@
             cache: "no-store",
           });
           if (resp.ok) {
-            const html = await resp.text();
-            const parsedFromFetch = parseOfficialUsageFromRawHtml(html);
+            const rawHtml = await resp.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(rawHtml, "text/html");
+            const fromFetch = parseUsageDocument(doc, rawHtml);
             if (
-              parsedFromFetch &&
-              parsedFromFetch.fiveHour.pct !== null &&
-              parsedFromFetch.weekly.pct !== null &&
-              applyOfficialPayload(parsedFromFetch, true)
+              fromFetch &&
+              fromFetch.fiveHour &&
+              fromFetch.weekly &&
+              commitOfficialQuota(fromFetch, "usage-page", true)
             ) {
               return true;
             }
           }
         } catch {
-          // Fetch 失败或为纯 CSR 空壳时继续走 Iframe 水合探针
+          // 继续走 Iframe CSR 探针
         }
 
-        // 第二步：挂载同源隐藏 Iframe，等待官方前端水合渲染出真实百分比与重置倒计时文本
-        const iframeResult = await probeViaHiddenIframe(usageUrl);
-        if (iframeResult && applyOfficialPayload(iframeResult, true)) {
+        // 4. 通过同源隐藏 Iframe 等待 /usage 客户端渲染完成并提取真实节点（因为脚本含 @noframes，不会递归执行）
+        const fromIframe = await extractViaSameOriginUsageIframe(usageUrl);
+        if (fromIframe && commitOfficialQuota(fromIframe, "usage-page", true)) {
           return true;
         }
 
-        usageState.lastSyncError = "官方 /usage 未返回可识别配额卡片";
+        quotaState.lastError = "暂未从官方接口获取到配额数据";
         return false;
       } catch (err) {
-        usageState.lastSyncError =
-          err instanceof Error ? err.message : "同步异常";
+        quotaState.lastError =
+          err instanceof Error ? err.message : "官方同步失败";
         return false;
       } finally {
-        usageState.isSyncing = false;
-        syncPromise = null;
+        quotaState.isSyncing = false;
+        activeSyncPromise = null;
         updateUI();
       }
     })();
 
-    return syncPromise;
+    return activeSyncPromise;
   }
 
   // =========================================================================
-  // 5. 本地滑动窗口真实时间戳保底（当账号无 /usage 权限时使用）
+  // 6. 格式化工具与颜色阶梯
   // =========================================================================
-  function getLocalLogs() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY_LOCAL_LOGS);
-      const list = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(list)) return [];
-      const now = Date.now();
-      const filtered = list.filter(
-        (ts) => typeof ts === "number" && now - ts < TIME_WEEK_MS,
-      );
-      if (filtered.length !== list.length) {
-        localStorage.setItem(STORAGE_KEY_LOCAL_LOGS, JSON.stringify(filtered));
-      }
-      return filtered;
-    } catch {
-      return [];
-    }
-  }
-
-  function recordLocalUsage(count = 1) {
-    try {
-      const logs = getLocalLogs();
-      const now = Date.now();
-      for (let i = 0; i < count; i++) logs.push(now);
-      localStorage.setItem(STORAGE_KEY_LOCAL_LOGS, JSON.stringify(logs));
-    } catch {
-      // 忽略存储异常
-    }
-    updateUI();
-  }
-
-  function calculateLocalStats() {
-    const logs = getLocalLogs();
-    const now = Date.now();
-
-    const logs5h = logs.filter((ts) => now - ts < TIME_5H_MS);
-    const count5h = logs5h.length;
-    const refreshAt5h = count5h > 0 ? Math.min(...logs5h) + TIME_5H_MS : null;
-
-    const countWeekly = logs.length;
-    const refreshAtWeekly =
-      countWeekly > 0 ? Math.min(...logs) + TIME_WEEK_MS : null;
-
-    return {
-      pct5h: Math.min(
-        100,
-        Math.round((count5h / Math.max(1, config.limit5h)) * 100),
-      ),
-      refreshAt5h,
-      pctWeekly: Math.min(
-        100,
-        Math.round((countWeekly / Math.max(1, config.limitWeekly)) * 100),
-      ),
-      refreshAtWeekly,
-    };
-  }
-
-  /**
-   * 紧凑型倒计时格式化（适配细长条单行布局）
-   */
   function formatCompactCountdown(ms, isWeekly = false) {
-    if (ms <= 0) return "已满";
+    if (ms <= 0) return "00:00";
     const totalSec = Math.floor(ms / 1000);
     const days = Math.floor(totalSec / 86400);
     const hours = Math.floor((totalSec % 86400) / 3600);
@@ -716,29 +958,27 @@
     const seconds = totalSec % 60;
     const pad = (n) => String(n).padStart(2, "0");
 
-    if (days > 0) {
-      return `${days}d ${pad(hours)}h`;
-    }
-    if (isWeekly && hours >= 10) {
-      return `${pad(hours)}h ${pad(minutes)}m`;
-    }
-    if (hours > 0) {
-      return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
-    }
+    if (days > 0) return `${days}d ${pad(hours)}h`;
+    if (isWeekly && hours > 0) return `${hours}h ${pad(minutes)}m`;
+    if (hours > 0) return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
     return `${pad(minutes)}:${pad(seconds)}`;
   }
 
-  function formatExactResetTimeTitle(refreshAt, rawResetText) {
-    if (refreshAt && refreshAt > Date.now()) {
-      const dt = new Date(refreshAt);
-      const pad = (n) => String(n).padStart(2, "0");
-      const dateStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
-      return rawResetText
-        ? `预计重置时间: ${dateStr} (${rawResetText})`
-        : `预计重置时间: ${dateStr}`;
+  function formatTooltip(label, metric) {
+    if (!metric || metric.pct === null) {
+      return `${label}: 等待从官方同步数据...`;
     }
-    if (rawResetText) return `官方重置状态: ${rawResetText}`;
-    return "当前额度充裕 / 暂无待重置冷却";
+    const lines = [`${label} 官方已用: ${metric.pct}%`];
+    if (metric.resetAt && metric.resetAt > Date.now()) {
+      const dt = new Date(metric.resetAt);
+      const pad = (n) => String(n).padStart(2, "0");
+      lines.push(
+        `官方重置时间: ${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`,
+      );
+    } else if (metric.rawResetText) {
+      lines.push(`官方重置状态: ${metric.rawResetText}`);
+    }
+    return lines.join("\n");
   }
 
   function getProgressColor(ratio) {
@@ -756,43 +996,7 @@
   }
 
   // =========================================================================
-  // 6. 会话请求侦听（对话后自动递增本地保底并触发官方后台同步）
-  // =========================================================================
-  let lastPromptTime = 0;
-  let postPromptSyncTimer = null;
-
-  function onPromptDetected() {
-    const now = Date.now();
-    if (now - lastPromptTime <= 2500) return;
-    lastPromptTime = now;
-    recordLocalUsage(1);
-
-    // 对话请求发出 4 秒后自动向官方 /usage 静默拉取最新真实数据
-    if (postPromptSyncTimer) clearTimeout(postPromptSyncTimer);
-    postPromptSyncTimer = setTimeout(() => {
-      syncOfficialUsage();
-    }, 4000);
-  }
-
-  const origFetch = window.fetch;
-  window.fetch = async function (...args) {
-    try {
-      const url =
-        typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
-      if (
-        url.includes("StreamGenerateContent") ||
-        url.includes("assistant.vertical.chat")
-      ) {
-        onPromptDetected();
-      }
-    } catch {
-      // 忽略拦截器异常
-    }
-    return origFetch.apply(this, args);
-  };
-
-  // =========================================================================
-  // 7. CSS 样式表注入（超薄细长条状单行布局，26px 高度）
+  // 7. 超薄细长条样式表（24px 高度，单行水平排布，5H + 7D 同屏）
   // =========================================================================
   const STYLES = `
     #gc-pill-root {
@@ -804,31 +1008,31 @@
       font-size: 11px;
       color: #f8fafc;
       line-height: 1;
-      filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.45));
+      filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45));
     }
     .gc-pill-container {
       display: inline-flex;
       align-items: center;
-      height: 26px;
-      gap: 7px;
-      background: linear-gradient(135deg, rgba(20, 20, 24, 0.94) 0%, rgba(9, 9, 11, 0.97) 100%);
+      height: 24px;
+      gap: 6px;
+      background: rgba(15, 17, 21, 0.92);
       border: 1px solid rgba(255, 255, 255, 0.14);
       border-radius: 9999px;
-      padding: 0 8px 0 6px;
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      padding: 0 7px 0 5px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
       cursor: grab;
       white-space: nowrap;
-      transition: border-color 0.2s, box-shadow 0.2s;
+      transition: border-color 0.2s;
     }
     .gc-pill-container:active { cursor: grabbing; }
     .gc-pill-container:hover { border-color: rgba(255, 255, 255, 0.28); }
 
-    /* 左侧微缩形态指示器（18x18，点击可切换形态） */
+    /* 左侧 16x16 微缩形态指示器（点击可切换 4 种视觉形态） */
     .gc-capsule-head {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       position: relative;
       display: inline-flex;
       align-items: center;
@@ -837,41 +1041,40 @@
       cursor: pointer;
     }
 
-    /* 单行双维度指标单元（5H 与 7D 并排） */
+    /* 单行指标单元：标签 + 百分比 + (内联进度条) + 重置倒计时 */
     .gc-metric-group {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       height: 100%;
     }
     .gc-pill-badge {
-      font-size: 9.5px;
+      font-size: 9px;
       font-weight: 700;
-      letter-spacing: 0.3px;
-      padding: 2px 4px;
+      letter-spacing: 0.2px;
+      padding: 1.5px 3.5px;
       border-radius: 3px;
       background: rgba(255, 255, 255, 0.08);
       line-height: 1;
     }
     .gc-pill-counter {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 11.5px;
+      font-size: 11px;
       font-weight: 700;
       color: #ffffff;
       font-variant-numeric: tabular-nums;
     }
     .gc-pill-timer {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 10px;
+      font-size: 9.5px;
       color: #94a3b8;
       font-variant-numeric: tabular-nums;
-      opacity: 0.9;
     }
 
-    /* 横条模式下的内联微缩进度槽 */
+    /* 横条模式下的细长内联进度条 */
     .gc-inline-track {
-      width: 26px;
-      height: 3px;
+      width: 24px;
+      height: 2.5px;
       background: rgba(255, 255, 255, 0.12);
       border-radius: 999px;
       overflow: hidden;
@@ -884,33 +1087,35 @@
       transition: width 0.3s ease, background-color 0.3s ease;
     }
 
-    /* 1px 垂直细分割线 */
+    /* 1px 竖向分割线 */
     .gc-v-divider {
       width: 1px;
-      height: 11px;
+      height: 10px;
       background: rgba(255, 255, 255, 0.12);
       flex-shrink: 0;
     }
 
-    /* 同步状态圆点 */
+    /* 同步状态指示灯 */
     .gc-sync-dot {
-      width: 5px;
-      height: 5px;
+      width: 4.5px;
+      height: 4.5px;
       border-radius: 50%;
       flex-shrink: 0;
       background: #64748b;
-      transition: background-color 0.25s, box-shadow 0.25s;
     }
     .gc-sync-dot.official {
       background: #10b981;
-      box-shadow: 0 0 5px rgba(16, 185, 129, 0.7);
+      box-shadow: 0 0 4px rgba(16, 185, 129, 0.75);
     }
     .gc-sync-dot.syncing {
       background: #f59e0b;
-      box-shadow: 0 0 6px rgba(245, 158, 11, 0.8);
+      box-shadow: 0 0 5px rgba(245, 158, 11, 0.85);
+    }
+    .gc-sync-dot.error {
+      background: #f43f5e;
     }
 
-    /* 右侧操作按钮区 */
+    /* 右侧图标按钮 */
     .gc-pill-actions {
       display: inline-flex;
       align-items: center;
@@ -922,62 +1127,61 @@
       outline: none;
       color: #94a3b8;
       cursor: pointer;
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       padding: 0;
       border-radius: 4px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      transition: color 0.18s, background 0.18s;
+      transition: color 0.15s, background 0.15s;
     }
     .gc-btn-icon:hover {
       color: #f8fafc;
       background: rgba(255, 255, 255, 0.12);
     }
-    .gc-btn-icon svg { width: 11.5px; height: 11.5px; }
+    .gc-btn-icon svg { width: 11px; height: 11px; }
 
     @keyframes gc-spin {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
     .gc-spinning svg {
-      animation: gc-spin 0.8s linear infinite;
+      animation: gc-spin 0.75s linear infinite;
       color: #38bdf8;
     }
 
-    /* 圆盘式 (16x16) */
+    /* 圆盘式 (14x14) */
     .gc-disk-box {
-      width: 15px;
-      height: 15px;
+      width: 14px;
+      height: 14px;
       border-radius: 50%;
       position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
-      border: 1px solid rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.2);
     }
     .gc-disk-core {
       position: absolute;
-      width: 5px;
-      height: 5px;
+      width: 4.5px;
+      height: 4.5px;
       background: #09090b;
       border-radius: 50%;
-      border: 1px solid rgba(255,255,255,0.22);
     }
 
-    /* 崩坏碎裂式 (16x16) */
+    /* 晶体崩坏式 (14x14) */
     .gc-decay-capsule {
-      width: 16px;
-      height: 16px;
+      width: 14px;
+      height: 14px;
       position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
     }
     .gc-decay-body {
-      width: 14px;
-      height: 14px;
+      width: 13px;
+      height: 13px;
       position: relative;
     }
     .gc-decay-shard {
@@ -986,51 +1190,42 @@
       height: 100%;
       top: 0;
       left: 0;
-      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease;
-    }
-    .gc-decay-fissures {
-      position: absolute;
-      inset: -1px;
-      pointer-events: none;
-      transition: opacity 0.3s ease;
-      background: radial-gradient(circle, transparent 40%, var(--glow-color) 120%);
-      mix-blend-mode: screen;
+      transition: transform 0.35s ease, opacity 0.35s ease;
     }
     @keyframes gc-jitter {
       0% { transform: translate(0, 0) rotate(0deg); }
-      25% { transform: translate(-0.8px, 0.8px) rotate(-1.5deg); }
-      50% { transform: translate(0.8px, -0.8px) rotate(1.5deg); }
-      75% { transform: translate(-0.8px, -0.6px) rotate(-0.8deg); }
+      25% { transform: translate(-0.7px, 0.7px) rotate(-1.5deg); }
+      50% { transform: translate(0.7px, -0.7px) rotate(1.5deg); }
+      75% { transform: translate(-0.7px, -0.5px) rotate(-0.8deg); }
       100% { transform: translate(0, 0) rotate(0deg); }
     }
     .gc-state-critical { animation: gc-jitter 0.18s infinite linear; }
 
-    /* 设置抽屉面板 */
+    /* 设置抽屉 */
     #gc-pill-drawer {
       position: absolute;
-      bottom: calc(100% + 8px);
+      bottom: calc(100% + 6px);
       right: 0;
-      width: 236px;
+      width: 230px;
       background: rgba(15, 17, 23, 0.98);
       border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 10px;
-      box-shadow: 0 12px 28px rgba(0,0,0,0.65);
-      padding: 10px 12px;
-      backdrop-filter: blur(20px);
+      border-radius: 9px;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.65);
+      padding: 9px 11px;
+      backdrop-filter: blur(18px);
       display: none;
       flex-direction: column;
-      gap: 8px;
+      gap: 7px;
       z-index: 10000000;
       white-space: normal;
     }
     #gc-pill-drawer.gc-active { display: flex; }
     .gc-drawer-title {
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 700;
       color: #94a3b8;
-      letter-spacing: 0.4px;
       border-bottom: 1px solid rgba(255,255,255,0.08);
-      padding-bottom: 5px;
+      padding-bottom: 4px;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -1044,12 +1239,12 @@
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.1);
       color: #cbd5e1;
-      padding: 4px 2px;
-      border-radius: 5px;
+      padding: 3.5px 2px;
+      border-radius: 4px;
       cursor: pointer;
       font-size: 10px;
       text-align: center;
-      transition: all 0.18s;
+      transition: all 0.15s;
     }
     .gc-choice-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
     .gc-choice-btn.active {
@@ -1059,20 +1254,19 @@
       font-weight: 600;
     }
     .gc-drawer-status {
-      font-size: 10px;
+      font-size: 9.5px;
       color: #94a3b8;
       border-top: 1px solid rgba(255,255,255,0.08);
-      padding-top: 6px;
+      padding-top: 5px;
       line-height: 1.45;
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      gap: 2px;
     }
     .gc-link-btn {
       color: #38bdf8;
       text-decoration: underline;
       cursor: pointer;
-      display: inline-block;
     }
   `;
 
@@ -1085,14 +1279,13 @@
   }
 
   // =========================================================================
-  // 8. UI DOM 节点构建（单行细长条：指示器 + 5H + 7D + 刷新同步 + 设置）
+  // 8. UI 节点装配与渲染
   // =========================================================================
   let rootEl = null;
   let pillContainerEl = null;
   let drawerEl = null;
   let headSlotEl = null;
 
-  // 5H 节点
   let group5hEl = null;
   let badge5hEl = null;
   let usage5hTextEl = null;
@@ -1100,7 +1293,6 @@
   let fill5hEl = null;
   let timer5hTextEl = null;
 
-  // 7D 节点
   let group7dEl = null;
   let badge7dEl = null;
   let usage7dTextEl = null;
@@ -1108,11 +1300,10 @@
   let fill7dEl = null;
   let timer7dTextEl = null;
 
-  // 状态与控制节点
   let syncDotEl = null;
   let btnRefreshEl = null;
-  let statusSourceLineEl = null;
-  let statusTimeLineEl = null;
+  let statusSourceEl = null;
+  let statusSyncTimeEl = null;
   const choiceBtns = [];
 
   function cycleStyleMode() {
@@ -1132,23 +1323,21 @@
 
     injectStyles();
 
-    // 左侧指示器（点击可快速切换 4 种视觉形态）
     headSlotEl = el("div", {
       className: "gc-capsule-head",
-      id: "gc-head-slot",
-      title: "点击切换视觉形态（横条 / 圆环 / 圆盘 / 崩坏）",
+      title: "点击切换指示器形态（横条 / 圆环 / 圆盘 / 崩坏）",
       onclick: (e) => {
         e.stopPropagation();
         cycleStyleMode();
       },
     });
 
-    // 5H 指标组
+    // 5H 单元
     badge5hEl = el("span", { className: "gc-pill-badge" }, ["5H"]);
-    usage5hTextEl = el("span", { className: "gc-pill-counter" }, ["0%"]);
+    usage5hTextEl = el("span", { className: "gc-pill-counter" }, ["--%"]);
     fill5hEl = el("div", { className: "gc-inline-fill" });
     track5hEl = el("div", { className: "gc-inline-track" }, [fill5hEl]);
-    timer5hTextEl = el("span", { className: "gc-pill-timer" }, ["已满"]);
+    timer5hTextEl = el("span", { className: "gc-pill-timer" }, ["同步中"]);
     group5hEl = el("div", { className: "gc-metric-group" }, [
       badge5hEl,
       usage5hTextEl,
@@ -1156,12 +1345,12 @@
       timer5hTextEl,
     ]);
 
-    // 7D 指标组
+    // 7D 单元
     badge7dEl = el("span", { className: "gc-pill-badge" }, ["7D"]);
-    usage7dTextEl = el("span", { className: "gc-pill-counter" }, ["0%"]);
+    usage7dTextEl = el("span", { className: "gc-pill-counter" }, ["--%"]);
     fill7dEl = el("div", { className: "gc-inline-fill" });
     track7dEl = el("div", { className: "gc-inline-track" }, [fill7dEl]);
-    timer7dTextEl = el("span", { className: "gc-pill-timer" }, ["已满"]);
+    timer7dTextEl = el("span", { className: "gc-pill-timer" }, ["同步中"]);
     group7dEl = el("div", { className: "gc-metric-group" }, [
       badge7dEl,
       usage7dTextEl,
@@ -1169,20 +1358,16 @@
       timer7dTextEl,
     ]);
 
-    // 同步状态小圆点
-    syncDotEl = el("span", {
-      className: "gc-sync-dot",
-      title: "数据同步状态",
-    });
+    syncDotEl = el("span", { className: "gc-sync-dot" });
 
-    // 立即同步按钮（原刷新符号修正为立即同步官方最新用量与重置时间）
+    // 刷新图标：立即同步官方当前配额与重置时间
     const refreshSvg = svgEl(
       "svg",
       {
         viewBox: "0 0 24 24",
         fill: "none",
         stroke: "currentColor",
-        "stroke-width": "2.2",
+        "stroke-width": "2.3",
         "stroke-linecap": "round",
         "stroke-linejoin": "round",
       },
@@ -1197,16 +1382,15 @@
       "button",
       {
         className: "gc-btn-icon",
-        title: "立即从官方 /usage 同步最新用量与重置时间",
+        title: "立即同步官方最新用量与重置时间",
         onclick: (e) => {
           e.stopPropagation();
-          syncOfficialUsage();
+          syncOfficialUsage(true);
         },
       },
       [refreshSvg],
     );
 
-    // 设置按钮
     const gearSvg = svgEl(
       "svg",
       {
@@ -1229,7 +1413,7 @@
       "button",
       {
         className: "gc-btn-icon",
-        title: "展开配置面板",
+        title: "样式与数据源设置",
         onclick: (e) => {
           e.stopPropagation();
           drawerEl.classList.toggle("gc-active");
@@ -1244,33 +1428,31 @@
       btnSettings,
     ]);
 
-    pillContainerEl = el(
-      "div",
-      { className: "gc-pill-container", id: "gc-pill-main" },
-      [
-        headSlotEl,
-        group5hEl,
-        el("div", { className: "gc-v-divider" }),
-        group7dEl,
-        el("div", { className: "gc-v-divider" }),
-        actionsBox,
-      ],
-    );
+    pillContainerEl = el("div", { className: "gc-pill-container" }, [
+      headSlotEl,
+      group5hEl,
+      el("div", { className: "gc-v-divider" }),
+      group7dEl,
+      el("div", { className: "gc-v-divider" }),
+      actionsBox,
+    ]);
 
     // 抽屉面板
     const drawerTitle = el("div", { className: "gc-drawer-title" }, [
-      el("span", {}, ["指示器形态切换"]),
-      el("span", { style: "font-size:9px; color:#64748b;" }, ["可拖拽长条"]),
+      el("span", {}, ["指示器形态"]),
+      el("span", { style: "font-size:9px; color:#64748b;" }, [
+        "Voyager 同源引擎",
+      ]),
     ]);
 
     choiceBtns.length = 0;
-    const modeConfigs = [
+    const modes = [
       { key: "bar", text: "横条" },
       { key: "ring", text: "圆环" },
       { key: "disk", text: "圆盘" },
       { key: "decay", text: "崩坏" },
     ];
-    for (const m of modeConfigs) {
+    for (const m of modes) {
       const btn = el(
         "button",
         {
@@ -1286,32 +1468,26 @@
       btn.dataset.style = m.key;
       choiceBtns.push(btn);
     }
-    const modeGrid = el("div", { className: "gc-mode-grid" }, choiceBtns);
 
-    statusSourceLineEl = el("div", {}, ["数据源：等待同步官方 /usage..."]);
-    statusTimeLineEl = el("div", { style: "color:#64748b;" }, [
-      "上次同步：尚未同步",
-    ]);
-
-    const openUsageLink = el(
+    statusSourceEl = el("div", {}, ["数据源: 正在连接官方接口..."]);
+    statusSyncTimeEl = el("div", { style: "color:#64748b;" }, ["上次同步: --"]);
+    const openOfficialLink = el(
       "span",
       {
         className: "gc-link-btn",
         onclick: () => window.open(getOfficialUsageUrl(), "_blank"),
       },
-      ["在新标签页查看官方 /usage 页面"],
+      ["打开官方 /usage 页面核对"],
     );
-
-    const drawerStatus = el("div", { className: "gc-drawer-status" }, [
-      statusSourceLineEl,
-      statusTimeLineEl,
-      openUsageLink,
-    ]);
 
     drawerEl = el("div", { id: "gc-pill-drawer" }, [
       drawerTitle,
-      modeGrid,
-      drawerStatus,
+      el("div", { className: "gc-mode-grid" }, choiceBtns),
+      el("div", { className: "gc-drawer-status" }, [
+        statusSourceEl,
+        statusSyncTimeEl,
+        openOfficialLink,
+      ]),
     ]);
 
     rootEl = el(
@@ -1329,9 +1505,6 @@
     updateUI();
   }
 
-  // =========================================================================
-  // 9. 全屏拖拽交互
-  // =========================================================================
   function bindDragEvents() {
     let isDragging = false;
     let startX = 0;
@@ -1359,14 +1532,14 @@
       const dy = e.clientY - startY;
       if (Math.abs(dx) > 2 || Math.abs(dy) > 2) hasMoved = true;
 
-      const rectWidth = pillContainerEl.offsetWidth || 260;
+      const width = pillContainerEl.offsetWidth || 240;
       const newRight = Math.max(
-        8,
-        Math.min(window.innerWidth - rectWidth - 8, initialRight - dx),
+        6,
+        Math.min(window.innerWidth - width - 6, initialRight - dx),
       );
       const newBottom = Math.max(
-        8,
-        Math.min(window.innerHeight - 36, initialBottom - dy),
+        6,
+        Math.min(window.innerHeight - 30, initialBottom - dy),
       );
 
       rootEl.style.right = `${newRight}px`;
@@ -1379,7 +1552,7 @@
       try {
         pillContainerEl.releasePointerCapture(e.pointerId);
       } catch {
-        // 忽略释放异常
+        // 忽略
       }
       if (hasMoved) {
         config.pos.right = parseInt(rootEl.style.right, 10) || config.pos.right;
@@ -1399,9 +1572,6 @@
     });
   }
 
-  // =========================================================================
-  // 10. 4 种微缩进度形态渲染引擎（适配 18x18 超薄高度）
-  // =========================================================================
   function renderIndicatorHead(mode, ratio5h, ratio7d) {
     if (!headSlotEl) return;
     headSlotEl.textContent = "";
@@ -1421,7 +1591,7 @@
       fill7dEl.style.backgroundColor = color7d.hex;
 
       const miniPill = el("div", {
-        style: `width:10px; height:14px; border-radius:999px; background:linear-gradient(180deg, ${color.hex} 50%, rgba(255,255,255,0.18) 50%); border:1px solid rgba(255,255,255,0.28); box-shadow: 0 0 5px ${color.glow};`,
+        style: `width:8px; height:13px; border-radius:999px; background:linear-gradient(180deg, ${color.hex} 50%, rgba(255,255,255,0.18) 50%); border:1px solid rgba(255,255,255,0.28);`,
       });
       headSlotEl.appendChild(miniPill);
       return;
@@ -1431,40 +1601,38 @@
     track7dEl.style.display = "none";
 
     if (mode === "ring") {
-      const radius = 6.5;
+      const radius = 5.8;
       const circumference = 2 * Math.PI * radius;
       const strokeOffset =
         circumference - Math.min(1, dominantRatio) * circumference;
 
-      const ringBg = svgEl("circle", {
-        cx: "9",
-        cy: "9",
-        r: String(radius),
-        stroke: "rgba(255, 255, 255, 0.14)",
-        "stroke-width": "2.2",
-        fill: "none",
-      });
-
-      const ringVal = svgEl("circle", {
-        cx: "9",
-        cy: "9",
-        r: String(radius),
-        "stroke-width": "2.2",
-        "stroke-linecap": "round",
-        fill: "none",
-        stroke: color.hex,
-        style: `stroke-dasharray: ${circumference}; stroke-dashoffset: ${strokeOffset}; filter: drop-shadow(0 0 2px ${color.glow}); transition: stroke-dashoffset 0.35s ease, stroke 0.35s ease;`,
-      });
-
       const ringSvg = svgEl(
         "svg",
         {
-          viewBox: "0 0 18 18",
-          style: "transform: rotate(-90deg); width:18px; height:18px;",
+          viewBox: "0 0 16 16",
+          style: "transform: rotate(-90deg); width:16px; height:16px;",
         },
-        [ringBg, ringVal],
+        [
+          svgEl("circle", {
+            cx: "8",
+            cy: "8",
+            r: String(radius),
+            stroke: "rgba(255, 255, 255, 0.14)",
+            "stroke-width": "2",
+            fill: "none",
+          }),
+          svgEl("circle", {
+            cx: "8",
+            cy: "8",
+            r: String(radius),
+            "stroke-width": "2",
+            "stroke-linecap": "round",
+            fill: "none",
+            stroke: color.hex,
+            style: `stroke-dasharray: ${circumference}; stroke-dashoffset: ${strokeOffset}; transition: stroke-dashoffset 0.35s ease;`,
+          }),
+        ],
       );
-
       headSlotEl.appendChild(ringSvg);
       return;
     }
@@ -1475,7 +1643,7 @@
         "div",
         {
           className: "gc-disk-box",
-          style: `background: conic-gradient(${color.hex} 0deg ${degrees}deg, rgba(255,255,255,0.12) ${degrees}deg 360deg); box-shadow: 0 0 5px ${color.glow};`,
+          style: `background: conic-gradient(${color.hex} 0deg ${degrees}deg, rgba(255,255,255,0.12) ${degrees}deg 360deg);`,
         },
         [el("div", { className: "gc-disk-core" })],
       );
@@ -1486,8 +1654,8 @@
     if (mode === "decay") {
       const r = Math.min(1.2, dominantRatio);
       const isCritical = r >= 0.88;
-      const drift = r * 4.5;
-      const rot = r * 26;
+      const drift = r * 4;
+      const rot = r * 24;
 
       const shardsData = [
         {
@@ -1514,61 +1682,46 @@
           dy: drift * 0.2,
           dr: rot * 0.4,
         },
-        {
-          clip: "polygon(52% 70%, 80% 82%, 100% 100%, 40% 100%)",
-          dx: drift * 0.8,
-          dy: drift * 0.9,
-          dr: rot * 1.1,
-        },
-        {
-          clip: "polygon(0% 100%, 52% 70%, 40% 100%)",
-          dx: -drift * 0.5,
-          dy: drift * 0.8,
-          dr: -rot * 0.5,
-        },
       ];
 
-      const shardNodes = shardsData.map((s, idx) => {
-        const opacity = r > 0.95 && (idx === 0 || idx === 4) ? 0.2 : 1;
+      const shardNodes = shardsData.map((s) => {
         const transform = `translate(${s.dx.toFixed(1)}px, ${s.dy.toFixed(1)}px) rotate(${s.dr.toFixed(1)}deg)`;
         return el("div", {
           className: "gc-decay-shard",
-          style: `clip-path: ${s.clip}; -webkit-clip-path: ${s.clip}; background: linear-gradient(135deg, ${color.hex} 0%, rgba(20,20,25,0.92) 100%); border: 1px solid rgba(255,255,255,0.22); transform: ${transform}; opacity: ${opacity};`,
+          style: `clip-path: ${s.clip}; -webkit-clip-path: ${s.clip}; background: ${color.hex}; transform: ${transform};`,
         });
-      });
-
-      const fissures = el("div", {
-        className: "gc-decay-fissures",
-        style: `opacity: ${Math.min(1, r * 1.3)}; --glow-color: ${color.glow};`,
       });
 
       const body = el(
         "div",
-        {
-          className: `gc-decay-body ${isCritical ? "gc-state-critical" : ""}`,
-        },
-        [...shardNodes, fissures],
+        { className: `gc-decay-body ${isCritical ? "gc-state-critical" : ""}` },
+        shardNodes,
       );
-
       headSlotEl.appendChild(
         el("div", { className: "gc-decay-capsule" }, [body]),
       );
     }
   }
 
-  // =========================================================================
-  // 11. 界面响应式更新（同时刷新 5H 与 7D）
-  // =========================================================================
-  function updateSingleMetricNode(
-    pct,
-    refreshAt,
-    rawResetText,
+  function renderMetricUnit(
+    metric,
     isWeekly,
+    label,
     badgeNode,
     usageNode,
     timerNode,
     groupNode,
   ) {
+    if (!metric || metric.pct === null) {
+      badgeNode.style.color = "#94a3b8";
+      usageNode.textContent = "--%";
+      timerNode.textContent = quotaState.isSyncing ? "同步中" : "待同步";
+      timerNode.style.color = "#64748b";
+      groupNode.title = formatTooltip(label, metric);
+      return 0;
+    }
+
+    const pct = metric.pct;
     const ratio = pct / 100;
     const color = getProgressColor(ratio);
 
@@ -1576,66 +1729,55 @@
     usageNode.textContent = `${pct}%`;
 
     const now = Date.now();
-    if (pct === 0) {
+    if (metric.resetAt && metric.resetAt > now) {
+      timerNode.textContent = formatCompactCountdown(
+        metric.resetAt - now,
+        isWeekly,
+      );
+      timerNode.style.color = color.hex;
+    } else if (metric.rawResetText) {
+      timerNode.textContent = metric.rawResetText.slice(0, 8);
+      timerNode.style.color = color.hex;
+    } else if (pct === 0) {
       timerNode.textContent = "已满";
       timerNode.style.color = "#10b981";
-    } else if (refreshAt && refreshAt > now) {
-      timerNode.textContent = formatCompactCountdown(refreshAt - now, isWeekly);
-      timerNode.style.color = color.hex;
-    } else if (rawResetText) {
-      timerNode.textContent = rawResetText.slice(0, 10);
-      timerNode.style.color = color.hex;
     } else {
-      timerNode.textContent = "就绪";
+      timerNode.textContent = "官方实时";
       timerNode.style.color = "#94a3b8";
     }
 
-    groupNode.title = formatExactResetTimeTitle(refreshAt, rawResetText);
+    groupNode.title = formatTooltip(label, metric);
     return ratio;
   }
 
   function updateUI() {
     if (!rootEl) return;
 
-    loadSharedOfficialData();
-    const localStats = calculateLocalStats();
+    // 自动检查官方重置到期归零
+    const now = Date.now();
+    if (quotaState.fiveHour.resetAt && quotaState.fiveHour.resetAt <= now) {
+      quotaState.fiveHour.pct = 0;
+      quotaState.fiveHour.resetAt = null;
+    }
+    if (quotaState.weekly.resetAt && quotaState.weekly.resetAt <= now) {
+      quotaState.weekly.pct = 0;
+      quotaState.weekly.resetAt = null;
+    }
 
-    // 5H 数据决策（优先采用官方同步数据，缺失字段使用本地真实时间戳兜底）
-    const pct5h =
-      usageState.isOfficial && usageState.fiveHour.pct !== null
-        ? usageState.fiveHour.pct
-        : localStats.pct5h;
-    const refreshAt5h =
-      usageState.isOfficial && usageState.fiveHour.refreshAt
-        ? usageState.fiveHour.refreshAt
-        : localStats.refreshAt5h;
-
-    // 7D 数据决策
-    const pct7d =
-      usageState.isOfficial && usageState.weekly.pct !== null
-        ? usageState.weekly.pct
-        : localStats.pctWeekly;
-    const refreshAt7d =
-      usageState.isOfficial && usageState.weekly.refreshAt
-        ? usageState.weekly.refreshAt
-        : localStats.refreshAtWeekly;
-
-    const ratio5h = updateSingleMetricNode(
-      pct5h,
-      refreshAt5h,
-      usageState.fiveHour.rawResetText,
+    const ratio5h = renderMetricUnit(
+      quotaState.fiveHour,
       false,
+      "5H (5小时窗口)",
       badge5hEl,
       usage5hTextEl,
       timer5hTextEl,
       group5hEl,
     );
 
-    const ratio7d = updateSingleMetricNode(
-      pct7d,
-      refreshAt7d,
-      usageState.weekly.rawResetText,
+    const ratio7d = renderMetricUnit(
+      quotaState.weekly,
       true,
+      "7D (7天周窗口)",
       badge7dEl,
       usage7dTextEl,
       timer7dTextEl,
@@ -1644,27 +1786,36 @@
 
     renderIndicatorHead(config.styleMode, ratio5h, ratio7d);
 
-    // 刷新按钮旋转状态与同步状态指示灯
-    btnRefreshEl.classList.toggle("gc-spinning", usageState.isSyncing);
+    btnRefreshEl.classList.toggle("gc-spinning", quotaState.isSyncing);
+
+    const hasOfficialData =
+      quotaState.fiveHour.pct !== null || quotaState.weekly.pct !== null;
     syncDotEl.className = `gc-sync-dot ${
-      usageState.isSyncing ? "syncing" : usageState.isOfficial ? "official" : ""
+      quotaState.isSyncing
+        ? "syncing"
+        : hasOfficialData
+          ? "official"
+          : quotaState.lastError
+            ? "error"
+            : ""
     }`;
 
-    const syncTimeStr =
-      usageState.lastSyncTime > 0
-        ? new Date(usageState.lastSyncTime).toLocaleTimeString()
-        : "尚未同步";
+    const timeStr =
+      quotaState.lastSyncTime > 0
+        ? new Date(quotaState.lastSyncTime).toLocaleTimeString()
+        : "未同步";
 
-    syncDotEl.title = usageState.isSyncing
-      ? "正在从官方 /usage 同步..."
-      : usageState.isOfficial
-        ? `已同步官方数据 (${syncTimeStr})`
-        : "当前为本地滑动窗口估算（点击右侧刷新按钮同步官方数据）";
+    const sourceMap = {
+      rpc: "官方 batchexecute RPC 实时帧",
+      "usage-page": "官方 /usage 页面直连",
+      cache: "官方数据本地缓存",
+      init: "等待首次同步",
+    };
 
-    statusSourceLineEl.textContent = usageState.isOfficial
-      ? "数据源：官方 /usage 实时直连"
-      : `数据源：本地窗口估算${usageState.lastSyncError ? ` (${usageState.lastSyncError})` : ""}`;
-    statusTimeLineEl.textContent = `上次同步：${syncTimeStr}`;
+    statusSourceEl.textContent = quotaState.lastError
+      ? `状态: ${quotaState.lastError}`
+      : `数据源: ${sourceMap[quotaState.source] || "官方直连"}`;
+    statusSyncTimeEl.textContent = `最后同步: ${timeStr}`;
 
     for (const btn of choiceBtns) {
       btn.classList.toggle("active", btn.dataset.style === config.styleMode);
@@ -1672,7 +1823,7 @@
   }
 
   // =========================================================================
-  // 12. 自愈保活与启动引导
+  // 9. 自愈保活与启动引导
   // =========================================================================
   function ensureMounted() {
     if (!document.body) return;
@@ -1686,25 +1837,24 @@
   }
 
   function bootstrap() {
+    restoreCachedOfficialQuota();
+
     window.addEventListener("storage", (e) => {
-      if (e.key === STORAGE_KEY_SHARED_DATA) {
-        updateUI();
+      if (e.key === STORAGE_KEY_OFFICIAL_CACHE) {
+        restoreCachedOfficialQuota();
       }
     });
 
     const init = () => {
       createDOM();
-      // 启动后立即执行首次官方数据同步
       setTimeout(() => {
-        syncOfficialUsage();
-      }, 600);
+        syncOfficialUsage(false);
+      }, 500);
 
-      // 定时后台静默同步官方 /usage
       setInterval(() => {
-        syncOfficialUsage();
+        syncOfficialUsage(false);
       }, AUTO_SYNC_INTERVAL_MS);
 
-      // 每秒刷新倒计时与 DOM 自愈检查
       setInterval(() => {
         ensureMounted();
         updateUI();
