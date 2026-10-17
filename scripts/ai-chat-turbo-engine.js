@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.3";
+  const VERSION = "0.13.4";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
