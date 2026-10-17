@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.0
+// @version      0.8.1
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -22,8 +22,9 @@
   // 1. 常量与持久化配置
   // =========================================================================
   const STORAGE_KEY_CFG = "__gemini_quota_capsule_cfg_v5__";
-  // v6 缓存与旧版语义不兼容：percentageUsed 曾被误当作剩余额度。
-  const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v6__";
+  // v6 → v7：v0.8.0 把 WIZ_global_data 里的样式/模板文本当成配额，缓存里留下了
+  // 大量「已用 100%」的假数据，必须整段作废，否则升级后首屏依旧是 100%。
+  const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v7__";
 
   const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000;
 
@@ -35,6 +36,13 @@
 
   // 数据置信度：结构化 pools > 官方 /usage 页面 > 标签启发式
   const CONFIDENCE = { heuristic: 1, dom: 2, pools: 3 };
+
+  // 解析拒绝计数：只统计「为什么没采信」，供 __gqc.dump() 回传定位，不含页面正文。
+  const parseRejectDiag = {
+    cssLike: 0, // 命中内联样式 / 模板 / HTML 片段，整段丢弃
+    barePercent: 0, // 结构体里没有方向词的裸百分比（旧版会直接当成「已用」）
+    unverifiedFull: 0, // 低置信度且无重置时刻的「已用 100%」
+  };
 
   const DEFAULT_CONFIG = {
     styleMode: "bar", // 'bar' | 'ring' | 'disk' | 'decay'
@@ -407,6 +415,16 @@
       }
     }
 
+    // 兜底：低置信度来源声称「已用 100%」却拿不到任何官方重置时刻，几乎只可能是
+    // 扫描到了无关的 100% 文本（样式、配置、模板）。真实耗尽一定伴随重置窗口。
+    // 这里选择「不显示」而不是显示一个假的 100%：宁可空着，也不能骗人。
+    const confidence =
+      typeof metric.confidence === "number" ? metric.confidence : CONFIDENCE.heuristic;
+    if (usedPct === 100 && resetAt === null && confidence <= CONFIDENCE.heuristic) {
+      parseRejectDiag.unverifiedFull += 1;
+      return null;
+    }
+
     return {
       pct,
       usedPct,
@@ -420,10 +438,7 @@
           : null,
       resetAt,
       rawResetText,
-      confidence:
-        typeof metric.confidence === "number"
-          ? metric.confidence
-          : CONFIDENCE.heuristic,
+      confidence,
       updatedAt: 0, // 提交时再写入，缓存恢复的值保持 0 以便被新数据覆盖
     };
   }
@@ -692,8 +707,12 @@
         continue;
       }
       if (typeof item === "string") {
+        // 结构体里的字符串先过「像不像配额文本」这一关：内联样式、模板片段直接丢弃。
+        if (!isQuotaTextCandidate(item)) continue;
         if (!pctInfo) {
-          const info = pctFromTextWithContext(item);
+          // 元组路径不允许裸百分比：没有方向词时无法区分「剩余 / 已用」，
+          // 旧版默认按「已用」处理，于是任意 100% 都变成「已用 100%」。
+          const info = pctFromTextWithContext(item, { allowBare: false });
           if (info) {
             pctInfo = info;
             continue;
@@ -761,7 +780,7 @@
       if (Array.isArray(node)) {
         const labels = new Set();
         for (const item of flattenShallow(node)) {
-          const kind = poolKindFromLabel(item);
+          const kind = strictPoolKindFromLabel(item);
           if (kind) labels.add(kind);
         }
         // 同时含两个窗口标签 = 父容器，交给子节点分别处理
@@ -881,15 +900,34 @@
   }
 
   /**
+   * 严格 pool 枚举：只有官方 poolType 形态的字符串（GXU_*）才算「结构化」。
+   * 旧版用 poolKindFromLabel 的宽松标签（session / week / 18000 / 604800）当结构化依据，
+   * 于是整个 WIZ_global_data / 聊天 batchexecute 帧里任何提到 session、week 的数组
+   * 都能产出「配额」，并被标成最高置信度——这是「两个窗口都显示已用 100%」的根源。
+   */
+  function strictPoolKindFromLabel(label) {
+    if (typeof label !== "string") return null;
+    const upper = label.trim().toUpperCase();
+    if (!/^GXU_[A-Z0-9_]{2,}$/.test(upper)) return null;
+    if (/(WEEK|7D|604800)/.test(upper)) return "weekly";
+    if (/(FIVE_HOURLY|5H|HOUR|18000)/.test(upper)) return "fiveHour";
+    return null;
+  }
+
+  /**
    * 递归扫描 Google batchexecute 或 AF_initDataCallback 结构。
    * 结构化 pools 与标签启发式各跑一遍，逐窗口取更高置信度的结果，
    * 因此「服务端只给结构化周额度、5H 仍在元组里」这种混合形态也能补齐。
+   *
+   * options.useLabels = false 时必须禁用标签启发式：整页 bootstrap blob 与聊天 RPC 帧
+   * 里的普通数组（配置、会话、样式文本）会被宽松标签误命中，产出完全无关的百分比。
    */
-  function extractQuotaFromWizStructure(rootData, nowMs = Date.now()) {
+  function extractQuotaFromWizStructure(rootData, nowMs = Date.now(), options = {}) {
     if (!rootData || typeof rootData !== "object") return null;
 
     const structured = collectStructuredPools(rootData, nowMs);
-    const labeled = collectQuotaByLabels(rootData, nowMs);
+    const labeled =
+      options.useLabels === false ? null : collectQuotaByLabels(rootData, nowMs);
     if (!structured && !labeled) return null;
 
     return {
@@ -935,17 +973,44 @@
     return results;
   }
 
+  // 内联样式 / 模板片段特征：结构体里的 "width:100%"、"transform:translate(0%,0%)"
+  // 与配额毫无关系，必须整段排除，否则 100% 会被读成「已用 100%」。
+  const CSS_LIKE_RE =
+    /(?:^|[;{]\s*)(?:width|height|min-width|max-width|min-height|max-height|opacity|transform|translate|rotate|scale|stroke|fill|margin|padding|border|font-size|line-height|flex|top|left|right|bottom)\s*:/i;
+
+  /**
+   * 结构体（WIZ_global_data / AF_initDataCallback / batchexecute 帧）里的字符串
+   * 绝大多数与配额无关，只有「短文本、无标签、无样式声明」的串才值得继续解析。
+   */
+  function isQuotaTextCandidate(text) {
+    if (typeof text !== "string") return false;
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > 160) return false;
+    if (/[{}<>]/.test(trimmed)) return false;
+    if (CSS_LIKE_RE.test(trimmed)) return false;
+    return true;
+  }
+
   /**
    * 官方 /usage 页面与 RPC 文本里的百分比是「已用」比例（例如 "34% used"），
    * 胶囊显示的是「剩余」，因此必须做语义判定再换算——旧实现直接把数字当剩余，
    * 于是 100% 已用会被显示成「剩余 100%」。
+   *
+   * options.allowBare 只在「官方 /usage 页面卡片文本」里为 true：该页面默认口径是
+   * "N% used"。结构体 / RPC / 全文切片一律不允许裸百分比——那正是 100% 假数据的来源。
    */
-  function pctFromTextWithContext(text) {
+  function pctFromTextWithContext(text, options = {}) {
     if (typeof text !== "string" || !text) return null;
+    if (/[{}<>]/.test(text) || CSS_LIKE_RE.test(text)) {
+      parseRejectDiag.cssLike += 1;
+      return null;
+    }
+    const allowBare = options.allowBare === true;
     const re = /(\d{1,3}(?:\.\d+)?)\s*%/g;
     let match;
     let usedPct = null;
     let remainingPct = null;
+    let barePct = null;
 
     const directionOf = (fragment) => {
       if (/(剩余|剩餘|可用|余量|餘量|remaining|available|left)/i.test(fragment)) {
@@ -967,30 +1032,40 @@
       const before = text.slice(Math.max(lineStart + 1, match.index - 12), match.index);
       const line = text.slice(lineStart + 1, lineEnd);
       const after = text.slice(match.index, Math.min(lineEnd, match.index + 12));
-      const direction = directionOf(before) || directionOf(line) || directionOf(after);
+      const direction = directionOf(before) || directionOf(after) || directionOf(line);
 
       if (direction === "remaining") {
         if (remainingPct === null) remainingPct = value;
       } else if (direction === "used") {
         if (usedPct === null) usedPct = value;
-      } else if (usedPct === null && remainingPct === null) {
-        // 官方页面没有方向词时默认标注的是「N% used」
-        usedPct = value;
+      } else if (barePct === null) {
+        // 先记下来：同段里若存在带方向词的百分比，以方向词为准
+        barePct = value;
       }
     }
 
     if (remainingPct !== null) return { pct: remainingPct, usedPct: 100 - remainingPct };
     if (usedPct !== null) return { pct: 100 - usedPct, usedPct };
-    return null;
+    if (barePct === null) return null;
+
+    if (!allowBare) {
+      parseRejectDiag.barePercent += 1;
+      return null;
+    }
+    return { pct: 100 - barePct, usedPct: barePct };
   }
 
   /**
    * 从卡片文本中解析剩余百分比、请求数比率及官方真实重置时间
+   * options.allowBare：卡片文本默认允许裸百分比（官方页面口径 "N% used"），
+   * 全文切片等「位置可能切错」的场景必须传 false。
    */
-  function extractMetricFromCardText(cardText, windowType, nowMs) {
+  function extractMetricFromCardText(cardText, windowType, nowMs, options = {}) {
     if (!cardText || typeof cardText !== "string") return null;
 
-    let pctInfo = pctFromTextWithContext(cardText);
+    let pctInfo = pctFromTextWithContext(cardText, {
+      allowBare: options.allowBare !== false,
+    });
     let used = null;
     let limit = null;
 
@@ -1148,34 +1223,15 @@
 
   /**
    * 从官方 /usage 页面 DOM 或 HTML 中提取配额指标
+   *
+   * 取值顺序：可见 DOM 卡片 → 全文切片 → HTML 内嵌 AF_initDataCallback。
+   * 旧版把 AF_initDataCallback 放最前，并用 `if (!fiveHour)` 挡住 DOM：blob 里一旦
+   * 误命中无关数字（样式 100%、会话配置…），页面上真实可见的百分比就永远读不到了。
    */
   function parseUsageDocument(doc, rawHtml = "") {
     const nowMs = Date.now();
     let fiveHour = null;
     let weekly = null;
-
-    // 1. 先检查 HTML 源码内的 AF_initDataCallback（括号配对提取，替代脆弱的惰性正则）
-    if (rawHtml) {
-      const rawBlocks = extractInitDataBlocks(rawHtml);
-      usageParseDiag.blocks = rawBlocks.length;
-      for (const rawBlock of rawBlocks) {
-        try {
-          const dataArr = JSON.parse(rawBlock);
-          const wizExtracted = extractQuotaFromWizStructure(dataArr, nowMs);
-          if (wizExtracted) {
-            usageParseDiag.initHit = true;
-            if (wizExtracted.fiveHour && !fiveHour) {
-              fiveHour = wizExtracted.fiveHour;
-            }
-            if (wizExtracted.weekly && !weekly) {
-              weekly = wizExtracted.weekly;
-            }
-          }
-        } catch {
-          // 继续走 DOM 解析
-        }
-      }
-    }
 
     if (doc && doc.body) {
       const fiveRegex =
@@ -1195,6 +1251,9 @@
         ),
       );
 
+      // 2. 扫描独立容器：同一窗口会被多级容器同时命中（祖先节点的文本包含卡片文本），
+      //    优先取文本最短的那个——它才最贴近卡片本身，最不容易夹带别的数字。
+      const candidates = { "5h": [], "7d": [] };
       for (const node of blocks) {
         const txt = (node.innerText || node.textContent || "").trim();
         if (txt.length < 4 || txt.length > 500) continue;
@@ -1204,14 +1263,24 @@
         const isStrict7d = strictlyWeekRegex.test(txt);
 
         // 避免 5H 卡片中因包含日期（如“重置于 7 日”）被 weekRegex 误判
-        if (is5h && !isStrict7d && !fiveHour) {
-          const m = extractMetricFromCardText(txt, "5h", nowMs);
-          if (m) fiveHour = m;
-        } else if (is7d && !is5h && !weekly) {
-          const m = extractMetricFromCardText(txt, "7d", nowMs);
-          if (m) weekly = m;
+        if (is5h && !isStrict7d) {
+          candidates["5h"].push(txt);
+        } else if (is7d && !is5h) {
+          candidates["7d"].push(txt);
         }
       }
+
+      const pickShortest = (kind) => {
+        const list = candidates[kind].slice().sort((a, b) => a.length - b.length);
+        for (const txt of list.slice(0, 5)) {
+          const m = extractMetricFromCardText(txt, kind, nowMs);
+          if (m) return m;
+        }
+        return null;
+      };
+
+      fiveHour = pickShortest("5h");
+      weekly = pickShortest("7d");
 
       // 3. 全文按上下文切片回退提取：切片必须在「下一个窗口标签」处截断，
       //    否则 5H 切片会把紧随其后的 7D 卡片的百分比和倒计时一起吃进来。
@@ -1225,10 +1294,12 @@
       if (!fiveHour) {
         const idx5 = fullText.search(fiveRegex);
         if (idx5 !== -1) {
+          // 切片起点/终点都是猜的，裸百分比在这里不可信
           fiveHour = extractMetricFromCardText(
             sliceUntilNextLabel(idx5, strictlyWeekRegex, 400),
             "5h",
             nowMs,
+            { allowBare: false },
           );
         }
       }
@@ -1239,8 +1310,36 @@
             sliceUntilNextLabel(idx7, strictlyFiveRegex, 400),
             "7d",
             nowMs,
+            { allowBare: false },
           );
         }
+      }
+    }
+
+    // 4. 最后才解析 HTML 内嵌的 AF_initDataCallback：这是整页 bootstrap 数据，
+    //    只能作为可见 DOM 的兜底，且必须禁用标签启发式（严格 GXU pools 才采信）。
+    if (rawHtml && (!fiveHour || !weekly)) {
+      const rawBlocks = extractInitDataBlocks(rawHtml);
+      usageParseDiag.blocks = rawBlocks.length;
+      for (const rawBlock of rawBlocks) {
+        try {
+          const dataArr = JSON.parse(rawBlock);
+          const wizExtracted = extractQuotaFromWizStructure(dataArr, nowMs, {
+            useLabels: false,
+          });
+          if (wizExtracted) {
+            usageParseDiag.initHit = true;
+            if (wizExtracted.fiveHour && !fiveHour) {
+              fiveHour = wizExtracted.fiveHour;
+            }
+            if (wizExtracted.weekly && !weekly) {
+              weekly = wizExtracted.weekly;
+            }
+          }
+        } catch {
+          // 忽略非法块
+        }
+        if (fiveHour && weekly) break;
       }
     }
 
@@ -1502,6 +1601,7 @@
         const extracted = extractQuotaFromWizStructure(
           frame.payload,
           Date.now(),
+          { useLabels: false },
         );
         if (extracted) {
           obsDiag.quotaHits += 1;
@@ -1616,6 +1716,7 @@
         const extracted = extractQuotaFromWizStructure(
           frame.payload,
           Date.now(),
+          { useLabels: false },
         );
         if (extracted && commitOfficialQuota(extracted, "rpc", true)) {
           return true;
@@ -1747,21 +1848,7 @@
         const rpcOk = await replayCapturedQuotaRpc();
         if (rpcOk) return true;
 
-        // 2. 检查全局 WIZ_global_data
-        if (window.WIZ_global_data) {
-          const fromGlobalWiz = extractQuotaFromWizStructure(
-            window.WIZ_global_data,
-            Date.now(),
-          );
-          if (
-            fromGlobalWiz &&
-            commitOfficialQuota(fromGlobalWiz, "rpc", true)
-          ) {
-            return true;
-          }
-        }
-
-        // 3. GET 同源 /usage 页面 SSR 与内嵌 AF_initDataCallback
+        // 2. GET 同源 /usage 页面 SSR 与内嵌 AF_initDataCallback
         const usageUrl = getOfficialUsageUrl();
         try {
           const resp = await origFetch.call(window, usageUrl, {
@@ -1775,6 +1862,7 @@
             const doc = parser.parseFromString(rawHtml, "text/html");
             const fromFetch = parseUsageDocument(doc, rawHtml);
             if (fromFetch && (fromFetch.fiveHour || fromFetch.weekly)) {
+              // 即便只拿到一个窗口也要提交：另一个窗口稍后由 iframe / 缓存补齐
               commitOfficialQuota(fromFetch, "usage-page", true);
               if (fromFetch.fiveHour && fromFetch.weekly) {
                 return true;
@@ -1785,10 +1873,24 @@
           // 继续走探针
         }
 
-        // 4. 同源隐藏 Iframe 等待 CSR 异步节点加载
+        // 3. 同源隐藏 Iframe 等待 CSR 异步节点加载
         const fromIframe = await extractViaSameOriginUsageIframe(usageUrl);
         if (fromIframe && commitOfficialQuota(fromIframe, "usage-page", true)) {
           return true;
+        }
+
+        // 4. 最后才看全局 WIZ_global_data：它是整页 bootstrap blob，包含海量与配额
+        //    无关的 session / week / 样式文本，只能当兜底，且必须禁用标签启发式——
+        //    旧版把它排在 /usage 页面之前，一旦误命中就 return，官方页面再也跑不到。
+        if (window.WIZ_global_data) {
+          const fromGlobalWiz = extractQuotaFromWizStructure(
+            window.WIZ_global_data,
+            Date.now(),
+            { useLabels: false },
+          );
+          if (fromGlobalWiz && commitOfficialQuota(fromGlobalWiz, "rpc", false)) {
+            return true;
+          }
         }
 
         quotaState.lastError = "暂未从官方接口获取到配额数据";
@@ -2771,7 +2873,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.8.0",
+    version: "0.8.1",
     get state() {
       return quotaState;
     },
@@ -2810,7 +2912,7 @@
         }
       }
       return {
-        version: "0.8.0",
+        version: "0.8.1",
         status: resp.status,
         len: rawHtml.length,
         blocks: usageParseDiag.blocks,
@@ -2829,7 +2931,7 @@
     },
     dump() {
       return {
-        version: "0.8.0",
+        version: "0.8.1",
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },
@@ -2857,6 +2959,8 @@
           rawFrames: rawFrameRing.length,
           usageBlocks: usageParseDiag.blocks,
           usageInitHit: usageParseDiag.initHit,
+          // 拒绝计数：解释「为什么这次没数字」，避免再去猜官方字段
+          rejected: { ...parseRejectDiag },
         },
       };
     },
