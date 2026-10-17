@@ -19,7 +19,7 @@
 | 优先级 | 通道 | 说明 |
 | --- | --- | --- |
 | 1 | 捕获并重放 `batchexecute`（`wrb.fr` 帧） | document-start 包装 `fetch` / `XMLHttpRequest`，命中配额帧后保存请求模板，后续直接重放 |
-| 2 | 同源 `GET /usage` | 解析服务端渲染 HTML 中的 `AF_initDataCallback` 数据块与 DOM 卡片文本 |
+| 2 | 同源 `GET /usage` | 解析服务端渲染 HTML 中的 `AF_initDataCallback` 数据块（按括号配对提取，正则截取已废弃）与 DOM 卡片文本 |
 | 3 | 隐藏 iframe 探测 `/usage` | 需要真实渲染结果时以 1×1 iframe 加载页面，读取 `contentDocument` 并按 300ms 轮询 + `MutationObserver` 提取 |
 | 4 | `window.WIZ_global_data` | 首屏预置数据的兜底扫描 |
 | 5 | 本地缓存 | 仅用于首屏回显，恢复时 `updatedAt = 0`，会被任何新数据立即覆盖 |
@@ -47,12 +47,13 @@
 }
 ```
 
-- `poolType` / `pool_id` / `bucket` 等键上出现 `GXU_FIVE_HOURLY`（或 `5H`、`18000`）→ 5H 池；出现 `GXU_WEEKLY`（或 `WEEK`、`7D`、`604800`）→ 7D 池。
+- `poolType` / `pool_id` / `bucket` 等键上出现 `GXU_FIVE_HOURLY`（或 `5H`、`HOURLY`、`per_hour`、`18000`）→ 5 小时池；出现 `GXU_WEEKLY`（或 `WEEK`、`7D`、`604800`）→ 每周池。
 - 百分比分三类读取，优先级为 `剩余字段 > 已用字段 > 裸 percent`：
-  - 剩余：`remainingPercent` / `percentRemaining` / `availablePct` / `leftRatio` 等，直接使用；
-  - 已用：`percentageUsed` / `usedPercent` / `usagePercent` 等，`pct = 100 − x`；
+  - 剩余：`remainingPercent` / `percentRemaining` / `availablePct` / `leftRatio` / `remainingFraction` 等，直接使用；
+  - 已用：`percentageUsed` / `usedPercent` / `usagePercent` / `usedFraction` 等，`pct = 100 − x`；
   - 裸 `percent` / `pct` / `ratio` / `utilization`：官方语义是「已用」，同样取反。
-  - `0 < x ≤ 1` 视为比率，乘以 100。
+  - **量纲由字段名决定，不由数值大小决定**：键名含 `fraction` / `ratio` 的按 0~1 比率 ×100，其余按 0~100 百分数原样取用。
+    旧实现用 `0 < x ≤ 1 → x × 100` 猜测量纲，把 `1` 同时当成 1% 和 100%（已用 1% 显示成 100%，剩余 100% 显示成 1%）。
 - `used` / `limit` 只有在**同一个作用域**内成对出现且满足 `0 ≤ used ≤ limit` 时才换算，跨对象拼接视为无效。
 - 重置时刻取 `windowRefreshesAt` / `refreshesAt` / `resetAt` / `expiresAt`，兼容 ISO 8601、10/13 位数字串、`[秒, 纳秒]` 元组、`{seconds, nanos}` 对象。
 
@@ -102,9 +103,10 @@
 
 ## 六、UI 与交互
 
-- 胶囊展示 `5H` / `7D` 两组**剩余**百分比与倒计时，悬停显示剩余 / 已用、官方重置时刻、剩余时长与频次用量。
-- 左侧徽章切换指示形态：横条 / 圆环 / 圆盘 / 崩坏（`bar` / `ring` / `disk` / `decay`）。填充量按「剩余」绘制，配色与临界告警按「已用」计算（`<50%` 已用翡翠绿、`<75%` 琥珀金、`<90%` 炽烈橙、`≥90%` 崩坏猩红）。
-- 百分比为 0 时倒计时位置显示「已用尽」。
+- 胶囊展示 **5 小时** / **每周** 两组**已用**百分比与倒计时（徽章文案即「5小时」「每周」），悬停显示已用 / 剩余、官方重置时刻、剩余时长与频次用量。
+  显示口径是「已用」：百分比越高表示用得越多，与状态里的 `pct`（剩余）相反，换算只发生在渲染层。
+- 左侧徽章切换指示形态：横条 / 圆环 / 圆盘 / 崩坏（`bar` / `ring` / `disk` / `decay`）。填充量与配色同向，均按「已用」绘制（`<50%` 翡翠绿、`<75%` 琥珀金、`<90%` 炽烈橙、`≥90%` 崩坏猩红）。
+- 已用达到 100% 时倒计时位置显示「已用尽」。
 - 拖拽位置、形态写入 `localStorage`，刷新后恢复。
 
 ## 七、配置与存储
@@ -128,14 +130,17 @@
 控制台提供只读出口，便于核对窗口归属：
 
 ```js
-__gqc.state            // 当前 5H / 7D 状态（含 confidence、updatedAt）
-__gqc.dump()           // 状态 + 配置 + 最近 6 帧配额原始响应
+__gqc.state            // 当前 5 小时 / 每周状态（含 confidence、updatedAt）
+__gqc.dump()           // 状态 + 配置 + 最近 6 帧配额原始响应 + 端点发现环
 copy(JSON.stringify(__gqc.dump(), null, 2))
+__gqc.probeUsage()     // 直连 /usage：状态码、initData 块数、命中块片段、解析结果
 __gqc.sync()           // 立即同步一次
 __gqc.setDebug(true)   // 打开调试日志
 ```
 
-`__gqc.dump().frames` 只保留命中配额关键字的响应帧（每帧截断 24KB），用于确认服务端字段命名是否再次变化。
+- `__gqc.dump().frames` 只保留命中配额关键字的响应帧（每帧截断 24KB），用于确认服务端字段命名是否再次变化。
+- `__gqc.dump().endpoints` 是端点发现环：最近 24 条 URL 命中 `batchexecute` / `usage` / `quota` / `limit` 等的请求（只记 URL、状态码与长度），用来确认配额到底由哪个接口返回。
+- `__gqc.probeUsage()` 是排查「拿不到 5 小时 / 每周用量」的第一步：`blocks` 为 0 说明页面里没有 `AF_initDataCallback`（数据只走 XHR），`blocks > 0` 但 `initHit` 为 false 说明字段结构与解析器不匹配，此时看 `blockHits[].excerpt` 就能核对真实字段名。
 
 `__gqc.dump().diagnostics` 是轻量观测计数（只记录数量与 `rpcId`，不保存正文），用于区分两类完全不同的故障：
 
