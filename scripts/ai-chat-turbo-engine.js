@@ -68,7 +68,7 @@
     '[data-app-shell-main-surface] [data-thread-find-target="conversation"] [data-turn-key]';
   const CHATGPT_TRANSCRIPT_ROOT_SELECTOR = "ol[data-conversation-transcript]";
   const CHATGPT_TRANSCRIPT_MESSAGE_SELECTOR =
-    'ol[data-conversation-transcript] > li[data-message-role]';
+    "ol[data-conversation-transcript] > li[data-message-role]";
   const CHATGPT_CODE_CARD_BOUNDARY_SELECTOR = [
     "[data-turn-key]",
     '[data-testid^="conversation-turn-"]',
@@ -123,10 +123,39 @@
     "[data-type='reasoning']",
   ].join(", ");
   const BLOCK_TEXT_TAGS = new Set([
-    "ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DD", "DIV", "DL", "DT",
-    "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4",
-    "H5", "H6", "HEADER", "HR", "LI", "MAIN", "NAV", "OL", "P", "SECTION",
-    "TABLE", "TBODY", "TD", "TH", "THEAD", "TR", "UL",
+    "ADDRESS",
+    "ARTICLE",
+    "ASIDE",
+    "BLOCKQUOTE",
+    "DD",
+    "DIV",
+    "DL",
+    "DT",
+    "FIELDSET",
+    "FIGCAPTION",
+    "FIGURE",
+    "FOOTER",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "HEADER",
+    "HR",
+    "LI",
+    "MAIN",
+    "NAV",
+    "OL",
+    "P",
+    "SECTION",
+    "TABLE",
+    "TBODY",
+    "TD",
+    "TH",
+    "THEAD",
+    "TR",
+    "UL",
   ]);
 
   const PLATFORMS = {
@@ -346,7 +375,7 @@
         "#chat-input",
         'textarea[data-testid="chat-input"]',
         'textarea[placeholder*="Send a message" i]',
-        'textarea[placeholder]',
+        "textarea[placeholder]",
         'div[contenteditable="true"][role="textbox"]',
         "textarea",
         '[contenteditable="true"]',
@@ -384,7 +413,7 @@
         '[class*="message-content"]',
       ],
       inputSelectors: [
-        'textarea[placeholder]',
+        "textarea[placeholder]",
         'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
         "textarea",
@@ -423,7 +452,7 @@
         '[class*="message-content"]',
       ],
       inputSelectors: [
-        'textarea[placeholder]',
+        "textarea[placeholder]",
         'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
         "textarea",
@@ -462,7 +491,7 @@
         '[class*="message-content"]',
       ],
       inputSelectors: [
-        'textarea[placeholder]',
+        "textarea[placeholder]",
         'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
         "textarea",
@@ -510,7 +539,7 @@
       inputSelectors: [
         '[data-testid="chat_input_input"]',
         "#chat-input",
-        'textarea[placeholder]',
+        "textarea[placeholder]",
         'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
         "textarea",
@@ -1031,7 +1060,10 @@
   }
 
   function elementToPlainText(rootElement) {
-    if (!(rootElement instanceof Element) || matchesReasoningElement(rootElement)) {
+    if (
+      !(rootElement instanceof Element) ||
+      matchesReasoningElement(rootElement)
+    ) {
       return "";
     }
 
@@ -1058,7 +1090,9 @@
         return node.nodeValue || "";
       }
       if (!(node instanceof Element)) {
-        return Array.from(node.childNodes || []).map(walk).join("");
+        return Array.from(node.childNodes || [])
+          .map(walk)
+          .join("");
       }
 
       try {
@@ -1117,7 +1151,10 @@
     if (contentSearchKey && /:(user|human)$/i.test(contentSearchKey)) {
       return true;
     }
-    if (contentSearchKey && /:(assistant|model|system)$/i.test(contentSearchKey)) {
+    if (
+      contentSearchKey &&
+      /:(assistant|model|system)$/i.test(contentSearchKey)
+    ) {
       return false;
     }
 
@@ -1148,7 +1185,9 @@
     let ancestor = turnElement.parentElement;
     let ancestorDepth = 0;
     while (ancestor && ancestorDepth < 3) {
-      if (platformUserSelectors.some((selector) => ancestor.matches(selector))) {
+      if (
+        platformUserSelectors.some((selector) => ancestor.matches(selector))
+      ) {
         return true;
       }
       ancestor = ancestor.parentElement;
@@ -1828,7 +1867,10 @@
           currentPlatform.userTurnSelectors || []
         ).some((selector) => {
           try {
-            return candidate.matches(selector) || Boolean(candidate.closest(selector));
+            return (
+              candidate.matches(selector) ||
+              Boolean(candidate.closest(selector))
+            );
           } catch (_) {
             return false;
           }
@@ -2008,8 +2050,7 @@
       return false;
     }
 
-    const className =
-      typeof node.className === "string" ? node.className : "";
+    const className = typeof node.className === "string" ? node.className : "";
     const markerText = [
       className,
       node.getAttribute("data-testid") || "",
@@ -2307,12 +2348,15 @@
           !(candidate instanceof HTMLElement) ||
           !candidate.isConnected ||
           candidate.closest("#" + HUD_ID) ||
-          (candidate.offsetParent === null && candidate.getClientRects().length === 0)
+          (candidate.offsetParent === null &&
+            candidate.getClientRects().length === 0)
         ) {
           continue;
         }
         if (
-          candidate.matches('input[type="hidden"], textarea[aria-hidden="true"]') ||
+          candidate.matches(
+            'input[type="hidden"], textarea[aria-hidden="true"]',
+          ) ||
           candidate.getAttribute("aria-hidden") === "true"
         ) {
           continue;
@@ -2373,24 +2417,47 @@
 
   function getInputContainer(input) {
     if (!input) return null;
+
     const candidates = [
-      ".input-area",
+      "form[data-chatgpt-composer]",
+      "[data-chatgpt-composer]",
       ".input-area-container",
-      "rich-textarea",
-      "[class*='composer-parent']",
-      "[class*='input-area']",
       "form",
+      ".input-area",
+      "[class*='composer-parent']",
       "[class*='composer']",
+      "[class*='input-area']",
       "[class*='input-container']",
+      "rich-textarea",
       "fieldset",
     ];
+
+    const inputRect = input.getBoundingClientRect();
+    let best = null;
+    let bestTop = Infinity;
+
     for (const selector of candidates) {
-      const matched = input.closest(selector);
-      if (matched && matched.getBoundingClientRect().height > 20) {
-        return matched;
+      let matched;
+      try {
+        matched = input.closest(selector);
+      } catch (_) {
+        continue;
+      }
+      if (!matched) continue;
+
+      const rect = matched.getBoundingClientRect();
+      if (rect.height < 20) continue;
+
+      const extendsAbove = inputRect.top - rect.top;
+      if (extendsAbove > 360) continue;
+
+      if (rect.top < bestTop) {
+        bestTop = rect.top;
+        best = matched;
       }
     }
-    return input.parentElement;
+
+    return best || input.parentElement;
   }
 
   function createUiIcon(name, size = 14) {
@@ -2454,10 +2521,7 @@
 
   function positionVirtualFileTray() {
     const tray = document.getElementById("ai-turbo-vf-tray");
-
-    if (!tray || !tray.isConnected || !activeVirtualFiles.length) {
-      return;
-    }
+    if (!tray || !tray.isConnected || !activeVirtualFiles.length) return;
 
     const input = getChatInput();
     const anchor = getInputContainer(input);
@@ -2471,7 +2535,6 @@
       if (virtualFileTrayResizeObserver) {
         virtualFileTrayResizeObserver.disconnect();
       }
-
       virtualFileTrayAnchor = anchor;
 
       if ("ResizeObserver" in window) {
@@ -2480,9 +2543,13 @@
         });
 
         virtualFileTrayResizeObserver.observe(anchor);
+        if (input !== anchor) virtualFileTrayResizeObserver.observe(input);
 
-        if (input !== anchor) {
-          virtualFileTrayResizeObserver.observe(input);
+        // ★ 新增：观察父节点 —— 有些平台附件插入会扩展外层 wrapper，而
+        // input 与 anchor 都未必直接变化
+        const anchorParent = anchor.parentElement;
+        if (anchorParent && anchorParent !== document.body) {
+          virtualFileTrayResizeObserver.observe(anchorParent);
         }
       }
     }
@@ -2504,7 +2571,6 @@
     const verticalGap = 16;
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
-
     const availableWidth = Math.max(0, viewportWidth - viewportPadding * 2);
 
     const trayWidth = Math.min(Math.max(anchorRect.width, 280), availableWidth);
@@ -2514,30 +2580,29 @@
       Math.max(viewportPadding, viewportWidth - trayWidth - viewportPadding),
     );
 
-    /*
-     * 核心修改：
-     * 不再使用 top / bottom 二选一。
-     * 直接使用 bottom 锚定输入框顶部。
-     *
-     * 这样无论输入框高度怎么变化，
-     * 托盘都始终位于输入框上方。
-     */
-    const bottom = viewportHeight - inputRect.top + verticalGap;
+    // ★ 核心修复：真正的"视觉顶部"= min(容器 top, 输入框 top)
+    //   - 有原生文件时，anchorRect.top 会比 inputRect.top 更高
+    //   - 若 anchor 延伸得过远（>360px，疑似误选整页 wrapper），降级用 inputRect.top
+    const anchorExtendsAboveInput = inputRect.top - anchorRect.top;
+    const MAX_ATTACHMENT_EXTENSION = 360;
+    const visualTop =
+      anchorExtendsAboveInput >= 0 &&
+      anchorExtendsAboveInput <= MAX_ATTACHMENT_EXTENSION
+        ? anchorRect.top
+        : inputRect.top;
+
+    const bottom = viewportHeight - visualTop + verticalGap;
 
     tray.style.width = `${trayWidth}px`;
     tray.style.left = `${left}px`;
     tray.style.top = "auto";
     tray.style.bottom = `${Math.max(viewportPadding, bottom)}px`;
 
-    /*
-     * 输入框非常靠近顶部时，仍然保持托盘向上布局，
-     * 不再翻转到输入框下面。
-     */
+    // ★ maxHeight 也必须基于 visualTop 计算，否则高输入框场景下 max-height 会被压缩得过小
     const maxTrayHeight = Math.max(
       48,
-      inputRect.top - viewportPadding - verticalGap,
+      visualTop - viewportPadding - verticalGap,
     );
-
     tray.style.maxHeight = `${maxTrayHeight}px`;
     tray.style.overflowY = "auto";
 
@@ -3243,7 +3308,7 @@
         transition:
           bottom 160ms cubic-bezier(0.16, 1, 0.3, 1),
           left 160ms cubic-bezier(0.16, 1, 0.3, 1),
-          max-height 120ms ease,
+          max-height 100ms ease-out,   /* 120ms → 100ms，稍微紧凑一点 */
           opacity 120ms ease,
           transform 120ms ease,
           visibility 120ms ease !important;
@@ -3500,10 +3565,14 @@
     hudStats.total.textContent = String(state.totalTurns);
     hudStats.hidden.textContent = String(state.hiddenCount);
     hudStats.folded.textContent = String(state.foldedCodeCount);
-    if (hudStats.pillTotal) hudStats.pillTotal.textContent = String(state.totalTurns);
-    if (hudStats.pillHidden) hudStats.pillHidden.textContent = String(state.hiddenCount);
-    if (hudStats.pillFolded) hudStats.pillFolded.textContent = String(state.foldedCodeCount);
-    if (hudStats.pillVirtual) hudStats.pillVirtual.textContent = String(activeVirtualFiles.length);
+    if (hudStats.pillTotal)
+      hudStats.pillTotal.textContent = String(state.totalTurns);
+    if (hudStats.pillHidden)
+      hudStats.pillHidden.textContent = String(state.hiddenCount);
+    if (hudStats.pillFolded)
+      hudStats.pillFolded.textContent = String(state.foldedCodeCount);
+    if (hudStats.pillVirtual)
+      hudStats.pillVirtual.textContent = String(activeVirtualFiles.length);
 
     const loadRatioLabel = `${state.totalTurns}/${LOAD_INDICATOR_FULL_TURNS}`;
     const loadProgress = Math.min(
@@ -3767,7 +3836,9 @@
     const pillTotalVal = el("span", { className: "pill-metric-value" }, ["0"]);
     const pillHiddenVal = el("span", { className: "pill-metric-value" }, ["0"]);
     const pillFoldedVal = el("span", { className: "pill-metric-value" }, ["0"]);
-    const pillVirtualVal = el("span", { className: "pill-metric-value" }, ["0"]);
+    const pillVirtualVal = el("span", { className: "pill-metric-value" }, [
+      "0",
+    ]);
 
     const svgNamespace = "http://www.w3.org/2000/svg";
     const pillLoadRing = document.createElementNS(svgNamespace, "svg");
@@ -3790,8 +3861,14 @@
     pillLoadProgress.setAttribute("cx", "20");
     pillLoadProgress.setAttribute("cy", "20");
     pillLoadProgress.setAttribute("r", String(LOAD_RING_RADIUS));
-    pillLoadProgress.setAttribute("stroke-dasharray", String(LOAD_RING_CIRCUMFERENCE));
-    pillLoadProgress.setAttribute("stroke-dashoffset", String(LOAD_RING_CIRCUMFERENCE));
+    pillLoadProgress.setAttribute(
+      "stroke-dasharray",
+      String(LOAD_RING_CIRCUMFERENCE),
+    );
+    pillLoadProgress.setAttribute(
+      "stroke-dashoffset",
+      String(LOAD_RING_CIRCUMFERENCE),
+    );
     pillLoadProgress.setAttribute("transform", "rotate(-90 20 20)");
 
     const pillLoadLabel = document.createElementNS(svgNamespace, "text");
@@ -3809,7 +3886,8 @@
         className: "docked-pill",
         id: "pill-trigger",
         type: "button",
-        title: "消息 0 · 已脱水 0 · 代码折叠 0 · 虚拟文件 0；点击打开面板，拖动可移动",
+        title:
+          "消息 0 · 已脱水 0 · 代码折叠 0 · 虚拟文件 0；点击打开面板，拖动可移动",
       },
       [
         el("span", { className: "pill-brand" }, [
@@ -3829,10 +3907,14 @@
             el("span", { className: "pill-metric-label" }, ["折叠"]),
             pillFoldedVal,
           ]),
-          el("span", { className: "pill-metric", title: "当前待发送虚拟文件数" }, [
-            el("span", { className: "pill-metric-label" }, ["文件"]),
-            pillVirtualVal,
-          ]),
+          el(
+            "span",
+            { className: "pill-metric", title: "当前待发送虚拟文件数" },
+            [
+              el("span", { className: "pill-metric-label" }, ["文件"]),
+              pillVirtualVal,
+            ],
+          ),
         ]),
       ],
     );
@@ -3936,7 +4018,9 @@
       },
     });
 
-    const forkText = el("span", { id: "fork-text" }, ["复制原始上下文（回退）"]);
+    const forkText = el("span", { id: "fork-text" }, [
+      "复制原始上下文（回退）",
+    ]);
     const btnFork = el(
       "button",
       {
@@ -4422,11 +4506,15 @@
         .then(() => setHandoffStatus(successMessage))
         .catch(() => {
           setHandoffStatus("剪贴板写入失败，请检查浏览器权限。");
-          window.alert("无法写入剪贴板，请检查浏览器权限，或手动选择对应内容。");
+          window.alert(
+            "无法写入剪贴板，请检查浏览器权限，或手动选择对应内容。",
+          );
         });
     } catch (_) {
       setHandoffStatus("剪贴板不可用，请检查浏览器权限。");
-      window.alert("当前页面无法访问剪贴板。请检查浏览器权限，或手动选择对应内容。");
+      window.alert(
+        "当前页面无法访问剪贴板。请检查浏览器权限，或手动选择对应内容。",
+      );
     }
   }
 
@@ -4434,7 +4522,9 @@
     const yamlText = extractLatestHandoffYaml();
     if (!yamlText) {
       setHandoffStatus("尚未检测到最新助手回答中的完整 YAML。");
-      window.alert("未找到符合交接包结构的 YAML。请等待助手回答完整结束后重试。");
+      window.alert(
+        "未找到符合交接包结构的 YAML。请等待助手回答完整结束后重试。",
+      );
       return;
     }
     copyHandoffText(
@@ -4447,7 +4537,9 @@
     const yamlText = extractLatestHandoffYaml();
     if (!yamlText) {
       setHandoffStatus("尚未检测到最新助手回答中的完整 YAML。");
-      window.alert("未找到符合交接包结构的 YAML。请等待助手回答完整结束后重试。");
+      window.alert(
+        "未找到符合交接包结构的 YAML。请等待助手回答完整结束后重试。",
+      );
       return;
     }
     const restoreText = buildHandoffRestorePrompt(yamlText);
@@ -4482,11 +4574,13 @@
       try {
         controls = Array.from(document.querySelectorAll(selector));
       } catch (_) {}
-      const found = controls.find((control) =>
-        control instanceof HTMLElement &&
-        control.isConnected &&
-        control.getAttribute("target") !== "_blank" &&
-        (control.offsetParent !== null || control.getClientRects().length > 0),
+      const found = controls.find(
+        (control) =>
+          control instanceof HTMLElement &&
+          control.isConnected &&
+          control.getAttribute("target") !== "_blank" &&
+          (control.offsetParent !== null ||
+            control.getClientRects().length > 0),
       );
       if (found) return found;
     }
@@ -4502,27 +4596,32 @@
       "开始新对话",
       "开启新对话",
     ]);
-    return Array.from(
-      document.querySelectorAll("button, a, [role='button']"),
-    ).find((control) => {
-      if (
-        !(control instanceof HTMLElement) ||
-        !control.isConnected ||
-        control.getAttribute("target") === "_blank" ||
-        !(control.offsetParent !== null || control.getClientRects().length > 0)
-      ) {
-        return false;
-      }
-      const label = [
-        control.getAttribute("aria-label") || "",
-        control.getAttribute("title") || "",
-        control.innerText || control.textContent || "",
-      ]
-        .join(" ")
-        .trim()
-        .toLowerCase();
-      return exactLabels.has(label);
-    }) || null;
+    return (
+      Array.from(document.querySelectorAll("button, a, [role='button']")).find(
+        (control) => {
+          if (
+            !(control instanceof HTMLElement) ||
+            !control.isConnected ||
+            control.getAttribute("target") === "_blank" ||
+            !(
+              control.offsetParent !== null ||
+              control.getClientRects().length > 0
+            )
+          ) {
+            return false;
+          }
+          const label = [
+            control.getAttribute("aria-label") || "",
+            control.getAttribute("title") || "",
+            control.innerText || control.textContent || "",
+          ]
+            .join(" ")
+            .trim()
+            .toLowerCase();
+          return exactLabels.has(label);
+        },
+      ) || null
+    );
   }
 
   function resumePendingHandoffPrompt() {
@@ -4558,11 +4657,17 @@
             navigator.clipboard
               .writeText(pending.text)
               .then(() => {
-                setHandoffStatus("新对话输入框已有草稿，恢复指令已复制到剪贴板。");
-                window.alert("新对话输入框已有未发送内容。为避免覆盖草稿，已将恢复指令复制到剪贴板，请手动粘贴。");
+                setHandoffStatus(
+                  "新对话输入框已有草稿，恢复指令已复制到剪贴板。",
+                );
+                window.alert(
+                  "新对话输入框已有未发送内容。为避免覆盖草稿，已将恢复指令复制到剪贴板，请手动粘贴。",
+                );
               })
               .catch(() => {
-                window.alert("无法覆盖新对话中的已有草稿。请保留草稿后手动粘贴恢复指令。");
+                window.alert(
+                  "无法覆盖新对话中的已有草稿。请保留草稿后手动粘贴恢复指令。",
+                );
               });
           } else {
             insertTextAtomic(input, pending.text);
@@ -4582,10 +4687,14 @@
           .writeText(pending.text)
           .then(() => {
             setHandoffStatus("未识别到新对话输入框，恢复指令已复制到剪贴板。");
-            window.alert("未能可靠识别新对话输入框。完整恢复指令已复制，请手动打开新对话并粘贴。");
+            window.alert(
+              "未能可靠识别新对话输入框。完整恢复指令已复制，请手动打开新对话并粘贴。",
+            );
           })
           .catch(() => {
-            window.alert("未能识别新对话输入框，也无法写入剪贴板。请回到原回答手动复制 YAML。");
+            window.alert(
+              "未能识别新对话输入框，也无法写入剪贴板。请回到原回答手动复制 YAML。",
+            );
           });
       }
     }, 250);
@@ -4599,7 +4708,9 @@
         .writeText(prompt)
         .then(() => {
           setHandoffStatus("未识别当前输入框，生成指令已复制。");
-          window.alert("未识别到当前网站的输入框。生成指令已复制，请手动粘贴并发送。");
+          window.alert(
+            "未识别到当前网站的输入框。生成指令已复制，请手动粘贴并发送。",
+          );
         })
         .catch(() => window.alert("未能识别输入框，也无法写入剪贴板。"));
       return;
@@ -4610,7 +4721,9 @@
         .writeText(prompt)
         .then(() => {
           setHandoffStatus("当前输入框有草稿；生成指令已复制，未覆盖草稿。");
-          window.alert("当前输入框已有未发送内容。为避免覆盖草稿，生成指令已复制，请先处理现有草稿，再手动粘贴发送。");
+          window.alert(
+            "当前输入框已有未发送内容。为避免覆盖草稿，生成指令已复制，请先处理现有草稿，再手动粘贴发送。",
+          );
         })
         .catch(() => window.alert("当前输入框有草稿，且无法复制生成指令。"));
       return;
@@ -4646,10 +4759,14 @@
         .writeText(restoreText)
         .then(() => {
           setHandoffStatus("未识别新对话入口；完整恢复指令已复制。");
-          window.alert("已提取 YAML 并复制完整恢复指令。此网站的新对话按钮未能可靠识别，请手动打开新对话并粘贴。");
+          window.alert(
+            "已提取 YAML 并复制完整恢复指令。此网站的新对话按钮未能可靠识别，请手动打开新对话并粘贴。",
+          );
         })
         .catch(() => {
-          window.alert("已找到 YAML，但无法识别新对话入口或写入剪贴板。请手动复制 YAML 后恢复。");
+          window.alert(
+            "已找到 YAML，但无法识别新对话入口或写入剪贴板。请手动复制 YAML 后恢复。",
+          );
         });
       return;
     }
@@ -4667,7 +4784,11 @@
     } catch (_) {
       navigator.clipboard
         .writeText(restoreText)
-        .then(() => window.alert("无法暂存跨页面恢复状态，已复制完整恢复指令，请手动打开新对话并粘贴。"))
+        .then(() =>
+          window.alert(
+            "无法暂存跨页面恢复状态，已复制完整恢复指令，请手动打开新对话并粘贴。",
+          ),
+        )
         .catch(() => window.alert("无法暂存或复制恢复指令，请手动复制 YAML。"));
       return;
     }
@@ -4736,22 +4857,18 @@
           attributeName === "class" || attributeName === "id";
         const isMarkerAttribute = TURN_MARKER_ATTRIBUTES.has(attributeName);
         const isIndexedTurn = turnIndex.has(mutationTarget);
-        const matchesKnownTurn = isIndexedTurn || (
-          Boolean(allTurnSelector) && (
-            mutationTarget.matches(allTurnSelector) ||
-            mutationTarget.matches(turnMarkerSelector) ||
-            mutationTarget.matches('[data-testid^="conversation-turn-"]')
-          )
-        );
+        const matchesKnownTurn =
+          isIndexedTurn ||
+          (Boolean(allTurnSelector) &&
+            (mutationTarget.matches(allTurnSelector) ||
+              mutationTarget.matches(turnMarkerSelector) ||
+              mutationTarget.matches('[data-testid^="conversation-turn-"]')));
 
         // Preserve the existing refresh behaviour for marker attributes.
         // Ignore unrelated class/id changes to avoid redundant full syncs.
         if (isMarkerAttribute) shouldRequestUpdate = true;
 
-        if (
-          matchesKnownTurn &&
-          (isMarkerAttribute || isSelectorAttribute)
-        ) {
+        if (matchesKnownTurn && (isMarkerAttribute || isSelectorAttribute)) {
           invalidateActiveTurnSelectorGroup();
           structuralChange = true;
           shouldRequestUpdate = true;
