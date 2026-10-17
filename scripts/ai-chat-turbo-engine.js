@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://local/ai-turbo-engine-v9
-// @version      0.13.7
+// @version      0.13.8
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
 // @author       Yoko
 // @match        https://chatgpt.com/*
@@ -33,7 +33,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.7";
+  const VERSION = "0.13.8";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -2742,6 +2742,34 @@
           continue;
         }
 
+        const siblingStyle = window.getComputedStyle(sibling);
+        if (
+          siblingStyle.position === "fixed" ||
+          siblingStyle.position === "sticky"
+        ) {
+          sibling = sibling.previousElementSibling;
+          continue;
+        }
+
+        if (
+          sibling.matches('button, [role="button"]') &&
+          !sibling.querySelector(
+            'input, textarea, [contenteditable="true"], [role="textbox"]',
+          )
+        ) {
+          sibling = sibling.previousElementSibling;
+          continue;
+        }
+
+        if (siblingRect.top < 8) {
+          break;
+        }
+
+        const maxSiblingHeight = Math.max(baseRect.height * 3, 320);
+        if (siblingRect.height > maxSiblingHeight) {
+          break;
+        }
+
         const overlap =
           Math.min(bounds.right, siblingRect.right) -
           Math.max(bounds.left, siblingRect.left);
@@ -2944,13 +2972,17 @@
 
     const bounds = getComposerVisualBounds(input, anchor);
 
-    const visualTop =
-      Number.isFinite(bounds.top) && bounds.top <= inputRect.top + 1
-        ? Math.max(0, bounds.top)
-        : inputRect.top;
-
     const viewportPadding = 18;
     const verticalGap = 16;
+
+    let visualTop =
+      Number.isFinite(bounds.top) && bounds.top <= inputRect.top + 1
+        ? bounds.top
+        : inputRect.top;
+
+    visualTop = Math.min(visualTop, inputRect.top);
+    const minVisibleTop = viewportPadding + verticalGap + 60;
+    visualTop = Math.max(minVisibleTop, Math.max(0, visualTop));
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const availableWidth = Math.max(0, viewportWidth - viewportPadding * 2);
@@ -4455,41 +4487,14 @@
       [forkText],
     );
 
-    const btnGenerateHandoff = el(
+    const btnOneClickHandoff = el(
       "button",
       {
         className: "action-btn",
         type: "button",
-        onclick: startHandoffGeneration,
+        onclick: startOneClickHandoff,
       },
-      ["发送 YAML 交接指令"],
-    );
-    const btnContinueHandoff = el(
-      "button",
-      {
-        className: "action-btn",
-        type: "button",
-        onclick: prepareNewConversationFromYaml,
-      },
-      ["恢复到新对话"],
-    );
-    const btnCopyHandoffYaml = el(
-      "button",
-      {
-        className: "action-btn",
-        type: "button",
-        onclick: copyLatestHandoffYaml,
-      },
-      ["仅复制 YAML 交接包"],
-    );
-    const btnCopyRestorePrompt = el(
-      "button",
-      {
-        className: "action-btn",
-        type: "button",
-        onclick: copyLatestRestorePrompt,
-      },
-      ["仅复制新对话恢复指令"],
+      ["一键交接（生成并恢复）"],
     );
     handoffStatusNode = el(
       "div",
@@ -4528,10 +4533,7 @@
 
     const handoffSection = el("div", { className: "section" }, [
       el("div", { className: "section-title" }, ["上下文交接"]),
-      btnGenerateHandoff,
-      btnContinueHandoff,
-      btnCopyRestorePrompt,
-      btnCopyHandoffYaml,
+      btnOneClickHandoff,
       handoffStatusNode,
       btnFork,
     ]);
@@ -5279,6 +5281,165 @@
           .catch(() => {});
       }
     }, 500);
+  }
+
+  function copyHandoffFallback(text, statusMessage, alertMessage) {
+    const done = (ok) => {
+      setHandoffStatus(
+        ok ? statusMessage : `${statusMessage}（写入剪贴板失败，请手动复制）`,
+      );
+      if (alertMessage) {
+        window.alert(
+          ok
+            ? alertMessage
+            : "无法写入剪贴板。请检查浏览器权限，或手动选择对应内容后重试。",
+        );
+      }
+    };
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("no clipboard");
+      navigator.clipboard
+        .writeText(text)
+        .then(() => done(true))
+        .catch(() => done(false));
+    } catch (_) {
+      done(false);
+    }
+  }
+
+  /**
+   * 一键交接：
+   * 1. 若最新助手回答已包含完整交接包 → 直接打开新对话并填入恢复指令。
+   * 2. 若没有 → 自动发送交接生成指令，轮询等待 AI 输出完整交接包后再恢复。
+   * 3. 任一步失败（输入框不存在 / 输入框有草稿 / 发送未确认 / 等待超时 /
+   *    未找到新对话入口 / 无法暂存 sessionStorage）→ 把当前进度
+   *    （生成指令或恢复指令）复制到剪贴板，方便手动继续。
+   */
+  function startOneClickHandoff() {
+    if (isSubmitting) return;
+
+    // 已有现成交接包：直接进入恢复流程
+    const existing = extractLatestHandoffText();
+    if (existing) {
+      proceedOneClickHandoff(existing);
+      return;
+    }
+
+    const prompt = buildHandoffGenerationPrompt();
+    const input = getChatInput();
+
+    if (!input) {
+      copyHandoffFallback(
+        prompt,
+        "未识别输入框，生成指令已复制到剪贴板。",
+        "未识别到当前网站的输入框。生成指令已复制，请手动粘贴并发送。",
+      );
+      return;
+    }
+
+    if (getComposerText(input).trim()) {
+      copyHandoffFallback(
+        prompt,
+        "输入框有草稿，生成指令已复制到剪贴板。",
+        "当前输入框已有未发送内容。为避免覆盖草稿，生成指令已复制，请先处理现有草稿，再手动粘贴发送。",
+      );
+      return;
+    }
+
+    insertTextAtomic(input, prompt);
+    setHandoffStatus("已填入交接指令，正在发送……");
+    const baselineTurns = getTurns().length;
+    isSubmitting = true;
+
+    sendWithRetry(input, (sent) => {
+      isSubmitting = false;
+
+      if (!sent) {
+        copyHandoffFallback(
+          prompt,
+          "发送未确认，生成指令已复制到剪贴板。",
+          "未能确认发送成功。生成指令已复制，请手动粘贴发送。",
+        );
+        return;
+      }
+
+      setHandoffStatus("已发送交接指令；等待 AI 生成交接包……");
+      waitForHandoffPackage(baselineTurns, prompt);
+    });
+  }
+
+  function waitForHandoffPackage(baselineTurns, prompt) {
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 180000; // 3 分钟
+
+    const timer = window.setInterval(() => {
+      // 避免在助手消息尚未出现（旧回答仍是最新）时误判为已生成
+      if (getTurns().length <= baselineTurns) {
+        if (Date.now() - startedAt > TIMEOUT_MS) {
+          window.clearInterval(timer);
+          copyHandoffFallback(
+            prompt,
+            "等待交接包超时，生成指令已复制到剪贴板。",
+            "等待 AI 生成交接包超时。生成指令已复制，可手动重新执行。",
+          );
+        }
+        return;
+      }
+
+      const result = extractLatestHandoffText();
+      if (result) {
+        window.clearInterval(timer);
+        setHandoffStatus("已检测到交接包，正在准备新对话……");
+        proceedOneClickHandoff(result);
+        return;
+      }
+
+      if (Date.now() - startedAt > TIMEOUT_MS) {
+        window.clearInterval(timer);
+        copyHandoffFallback(
+          prompt,
+          "等待交接包超时，生成指令已复制到剪贴板。",
+          "等待 AI 生成交接包超时。生成指令已复制，可手动重新执行。",
+        );
+      }
+    }, 600);
+  }
+
+  function proceedOneClickHandoff(result) {
+    const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
+    const newChatControl = findNewChatControl();
+
+    if (!newChatControl) {
+      copyHandoffFallback(
+        restoreText,
+        "未识别新对话入口，恢复指令已复制到剪贴板。",
+        "未识别到新对话按钮。完整恢复指令已复制，请手动打开新对话并粘贴。",
+      );
+      return;
+    }
+
+    try {
+      sessionStorage.setItem(
+        HANDOFF_STORAGE_KEY,
+        JSON.stringify({
+          text: restoreText,
+          createdAt: Date.now(),
+          sourceUrl: window.location.href,
+          sourceTurns: getTurns().length,
+        }),
+      );
+    } catch (_) {
+      copyHandoffFallback(
+        restoreText,
+        "无法暂存恢复状态，恢复指令已复制到剪贴板。",
+        "无法暂存跨页面恢复状态。完整恢复指令已复制，请手动打开新对话并粘贴。",
+      );
+      return;
+    }
+
+    setHandoffStatus("正在打开新对话并准备填入恢复指令……");
+    newChatControl.click();
+    resumePendingHandoffPrompt();
   }
 
   function prepareNewConversationFromYaml() {
