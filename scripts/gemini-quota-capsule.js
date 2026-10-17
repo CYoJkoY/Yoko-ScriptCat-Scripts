@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.2.0
-// @description  专为 Google Gemini 定制的拟物化可拖拽用量监控胶囊：自动读取真实配额（无需手动计数），实时刷新倒计时、温控阶梯变色预警，支持横条、圆环、圆盘以及动态晶体崩坏（碎裂脱落/高危震颤）4 种形态自由切换。
+// @version      0.3.0
+// @description  专为 Google Gemini 定制的拟物化可拖拽用量监控胶囊：原生 DOM 构造免疫 CSP Trusted Types，实时刷新倒计时、温控阶梯变色预警，支持横条、圆环、圆盘以及动态晶体崩坏（碎裂脱落/高危震颤）4 种形态自由切换。
 // @author       Yoko
 // @match        https://gemini.google.com/*
 // @match        https://bard.google.com/*
@@ -16,17 +16,19 @@
 (function () {
   "use strict";
 
-  const STORAGE_KEY_CFG = "__gemini_quota_capsule_cfg_v2__";
-  const STORAGE_KEY_SIG = "__gemini_usage_signature__";
-  const STORAGE_KEY_URL = "__gemini_usage_url__";
-  const STORAGE_KEY_TS = "__gemini_usage_ts__";
+  // =========================================================================
+  // 1. 本地配置与跨页面同步键名
+  // =========================================================================
+  const STORAGE_KEY_CFG = "__gemini_quota_capsule_cfg_v3__";
+  const STORAGE_KEY_SHARED_DATA = "__gemini_quota_shared_metrics__";
+  const STORAGE_KEY_LOCAL_LOGS = "__gemini_quota_local_timestamps__";
 
-  const SIG_TTL_MS = 24 * 60 * 60 * 1000; // 缓存的 GraphQL URL 有效期
-  const USAGE_PAGE = "https://gemini.google.com/usage";
-  const POLL_INTERVAL_MS = 60 * 1000; // 每 60 秒自动拉取一次用量
-  const IFRAME_WAIT_MS = 15000; // iframe 兜底解析等待时长
+  const TIME_5H_MS = 5 * 60 * 60 * 1000;
+  const TIME_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
   const DEFAULT_CONFIG = {
+    limit5h: 50,
+    limitWeekly: 500,
     activeWindow: "5h", // '5h' | 'weekly'
     styleMode: "decay", // 'decay' | 'bar' | 'ring' | 'disk'
     pos: { right: 28, bottom: 85 },
@@ -47,301 +49,133 @@
     try {
       localStorage.setItem(STORAGE_KEY_CFG, JSON.stringify(cfg));
     } catch (e) {
-      console.error("[Gemini Quota] 配置持久化失败", e);
+      console.error("[Gemini Quota] 配置保存失败", e);
     }
   }
 
+  const config = loadConfig();
+
+  // =========================================================================
+  // 2. DOM 辅助构建器（严格杜绝 innerHTML，全面免疫 Trusted Types）
+  // =========================================================================
+  function el(tag, attrs = {}, children = []) {
+    const elem = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "style" && typeof v === "string") {
+        elem.style.cssText = v;
+      } else if (k === "className") {
+        elem.className = v;
+      } else if (k.startsWith("on") && typeof v === "function") {
+        elem.addEventListener(k.slice(2).toLowerCase(), v);
+      } else {
+        elem.setAttribute(k, v);
+      }
+    }
+    const list = Array.isArray(children) ? children : [children];
+    for (const child of list) {
+      if (child == null) continue;
+      if (typeof child === "string" || typeof child === "number") {
+        elem.appendChild(document.createTextNode(String(child)));
+      } else if (child instanceof Node) {
+        elem.appendChild(child);
+      }
+    }
+    return elem;
+  }
+
+  function svgEl(tag, attrs = {}, children = []) {
+    const elem = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      elem.setAttribute(k, v);
+    }
+    const list = Array.isArray(children) ? children : [children];
+    for (const child of list) {
+      if (child == null) continue;
+      if (child instanceof Node) elem.appendChild(child);
+    }
+    return elem;
+  }
+
+  // =========================================================================
+  // 3. 数据状态核心与本地滑动窗口保底
+  // =========================================================================
   const usageState = {
+    isOfficial: false,
     fiveHour: { pct: null, refreshAt: null },
     weekly: { pct: null, refreshAt: null },
-    signature: null,
-    templateUrl: null,
-    lastUpdate: 0,
-    fetchFailCount: 0,
+    lastSyncTime: 0,
   };
 
-  function isUsageQueryUrl(url) {
-    return (
-      typeof url === "string" &&
-      url.includes("executeQuery") &&
-      url.includes("query_signature=")
-    );
-  }
-
-  function captureSignature(url) {
+  function getLocalLogs() {
     try {
-      const m = url.match(/query_signature=([^&]+)/);
-      if (!m) return;
-      const sig = decodeURIComponent(m[1]);
-      if (sig === usageState.signature && usageState.templateUrl) return;
-      usageState.signature = sig;
-      usageState.templateUrl = url;
-      try {
-        localStorage.setItem(STORAGE_KEY_SIG, sig);
-        localStorage.setItem(STORAGE_KEY_URL, url);
-        localStorage.setItem(STORAGE_KEY_TS, String(Date.now()));
-      } catch {}
-      fetchUsageViaGraphQL();
-    } catch {}
-  }
-
-  const originalFetch = window.fetch;
-  window.fetch = async function (...args) {
-    let url = "";
-    try {
-      url =
-        typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
-    } catch {}
-    if (isUsageQueryUrl(url)) captureSignature(url);
-    return originalFetch.apply(this, args);
-  };
-
-  const originalXhrOpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-    try {
-      if (isUsageQueryUrl(url)) captureSignature(url);
-    } catch {}
-    return originalXhrOpen.call(this, method, url, ...rest);
-  };
-
-  function parseUsageResponse(text) {
-    if (!text || typeof text !== "string") return;
-
-    const clean = text.replace(/^\)\]\}'?\s*/, "");
-    let data;
-    try {
-      data = JSON.parse(clean);
+      const raw = localStorage.getItem(STORAGE_KEY_LOCAL_LOGS);
+      const list = raw ? JSON.parse(raw) : [];
+      const now = Date.now();
+      const filtered = list.filter(
+        (ts) => typeof ts === "number" && now - ts < TIME_WEEK_MS,
+      );
+      if (filtered.length !== list.length) {
+        localStorage.setItem(STORAGE_KEY_LOCAL_LOGS, JSON.stringify(filtered));
+      }
+      return filtered;
     } catch {
-      return;
-    }
-    extractUsage(data);
-  }
-
-  function extractUsage(data) {
-    if (!data || typeof data !== "object") return;
-
-    let pools =
-      data?.data?.viewer?.rpcs?.getUsageInfo?.pools ||
-      data?.viewer?.rpcs?.getUsageInfo?.pools;
-
-    if (!Array.isArray(pools)) pools = findPoolsRecursive(data);
-
-    if (!Array.isArray(pools) || pools.length === 0) return;
-
-    let updated = false;
-    for (const pool of pools) {
-      if (!pool || typeof pool !== "object" || !pool.poolType) continue;
-
-      const raw =
-        typeof pool.percentageUsed === "number" ? pool.percentageUsed : null;
-      const pct = raw === null ? null : Math.round(raw <= 1 ? raw * 100 : raw);
-
-      const refreshAt =
-        pool.gxu && pool.gxu.windowRefreshesAt
-          ? Date.parse(pool.gxu.windowRefreshesAt)
-          : null;
-
-      if (pool.poolType === "GXU_FIVE_HOURLY") {
-        usageState.fiveHour = { pct, refreshAt };
-        updated = true;
-      } else if (pool.poolType === "GXU_WEEKLY") {
-        usageState.weekly = { pct, refreshAt };
-        updated = true;
-      }
-    }
-
-    if (updated) {
-      usageState.lastUpdate = Date.now();
-      usageState.fetchFailCount = 0;
-      updateUI();
+      return [];
     }
   }
 
-  function findPoolsRecursive(obj, depth = 0) {
-    if (depth > 6 || !obj || typeof obj !== "object") return null;
-    if (Array.isArray(obj)) {
-      if (
-        obj.length > 0 &&
-        obj.every(
-          (x) => x && typeof x === "object" && typeof x.poolType === "string",
-        )
-      ) {
-        return obj;
-      }
-      for (const v of obj) {
-        const r = findPoolsRecursive(v, depth + 1);
-        if (r) return r;
-      }
-      return null;
-    }
-    if ("pools" in obj && Array.isArray(obj.pools)) return obj.pools;
-    for (const k of Object.keys(obj)) {
-      const r = findPoolsRecursive(obj[k], depth + 1);
-      if (r) return r;
-    }
-    return null;
+  function recordUsage(count = 1) {
+    const logs = getLocalLogs();
+    const now = Date.now();
+    for (let i = 0; i < count; i++) logs.push(now);
+    localStorage.setItem(STORAGE_KEY_LOCAL_LOGS, JSON.stringify(logs));
+    updateUI();
   }
 
-  async function fetchUsageViaGraphQL() {
-    if (!usageState.templateUrl) return;
+  function loadSharedOfficialData() {
     try {
-      const res = await fetch(usageState.templateUrl, {
-        credentials: "include",
-        headers: { Accept: "*/*" },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      const before = JSON.stringify(usageState.fiveHour);
-      parseUsageResponse(text);
-      const after = JSON.stringify(usageState.fiveHour);
-      if (before === after && usageState.fiveHour.pct === null) {
-        usageState.fetchFailCount++;
-      } else {
-        usageState.fetchFailCount = 0;
-      }
-    } catch (e) {
-      usageState.fetchFailCount++;
-    }
-
-    if (usageState.fetchFailCount >= 3) {
-      usageState.fetchFailCount = 0;
-      reloadUsageIframe();
-    }
-  }
-
-  let usageIframe = null;
-  let iframeHookInterval = null;
-  let iframeHooked = false;
-
-  function ensureUsageIframe() {
-    if (usageIframe && usageIframe.isConnected) return;
-
-    usageIframe = document.createElement("iframe");
-    usageIframe.setAttribute("aria-hidden", "true");
-    usageIframe.setAttribute("tabindex", "-1");
-    usageIframe.style.cssText =
-      "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:-9999px;border:0;";
-    usageIframe.src = USAGE_PAGE;
-
-    (document.body || document.documentElement).appendChild(usageIframe);
-
-    iframeHooked = false;
-    if (iframeHookInterval) clearInterval(iframeHookInterval);
-
-    iframeHookInterval = setInterval(() => {
-      if (iframeHooked) {
-        clearInterval(iframeHookInterval);
-        iframeHookInterval = null;
-        return;
-      }
-      try {
-        const win = usageIframe.contentWindow;
-        if (!win) return;
-        if (!win.location || win.location.href === "about:blank") return;
-        hookIframeWindow(win);
-        iframeHooked = true;
-        clearInterval(iframeHookInterval);
-        iframeHookInterval = null;
-      } catch {}
-    }, 100);
-
-    setTimeout(() => {
-      if (usageState.fiveHour.pct === null) {
-        tryParseUsageDOM();
-      }
-    }, IFRAME_WAIT_MS);
-  }
-
-  function reloadUsageIframe() {
-    if (!usageIframe) {
-      ensureUsageIframe();
-      return;
-    }
-    iframeHooked = false;
-    try {
-      usageIframe.src = USAGE_PAGE + "?_=" + Date.now();
-    } catch {}
-  }
-
-  function hookIframeWindow(win) {
-    // fetch hook
-    try {
-      const origFetch = win.fetch;
-      if (origFetch && !origFetch.__gcHooked) {
-        const wrapped = async function (...args) {
-          let url = "";
-          try {
-            url =
-              typeof args[0] === "string"
-                ? args[0]
-                : (args[0] && args[0].url) || "";
-          } catch {}
-          const isUsage = isUsageQueryUrl(url);
-          if (isUsage) captureSignature(url);
-
-          const res = await origFetch.apply(this, args);
-
-          if (isUsage) {
-            try {
-              const clone = res.clone();
-              const text = await clone.text();
-              parseUsageResponse(text);
-            } catch {}
-          }
-          return res;
-        };
-        wrapped.__gcHooked = true;
-        win.fetch = wrapped;
-      }
-    } catch {}
-
-    // XHR hook
-    try {
-      const XHR = win.XMLHttpRequest;
-      if (XHR && !XHR.__gcHooked) {
-        const origOpen = XHR.prototype.open;
-        const origSend = XHR.prototype.send;
-        XHR.prototype.open = function (method, url, ...rest) {
-          this.__gcUrl = url;
-          if (isUsageQueryUrl(url)) captureSignature(url);
-          return origOpen.call(this, method, url, ...rest);
-        };
-        XHR.prototype.send = function (...args) {
-          this.addEventListener("load", () => {
-            try {
-              if (isUsageQueryUrl(this.__gcUrl)) {
-                parseUsageResponse(this.responseText);
-              }
-            } catch {}
-          });
-          return origSend.apply(this, args);
-        };
-        XHR.__gcHooked = true;
+      const raw = localStorage.getItem(STORAGE_KEY_SHARED_DATA);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        if (parsed.fiveHour) usageState.fiveHour = parsed.fiveHour;
+        if (parsed.weekly) usageState.weekly = parsed.weekly;
+        usageState.lastSyncTime = parsed.timestamp || Date.now();
+        usageState.isOfficial = true;
       }
     } catch {}
   }
 
-  function tryParseUsageDOM() {
-    if (!usageIframe) return;
-    try {
-      const doc = usageIframe.contentDocument;
-      if (!doc || !doc.body) return;
-      const text = doc.body.innerText || "";
+  function calculateLocalStats() {
+    const logs = getLocalLogs();
+    const now = Date.now();
 
-      const fiveMatch =
-        text.match(/(\d+)\s*%\s*(?:of\s+(?:your\s+)?)?5\s*-?\s*hour/i) ||
-        text.match(/(?:5\s*-?\s*hour|five\s*hour)[^%]{0,80}?(\d+)\s*%/i);
-      const weekMatch =
-        text.match(/(\d+)\s*%\s*(?:of\s+(?:your\s+)?)?week(?:ly)?/i) ||
-        text.match(/week(?:ly)?[^%]{0,80}?(\d+)\s*%/i);
-
-      if (fiveMatch) usageState.fiveHour.pct = parseInt(fiveMatch[1], 10);
-      if (weekMatch) usageState.weekly.pct = parseInt(weekMatch[1], 10);
-
-      if (fiveMatch || weekMatch) updateUI();
-    } catch (e) {
-      console.warn("[Gemini Quota] DOM 兜底解析失败", e);
+    const logs5h = logs.filter((ts) => now - ts < TIME_5H_MS);
+    const count5h = logs5h.length;
+    let refreshAt5h = null;
+    if (count5h > 0) {
+      refreshAt5h = Math.min(...logs5h) + TIME_5H_MS;
     }
+
+    const countWeekly = logs.length;
+    let refreshAtWeekly = null;
+    if (countWeekly > 0) {
+      refreshAtWeekly = Math.min(...logs) + TIME_WEEK_MS;
+    }
+
+    return {
+      count5h,
+      pct5h: Math.min(
+        100,
+        Math.round((count5h / Math.max(1, config.limit5h)) * 100),
+      ),
+      refreshAt5h,
+      countWeekly,
+      pctWeekly: Math.min(
+        100,
+        Math.round((countWeekly / Math.max(1, config.limitWeekly)) * 100),
+      ),
+      refreshAtWeekly,
+    };
   }
 
   function formatCountdown(ms) {
@@ -368,10 +202,59 @@
     }
   }
 
+  // =========================================================================
+  // 4. 输入交互与会话请求侦听（自动递增计数）
+  // =========================================================================
+  let lastPromptTime = 0;
+  function onPromptDetected() {
+    const now = Date.now();
+    if (now - lastPromptTime > 2500) {
+      lastPromptTime = now;
+      recordUsage(1);
+    }
+  }
+
+  const origFetch = window.fetch;
+  window.fetch = async function (...args) {
+    try {
+      const url =
+        typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
+      if (
+        url.includes("BardChatUi/data/batchexecute") ||
+        url.includes("StreamGenerateContent") ||
+        url.includes("assistant.vertical.chat")
+      ) {
+        onPromptDetected();
+      }
+    } catch {}
+    return origFetch.apply(this, args);
+  };
+
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        const target = e.target;
+        if (
+          target &&
+          (target.getAttribute("contenteditable") === "true" ||
+            target.tagName === "TEXTAREA" ||
+            target.closest('.input-area, rich-textarea, [role="textbox"]'))
+        ) {
+          setTimeout(onPromptDetected, 300);
+        }
+      }
+    },
+    true,
+  );
+
+  // =========================================================================
+  // 5. CSS 样式表注入
+  // =========================================================================
   const STYLES = `
     #gc-pill-root {
       position: fixed;
-      z-index: 999999;
+      z-index: 9999999;
       user-select: none;
       touch-action: none;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
@@ -380,23 +263,22 @@
       line-height: 1.4;
       filter: drop-shadow(0 10px 25px rgba(0, 0, 0, 0.5));
     }
-
     .gc-pill-container {
       display: flex;
       align-items: center;
       gap: 10px;
-      background: linear-gradient(135deg, rgba(24, 24, 27, 0.94) 0%, rgba(9, 9, 11, 0.98) 100%);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: linear-gradient(135deg, rgba(24, 24, 27, 0.95) 0%, rgba(9, 9, 11, 0.98) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
       border-radius: 9999px;
       padding: 6px 14px 6px 9px;
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
-      box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15), 0 8px 24px rgba(0,0,0,0.45);
+      box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15), 0 8px 24px rgba(0,0,0,0.5);
       cursor: grab;
       transition: border-color 0.25s, box-shadow 0.25s;
     }
     .gc-pill-container:active { cursor: grabbing; }
-    .gc-pill-container:hover { border-color: rgba(255, 255, 255, 0.28); }
+    .gc-pill-container:hover { border-color: rgba(255, 255, 255, 0.3); }
 
     .gc-capsule-head {
       width: 32px;
@@ -407,7 +289,6 @@
       justify-content: center;
       flex-shrink: 0;
     }
-
     .gc-pill-content {
       display: flex;
       flex-direction: column;
@@ -458,7 +339,7 @@
       background: transparent;
       border: none;
       outline: none;
-      color: #64748b;
+      color: #94a3b8;
       cursor: pointer;
       padding: 4px;
       border-radius: 6px;
@@ -469,11 +350,11 @@
     }
     .gc-btn-icon:hover {
       color: #f8fafc;
-      background: rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.1);
     }
     .gc-btn-icon svg { width: 14px; height: 14px; }
 
-    /* 模式 1：横条式 */
+    /* 横条式 */
     .gc-track-bar {
       width: 100%;
       height: 3px;
@@ -481,45 +362,23 @@
       border-radius: 999px;
       overflow: hidden;
       margin-top: 3px;
-      position: relative;
     }
     .gc-fill-bar {
       height: 100%;
       border-radius: 999px;
-      transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.35s ease;
+      transition: width 0.35s ease, background-color 0.35s ease;
     }
 
-    /* 模式 2：圆环式 */
-    .gc-ring-svg {
-      transform: rotate(-90deg);
-      width: 32px;
-      height: 32px;
-    }
-    .gc-ring-bg {
-      stroke: rgba(255, 255, 255, 0.12);
-      stroke-width: 3.2;
-      fill: none;
-    }
-    .gc-ring-val {
-      stroke-width: 3.2;
-      stroke-linecap: round;
-      fill: none;
-      transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
-    }
-
-    /* 模式 3：圆盘式 */
+    /* 圆盘式 */
     .gc-disk-box {
       width: 26px;
       height: 26px;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.08);
       position: relative;
-      box-shadow: inset 0 0 4px rgba(0,0,0,0.6);
       display: flex;
       align-items: center;
       justify-content: center;
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.15);
     }
     .gc-disk-core {
       position: absolute;
@@ -527,11 +386,10 @@
       height: 10px;
       background: #09090b;
       border-radius: 50%;
-      z-index: 2;
-      border: 1px solid rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.2);
     }
 
-    /* 模式 4：崩坏式 */
+    /* 崩坏碎裂式 */
     .gc-decay-capsule {
       width: 28px;
       height: 28px;
@@ -544,9 +402,6 @@
       width: 26px;
       height: 26px;
       position: relative;
-      border-radius: 6px;
-      overflow: visible;
-      transition: transform 0.2s ease;
     }
     .gc-decay-shard {
       position: absolute;
@@ -554,44 +409,41 @@
       height: 100%;
       top: 0;
       left: 0;
-      background-size: cover;
-      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease, filter 0.3s;
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;
     }
     .gc-decay-fissures {
       position: absolute;
       inset: -2px;
       pointer-events: none;
-      opacity: 0;
       transition: opacity 0.35s ease;
       background: radial-gradient(circle, transparent 40%, var(--glow-color) 120%);
       mix-blend-mode: screen;
     }
-
-    @keyframes gc-fracture-jitter {
+    @keyframes gc-jitter {
       0% { transform: translate(0, 0) rotate(0deg); }
-      25% { transform: translate(-1px, 1.2px) rotate(-1.5deg); }
-      50% { transform: translate(1.4px, -1px) rotate(1.8deg); }
-      75% { transform: translate(-1.2px, -0.8px) rotate(-0.8deg); }
+      25% { transform: translate(-1px, 1px) rotate(-1.5deg); }
+      50% { transform: translate(1.2px, -1px) rotate(1.5deg); }
+      75% { transform: translate(-1px, -0.8px) rotate(-0.8deg); }
       100% { transform: translate(0, 0) rotate(0deg); }
     }
-    .gc-state-critical { animation: gc-fracture-jitter 0.18s infinite linear; }
+    .gc-state-critical { animation: gc-jitter 0.18s infinite linear; }
 
-    /* 设置抽屉 */
+    /* 设置面板抽屉 */
     #gc-pill-drawer {
       position: absolute;
       bottom: calc(100% + 10px);
       right: 0;
-      width: 210px;
-      background: rgba(15, 17, 23, 0.97);
+      width: 220px;
+      background: rgba(15, 17, 23, 0.98);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 12px;
-      box-shadow: 0 16px 36px rgba(0,0,0,0.65);
+      box-shadow: 0 16px 36px rgba(0,0,0,0.7);
       padding: 12px;
       backdrop-filter: blur(20px);
       display: none;
       flex-direction: column;
       gap: 10px;
-      z-index: 1000000;
+      z-index: 10000000;
     }
     #gc-pill-drawer.gc-active { display: flex; }
     .gc-drawer-title {
@@ -631,17 +483,17 @@
     }
     .gc-drawer-status {
       font-size: 10px;
-      color: #64748b;
+      color: #94a3b8;
       border-top: 1px solid rgba(255,255,255,0.08);
       padding-top: 6px;
       line-height: 1.5;
     }
+    .gc-link-btn {
+      color: #38bdf8;
+      text-decoration: underline;
+      cursor: pointer;
+    }
   `;
-
-  let config = loadConfig();
-  let rootEl = null;
-  let pillContainerEl = null;
-  let drawerEl = null;
 
   function injectStyles() {
     if (document.getElementById("gc-pill-style")) return;
@@ -651,86 +503,237 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  // =========================================================================
+  // 6. UI DOM 节点纯原生装配
+  // =========================================================================
+  let rootEl = null;
+  let pillContainerEl = null;
+  let drawerEl = null;
+  let badgeEl = null;
+  let usageTextEl = null;
+  let timerTextEl = null;
+  let headSlotEl = null;
+  let trackBarSlotEl = null;
+  let fillBarEl = null;
+  let statusTextEl = null;
+  const choiceBtns = [];
+
   function createDOM() {
     if (document.getElementById("gc-pill-root")) {
       rootEl = document.getElementById("gc-pill-root");
-      pillContainerEl = document.getElementById("gc-pill-main");
-      drawerEl = document.getElementById("gc-pill-drawer");
-      updateUI();
       return;
     }
 
     injectStyles();
 
-    rootEl = document.createElement("div");
-    rootEl.id = "gc-pill-root";
-    rootEl.style.right = `${config.pos.right}px`;
-    rootEl.style.bottom = `${config.pos.bottom}px`;
+    headSlotEl = el("div", {
+      className: "gc-capsule-head",
+      id: "gc-head-slot",
+    });
 
-    rootEl.innerHTML = `
-      <div class="gc-pill-container" id="gc-pill-main">
-        <div class="gc-capsule-head" id="gc-head-slot"></div>
+    badgeEl = el(
+      "span",
+      {
+        className: "gc-pill-badge",
+        title: "点击切换 5小时 / 每周",
+        onclick: (e) => {
+          e.stopPropagation();
+          config.activeWindow = config.activeWindow === "5h" ? "weekly" : "5h";
+          saveConfig(config);
+          updateUI();
+        },
+      },
+      ["5H"],
+    );
 
-        <div class="gc-pill-content">
-          <div class="gc-pill-row-top">
-            <span class="gc-pill-badge" id="gc-btn-toggle-window" title="点击切换 5小时 / 每周">5H</span>
-            <span class="gc-pill-counter" id="gc-text-usage">--%</span>
-          </div>
-          <div class="gc-track-bar" id="gc-track-bar-slot" style="display:none;">
-            <div class="gc-fill-bar" id="gc-fill-bar-core"></div>
-          </div>
-          <div class="gc-pill-timer" id="gc-timer-wrapper">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"></circle>
-              <polyline points="12 6 12 12 16 14"></polyline>
-            </svg>
-            <span id="gc-text-timer">初始化</span>
-          </div>
-        </div>
+    usageTextEl = el("span", { className: "gc-pill-counter" }, ["0%"]);
 
-        <div class="gc-pill-actions">
-          <button class="gc-btn-icon" id="gc-btn-style-cycle" title="形态轮换（横条/圆环/圆盘/崩坏）">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-            </svg>
-          </button>
-          <button class="gc-btn-icon" id="gc-btn-settings" title="形态设置">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="3"></circle>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
+    const rowTop = el("div", { className: "gc-pill-row-top" }, [
+      badgeEl,
+      usageTextEl,
+    ]);
 
-      <div id="gc-pill-drawer">
-        <div class="gc-drawer-title">
-          <span>胶囊形态</span>
-          <span style="font-size:9px; color:#64748b;">用量自动同步</span>
-        </div>
+    fillBarEl = el("div", { className: "gc-fill-bar" });
+    trackBarSlotEl = el(
+      "div",
+      { className: "gc-track-bar", style: "display:none;" },
+      [fillBarEl],
+    );
 
-        <div class="gc-mode-grid">
-          <button class="gc-choice-btn" data-style="bar">横条式</button>
-          <button class="gc-choice-btn" data-style="ring">圆环式</button>
-          <button class="gc-choice-btn" data-style="disk">圆盘式</button>
-          <button class="gc-choice-btn" data-style="decay">崩坏式</button>
-        </div>
+    const timerSvg = svgEl(
+      "svg",
+      {
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": "2.2",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+      },
+      [
+        svgEl("circle", { cx: "12", cy: "12", r: "10" }),
+        svgEl("polyline", { points: "12 6 12 12 16 14" }),
+      ],
+    );
 
-        <div class="gc-drawer-status" id="gc-drawer-status">
-          正在初始化同步…
-        </div>
-      </div>
-    `;
+    timerTextEl = el("span", {}, ["已满血"]);
+    const timerWrapper = el("div", { className: "gc-pill-timer" }, [
+      timerSvg,
+      timerTextEl,
+    ]);
+
+    const contentBox = el("div", { className: "gc-pill-content" }, [
+      rowTop,
+      trackBarSlotEl,
+      timerWrapper,
+    ]);
+
+    const cycleSvg = svgEl(
+      "svg",
+      {
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": "2",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+      },
+      [
+        svgEl("path", {
+          d: "M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2",
+        }),
+      ],
+    );
+
+    const btnCycle = el(
+      "button",
+      {
+        className: "gc-btn-icon",
+        title: "轮换形态（横条/圆环/圆盘/崩坏）",
+        onclick: (e) => {
+          e.stopPropagation();
+          const modes = ["bar", "ring", "disk", "decay"];
+          const nextIdx = (modes.indexOf(config.styleMode) + 1) % modes.length;
+          config.styleMode = modes[nextIdx];
+          saveConfig(config);
+          updateUI();
+        },
+      },
+      [cycleSvg],
+    );
+
+    const gearSvg = svgEl(
+      "svg",
+      {
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": "2",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+      },
+      [
+        svgEl("circle", { cx: "12", cy: "12", r: "3" }),
+        svgEl("path", {
+          d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z",
+        }),
+      ],
+    );
+
+    const btnSettings = el(
+      "button",
+      {
+        className: "gc-btn-icon",
+        title: "展开配置面板",
+        onclick: (e) => {
+          e.stopPropagation();
+          drawerEl.classList.toggle("gc-active");
+        },
+      },
+      [gearSvg],
+    );
+
+    const actionsBox = el("div", { className: "gc-pill-actions" }, [
+      btnCycle,
+      btnSettings,
+    ]);
+
+    pillContainerEl = el(
+      "div",
+      { className: "gc-pill-container", id: "gc-pill-main" },
+      [headSlotEl, contentBox, actionsBox],
+    );
+
+    // 抽屉面板
+    const drawerTitle = el("div", { className: "gc-drawer-title" }, [
+      el("span", {}, ["胶囊监控设置"]),
+      el("span", { style: "font-size:9px; color:#64748b;" }, ["可全屏拖拽"]),
+    ]);
+
+    choiceBtns.length = 0;
+    const modeConfigs = [
+      { key: "bar", text: "横条式" },
+      { key: "ring", text: "圆环式" },
+      { key: "disk", text: "圆盘式" },
+      { key: "decay", text: "崩坏式" },
+    ];
+    for (const m of modeConfigs) {
+      const btn = el(
+        "button",
+        {
+          className: `gc-choice-btn ${config.styleMode === m.key ? "active" : ""}`,
+          onclick: () => {
+            config.styleMode = m.key;
+            saveConfig(config);
+            updateUI();
+          },
+        },
+        [m.text],
+      );
+      btn.dataset.style = m.key;
+      choiceBtns.push(btn);
+    }
+    const modeGrid = el("div", { className: "gc-mode-grid" }, choiceBtns);
+
+    statusTextEl = el("div", { className: "gc-drawer-status" }, [
+      el("span", {}, ["数据模式：本地滑动窗口实时推算"]),
+      el("br"),
+      el(
+        "span",
+        {
+          className: "gc-link-btn",
+          onclick: () =>
+            window.open("https://gemini.google.com/usage", "_blank"),
+        },
+        ["点此在新标签打开官方 /usage 页面"],
+      ),
+    ]);
+
+    drawerEl = el("div", { id: "gc-pill-drawer" }, [
+      drawerTitle,
+      modeGrid,
+      statusTextEl,
+    ]);
+
+    rootEl = el(
+      "div",
+      {
+        id: "gc-pill-root",
+        style: `right:${config.pos.right}px; bottom:${config.pos.bottom}px;`,
+      },
+      [pillContainerEl, drawerEl],
+    );
 
     (document.body || document.documentElement).appendChild(rootEl);
-    pillContainerEl = document.getElementById("gc-pill-main");
-    drawerEl = document.getElementById("gc-pill-drawer");
 
-    bindEvents();
+    bindDragEvents();
     updateUI();
   }
 
-  function bindEvents() {
+  // =========================================================================
+  // 7. 拖拽交互绑定
+  // =========================================================================
+  function bindDragEvents() {
     let isDragging = false;
     let startX = 0,
       startY = 0;
@@ -785,89 +788,85 @@
     pillContainerEl.addEventListener("pointerup", endDrag);
     pillContainerEl.addEventListener("pointercancel", endDrag);
 
-    // 切换 5h / 7d
-    document
-      .getElementById("gc-btn-toggle-window")
-      .addEventListener("click", (e) => {
-        e.stopPropagation();
-        config.activeWindow = config.activeWindow === "5h" ? "weekly" : "5h";
-        saveConfig(config);
-        updateUI();
-      });
-
-    // 形态轮换
-    const modes = ["bar", "ring", "disk", "decay"];
-    document
-      .getElementById("gc-btn-style-cycle")
-      .addEventListener("click", (e) => {
-        e.stopPropagation();
-        const nextIdx = (modes.indexOf(config.styleMode) + 1) % modes.length;
-        config.styleMode = modes[nextIdx];
-        saveConfig(config);
-        updateUI();
-      });
-
-    // 抽屉开关
-    document
-      .getElementById("gc-btn-settings")
-      .addEventListener("click", (e) => {
-        e.stopPropagation();
-        drawerEl.classList.toggle("gc-active");
-      });
-
-    drawerEl.querySelectorAll(".gc-choice-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        config.styleMode = btn.getAttribute("data-style");
-        saveConfig(config);
-        updateUI();
-      });
-    });
-
     document.addEventListener("pointerdown", (e) => {
-      if (!rootEl.contains(e.target)) drawerEl.classList.remove("gc-active");
+      if (rootEl && !rootEl.contains(e.target)) {
+        drawerEl.classList.remove("gc-active");
+      }
     });
   }
 
+  // =========================================================================
+  // 8. 4 种进度形态渲染引擎（完全通过原生 DOM 构造）
+  // =========================================================================
   function renderIndicatorHead(mode, ratio, color) {
-    const headSlot = document.getElementById("gc-head-slot");
-    const barSlot = document.getElementById("gc-track-bar-slot");
-    const fillBar = document.getElementById("gc-fill-bar-core");
+    if (!headSlotEl) return;
+    headSlotEl.textContent = "";
 
     if (mode === "bar") {
-      barSlot.style.display = "block";
-      fillBar.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
-      fillBar.style.backgroundColor = color.hex;
-      fillBar.style.boxShadow = `0 0 8px ${color.glow}`;
+      trackBarSlotEl.style.display = "block";
+      fillBarEl.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
+      fillBarEl.style.backgroundColor = color.hex;
+      fillBarEl.style.boxShadow = `0 0 8px ${color.glow}`;
 
-      headSlot.innerHTML = `
-        <div style="width:16px; height:24px; border-radius:999px; background:linear-gradient(180deg, ${color.hex} 50%, rgba(255,255,255,0.15) 50%); border:1px solid rgba(255,255,255,0.2); box-shadow: 0 0 6px ${color.glow};"></div>
-      `;
+      const miniPill = el("div", {
+        style: `width:16px; height:24px; border-radius:999px; background:linear-gradient(180deg, ${color.hex} 50%, rgba(255,255,255,0.15) 50%); border:1px solid rgba(255,255,255,0.25); box-shadow: 0 0 6px ${color.glow};`,
+      });
+      headSlotEl.appendChild(miniPill);
       return;
-    } else {
-      barSlot.style.display = "none";
     }
+
+    trackBarSlotEl.style.display = "none";
 
     if (mode === "ring") {
       const radius = 12;
       const circumference = 2 * Math.PI * radius;
       const strokeOffset = circumference - Math.min(1, ratio) * circumference;
-      headSlot.innerHTML = `
-        <svg class="gc-ring-svg" viewBox="0 0 32 32">
-          <circle class="gc-ring-bg" cx="16" cy="16" r="${radius}"></circle>
-          <circle class="gc-ring-val" cx="16" cy="16" r="${radius}"
-                  style="stroke-dasharray: ${circumference}; stroke-dashoffset: ${strokeOffset}; stroke: ${color.hex}; filter: drop-shadow(0 0 3px ${color.glow});"></circle>
-        </svg>
-      `;
+
+      const ringBg = svgEl("circle", {
+        cx: "16",
+        cy: "16",
+        r: String(radius),
+        stroke: "rgba(255, 255, 255, 0.12)",
+        "stroke-width": "3.2",
+        fill: "none",
+      });
+
+      const ringVal = svgEl("circle", {
+        cx: "16",
+        cy: "16",
+        r: String(radius),
+        "stroke-width": "3.2",
+        "stroke-linecap": "round",
+        fill: "none",
+        stroke: color.hex,
+        style: `stroke-dasharray: ${circumference}; stroke-dashoffset: ${strokeOffset}; filter: drop-shadow(0 0 3px ${color.glow}); transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;`,
+      });
+
+      const ringSvg = svgEl(
+        "svg",
+        {
+          viewBox: "0 0 32 32",
+          style: "transform: rotate(-90deg); width:32px; height:32px;",
+        },
+        [ringBg, ringVal],
+      );
+
+      headSlotEl.appendChild(ringSvg);
       return;
     }
 
     if (mode === "disk") {
       const degrees = Math.min(360, Math.round(ratio * 360));
-      headSlot.innerHTML = `
-        <div class="gc-disk-box" style="background: conic-gradient(${color.hex} 0deg ${degrees}deg, rgba(255,255,255,0.12) ${degrees}deg 360deg); box-shadow: 0 0 8px ${color.glow};">
-          <div class="gc-disk-core"></div>
-        </div>
-      `;
+      const diskBox = el(
+        "div",
+        {
+          className: "gc-disk-box",
+          style: `background: conic-gradient(${color.hex} 0deg ${degrees}deg, rgba(255,255,255,0.12) ${degrees}deg 360deg); box-shadow: 0 0 8px ${color.glow};`,
+        },
+        [el("div", { className: "gc-disk-core" })],
+      );
+
+      headSlotEl.appendChild(diskBox);
       return;
     }
 
@@ -877,7 +876,7 @@
       const drift = r * 8.5;
       const rot = r * 30;
 
-      const shards = [
+      const shardsData = [
         {
           clip: "polygon(0% 0%, 55% 0%, 42% 45%, 0% 50%)",
           dx: -drift * 0.7,
@@ -916,146 +915,168 @@
         },
       ];
 
-      const shardElements = shards
-        .map((s, idx) => {
-          const opacity = r > 0.95 && (idx === 0 || idx === 4) ? 0.2 : 1;
-          const transform = `translate(${s.dx.toFixed(1)}px, ${s.dy.toFixed(
-            1,
-          )}px) rotate(${s.dr.toFixed(1)}deg)`;
-          return `
-          <div class="gc-decay-shard" style="
-            clip-path: ${s.clip};
-            -webkit-clip-path: ${s.clip};
-            background: linear-gradient(135deg, ${color.hex} 0%, rgba(20,20,25,0.92) 100%);
-            border: 1px solid rgba(255,255,255,0.25);
-            transform: ${transform};
-            opacity: ${opacity};
-            filter: drop-shadow(0 0 ${Math.max(2, r * 6)}px ${color.glow});
-          "></div>
-        `;
-        })
-        .join("");
+      const shardNodes = shardsData.map((s, idx) => {
+        const opacity = r > 0.95 && (idx === 0 || idx === 4) ? 0.2 : 1;
+        const transform = `translate(${s.dx.toFixed(1)}px, ${s.dy.toFixed(1)}px) rotate(${s.dr.toFixed(1)}deg)`;
+        return el("div", {
+          className: "gc-decay-shard",
+          style: `clip-path: ${s.clip}; -webkit-clip-path: ${s.clip}; background: linear-gradient(135deg, ${color.hex} 0%, rgba(20,20,25,0.92) 100%); border: 1px solid rgba(255,255,255,0.25); transform: ${transform}; opacity: ${opacity}; filter: drop-shadow(0 0 ${Math.max(2, r * 6)}px ${color.glow});`,
+        });
+      });
 
-      headSlot.innerHTML = `
-        <div class="gc-decay-capsule">
-          <div class="gc-decay-body ${isCritical ? "gc-state-critical" : ""}">
-            ${shardElements}
-            <div class="gc-decay-fissures" style="opacity: ${Math.min(
-              1,
-              r * 1.3,
-            )}; --glow-color: ${color.glow};"></div>
-          </div>
-        </div>
-      `;
+      const fissures = el("div", {
+        className: "gc-decay-fissures",
+        style: `opacity: ${Math.min(1, r * 1.3)}; --glow-color: ${color.glow};`,
+      });
+
+      const body = el(
+        "div",
+        {
+          className: `gc-decay-body ${isCritical ? "gc-state-critical" : ""}`,
+        },
+        [...shardNodes, fissures],
+      );
+
+      const decayCapsule = el("div", { className: "gc-decay-capsule" }, [body]);
+      headSlotEl.appendChild(decayCapsule);
     }
   }
 
+  // =========================================================================
+  // 9. 界面响应式更新
+  // =========================================================================
   function updateUI() {
     if (!rootEl) return;
 
+    loadSharedOfficialData();
+    const localStats = calculateLocalStats();
     const is5h = config.activeWindow === "5h";
-    const data = is5h ? usageState.fiveHour : usageState.weekly;
-    const pct = data.pct;
-    const refreshAt = data.refreshAt;
-    const ratio = pct !== null ? pct / 100 : 0;
+
+    let pct = 0;
+    let refreshAt = null;
+
+    if (usageState.isOfficial) {
+      const off = is5h ? usageState.fiveHour : usageState.weekly;
+      pct =
+        off.pct != null
+          ? off.pct
+          : is5h
+            ? localStats.pct5h
+            : localStats.pctWeekly;
+      refreshAt =
+        off.refreshAt ||
+        (is5h ? localStats.refreshAt5h : localStats.refreshAtWeekly);
+    } else {
+      pct = is5h ? localStats.pct5h : localStats.pctWeekly;
+      refreshAt = is5h ? localStats.refreshAt5h : localStats.refreshAtWeekly;
+    }
+
+    const ratio = pct / 100;
     const color = getProgressColor(ratio);
 
-    // 徽章
-    const badgeEl = document.getElementById("gc-btn-toggle-window");
-    if (badgeEl) {
-      badgeEl.textContent = is5h ? "5H" : "7D";
-      badgeEl.style.color = pct !== null ? color.hex : "#94a3b8";
-    }
+    badgeEl.textContent = is5h ? "5H" : "7D";
+    badgeEl.style.color = color.hex;
 
-    // 百分比
-    const countEl = document.getElementById("gc-text-usage");
-    if (countEl) {
-      countEl.textContent = pct !== null ? `${pct}%` : "--%";
-      countEl.style.color = pct !== null ? "#ffffff" : "#94a3b8";
-    }
+    usageTextEl.textContent = `${pct}%`;
+    usageTextEl.style.color = "#ffffff";
 
-    // 倒计时
-    const timerEl = document.getElementById("gc-text-timer");
-    if (timerEl) {
-      if (pct === 0) {
-        timerEl.textContent = "已满血";
-        timerEl.style.color = "#10b981";
-      } else if (refreshAt) {
-        const left = refreshAt - Date.now();
-        if (left > 0) {
-          timerEl.textContent = formatCountdown(left);
-          timerEl.style.color = color.hex;
-        } else {
-          timerEl.textContent = "刷新中";
-          timerEl.style.color = "#10b981";
-        }
+    if (pct === 0) {
+      timerTextEl.textContent = "已满血";
+      timerTextEl.style.color = "#10b981";
+    } else if (refreshAt) {
+      const left = refreshAt - Date.now();
+      if (left > 0) {
+        timerTextEl.textContent = formatCountdown(left);
+        timerTextEl.style.color = color.hex;
       } else {
-        timerEl.textContent = usageState.signature ? "同步中" : "初始化";
-        timerEl.style.color = "#64748b";
+        timerTextEl.textContent = "已就绪";
+        timerTextEl.style.color = "#10b981";
       }
+    } else {
+      timerTextEl.textContent = "已就绪";
+      timerTextEl.style.color = "#94a3b8";
     }
 
     renderIndicatorHead(config.styleMode, ratio, color);
 
-    const statusEl = document.getElementById("gc-drawer-status");
-    if (statusEl) {
-      if (usageState.lastUpdate > 0) {
-        const ago = Math.round((Date.now() - usageState.lastUpdate) / 1000);
-        statusEl.textContent = `上次同步：${ago}s 前 · 每 60s 自动刷新`;
-      } else if (usageState.signature) {
-        statusEl.textContent = "正在同步 Gemini 用量…";
-      } else {
-        statusEl.textContent = "正在捕获接口 signature…";
-      }
-    }
-
-    if (drawerEl) {
-      drawerEl.querySelectorAll(".gc-choice-btn").forEach((btn) => {
-        btn.classList.toggle(
-          "active",
-          btn.getAttribute("data-style") === config.styleMode,
-        );
-      });
+    for (const btn of choiceBtns) {
+      btn.classList.toggle("active", btn.dataset.style === config.styleMode);
     }
   }
 
-  async function initUsage() {
-    try {
-      const sig = localStorage.getItem(STORAGE_KEY_SIG);
-      const url = localStorage.getItem(STORAGE_KEY_URL);
-      const ts = parseInt(localStorage.getItem(STORAGE_KEY_TS) || "0", 10);
-      if (sig && url && Date.now() - ts < SIG_TTL_MS) {
-        usageState.signature = sig;
-        usageState.templateUrl = url;
-        await fetchUsageViaGraphQL();
-      }
-    } catch {}
+  // =========================================================================
+  // 10. 官方 /usage 页面探针采集器（打开官方页时自动抓取并共享至 localStorage）
+  // =========================================================================
+  function runUsagePageCollector() {
+    if (!window.location.pathname.startsWith("/usage")) return;
 
-    ensureUsageIframe();
+    const scrape = () => {
+      try {
+        const text = document.body.innerText || "";
+        const fiveMatch =
+          text.match(/(\d+)\s*%\s*(?:of\s+(?:your\s+)?)?5\s*-?\s*hour/i) ||
+          text.match(/(?:5\s*-?\s*hour|five\s*hour)[^%]{0,80}?(\d+)\s*%/i);
+        const weekMatch =
+          text.match(/(\d+)\s*%\s*(?:of\s+(?:your\s+)?)?week(?:ly)?/i) ||
+          text.match(/week(?:ly)?[^%]{0,80}?(\d+)\s*%/i);
 
-    setInterval(() => {
-      if (usageState.templateUrl) fetchUsageViaGraphQL();
-    }, POLL_INTERVAL_MS);
+        if (fiveMatch || weekMatch) {
+          const payload = {
+            timestamp: Date.now(),
+            fiveHour: {
+              pct: fiveMatch ? parseInt(fiveMatch[1], 10) : null,
+              refreshAt: Date.now() + 3.5 * 3600 * 1000,
+            },
+            weekly: {
+              pct: weekMatch ? parseInt(weekMatch[1], 10) : null,
+              refreshAt: Date.now() + 5 * 24 * 3600 * 1000,
+            },
+          };
+          localStorage.setItem(
+            STORAGE_KEY_SHARED_DATA,
+            JSON.stringify(payload),
+          );
+        }
+      } catch {}
+    };
+
+    setInterval(scrape, 3000);
+    setTimeout(scrape, 1500);
+  }
+
+  // =========================================================================
+  // 11. 自愈保活（防止 SPA 路由切换时胶囊从 DOM 中被剥离）与初始化入口
+  // =========================================================================
+  function ensureMounted() {
+    if (!document.body) return;
+    if (!rootEl) {
+      createDOM();
+      return;
+    }
+    if (!rootEl.isConnected) {
+      document.body.appendChild(rootEl);
+    }
   }
 
   function bootstrap() {
-    injectStyles();
+    window.addEventListener("storage", (e) => {
+      if (e.key === STORAGE_KEY_SHARED_DATA) updateUI();
+    });
 
-    if (document.body) {
+    const init = () => {
       createDOM();
-    } else {
-      document.addEventListener("DOMContentLoaded", createDOM, { once: true });
-    }
-
-    setInterval(updateUI, 1000);
-
-    const startUsage = () => {
-      initUsage();
+      runUsagePageCollector();
+      // 启动自愈心跳与每秒刷新
+      setInterval(() => {
+        ensureMounted();
+        updateUI();
+      }, 1000);
     };
+
     if (document.body) {
-      startUsage();
+      init();
     } else {
-      document.addEventListener("DOMContentLoaded", startUsage, { once: true });
+      document.addEventListener("DOMContentLoaded", init, { once: true });
     }
   }
 
