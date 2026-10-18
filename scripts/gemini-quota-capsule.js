@@ -11,13 +11,14 @@
 // @run-at       document-start
 // @grant        none
 // @noframes
-// @icon         data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="64" height="64"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="%2310b981"/><stop offset="100%" stop-color="%23065f46"/></linearGradient></defs><rect width="48" height="48" rx="12" fill="%2309090b"/><g transform="rotate(-45 24 24)"><rect x="14" y="8" width="20" height="32" rx="10" fill="none" stroke="%23334155" stroke-width="2.5"/><path d="M14 18 C14 12.5 18.5 8 24 8 C29.5 8 34 12.5 34 18 L34 24 L14 24 Z" fill="url(%23g)"/><rect x="14" y="24" width="20" height="16" rx="0 0 10 10" fill="%231e293b"/><line x1="14" y1="24" x2="34" y2="24" stroke="%23f8fafc" stroke-width="1.5" stroke-opacity="0.6"/></g></svg>
+// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMTBiOTgxIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDY1ZjQ2Ii8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9IiMwOTA5MGIiLz48ZyB0cmFuc2Zvcm09InJvdGF0ZSgtNDUgMjQgMjQpIj48cmVjdCB4PSIxNCIgeT0iOCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjMyIiByeD0iMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzMzNDE1NSIgc3Ryb2tlLXdpZHRoPSIyLjUiLz48cGF0aCBkPSJNMTQgMThDMTQgMTIuNSAxOC41IDggMjQgOHMxMCA0LjUgMTAgMTB2NkgxNHoiIGZpbGw9InVybCgjZykiLz48cGF0aCBkPSJNMTQgMjRoMjB2NkgxNHoiIGZpbGw9IiMxZTI5M2IiLz48bGluZSB4MT0iMTQiIHkxPSIyNCIgeDI9IjM0IiB5Mj0iMjQiIHN0cm9rZT0iI2Y4ZmFmYyIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1vcGFjaXR5PSIuNiIvPjwvZz48L3N2Zz4=
 // @license      MIT
 // ==/UserScript==
 
 (function () {
   "use strict";
 
+  const SCRIPT_VERSION = "0.8.5";
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
@@ -3275,7 +3276,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.8.5",
+    version: SCRIPT_VERSION,
     get state() {
       return quotaState;
     },
@@ -3328,7 +3329,7 @@
         }
       }
       const result = {
-        version: "0.8.5",
+        version: SCRIPT_VERSION,
         url,
         status: resp.status,
         finalUrl: shortenUrl(finalUrl),
@@ -3371,7 +3372,7 @@
      */
     report() {
       const result = {
-        version: "0.8.5",
+        version: SCRIPT_VERSION,
         at: new Date().toISOString(),
         href: shortenUrl(window.location.href),
         path: window.location.pathname,
@@ -3413,7 +3414,7 @@
     },
     dump() {
       return {
-        version: "0.8.5",
+        version: SCRIPT_VERSION,
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },
