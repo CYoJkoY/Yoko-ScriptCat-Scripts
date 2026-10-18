@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：0.9.0
+- 版本：0.9.1
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -72,6 +72,7 @@
 优先按官方页面文本解析百分比与重置提示：
 
 - `/u/<账号>/usage` 页面中的 `Current usage` 和 `Weekly limit` 是两个明确的文本分段；每段只读取其中的 `N% used` 与紧邻的 `Resets ...`，不再从整页任意数字猜窗口归属。
+- 当主页面是 `/app` 时，脚本会有限探测登录态账号路径 `/u/0/usage` 至 `/u/3/usage`；只有最终地址仍在 `/usage` 的响应才会解析。
 - 例如 `1% used` 会转换为剩余 99%，`2% used` 会转换为剩余 98%；`Resets at 3:43 PM` 与 `Resets Oct 23 at 7:43 AM` 分别作为 5 小时和每周窗口的官方重置时刻。
 - 只有官方文本分段缺失时，才继续使用 DOM 卡片、进度条和结构化响应作为补缺路径。
 
@@ -196,6 +197,12 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
 
 ## 十一、版本历史
+
+### v0.9.1
+
+- 移除与其他产品或项目的关系描述。
+- 当前页面为 `/app` 且没有账号前缀时，依次探测有限的登录账号用量路径 `/u/0/usage` 至 `/u/3/usage`，避免错误请求无前缀 `/usage` 后直接放弃官方数据通道。
+- 只有最终仍位于 `/usage` 路径的响应才进入解析；被重定向到其他页面的响应不会被当作用量数据。
 
 ### v0.8.2
 

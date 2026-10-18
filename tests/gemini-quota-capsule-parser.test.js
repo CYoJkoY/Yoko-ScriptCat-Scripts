@@ -62,4 +62,15 @@ assert.equal(
   usageText.weekly.resetAt,
   new Date("2026-10-23T17:30:00").getTime(),
 );
+const usageUrls = window.__gqc._test.getOfficialUsageUrls();
+assert.equal(
+  JSON.stringify(usageUrls),
+  JSON.stringify([
+    "https://gemini.google.com/u/0/usage",
+    "https://gemini.google.com/u/1/usage",
+    "https://gemini.google.com/u/2/usage",
+    "https://gemini.google.com/u/3/usage",
+  ]),
+);
+
 console.log("quota parser tests passed");

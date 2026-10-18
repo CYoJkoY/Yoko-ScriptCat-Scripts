@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.9.0
-// @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
+// @version      0.9.1
+// @description  document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与官方用量页面，按窗口精确分流 5H / 7D 用量，重置倒计时基于官方重置时刻实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/gemini-quota-capsule.js
@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.9.0";
+  const SCRIPT_VERSION = "0.9.1";
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
@@ -174,6 +174,16 @@
 
   function getOfficialUsageUrl() {
     return `${window.location.origin}${getAccountPrefix()}/usage`;
+  }
+
+  function getOfficialUsageUrls() {
+    const primary = getOfficialUsageUrl();
+    if (getAccountPrefix()) return [primary];
+    // /app 没有账号前缀时，登录态用量页仍使用 /u/<index>/usage。
+    // 只探测有限的账号索引，不把 /app 的 HTML 当作用量数据。
+    return [0, 1, 2, 3].map(
+      (index) => `${window.location.origin}/u/${index}/usage`,
+    );
   }
 
   /**
@@ -2398,27 +2408,33 @@
         if (rpcOk) return true;
 
         // 2. GET 同源 /usage 页面 SSR 与内嵌 AF_initDataCallback
-        const usageUrl = getOfficialUsageUrl();
-        let usagePageMissing = false;
-        try {
-          const resp = await origFetch.call(window, usageUrl, {
-            method: "GET",
-            credentials: "include",
-            cache: "no-store",
-          });
+        const usageUrls = getOfficialUsageUrls();
+        let usagePageMissing = true;
+        let usageUrl = usageUrls[0];
+        for (const candidateUrl of usageUrls) {
+          usageUrl = candidateUrl;
+          let resp;
+          try {
+            resp = await origFetch.call(window, candidateUrl, {
+              method: "GET",
+              credentials: "include",
+              cache: "no-store",
+            });
+          } catch {
+            continue;
+          }
           const finalPath = (() => {
             try {
-              return new URL(resp.url || usageUrl, window.location.href)
+              return new URL(resp.url || candidateUrl, window.location.href)
                 .pathname;
             } catch {
               return "";
             }
           })();
-          // /usage 不存在时会被 302 到 /app；继续解析只会拿 app 的 blob 当配额
           usagePageMissing =
             !!resp.redirected && !/\/usage\/?$/.test(finalPath);
           quotaState.usagePageStatus = {
-            url: usageUrl,
+            url: candidateUrl,
             status: resp.status,
             finalUrl: shortenUrl(resp.url || ""),
             redirected: !!resp.redirected,
@@ -2430,15 +2446,13 @@
             const doc = parser.parseFromString(rawHtml, "text/html");
             const fromFetch = parseUsageDocument(doc, rawHtml);
             if (fromFetch && (fromFetch.fiveHour || fromFetch.weekly)) {
-              // 即便只拿到一个窗口也要提交：另一个窗口稍后由 iframe / 缓存补齐
               commitOfficialQuota(fromFetch, "usage-page", true);
               if (fromFetch.fiveHour && fromFetch.weekly) {
                 return true;
               }
             }
+            break;
           }
-        } catch {
-          // 继续走探针
         }
 
         // 3. 同源隐藏 Iframe 等待 CSR 异步节点加载（/usage 不存在时直接跳过）
@@ -2973,7 +2987,7 @@
     const drawerTitle = el("div", { className: "gc-drawer-title" }, [
       el("span", {}, ["指示器形态"]),
       el("span", { style: "font-size:9px; color:#64748b;" }, [
-        "Voyager 同源引擎",
+        "官方数据源",
       ]),
     ]);
 
@@ -3489,7 +3503,8 @@
      * 因此正确用法是直接调用：__gqc.probeUsage()
      */
     async probeUsage() {
-      const url = getOfficialUsageUrl();
+      const paths = getOfficialUsageUrls();
+      const url = paths[0];
       const resp = await origFetch.call(window, url, {
         method: "GET",
         credentials: "include",
@@ -3667,6 +3682,7 @@
       parseBatchExecuteResponse,
       parseUsageDocument,
       parseOfficialUsageText,
+      getOfficialUsageUrls,
       extractInitDataBlocks,
       scanBalancedArray,
       normalizePctValue,
