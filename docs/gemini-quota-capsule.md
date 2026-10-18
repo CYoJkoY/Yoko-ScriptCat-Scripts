@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：0.8.5
+- 版本：0.8.7
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -181,8 +181,8 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 
 ## 十、已知限制
 
-- **当前没有已验证的官方额度字段。** `GXU_*` / `getUsageInfo.pools` 尚未在真实响应中出现；本次登录态 `/usage` 仅确认 `200` 且未重定向，但页面取证没有额度节点（只有 `mat-progress-spinner` 加载提示），因此脚本不得把 spinner 的 `aria-valuenow` 当百分比。
-- 服务端字段一旦改名（如 `percentageUsed` → 其他拼写），结构化层会失效并回退到置信度更低的启发式；此时请用 `__gqc.dump()` 回传一帧原始响应，并先看 `diagnostics` 判断是「没拦到」还是「拦到了但结构变了」。
+- **当前没有已验证的官方额度字段。** `GXU_*` / `getUsageInfo.pools` 尚未在真实响应中出现；附件取证只确认登录态请求成功触发了 `BardChatUi/data/batchexecute?rpcids=ESY5D`，响应长度约 166 字节，但旧探针没有保存其正文，因此尚不能判断它是否与配额有关。脚本不得把 spinner 的 `aria-valuenow`、WIZ 全局文本或无方向百分比当作配额。
+- 当前版本会保留最近几条受限长度的 batchexecute 响应用于诊断，并记录 `nonQuotaResponses` / `responseReadFailures`；只有通过结构化字段验证的响应才会写入胶囊。
 - 百分比若是无方向词的裸数字（既非 `used` 也非 `remaining`），只能按官方页面默认口径「已用」解释；这类来源不会被当成高置信度数据。
 - `/usage` 页面若改为纯前端渲染且不产生可捕获帧，只能依赖 iframe + DOM 文本解析。
 - 窗口翻篇的瞬间会显示 `--%`，直到下一次同步（≤3 分钟，或点刷新按钮）拿回新窗口的真实数字。

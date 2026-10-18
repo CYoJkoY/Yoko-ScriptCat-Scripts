@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.8.6";
+  const SCRIPT_VERSION = "0.8.7";
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
@@ -1034,33 +1034,35 @@
     if (!rawText || typeof rawText !== "string") return [];
     const results = [];
     const stripped = rawText.replace(/^\)\]\}'\s*/, "");
-    const lines = stripped.split(/\r?\n/);
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("[")) continue;
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (!Array.isArray(parsed)) continue;
-        for (const entry of parsed) {
-          if (
-            Array.isArray(entry) &&
-            entry[0] === "wrb.fr" &&
-            typeof entry[1] === "string" &&
-            typeof entry[2] === "string"
-          ) {
-            const rpcId = entry[1];
-            try {
-              const payload = JSON.parse(entry[2]);
-              results.push({ rpcId, payload });
-            } catch {
-              // 忽略非 JSON 载荷
-            }
-          }
+    const seen = new Set();
+    const visit = (value) => {
+      if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+          try { visit(JSON.parse(trimmed)); } catch { /* plain text */ }
         }
-      } catch {
-        // 忽略分片残余
+        return;
       }
+      if (!Array.isArray(value)) return;
+      if (
+        value[0] === "wrb.fr" &&
+        typeof value[1] === "string" &&
+        typeof value[2] === "string"
+      ) {
+        const key = `${value[1]}\u0000${value[2]}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        let payload = value[2];
+        try { payload = JSON.parse(payload); } catch { /* opaque payload */ }
+        results.push({ rpcId: value[1], payload });
+        return;
+      }
+      for (const child of value) visit(child);
+    };
+    for (const line of stripped.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try { visit(JSON.parse(trimmed)); } catch { /* framing residue */ }
     }
     return results;
   }
@@ -1725,6 +1727,9 @@
   const RAW_FRAME_LIMIT = 6;
   const RAW_FRAME_MAX_CHARS = 24000;
   const rawFrameRing = [];
+  const RESPONSE_RING_LIMIT = 8;
+  const RESPONSE_MAX_CHARS = 12000;
+  const responseRing = [];
 
   /**
    * 轻量观测计数（只存 rpcId 与数量，不保存响应正文）。
@@ -1735,6 +1740,8 @@
     batchFrames: 0,
     quotaHits: 0,
     lastRpcIds: [],
+    nonQuotaResponses: 0,
+    responseReadFailures: 0,
   };
   /**
    * 端点发现环：记录所有 URL 命中 usage/quota/limit 的请求，用来确认配额到底由哪个接口返回。
@@ -1810,6 +1817,22 @@
     } catch {
       // 无法序列化的载荷直接跳过
     }
+  }
+
+  function rememberBatchResponse(url, text, frames) {
+    if (typeof text !== "string") return;
+    const safeText = text.length <= RESPONSE_MAX_CHARS
+      ? text
+      : `${text.slice(0, RESPONSE_MAX_CHARS / 2)}…${text.slice(-RESPONSE_MAX_CHARS / 2)}`;
+    responseRing.push({
+      at: new Date().toISOString(),
+      url: safeDiagnosticUrl(url),
+      size: text.length,
+      frameCount: frames.length,
+      rpcIds: frames.map((frame) => frame.rpcId).slice(0, 12),
+      text: safeText,
+    });
+    while (responseRing.length > RESPONSE_RING_LIMIT) responseRing.shift();
   }
 
   // -------------------------------------------------------------------------
@@ -1973,6 +1996,8 @@
     if (url.includes("/batchexecute") && responseText) {
       obsDiag.batchExecSeen += 1;
       const frames = parseBatchExecuteResponse(responseText);
+      rememberBatchResponse(url, responseText, frames);
+      if (frames.length === 0) obsDiag.responseReadFailures += 1;
       for (const frame of frames) {
         noteDiag(frame.rpcId);
         rememberRawFrame(url, frame.rpcId, frame.payload);
@@ -2001,6 +2026,8 @@
             };
           }
           commitOfficialQuota(extracted, "rpc", true);
+        } else {
+          obsDiag.nonQuotaResponses += 1;
         }
       }
     }
@@ -2020,7 +2047,8 @@
       noteNetwork(url, response.status, 0);
       if (
         url.includes("/batchexecute") ||
-        url.includes("StreamGenerateContent")
+        url.includes("StreamGenerateContent") ||
+        url.includes("assistant.vertical.chat")
       ) {
         const cloned = response.clone();
         cloned
@@ -2044,7 +2072,8 @@
     const url = this.__gc_url || "";
     if (
       url.includes("/batchexecute") ||
-      url.includes("StreamGenerateContent")
+      url.includes("StreamGenerateContent") ||
+      url.includes("assistant.vertical.chat")
     ) {
       const reqBody = typeof body === "string" ? body : "";
       this.addEventListener("load", function () {
@@ -2294,26 +2323,9 @@
           }
         }
 
-        // 4. 最后才看全局 WIZ_global_data：它是整页 bootstrap blob，包含海量与配额
-        //    无关的 session / week / 样式文本，只能当兜底，且必须禁用标签启发式——
-        //    旧版把它排在 /usage 页面之前，一旦误命中就 return，官方页面再也跑不到。
-        if (window.WIZ_global_data) {
-          const fromGlobalWiz = extractQuotaFromWizStructure(
-            window.WIZ_global_data,
-            Date.now(),
-            { useLabels: false },
-          );
-          if (
-            fromGlobalWiz &&
-            commitOfficialQuota(fromGlobalWiz, "rpc", false)
-          ) {
-            return true;
-          }
-        }
-
         quotaState.lastError = usagePageMissing
-          ? "本次 /usage 通道不可用（已重定向到其他页面），等待网络探针取证"
-          : "暂未从官方接口获取到配额数据";
+          ? "本次 /usage 通道不可用（已重定向到其他页面），等待官方 RPC 数据"
+          : "暂未从官方响应获取到已验证的配额字段";
         return false;
       } catch (err) {
         quotaState.lastError =
@@ -3443,6 +3455,8 @@
           batchExecSeen: obsDiag.batchExecSeen,
           batchFrames: obsDiag.batchFrames,
           quotaHits: obsDiag.quotaHits,
+          nonQuotaResponses: obsDiag.nonQuotaResponses,
+          responseReadFailures: obsDiag.responseReadFailures,
           rpcIds: obsDiag.lastRpcIds.slice(),
           rawFrames: rawFrameRing.length,
           snippets: snippetRing.length,
@@ -3479,13 +3493,17 @@
             : null,
         },
         frames: rawFrameRing.slice(),
+        responses: responseRing.slice(),
         endpoints: netRing.slice(),
         diagnostics: {
           batchExecSeen: obsDiag.batchExecSeen,
           batchFrames: obsDiag.batchFrames,
           quotaHits: obsDiag.quotaHits,
+          nonQuotaResponses: obsDiag.nonQuotaResponses,
+          responseReadFailures: obsDiag.responseReadFailures,
           lastRpcIds: obsDiag.lastRpcIds.slice(),
           rawFrames: rawFrameRing.length,
+          responses: responseRing.length,
           usageBlocks: usageParseDiag.blocks,
           usageInitHit: usageParseDiag.initHit,
           // 拒绝计数：解释「为什么这次没数字」，避免再去猜官方字段
