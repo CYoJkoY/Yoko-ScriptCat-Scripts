@@ -14,6 +14,7 @@ window.XMLHttpRequest.prototype.open = function open() {};
 window.XMLHttpRequest.prototype.send = function send() {};
 const document = {
   body: null,
+  documentElement: null,
   addEventListener(type, handler) { listeners.set(type, handler); },
   createElement() { throw new Error("DOM not expected in parser test"); },
 };

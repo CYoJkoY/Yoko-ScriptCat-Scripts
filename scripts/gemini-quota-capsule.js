@@ -1561,6 +1561,33 @@
    * 旧版把 AF_initDataCallback 放最前，并用 `if (!fiveHour)` 挡住 DOM：blob 里一旦
    * 误命中无关数字（样式 100%、会话配置…），页面上真实可见的百分比就永远读不到了。
    */
+  function parseHtmlDocument(rawHtml) {
+    if (typeof rawHtml !== "string" || !rawHtml) return null;
+
+    // Gemini 页面可能通过 Trusted Types CSP 禁止页面 realm 的
+    // DOMParser.parseFromString(string, "text/html")。使用同源空白 iframe 的
+    // DOMParser 解析网络返回的 HTML，不把字符串写回当前活动文档。
+    let frame = null;
+    try {
+      frame = document.createElement("iframe");
+      frame.setAttribute("aria-hidden", "true");
+      frame.setAttribute("tabindex", "-1");
+      frame.style.cssText =
+        "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:-9999px;border:0;";
+      const host = document.body || document.documentElement;
+      if (!host) return null;
+      host.appendChild(frame);
+      const Parser =
+        frame.contentWindow && frame.contentWindow.DOMParser;
+      if (typeof Parser !== "function") return null;
+      return new Parser().parseFromString(rawHtml, "text/html");
+    } catch {
+      return null;
+    } finally {
+      if (frame && frame.parentNode) frame.parentNode.removeChild(frame);
+    }
+  }
+
   function parseUsageDocument(doc, rawHtml = "") {
     const nowMs = Date.now();
     let fiveHour = null;
@@ -2442,9 +2469,10 @@
           };
           if (resp.ok && !usagePageMissing) {
             const rawHtml = await resp.text();
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(rawHtml, "text/html");
-            const fromFetch = parseUsageDocument(doc, rawHtml);
+            const doc = parseHtmlDocument(rawHtml);
+            const fromFetch = doc
+              ? parseUsageDocument(doc, rawHtml)
+              : null;
             if (fromFetch && (fromFetch.fiveHour || fromFetch.weekly)) {
               commitOfficialQuota(fromFetch, "usage-page", true);
               if (fromFetch.fiveHour && fromFetch.weekly) {
@@ -3524,11 +3552,10 @@
       let parsed = null;
       if (rawHtml && !redirectedAway) {
         try {
-          const domParser = new DOMParser();
-          parsed = parseUsageDocument(
-            domParser.parseFromString(rawHtml, "text/html"),
-            rawHtml,
-          );
+          const parsedDoc = parseHtmlDocument(rawHtml);
+          parsed = parsedDoc
+            ? parseUsageDocument(parsedDoc, rawHtml)
+            : { error: "无法创建安全 HTML 文档" };
         } catch (err) {
           parsed = { error: err instanceof Error ? err.message : "解析失败" };
         }
@@ -3681,6 +3708,7 @@
       extractQuotaFromWizStructure,
       parseBatchExecuteResponse,
       parseUsageDocument,
+      parseHtmlDocument,
       parseOfficialUsageText,
       getOfficialUsageUrls,
       extractInitDataBlocks,
