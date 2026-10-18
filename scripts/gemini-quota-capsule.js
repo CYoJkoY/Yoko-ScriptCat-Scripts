@@ -327,10 +327,22 @@
     );
     if (monthDateMatch) {
       const monthNames = [
-        "jan", "feb", "mar", "apr", "may", "jun",
-        "jul", "aug", "sep", "oct", "nov", "dec",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "may",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "oct",
+        "nov",
+        "dec",
       ];
-      const month = monthNames.indexOf(monthDateMatch[1].slice(0, 3).toLowerCase());
+      const month = monthNames.indexOf(
+        monthDateMatch[1].slice(0, 3).toLowerCase(),
+      );
 
       let hour = Number(monthDateMatch[4]);
       const minute = Number(monthDateMatch[5]);
@@ -341,9 +353,25 @@
         ? Number(monthDateMatch[3])
         : new Date(nowMs).getFullYear();
       if (month >= 0 && hour <= 23 && minute <= 59) {
-        let absolute = new Date(year, month, Number(monthDateMatch[2]), hour, minute, 0, 0).getTime();
+        let absolute = new Date(
+          year,
+          month,
+          Number(monthDateMatch[2]),
+          hour,
+          minute,
+          0,
+          0,
+        ).getTime();
         if (!monthDateMatch[3] && absolute < nowMs - 86400 * 1000) {
-          absolute = new Date(year + 1, month, Number(monthDateMatch[2]), hour, minute, 0, 0).getTime();
+          absolute = new Date(
+            year + 1,
+            month,
+            Number(monthDateMatch[2]),
+            hour,
+            minute,
+            0,
+            0,
+          ).getTime();
         }
         if (absolute >= minMs && absolute <= maxMs) return absolute;
         return null;
@@ -1070,7 +1098,11 @@
       if (typeof value === "string") {
         const trimmed = value.trim();
         if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
-          try { visit(JSON.parse(trimmed)); } catch { /* plain text */ }
+          try {
+            visit(JSON.parse(trimmed));
+          } catch {
+            /* plain text */
+          }
         }
         return;
       }
@@ -1084,7 +1116,11 @@
         if (seen.has(key)) return;
         seen.add(key);
         let payload = value[2];
-        try { payload = JSON.parse(payload); } catch { /* opaque payload */ }
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          /* opaque payload */
+        }
         results.push({ rpcId: value[1], payload });
         return;
       }
@@ -1093,7 +1129,11 @@
     for (const line of stripped.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      try { visit(JSON.parse(trimmed)); } catch { /* framing residue */ }
+      try {
+        visit(JSON.parse(trimmed));
+      } catch {
+        /* framing residue */
+      }
     }
     return results;
   }
@@ -1315,12 +1355,9 @@
     }
     const parseSection = (section, windowType) => {
       if (!section.length) return null;
-      return extractMetricFromCardText(
-        section.join("\n"),
-        windowType,
-        nowMs,
-        { allowBare: false },
-      );
+      return extractMetricFromCardText(section.join("\n"), windowType, nowMs, {
+        allowBare: false,
+      });
     };
     const fiveHour = parseSection(sections.fiveHour, "5h");
     const weekly = parseSection(sections.weekly, "7d");
@@ -1751,7 +1788,11 @@
       // 缓存只能用于极短暂的首屏回显。没有 resetAt 的旧缓存尤其危险：
       // 它无法证明自己仍属于当前窗口，不能无限期冒充实时数据。
       const cacheAge = now - Number(parsed.timestamp || 0);
-      if (!Number.isFinite(cacheAge) || cacheAge < 0 || cacheAge > MAX_CACHE_AGE_MS) {
+      if (
+        !Number.isFinite(cacheAge) ||
+        cacheAge < 0 ||
+        cacheAge > MAX_CACHE_AGE_MS
+      ) {
         return;
       }
       const restoreMetric = (metric, kind) => {
@@ -1908,9 +1949,10 @@
 
   function rememberBatchResponse(url, text, frames) {
     if (typeof text !== "string") return;
-    const safeText = text.length <= RESPONSE_MAX_CHARS
-      ? text
-      : `${text.slice(0, RESPONSE_MAX_CHARS / 2)}…${text.slice(-RESPONSE_MAX_CHARS / 2)}`;
+    const safeText =
+      text.length <= RESPONSE_MAX_CHARS
+        ? text
+        : `${text.slice(0, RESPONSE_MAX_CHARS / 2)}…${text.slice(-RESPONSE_MAX_CHARS / 2)}`;
     responseRing.push({
       at: new Date().toISOString(),
       url: safeDiagnosticUrl(url),
