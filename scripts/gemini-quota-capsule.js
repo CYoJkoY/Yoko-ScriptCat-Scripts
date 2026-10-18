@@ -243,7 +243,9 @@
     const minMs = nowMs - 10 * 60 * 1000;
     const maxMs = nowMs + 30 * 86400 * 1000;
 
-    // 1. 绝对日期时间：2026-10-18T09:30:00Z / 2026-10-18 09:30 / 2026/10/18 09:30
+    // 官方页面的相对文案按抓取时刻锚定；绝对日期/时刻则由浏览器本地时区解析。
+    // 这里不能使用固定 5H/7D 周期推导刷新时间。
+    // 仅将包含 reset/remaining 等锚点的文本交给相对时长解析。
     const isoMatch = clean.match(
       /(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?)?/,
     );
@@ -427,12 +429,15 @@
     if (typeof metric.pct === "number" && Number.isFinite(metric.pct)) {
       pct = Math.min(100, Math.max(0, Math.round(metric.pct)));
     }
-    if (pct === null) return null;
+    const resetOnly = pct === null && metric.allowResetOnly === true;
+    if (pct === null && !resetOnly) return null;
 
     const usedPct =
       typeof metric.usedPct === "number" && Number.isFinite(metric.usedPct)
         ? Math.min(100, Math.max(0, Math.round(metric.usedPct)))
-        : 100 - pct;
+        : pct === null
+          ? null
+          : 100 - pct;
 
     let resetAt = toEpochMs(metric.resetAt, nowMs);
     let rawResetText =
@@ -457,6 +462,7 @@
         ? metric.confidence
         : CONFIDENCE.heuristic;
     if (
+      !resetOnly &&
       usedPct === 100 &&
       resetAt === null &&
       confidence <= CONFIDENCE.heuristic
@@ -479,6 +485,7 @@
       resetAt,
       rawResetText,
       confidence,
+      allowResetOnly: resetOnly,
       updatedAt: 0, // 提交时再写入，缓存恢复的值保持 0 以便被新数据覆盖
     };
   }
@@ -1402,7 +1409,13 @@
         : usedRe.test(context)
           ? "used"
           : null;
-      if (!direction) continue;
+      // aria-valuenow 只有填充值，没有语义方向；取证中的 spinner 也不能当额度。
+      if (
+        !direction ||
+        /loading|加载|recent conversations|recent conversation/i.test(context)
+      ) {
+        continue;
+      }
 
       const usedPct = direction === "used" ? percentage : 100 - percentage;
       const resetAt = parseOfficialResetTextToTimestamp(cardText, nowMs);
@@ -1731,13 +1744,27 @@
   const netRing = [];
   const NET_INTEREST_RE =
     /(batchexecute|usage|quota|limit|entitle|billing|gxu|tier)/i;
+  function safeDiagnosticUrl(url, maxLength = 180) {
+    if (typeof url !== "string") return "";
+    try {
+      const parsed = new URL(url, window.location.href);
+      const rpcids = parsed.searchParams.get("rpcids");
+      const safeQuery = rpcids ? `?rpcids=${encodeURIComponent(rpcids)}` : "";
+      const safe = `${parsed.origin}${parsed.pathname}${safeQuery}`;
+      return safe.length > maxLength ? `${safe.slice(0, maxLength)}…` : safe;
+    } catch {
+      const safe = url.split(/[?#]/, 1)[0];
+      return safe.length > maxLength ? `${safe.slice(0, maxLength)}…` : safe;
+    }
+  }
+
   function noteNetwork(url, status, len) {
     try {
       const text = typeof url === "string" ? url : "";
       if (!text || !NET_INTEREST_RE.test(text)) return;
       netRing.push({
         at: new Date().toISOString(),
-        url: text.length > 180 ? `${text.slice(0, 180)}…` : text,
+        url: safeDiagnosticUrl(text),
         status,
         len,
       });
@@ -1770,7 +1797,7 @@
         return;
       }
       rawFrameRing.push({
-        url,
+        url: safeDiagnosticUrl(url),
         rpcId,
         at: new Date().toISOString(),
         size: text.length,
@@ -1799,7 +1826,16 @@
 
   function shortenUrl(url) {
     if (typeof url !== "string") return "";
-    return url.length > 140 ? `${url.slice(0, 140)}…` : url;
+    try {
+      const parsed = new URL(url, window.location.href);
+      const rpcids = parsed.searchParams.get("rpcids");
+      const safeQuery = rpcids ? `?rpcids=${encodeURIComponent(rpcids)}` : "";
+      const safe = `${parsed.origin}${parsed.pathname}${safeQuery}`;
+      return safe.length > 140 ? `${safe.slice(0, 140)}…` : safe;
+    } catch {
+      const safe = url.split(/[?#]/, 1)[0];
+      return safe.length > 140 ? `${safe.slice(0, 140)}…` : safe;
+    }
   }
 
   function rememberQuotaSnippets(kind, rpcId, url, text) {
@@ -2125,10 +2161,7 @@
             iframe.contentDocument ||
             (iframe.contentWindow && iframe.contentWindow.document);
           if (!iDoc || !iDoc.body) return;
-          const result = parseUsageDocument(
-            iDoc,
-            iDoc.documentElement ? iDoc.documentElement.innerHTML : "",
-          );
+          const result = parseUsageDocument(iDoc, "");
           if (!result) return;
 
           const has5h =
@@ -2196,10 +2229,7 @@
       try {
         // 0. 当前处于 /usage 页面时直接解析主 DOM
         if (window.location.pathname.endsWith("/usage")) {
-          const direct = parseUsageDocument(
-            document,
-            document.documentElement.innerHTML,
-          );
+          const direct = parseUsageDocument(document, "");
           if (direct && commitOfficialQuota(direct, "usage-page", true)) {
             return true;
           }
@@ -3077,11 +3107,27 @@
     timerNode,
     groupNode,
   ) {
-    if (!metric || metric.pct === null) {
+    if (!metric) {
       badgeNode.style.color = "#94a3b8";
       usageNode.textContent = "--%";
       timerNode.textContent = quotaState.isSyncing ? "同步中" : "待同步";
       timerNode.style.color = "#64748b";
+      groupNode.title = formatTooltip(label, metric);
+      return 0;
+    }
+
+    if (metric.pct === null) {
+      badgeNode.style.color = "#94a3b8";
+      usageNode.textContent = "--%";
+      if (metric.resetAt && metric.resetAt > Date.now()) {
+        const remaining = metric.resetAt - Date.now();
+        timerNode.textContent = formatCompactCountdown(remaining, isWeekly);
+        timerNode.style.color = "#94a3b8";
+        timerNode.title = `距官方重置 ${formatRemainingHuman(remaining)}`;
+      } else {
+        timerNode.textContent = quotaState.isSyncing ? "同步中" : "待同步";
+        timerNode.style.color = "#64748b";
+      }
       groupNode.title = formatTooltip(label, metric);
       return 0;
     }
