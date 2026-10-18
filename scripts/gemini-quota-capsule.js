@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.8
+// @version      0.9.0
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.8.8";
+  const SCRIPT_VERSION = "0.9.0";
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
@@ -1287,6 +1287,48 @@
   }
 
   /**
+   * 解析 /usage 页面实际呈现的稳定文本：
+   * Current usage -> N% used -> Resets ...；Weekly limit 同理。
+   * 按窗口标题分段，避免扫描整页时串入另一窗口的数字。
+   */
+  function parseOfficialUsageText(text, nowMs = Date.now()) {
+    if (typeof text !== "string" || !text.trim()) return null;
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    const sections = { fiveHour: [], weekly: [] };
+    let current = null;
+    for (const line of lines) {
+      if (/^current\s+usage$/i.test(line)) {
+        current = "fiveHour";
+        continue;
+      }
+      if (/^weekly\s+limit$/i.test(line)) {
+        current = "weekly";
+        continue;
+      }
+      if (/^(?:usage\s+limits|pro|your plan|learn more|updated)/i.test(line)) {
+        continue;
+      }
+      if (current) sections[current].push(line);
+    }
+    const parseSection = (section, windowType) => {
+      if (!section.length) return null;
+      return extractMetricFromCardText(
+        section.join("\n"),
+        windowType,
+        nowMs,
+        { allowBare: false },
+      );
+    };
+    const fiveHour = parseSection(sections.fiveHour, "5h");
+    const weekly = parseSection(sections.weekly, "7d");
+    if (!fiveHour && !weekly) return null;
+    return { timestamp: nowMs, fiveHour, weekly, strategy: "usage-text" };
+  }
+
+  /**
    * 解析诊断：只记录计数与结论，不含页面正文，供 __gqc.dump() 回传定位。
    */
   const usageParseDiag = {
@@ -1478,6 +1520,14 @@
     let weekly = null;
 
     if (doc && doc.body) {
+      const officialText = parseOfficialUsageText(
+        doc.body.innerText || doc.body.textContent || "",
+        nowMs,
+      );
+      if (officialText) {
+        fiveHour = officialText.fiveHour;
+        weekly = officialText.weekly;
+      }
       const fiveRegex =
         /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|hourly|per\s*hour|每小时|每小時|current\s*session|session|当前会话|会话(?:配额|限额|用量)?|セッション)/i;
       const weekRegex =
@@ -1525,8 +1575,8 @@
         return null;
       };
 
-      fiveHour = pickShortest("5h");
-      weekly = pickShortest("7d");
+      if (!fiveHour) fiveHour = pickShortest("5h");
+      if (!weekly) weekly = pickShortest("7d");
 
       // /usage 是 CSR 时，额度可能只存在 progressbar/ARIA 属性中，不会出现在文本卡片。
       // 仅在窗口标签与方向词都能从同一节点/邻近卡片确认时补入，避免误采普通进度条。
@@ -3574,6 +3624,7 @@
       extractQuotaFromWizStructure,
       parseBatchExecuteResponse,
       parseUsageDocument,
+      parseOfficialUsageText,
       extractInitDataBlocks,
       scanBalancedArray,
       normalizePctValue,

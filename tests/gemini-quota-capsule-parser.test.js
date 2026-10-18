@@ -41,4 +41,25 @@ const parsed = window.__gqc.parseResetText("Resets Oct 23 at 5:30 PM", now);
 assert.equal(parsed, new Date("2026-10-23T17:30:00").getTime());
 assert.equal(window.__gqc.parseResetText("Resets at 5:30 PM", now), new Date("2026-10-18T17:30:00").getTime());
 assert.equal(window.__gqc.parseResetText("Resets in 3 hr 12 min", now), now + (3 * 60 + 12) * 60 * 1000);
+
+const usageText = window.__gqc._test.parseOfficialUsageText(
+  [
+    "Usage limits",
+    "Current usage",
+    "1% used",
+    "Resets at 5:30 PM",
+    "Weekly limit",
+    "2% used",
+    "Resets Oct 23 at 5:30 PM",
+  ].join("\n"),
+  now,
+);
+assert.equal(usageText.fiveHour.pct, 99);
+assert.equal(usageText.fiveHour.usedPct, 1);
+assert.equal(usageText.weekly.pct, 98);
+assert.equal(usageText.weekly.usedPct, 2);
+assert.equal(
+  usageText.weekly.resetAt,
+  new Date("2026-10-23T17:30:00").getTime(),
+);
 console.log("quota parser tests passed");
