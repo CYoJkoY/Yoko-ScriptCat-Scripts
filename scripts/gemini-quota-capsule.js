@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.3
+// @version      0.8.4
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -1225,6 +1225,77 @@
   }
 
   /**
+   * 把 /usage CSR 页面里的进度条/ARIA 指标转换成统一 metric。
+   * 该页面可能没有可见百分比文本，真实数值只存在 aria-valuenow/value。
+   * 只有能从邻近标签明确归属到 5H/7D 的节点才采信，避免把普通 app 进度条当额度。
+   */
+  function collectProgressbarMetrics(doc, nowMs = Date.now()) {
+    const found = { fiveHour: null, weekly: null };
+    if (!doc || typeof doc.querySelectorAll !== "function") return found;
+
+    const fiveLabelRe =
+      /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|hourly|per\s*hour|current\s*session|当前会话|会话)/i;
+    const weekLabelRe =
+      /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i;
+    const usedRe = /(?:已用|已使用|使用量|用量|used|usage|consumed|utiliz)/i;
+    const remainingRe = /(?:剩余|剩餘|可用|余量|餘量|remaining|available|left)/i;
+    const nodes = Array.from(
+      doc.querySelectorAll("[role='progressbar'], progress, [aria-valuenow]"),
+    );
+
+    for (const node of nodes) {
+      const rawNow = node.getAttribute("aria-valuenow") ?? node.value;
+      const rawMax = node.getAttribute("aria-valuemax") ?? node.max ?? 100;
+      const value = Number(rawNow);
+      const max = Number(rawMax);
+      if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0 || value < 0) {
+        continue;
+      }
+
+      const valueText = [
+        node.getAttribute("aria-valuetext") || "",
+        node.getAttribute("aria-label") || "",
+        node.innerText || "",
+      ].join(" ");
+      let container = node;
+      for (let level = 0; level < 4 && container.parentElement; level += 1) {
+        container = container.parentElement;
+        const text = (container.innerText || container.textContent || "").trim();
+        if (text.length >= 4 && text.length <= 500) break;
+      }
+      const cardText = (container.innerText || container.textContent || "").trim();
+      const context = `${valueText} ${cardText}`;
+      const isFive = fiveLabelRe.test(context);
+      const isWeekly = weekLabelRe.test(context);
+      if (isFive === isWeekly) continue;
+
+      const kind = isFive ? "fiveHour" : "weekly";
+      if (found[kind]) continue;
+      const ratio = Math.min(1, Math.max(0, value / max));
+      const percentage = Math.round(ratio * 100);
+      const direction = remainingRe.test(context)
+        ? "remaining"
+        : usedRe.test(context)
+          ? "used"
+          : null;
+      if (!direction) continue;
+
+      const usedPct = direction === "used" ? percentage : 100 - percentage;
+      const resetAt = parseOfficialResetTextToTimestamp(cardText, nowMs);
+      found[kind] = {
+        pct: 100 - usedPct,
+        usedPct,
+        used: null,
+        limit: null,
+        resetAt,
+        rawResetText: resetAt ? cardText : "",
+        confidence: CONFIDENCE.dom,
+      };
+    }
+    return found;
+  }
+
+  /**
    * 从官方 /usage 页面 DOM 或 HTML 中提取配额指标
    *
    * 取值顺序：可见 DOM 卡片 → 全文切片 → HTML 内嵌 AF_initDataCallback。
@@ -1284,6 +1355,12 @@
 
       fiveHour = pickShortest("5h");
       weekly = pickShortest("7d");
+
+      // /usage 是 CSR 时，额度可能只存在 progressbar/ARIA 属性中，不会出现在文本卡片。
+      // 仅在窗口标签与方向词都能从同一节点/邻近卡片确认时补入，避免误采普通进度条。
+      const progressMetrics = collectProgressbarMetrics(doc, nowMs);
+      if (!fiveHour && progressMetrics.fiveHour) fiveHour = progressMetrics.fiveHour;
+      if (!weekly && progressMetrics.weekly) weekly = progressMetrics.weekly;
 
       // 3. 全文按上下文切片回退提取：切片必须在「下一个窗口标签」处截断，
       //    否则 5H 切片会把紧随其后的 7D 卡片的百分比和倒计时一起吃进来。
@@ -1898,7 +1975,10 @@
             iframe.contentDocument ||
             (iframe.contentWindow && iframe.contentWindow.document);
           if (!iDoc || !iDoc.body) return;
-          const result = parseUsageDocument(iDoc, "");
+          const result = parseUsageDocument(
+            iDoc,
+            iDoc.documentElement ? iDoc.documentElement.innerHTML : "",
+          );
           if (!result) return;
 
           const has5h = result.fiveHour && result.fiveHour.pct !== null;
@@ -2040,8 +2120,8 @@
         }
 
         quotaState.lastError = usagePageMissing
-          ? "官方 /usage 页面不存在（已重定向到 /app），等待网络探针取证"
-          : "暂未从官方接口获取到配额数据";
+        ? "本次 /usage 通道不可用（已重定向到其他页面），等待网络探针取证"
+        : "暂未从官方接口获取到配额数据";
         return false;
       } catch (err) {
         quotaState.lastError =
@@ -3029,7 +3109,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.8.3",
+    version: "0.8.4",
     get state() {
       return quotaState;
     },
@@ -3081,12 +3161,14 @@
         }
       }
       const result = {
-        version: "0.8.3",
+        version: "0.8.4",
         url,
         status: resp.status,
         finalUrl: shortenUrl(finalUrl),
         redirectedAway,
-        note: redirectedAway ? "官方没有 /usage 页面，该通道不可用" : "",
+        note: redirectedAway
+          ? "本次 /usage 通道不可用（最终地址已离开请求路径）"
+          : "",
         len: rawHtml.length,
         blocks: usageParseDiag.blocks,
         initHit: usageParseDiag.initHit,
@@ -3122,7 +3204,7 @@
      */
     report() {
       const result = {
-        version: "0.8.3",
+        version: "0.8.4",
         at: new Date().toISOString(),
         href: shortenUrl(window.location.href),
         path: window.location.pathname,
@@ -3164,7 +3246,7 @@
     },
     dump() {
       return {
-        version: "0.8.3",
+        version: "0.8.4",
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },
@@ -3202,6 +3284,7 @@
     _test: {
       collectQuotaDomHints,
       collectProgressbarHints,
+      collectProgressbarMetrics,
       rememberQuotaSnippets,
       shortenUrl,
       toEpochMs,
