@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.4
+// @version      0.8.5
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -183,7 +183,10 @@
     const minMs = nowMs - 10 * 60 * 1000;
     const maxMs = nowMs + 10 * 86400 * 1000;
     const plausible = (ms) =>
-      typeof ms === "number" && Number.isFinite(ms) && ms >= minMs && ms <= maxMs;
+      typeof ms === "number" &&
+      Number.isFinite(ms) &&
+      ms >= minMs &&
+      ms <= maxMs;
 
     if (typeof value === "number" && Number.isFinite(value)) {
       if (plausible(value)) return Math.round(value);
@@ -275,12 +278,36 @@
       const minute = cnDateMatch[6] === undefined ? 0 : Number(cnDateMatch[6]);
       if ((half === "下午" || half === "晚上") && hour < 12) hour += 12;
       if (half === "凌晨" && hour === 12) hour = 0;
-      if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && hour <= 23 && minute <= 59) {
-        const year = explicitYear === null ? new Date(nowMs).getFullYear() : explicitYear;
-        let absolute = new Date(year, month - 1, day, hour, minute, 0, 0).getTime();
+      if (
+        month >= 1 &&
+        month <= 12 &&
+        day >= 1 &&
+        day <= 31 &&
+        hour <= 23 &&
+        minute <= 59
+      ) {
+        const year =
+          explicitYear === null ? new Date(nowMs).getFullYear() : explicitYear;
+        let absolute = new Date(
+          year,
+          month - 1,
+          day,
+          hour,
+          minute,
+          0,
+          0,
+        ).getTime();
         // 未写年份且已过期一天以上 → 视为次年的同一时刻
         if (explicitYear === null && absolute < nowMs - 86400 * 1000) {
-          absolute = new Date(year + 1, month - 1, day, hour, minute, 0, 0).getTime();
+          absolute = new Date(
+            year + 1,
+            month - 1,
+            day,
+            hour,
+            minute,
+            0,
+            0,
+          ).getTime();
         }
         if (absolute >= minMs && absolute <= maxMs) return absolute;
         // 中文日期本身是权威信息：解析到过去/过远的日期就直接放弃，
@@ -369,7 +396,10 @@
    */
   function sumTrailingDurations(fragment) {
     if (typeof fragment !== "string") return null;
-    let rest = fragment.trim().replace(/[)）\]】]$/, "").trim();
+    let rest = fragment
+      .trim()
+      .replace(/[)）\]】]$/, "")
+      .trim();
     let total = 0;
     for (let guard = 0; guard < 4; guard += 1) {
       const match = rest.match(DURATION_TOKEN_RE);
@@ -422,8 +452,14 @@
     // 扫描到了无关的 100% 文本（样式、配置、模板）。真实耗尽一定伴随重置窗口。
     // 这里选择「不显示」而不是显示一个假的 100%：宁可空着，也不能骗人。
     const confidence =
-      typeof metric.confidence === "number" ? metric.confidence : CONFIDENCE.heuristic;
-    if (usedPct === 100 && resetAt === null && confidence <= CONFIDENCE.heuristic) {
+      typeof metric.confidence === "number"
+        ? metric.confidence
+        : CONFIDENCE.heuristic;
+    if (
+      usedPct === 100 &&
+      resetAt === null &&
+      confidence <= CONFIDENCE.heuristic
+    ) {
       parseRejectDiag.unverifiedFull += 1;
       return null;
     }
@@ -473,10 +509,13 @@
 
   const POOL_KIND_KEY_RE =
     /^(pool_?type|pool_?id|pool_?name|poolType|poolId|bucket|bucket_?type|type|kind|window_?type|quota_?type|limit_?type|id|name)$/i;
-  const USED_PCT_KEY_RE = /(?:percentage|percent|pct|ratio|fraction|utiliz).*used|used.*(?:percentage|percent|pct|ratio|fraction|utiliz)/i;
-  const REMAINING_PCT_KEY_RE = /(?:remaining|available|left|unused).*(?:percentage|percent|pct|ratio|fraction)|(?:percentage|percent|pct|ratio|fraction).*(?:remaining|available|left|unused)/i;
+  const USED_PCT_KEY_RE =
+    /(?:percentage|percent|pct|ratio|fraction|utiliz).*used|used.*(?:percentage|percent|pct|ratio|fraction|utiliz)/i;
+  const REMAINING_PCT_KEY_RE =
+    /(?:remaining|available|left|unused).*(?:percentage|percent|pct|ratio|fraction)|(?:percentage|percent|pct|ratio|fraction).*(?:remaining|available|left|unused)/i;
   const PCT_KEY_RE = /(percent|pct|ratio|utiliz)/i;
-  const USED_KEY_RE = /^(used|used_?count|used_?amount|consumed|count|requests|messages)$/i;
+  const USED_KEY_RE =
+    /^(used|used_?count|used_?amount|consumed|count|requests|messages)$/i;
   const LIMIT_KEY_RE = /^(limit|max|maximum|quota|capacity|total|cap)$/i;
   const RESET_KEY_RE = /(refresh|reset|expire|renew)/i;
 
@@ -497,11 +536,22 @@
     if (typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value.trim())) {
       return Number(value.trim());
     }
-    if (Array.isArray(value) && typeof value[0] === "number" && Number.isFinite(value[0])) {
+    if (
+      Array.isArray(value) &&
+      typeof value[0] === "number" &&
+      Number.isFinite(value[0])
+    ) {
       return value[0];
     }
     if (value && typeof value === "object") {
-      for (const key of ["value", "number", "amount", "count", "used", "percent"]) {
+      for (const key of [
+        "value",
+        "number",
+        "amount",
+        "count",
+        "used",
+        "percent",
+      ]) {
         if (typeof value[key] === "number" && Number.isFinite(value[key])) {
           return value[key];
         }
@@ -538,7 +588,8 @@
    * 无字段名线索时，只把「带小数的 0~1 值」当比率（0.34 → 34%），整数 0/1 保留百分数语义。
    */
   function normalizePctValue(raw, hint = null) {
-    if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return null;
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0)
+      return null;
     if (hint === "fraction") return Math.min(100, Math.round(raw * 100));
     if (hint === "percent") return Math.min(100, Math.round(raw));
     if (raw > 0 && raw < 1 && !Number.isInteger(raw)) {
@@ -547,7 +598,8 @@
     return Math.min(100, Math.round(raw));
   }
 
-  const QUOTA_SCOPE_KEY_RE = /^(gxu|pool|window|quota|limit|usage|refresh|billing|rate)/i;
+  const QUOTA_SCOPE_KEY_RE =
+    /^(gxu|pool|window|quota|limit|usage|refresh|billing|rate)/i;
 
   /**
    * 收集记录内所有「重置时刻」候选。
@@ -587,7 +639,9 @@
     const fitting = unique.filter(
       (ts) => ts > nowMs && ts - nowMs <= windowMs + RESET_SLACK_MS,
     );
-    const beyondWindow = unique.filter((ts) => ts - nowMs > windowMs + RESET_SLACK_MS);
+    const beyondWindow = unique.filter(
+      (ts) => ts - nowMs > windowMs + RESET_SLACK_MS,
+    );
 
     if (!fitting.length) {
       return { resetAt: null, misbound: beyondWindow.length > 0 };
@@ -611,7 +665,8 @@
    * 语义：percentageUsed 是已用比例 → 剩余 = 100 - 已用。
    */
   function readMetricFromRecord(record, kind, nowMs) {
-    if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+    if (!record || typeof record !== "object" || Array.isArray(record))
+      return null;
 
     const scopes = [record];
     for (const [key, value] of Object.entries(record)) {
@@ -627,17 +682,26 @@
     let usedPct = null;
 
     if (remainingPctField) {
-      pct = normalizePctValue(remainingPctField.number, pctHintFromKey(remainingPctField.key));
+      pct = normalizePctValue(
+        remainingPctField.number,
+        pctHintFromKey(remainingPctField.key),
+      );
       if (pct !== null) usedPct = 100 - pct;
     } else if (usedPctField) {
-      const value = normalizePctValue(usedPctField.number, pctHintFromKey(usedPctField.key));
+      const value = normalizePctValue(
+        usedPctField.number,
+        pctHintFromKey(usedPctField.key),
+      );
       if (value !== null) {
         usedPct = value;
         pct = 100 - value;
       }
     } else if (ambiguousPctField) {
       // 裸 percent / pct 字段在官方结构里表示「已用比例」，按已用处理
-      const value = normalizePctValue(ambiguousPctField.number, pctHintFromKey(ambiguousPctField.key));
+      const value = normalizePctValue(
+        ambiguousPctField.number,
+        pctHintFromKey(ambiguousPctField.key),
+      );
       if (value !== null) {
         usedPct = value;
         pct = 100 - value;
@@ -667,7 +731,11 @@
 
     if (pct === null) return null;
 
-    const resetPick = pickResetAt(collectResetCandidates(record, nowMs), kind, nowMs);
+    const resetPick = pickResetAt(
+      collectResetCandidates(record, nowMs),
+      kind,
+      nowMs,
+    );
     if (resetPick.misbound) return null;
 
     return {
@@ -722,7 +790,8 @@
           }
         }
         const timestamp =
-          toEpochMs(item, nowMs) || parseOfficialResetTextToTimestamp(item, nowMs);
+          toEpochMs(item, nowMs) ||
+          parseOfficialResetTextToTimestamp(item, nowMs);
         if (timestamp !== null) candidates.push(timestamp);
       }
     }
@@ -925,18 +994,30 @@
    * options.useLabels = false 时必须禁用标签启发式：整页 bootstrap blob 与聊天 RPC 帧
    * 里的普通数组（配置、会话、样式文本）会被宽松标签误命中，产出完全无关的百分比。
    */
-  function extractQuotaFromWizStructure(rootData, nowMs = Date.now(), options = {}) {
+  function extractQuotaFromWizStructure(
+    rootData,
+    nowMs = Date.now(),
+    options = {},
+  ) {
     if (!rootData || typeof rootData !== "object") return null;
 
     const structured = collectStructuredPools(rootData, nowMs);
     const labeled =
-      options.useLabels === false ? null : collectQuotaByLabels(rootData, nowMs);
+      options.useLabels === false
+        ? null
+        : collectQuotaByLabels(rootData, nowMs);
     if (!structured && !labeled) return null;
 
     return {
       timestamp: nowMs,
-      fiveHour: (structured && structured.fiveHour) || (labeled && labeled.fiveHour) || null,
-      weekly: (structured && structured.weekly) || (labeled && labeled.weekly) || null,
+      fiveHour:
+        (structured && structured.fiveHour) ||
+        (labeled && labeled.fiveHour) ||
+        null,
+      weekly:
+        (structured && structured.weekly) ||
+        (labeled && labeled.weekly) ||
+        null,
       strategy: structured ? "pools" : "labels",
     };
   }
@@ -1016,7 +1097,9 @@
     let barePct = null;
 
     const directionOf = (fragment) => {
-      if (/(剩余|剩餘|可用|余量|餘量|remaining|available|left)/i.test(fragment)) {
+      if (
+        /(剩余|剩餘|可用|余量|餘量|remaining|available|left)/i.test(fragment)
+      ) {
         return "remaining";
       }
       if (/(已用|已使用|使用量|用量|used|consumed|utiliz)/i.test(fragment)) {
@@ -1026,16 +1109,26 @@
     };
 
     while ((match = re.exec(text)) !== null) {
-      const value = Math.min(100, Math.max(0, Math.round(parseFloat(match[1]))));
+      const value = Math.min(
+        100,
+        Math.max(0, Math.round(parseFloat(match[1]))),
+      );
       // 只在本行内看方向词，且优先看紧邻的前文：
       // 「已用 12%\n剩余 88%」里的 12% 不能被下一行的「剩余」抢走方向。
       const lineStart = text.lastIndexOf("\n", match.index);
       const lineEndIdx = text.indexOf("\n", match.index);
       const lineEnd = lineEndIdx === -1 ? text.length : lineEndIdx;
-      const before = text.slice(Math.max(lineStart + 1, match.index - 12), match.index);
+      const before = text.slice(
+        Math.max(lineStart + 1, match.index - 12),
+        match.index,
+      );
       const line = text.slice(lineStart + 1, lineEnd);
-      const after = text.slice(match.index, Math.min(lineEnd, match.index + 12));
-      const direction = directionOf(before) || directionOf(after) || directionOf(line);
+      const after = text.slice(
+        match.index,
+        Math.min(lineEnd, match.index + 12),
+      );
+      const direction =
+        directionOf(before) || directionOf(after) || directionOf(line);
 
       if (direction === "remaining") {
         if (remainingPct === null) remainingPct = value;
@@ -1047,7 +1140,8 @@
       }
     }
 
-    if (remainingPct !== null) return { pct: remainingPct, usedPct: 100 - remainingPct };
+    if (remainingPct !== null)
+      return { pct: remainingPct, usedPct: 100 - remainingPct };
     if (usedPct !== null) return { pct: 100 - usedPct, usedPct };
     if (barePct === null) return null;
 
@@ -1063,7 +1157,12 @@
    * options.allowBare：卡片文本默认允许裸百分比（官方页面口径 "N% used"），
    * 全文切片等「位置可能切错」的场景必须传 false。
    */
-  function extractMetricFromCardText(cardText, windowType, nowMs, options = {}) {
+  function extractMetricFromCardText(
+    cardText,
+    windowType,
+    nowMs,
+    options = {},
+  ) {
     if (!cardText || typeof cardText !== "string") return null;
 
     let pctInfo = pctFromTextWithContext(cardText, {
@@ -1238,7 +1337,8 @@
     const weekLabelRe =
       /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i;
     const usedRe = /(?:已用|已使用|使用量|用量|used|usage|consumed|utiliz)/i;
-    const remainingRe = /(?:剩余|剩餘|可用|余量|餘量|remaining|available|left)/i;
+    const remainingRe =
+      /(?:剩余|剩餘|可用|余量|餘量|remaining|available|left)/i;
     const nodes = [];
     const visit = (root) => {
       if (!root || typeof root.querySelectorAll !== "function") return;
@@ -1258,7 +1358,12 @@
       const rawMax = node.getAttribute("aria-valuemax") ?? node.max ?? 100;
       const value = Number(rawNow);
       const max = Number(rawMax);
-      if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0 || value < 0) {
+      if (
+        !Number.isFinite(value) ||
+        !Number.isFinite(max) ||
+        max <= 0 ||
+        value < 0
+      ) {
         continue;
       }
 
@@ -1270,10 +1375,18 @@
       let container = node;
       for (let level = 0; level < 4 && container.parentElement; level += 1) {
         container = container.parentElement;
-        const text = (container.innerText || container.textContent || "").trim();
+        const text = (
+          container.innerText ||
+          container.textContent ||
+          ""
+        ).trim();
         if (text.length >= 4 && text.length <= 500) break;
       }
-      const cardText = (container.innerText || container.textContent || "").trim();
+      const cardText = (
+        container.innerText ||
+        container.textContent ||
+        ""
+      ).trim();
       const context = `${valueText} ${cardText}`;
       const isFive = fiveLabelRe.test(context);
       const isWeekly = weekLabelRe.test(context);
@@ -1355,7 +1468,9 @@
       }
 
       const pickShortest = (kind) => {
-        const list = candidates[kind].slice().sort((a, b) => a.length - b.length);
+        const list = candidates[kind]
+          .slice()
+          .sort((a, b) => a.length - b.length);
         for (const txt of list.slice(0, 5)) {
           const m = extractMetricFromCardText(txt, kind, nowMs);
           if (m) return m;
@@ -1369,7 +1484,8 @@
       // /usage 是 CSR 时，额度可能只存在 progressbar/ARIA 属性中，不会出现在文本卡片。
       // 仅在窗口标签与方向词都能从同一节点/邻近卡片确认时补入，避免误采普通进度条。
       const progressMetrics = collectProgressbarMetrics(doc, nowMs);
-      if (!fiveHour && progressMetrics.fiveHour) fiveHour = progressMetrics.fiveHour;
+      if (!fiveHour && progressMetrics.fiveHour)
+        fiveHour = progressMetrics.fiveHour;
       if (!weekly && progressMetrics.weekly) weekly = progressMetrics.weekly;
 
       // 3. 全文按上下文切片回退提取：切片必须在「下一个窗口标签」处截断，
@@ -1463,7 +1579,9 @@
 
       const prev = quotaState[kind];
       const prevFresh =
-        prev.pct !== null && prev.updatedAt > 0 && nowMs - prev.updatedAt < FRESH_MS;
+        prev.pct !== null &&
+        prev.updatedAt > 0 &&
+        nowMs - prev.updatedAt < FRESH_MS;
 
       // 低置信度（标签启发式）不得覆盖仍在新鲜期内的高置信度数据（pools / 官方页面）
       if (prevFresh && clean.confidence < (prev.confidence || 0)) return false;
@@ -1529,14 +1647,18 @@
       const hasLiveData =
         quotaState.source !== "cache" &&
         (quotaState.fiveHour.pct !== null || quotaState.weekly.pct !== null);
-      if (hasLiveData && quotaState.lastSyncTime >= (parsed.timestamp || 0)) return;
+      if (hasLiveData && quotaState.lastSyncTime >= (parsed.timestamp || 0))
+        return;
 
       const now = Date.now();
       const restoreMetric = (metric, kind) => {
         const windowMs = kind === "fiveHour" ? FIVE_HOUR_MS : WEEK_MS;
         const rawResetAt = metric ? toEpochMs(metric.resetAt, now) : null;
         // 历史版本曾把 7D 数据写进 5H：重置时刻超出窗口长度 → 整条 5H 缓存作废
-        if (rawResetAt !== null && rawResetAt - now > windowMs + RESET_SLACK_MS) {
+        if (
+          rawResetAt !== null &&
+          rawResetAt - now > windowMs + RESET_SLACK_MS
+        ) {
           return null;
         }
         const clean = sanitizeMetric(metric, kind, now);
@@ -1558,7 +1680,9 @@
       const fiveHourRaw = parsed.fiveHour
         ? { confidence: 0, ...parsed.fiveHour }
         : null;
-      const weeklyRaw = parsed.weekly ? { confidence: 0, ...parsed.weekly } : null;
+      const weeklyRaw = parsed.weekly
+        ? { confidence: 0, ...parsed.weekly }
+        : null;
 
       const fiveHour = restoreMetric(fiveHourRaw, "fiveHour");
       const weekly = restoreMetric(weeklyRaw, "weekly");
@@ -1604,7 +1728,8 @@
    */
   const NET_RING_LIMIT = 24;
   const netRing = [];
-  const NET_INTEREST_RE = /(batchexecute|usage|quota|limit|entitle|billing|gxu|tier)/i;
+  const NET_INTEREST_RE =
+    /(batchexecute|usage|quota|limit|entitle|billing|gxu|tier)/i;
   function noteNetwork(url, status, len) {
     try {
       const text = typeof url === "string" ? url : "";
@@ -1719,14 +1844,26 @@
           const card = node.closest
             ? node.closest("section, article, li, tr, div")
             : null;
-          cardText = card ? (card.innerText || card.textContent || "").trim() : "";
+          cardText = card
+            ? (card.innerText || card.textContent || "").trim()
+            : "";
         } catch {
           cardText = "";
         }
         out.push({
           tag: String(node.tagName || "").toLowerCase(),
-          now: attrNow !== null ? attrNow : node.value !== undefined ? node.value : null,
-          max: attrMax !== null ? attrMax : node.max !== undefined ? node.max : null,
+          now:
+            attrNow !== null
+              ? attrNow
+              : node.value !== undefined
+                ? node.value
+                : null,
+          max:
+            attrMax !== null
+              ? attrMax
+              : node.max !== undefined
+                ? node.max
+                : null,
           label: (
             node.getAttribute("aria-valuetext") ||
             node.getAttribute("aria-label") ||
@@ -1878,7 +2015,9 @@
           noteNetwork(
             url,
             this.status,
-            typeof this.responseText === "string" ? this.responseText.length : 0,
+            typeof this.responseText === "string"
+              ? this.responseText.length
+              : 0,
           );
           if (
             typeof this.responseText === "string" &&
@@ -2080,13 +2219,15 @@
           });
           const finalPath = (() => {
             try {
-              return new URL(resp.url || usageUrl, window.location.href).pathname;
+              return new URL(resp.url || usageUrl, window.location.href)
+                .pathname;
             } catch {
               return "";
             }
           })();
           // /usage 不存在时会被 302 到 /app；继续解析只会拿 app 的 blob 当配额
-          usagePageMissing = !!resp.redirected && !/\/usage\/?$/.test(finalPath);
+          usagePageMissing =
+            !!resp.redirected && !/\/usage\/?$/.test(finalPath);
           quotaState.usagePageStatus = {
             url: usageUrl,
             status: resp.status,
@@ -2114,7 +2255,10 @@
         // 3. 同源隐藏 Iframe 等待 CSR 异步节点加载（/usage 不存在时直接跳过）
         if (!usagePageMissing) {
           const fromIframe = await extractViaSameOriginUsageIframe(usageUrl);
-          if (fromIframe && commitOfficialQuota(fromIframe, "usage-page", true)) {
+          if (
+            fromIframe &&
+            commitOfficialQuota(fromIframe, "usage-page", true)
+          ) {
             return true;
           }
         }
@@ -2128,14 +2272,17 @@
             Date.now(),
             { useLabels: false },
           );
-          if (fromGlobalWiz && commitOfficialQuota(fromGlobalWiz, "rpc", false)) {
+          if (
+            fromGlobalWiz &&
+            commitOfficialQuota(fromGlobalWiz, "rpc", false)
+          ) {
             return true;
           }
         }
 
         quotaState.lastError = usagePageMissing
-        ? "本次 /usage 通道不可用（已重定向到其他页面），等待网络探针取证"
-        : "暂未从官方接口获取到配额数据";
+          ? "本次 /usage 通道不可用（已重定向到其他页面），等待网络探针取证"
+          : "暂未从官方接口获取到配额数据";
         return false;
       } catch (err) {
         quotaState.lastError =
@@ -2197,7 +2344,9 @@
     if (metric.resetAt && metric.resetAt > nowMs) {
       const dt = new Date(metric.resetAt);
       const pad = (n) => String(n).padStart(2, "0");
-      lines.push(`官方重置时间: ${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`);
+      lines.push(
+        `官方重置时间: ${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`,
+      );
       lines.push(`距重置剩余: ${formatRemainingHuman(metric.resetAt - nowMs)}`);
     } else if (metric.rawResetText) {
       lines.push(`官方重置状态: ${metric.rawResetText}`);
@@ -2958,7 +3107,10 @@
     } else if (metric.rawResetText) {
       // 拿不到官方时间戳时才退化为文案：以抓取时刻为锚点解析，保证倒计时仍在递减
       const anchor = metric.updatedAt > 0 ? metric.updatedAt : now;
-      const parsed = parseOfficialResetTextToTimestamp(metric.rawResetText, anchor);
+      const parsed = parseOfficialResetTextToTimestamp(
+        metric.rawResetText,
+        anchor,
+      );
       timerNode.textContent =
         parsed !== null && parsed > now
           ? formatCompactCountdown(parsed - now, isWeekly)
@@ -3123,7 +3275,7 @@
   // 10. 调试出口（控制台可调用，便于回传真实响应核对窗口归属）
   // =========================================================================
   window.__gqc = {
-    version: "0.8.4",
+    version: "0.8.5",
     get state() {
       return quotaState;
     },
@@ -3161,7 +3313,8 @@
           return "";
         }
       })();
-      const redirectedAway = !!resp.redirected && !/\/usage\/?$/.test(finalPath);
+      const redirectedAway =
+        !!resp.redirected && !/\/usage\/?$/.test(finalPath);
       let parsed = null;
       if (rawHtml && !redirectedAway) {
         try {
@@ -3175,7 +3328,7 @@
         }
       }
       const result = {
-        version: "0.8.4",
+        version: "0.8.5",
         url,
         status: resp.status,
         finalUrl: shortenUrl(finalUrl),
@@ -3218,7 +3371,7 @@
      */
     report() {
       const result = {
-        version: "0.8.4",
+        version: "0.8.5",
         at: new Date().toISOString(),
         href: shortenUrl(window.location.href),
         path: window.location.pathname,
@@ -3260,7 +3413,7 @@
     },
     dump() {
       return {
-        version: "0.8.4",
+        version: "0.8.5",
         at: new Date().toISOString(),
         href: window.location.href,
         config: { ...config },
