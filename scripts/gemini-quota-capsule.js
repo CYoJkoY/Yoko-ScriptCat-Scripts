@@ -1234,14 +1234,24 @@
     if (!doc || typeof doc.querySelectorAll !== "function") return found;
 
     const fiveLabelRe =
-      /(?:5\s*-?\s*(?:hour|hr|h|小时|小時|時間)|five\s*-?\s*hour|hourly|per\s*hour|current\s*session|当前会话|会话)/i;
+      /(?:5\s*-?\s*(?:hours?|hrs?|h|小时|小時|時間)|five\s*-?\s*hours?|hourly|per\s*hour|current\s*session|当前会话|会话)/i;
     const weekLabelRe =
       /(?:7\s*-?\s*(?:day|d|天|日)|week(?:ly)?|每周|每週|週間)/i;
     const usedRe = /(?:已用|已使用|使用量|用量|used|usage|consumed|utiliz)/i;
     const remainingRe = /(?:剩余|剩餘|可用|余量|餘量|remaining|available|left)/i;
-    const nodes = Array.from(
-      doc.querySelectorAll("[role='progressbar'], progress, [aria-valuenow]"),
-    );
+    const nodes = [];
+    const visit = (root) => {
+      if (!root || typeof root.querySelectorAll !== "function") return;
+      for (const node of root.querySelectorAll(
+        "[role='progressbar'], progress, [aria-valuenow]",
+      )) {
+        nodes.push(node);
+      }
+      for (const host of root.querySelectorAll("*")) {
+        if (host.shadowRoot) visit(host.shadowRoot);
+      }
+    };
+    visit(doc);
 
     for (const node of nodes) {
       const rawNow = node.getAttribute("aria-valuenow") ?? node.value;
@@ -1981,8 +1991,12 @@
           );
           if (!result) return;
 
-          const has5h = result.fiveHour && result.fiveHour.pct !== null;
-          const has7d = result.weekly && result.weekly.pct !== null;
+          const has5h =
+            result.fiveHour &&
+            (result.fiveHour.pct !== null || result.fiveHour.resetAt !== null);
+          const has7d =
+            result.weekly &&
+            (result.weekly.pct !== null || result.weekly.resetAt !== null);
 
           // 当两项指标皆已就绪，立即完成；若仅有一项就绪，设置防抖缓冲防止扼杀 5H 渲染
           if (has5h && has7d) {
@@ -3278,6 +3292,8 @@
           rejected: { ...parseRejectDiag },
           usagePage: quotaState.usagePageStatus,
           quotaSnippets: snippetRing.length,
+          domHints: collectQuotaDomHints(),
+          progressbars: collectProgressbarHints(),
         },
       };
     },
