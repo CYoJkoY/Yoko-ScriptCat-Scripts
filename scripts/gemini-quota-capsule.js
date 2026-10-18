@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.6
+// @version      0.8.8
 // @description  参照 Voyager usage-observer 架构：document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与 /usage 官方数据源，按 poolType 精确分流 5H / 7D 真实用量，重置倒计时基于官方重置时刻与当前时间实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -18,14 +18,14 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.8.7";
+  const SCRIPT_VERSION = "0.8.8";
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
   const STORAGE_KEY_CFG = "__gemini_quota_capsule_cfg_v5__";
   // v6 → v7：v0.8.0 把 WIZ_global_data 里的样式/模板文本当成配额，缓存里留下了
   // 大量「已用 100%」的假数据，必须整段作废，否则升级后首屏依旧是 100%。
-  const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v7__";
+  const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v8__";
 
   const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000;
 
@@ -34,6 +34,7 @@
   const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
   const RESET_SLACK_MS = 30 * 60 * 1000; // 允许的时钟/服务端抖动
   const FRESH_MS = 10 * 60 * 1000; // 超过该时长未更新的数据不再受置信度保护
+  const MAX_CACHE_AGE_MS = 10 * 60 * 1000; // 缓存只允许短暂首屏回显
 
   // 数据置信度：结构化 pools > 官方 /usage 页面 > 标签启发式
   const CONFIDENCE = { heuristic: 1, dom: 2, pools: 3 };
@@ -315,6 +316,36 @@
         if (absolute >= minMs && absolute <= maxMs) return absolute;
         // 中文日期本身是权威信息：解析到过去/过远的日期就直接放弃，
         // 不能落回「钟点」分支把 20:00 解释成今天 20:00。
+        return null;
+      }
+    }
+
+    // Google usage 页面常见文案："Resets Oct 23 at 5:30 PM"。
+    // 不能只交给钟点分支，否则会丢掉日期，把 5:30 PM 错当成下一个 5:30。
+    const monthDateMatch = clean.match(
+      /\b(?:resets?|refresh(?:es|ing)?|renews?)?\s*(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?\s+(?:at\s*)?(\d{1,2}):(\d{2})\s*(AM|PM)?/i,
+    );
+    if (monthDateMatch) {
+      const monthNames = [
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec",
+      ];
+      const month = monthNames.indexOf(monthDateMatch[1].slice(0, 3).toLowerCase());
+
+      let hour = Number(monthDateMatch[4]);
+      const minute = Number(monthDateMatch[5]);
+      const meridiem = (monthDateMatch[6] || "").toUpperCase();
+      if (meridiem === "PM" && hour < 12) hour += 12;
+      if (meridiem === "AM" && hour === 12) hour = 0;
+      const year = monthDateMatch[3]
+        ? Number(monthDateMatch[3])
+        : new Date(nowMs).getFullYear();
+      if (month >= 0 && hour <= 23 && minute <= 59) {
+        let absolute = new Date(year, month, Number(monthDateMatch[2]), hour, minute, 0, 0).getTime();
+        if (!monthDateMatch[3] && absolute < nowMs - 86400 * 1000) {
+          absolute = new Date(year + 1, month, Number(monthDateMatch[2]), hour, minute, 0, 0).getTime();
+        }
+        if (absolute >= minMs && absolute <= maxMs) return absolute;
         return null;
       }
     }
@@ -1667,6 +1698,12 @@
         return;
 
       const now = Date.now();
+      // 缓存只能用于极短暂的首屏回显。没有 resetAt 的旧缓存尤其危险：
+      // 它无法证明自己仍属于当前窗口，不能无限期冒充实时数据。
+      const cacheAge = now - Number(parsed.timestamp || 0);
+      if (!Number.isFinite(cacheAge) || cacheAge < 0 || cacheAge > MAX_CACHE_AGE_MS) {
+        return;
+      }
       const restoreMetric = (metric, kind) => {
         const windowMs = kind === "fiveHour" ? FIVE_HOUR_MS : WEEK_MS;
         const rawResetAt = metric ? toEpochMs(metric.resetAt, now) : null;
@@ -3343,6 +3380,9 @@
     },
     sync() {
       return syncOfficialUsage(true);
+    },
+    parseResetText(text, nowMs = Date.now()) {
+      return parseOfficialResetTextToTimestamp(text, nowMs);
     },
     setDebug(enabled) {
       config.debug = !!enabled;
