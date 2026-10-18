@@ -19,8 +19,8 @@
 | 优先级 | 通道 | 说明 |
 | --- | --- | --- |
 | 1 | 捕获并重放 `batchexecute`（`wrb.fr` 帧） | document-start 包装 `fetch` / `XMLHttpRequest`，命中配额帧后保存请求模板，后续直接重放。帧内只认结构化 `GXU_*` 池，不做标签猜测 |
-| 2 | 同源 `GET /usage` | **实测该页面并不存在**：未登录/普通会话都会被 302 到 `/app`，因此会先做重定向体检，一旦跳走就整条通道停用，绝不再拿 app 的 blob 当配额 |
-| 3 | 隐藏 iframe 探测 `/usage` | 同上，仅在 `GET /usage` 未发生重定向时才执行 |
+| 2 | 同源 `GET /usage` | **登录态页面可访问，但当前取证未返回额度数据**：`status=200`、`finalUrl` 仍为 `/usage`，不能再按「页面不存在」处理；只有发生重定向离开 `/usage` 时才停用该通道 |
+| 3 | 隐藏 iframe 探测 `/usage` | 同上：登录态允许 CSR 加载，但必须等到真实额度节点出现；加载 spinner 或无方向的进度条不得当作配额 |
 | 4 | `window.WIZ_global_data` | 仅兜底，且禁用标签启发式：它是整页 bootstrap blob，与配额无关的 `session` / `week` / 样式文本极多 |
 | 5 | 本地缓存 | 仅用于首屏回显，恢复时 `updatedAt = 0`，会被任何新数据立即覆盖 |
 
@@ -181,7 +181,7 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 
 ## 十、已知限制
 
-- **当前没有已验证的官方数据源。** `GXU_*` 字段、`getUsageInfo.pools`、`/usage` 页面都没有任何一份真实抓包佐证；在拿到真实字段名之前，脚本会如实显示 `--%`，而不是拿 bootstrap blob 里的 `100%` 充数。取证方式见「八、调试」的 `__gqc.report()`。
+- **当前没有已验证的官方额度字段。** `GXU_*` / `getUsageInfo.pools` 尚未在真实响应中出现；本次登录态 `/usage` 仅确认 `200` 且未重定向，但页面取证没有额度节点（只有 `mat-progress-spinner` 加载提示），因此脚本不得把 spinner 的 `aria-valuenow` 当百分比。
 - 服务端字段一旦改名（如 `percentageUsed` → 其他拼写），结构化层会失效并回退到置信度更低的启发式；此时请用 `__gqc.dump()` 回传一帧原始响应，并先看 `diagnostics` 判断是「没拦到」还是「拦到了但结构变了」。
 - 百分比若是无方向词的裸数字（既非 `used` 也非 `remaining`），只能按官方页面默认口径「已用」解释；这类来源不会被当成高置信度数据。
 - `/usage` 页面若改为纯前端渲染且不产生可捕获帧，只能依赖 iframe + DOM 文本解析。

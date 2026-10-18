@@ -35,13 +35,25 @@
     return text.length > max ? text.slice(0, max) + "…" : text;
   }
 
+  function safeUrl(value, max) {
+    try {
+      const parsed = new URL(String(value || ""), location.href);
+      const pathname = parsed.pathname || "";
+      const rpcids = parsed.searchParams.get("rpcids");
+      const safeQuery = rpcids ? `?rpcids=${encodeURIComponent(rpcids)}` : "";
+      return shorten(`${parsed.origin}${pathname}${safeQuery}`, max);
+    } catch (err) {
+      return shorten(String(value || "").split(/[?#]/, 1)[0], max);
+    }
+  }
+
   function noteEndpoint(kind, url, len) {
     if (!watchAll && !WATCH_URL_RE.test(url)) return;
     endpoints.push({
       at: Math.round(performance.now()),
       kind: kind,
-      url: shorten(url, 160),
-      len: len || 0,
+      url: safeUrl(url, 160),
+      len: Number.isFinite(len) ? len : 0,
     });
     if (endpoints.length > 80) endpoints.splice(0, endpoints.length - 80);
   }
@@ -59,7 +71,7 @@
       if (hits.some(function (item) { return item.text === frag; })) continue;
       hits.push({
         kind: kind,
-        url: shorten(url, 120),
+        url: safeUrl(url, 120),
         size: text.length,
         text: frag,
       });
@@ -81,15 +93,17 @@
     const promise = origFetch.apply(this, args);
     try {
       promise.then(function (resp) {
-        noteEndpoint("fetch", url, 0);
         if (!WATCH_URL_RE.test(url)) return;
         resp
           .clone()
           .text()
           .then(function (text) {
+            noteEndpoint("fetch", url, text.length);
             collect("fetch", url, text);
           })
-          .catch(function () {});
+          .catch(function () {
+            noteEndpoint("fetch", url, 0);
+          });
       });
     } catch (err) {
       // 探针失败不能影响页面
