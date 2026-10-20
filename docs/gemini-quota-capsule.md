@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：1.0.0
+- 版本：1.0.1
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -230,6 +230,13 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
 
 ## 十一、版本历史
+
+### v1.0.1
+
+- 上传完成前切换装饰、清除资源或发起新上传时，丢弃旧文件的异步结果，避免覆盖用户后续操作。
+- 图片经浏览器解码成功后才保存，损坏或不支持的文件保留原图并显示错误，解码最多等待 5 秒。
+- SVG 清洗后没有实际图形（包括只有 defs、脚本或空容器）时拒绝应用，避免装饰意外变空。
+- 增加对应浏览器回归，原有静默同步、布局与节点复用回归保持通过；真实登录态及管理器兼容性仍待确认。
 
 ### v1.0.0
 

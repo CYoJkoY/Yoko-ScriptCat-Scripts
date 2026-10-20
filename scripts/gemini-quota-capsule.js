@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.0
+// @version      1.0.1
 // @description  document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与官方用量页面，按窗口精确分流 5H / 7D 用量；装饰图标与两段进度独立配置，支持图片、SVG 与组件 CSS。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "1.0.0";
+  const SCRIPT_VERSION = "1.0.1";
   // 进度图形清单：5H 与 7D 各自选择，互不影响。
   const INDICATOR_MODES = [
     { key: "bar", text: "横条" },
@@ -384,7 +384,10 @@
     };
 
     const root = copyNode(sourceRoot, 0);
-    if (!root || nodeCount === 0) {
+    const hasGraphic = root && [...root.querySelectorAll(
+      "path,circle,ellipse,rect,line,polyline,polygon",
+    )].some((node) => !node.closest("defs,clipPath,mask"));
+    if (!hasGraphic) {
       return { node: null, error: "SVG 中没有可显示的图形" };
     }
     if (!root.getAttribute("viewBox")) {
@@ -3583,6 +3586,7 @@
   const ornamentBtns = [];
   const progressBtns = { fiveHour: [], weekly: [] };
   let iconRevision = 0;
+  let uploadSequence = 0;
   let lastOrnamentRender = null;
   let customSvgCache = { source: "", node: null };
   const progressCache = {
@@ -3662,8 +3666,37 @@
     });
   }
 
+  function validateImageDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      const cleanup = () => {
+        clearTimeout(timeout);
+        image.onload = null;
+        image.onerror = null;
+      };
+      const timeout = setTimeout(() => {
+        cleanup();
+        image.src = "";
+        reject(new Error("图片解码超时"));
+      }, 5000);
+      image.onload = () => {
+        cleanup();
+        if (image.naturalWidth > 0 && image.naturalHeight > 0) resolve();
+        else reject(new Error("图片没有有效尺寸"));
+      };
+      image.onerror = () => {
+        cleanup();
+        reject(new Error("图片损坏或浏览器不支持该格式"));
+      };
+      image.src = dataUrl;
+    });
+  }
+
   async function handleImageFile(file) {
     if (!file) return;
+    const sequence = ++uploadSequence;
+    const revision = iconRevision;
+    const isCurrent = () => sequence === uploadSequence && revision === iconRevision;
     if (file.size > MAX_IMAGE_BYTES) {
       setStyleStatus(`图片超过 ${MAX_IMAGE_BYTES / 1024}KB 上限。`, "error");
       return;
@@ -3673,6 +3706,7 @@
     try {
       if (isSvg) {
         const text = await file.text();
+        if (!isCurrent()) return;
         const checked = sanitizeSvg(text);
         if (!checked.node) {
           setStyleStatus(checked.error, "error");
@@ -3688,14 +3722,18 @@
         return;
       }
       const dataUrl = await readFileAsDataUrl(file);
+      if (!isCurrent()) return;
       if (!dataUrl.startsWith("data:image/") || dataUrl.length > MAX_IMAGE_DATA_URL_CHARS) {
         setStyleStatus("图片编码后体积过大，请压缩后重试。", "error");
         return;
       }
+      await validateImageDataUrl(dataUrl);
+      if (!isCurrent()) return;
       if (setOrnament("image", { image: dataUrl })) {
         setStyleStatus("图片图标已应用。", "ok");
       }
     } catch (err) {
+      if (!isCurrent()) return;
       setStyleStatus(`读取图片失败：${err && err.message ? err.message : "未知错误"}`, "error");
     }
   }

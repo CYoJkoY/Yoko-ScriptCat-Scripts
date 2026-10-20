@@ -550,6 +550,14 @@ async function main() {
       applyButton.click();
       const invalid = { status: status(), kind: window.__gqc.config.icon.kind };
 
+      const previousSvg = window.__gqc.config.icon.svg;
+      textarea.value = '<svg><script>alert(1)</script><defs><path d="M0 0h16v16z"/></defs></svg>';
+      applyButton.click();
+      const empty = {
+        status: status(),
+        unchanged: window.__gqc.config.icon.svg === previousSvg,
+      };
+
       textarea.value = `<svg viewBox="0 0 16 16">${"x".repeat(21000)}</svg>`;
       applyButton.click();
       const oversized = { status: status() };
@@ -559,7 +567,7 @@ async function main() {
         kind: window.__gqc.config.icon.kind,
         svg: window.__gqc.config.icon.svg,
       };
-      return { before, first, external, invalid, oversized, cleared };
+      return { before, first, external, invalid, empty, oversized, cleared };
     });
     assert.equal(svgResult.before, svgResult.first.width, "自定义 SVG 改变了胶囊宽度");
     assert.match(svgResult.first.status, /SVG 图标已应用/);
@@ -577,6 +585,8 @@ async function main() {
     assert.equal(svgResult.external.fill, null, "外部 url() 引用未被丢弃");
     assert.match(svgResult.invalid.status, /完整的 SVG 根元素/);
     assert.equal(svgResult.invalid.kind, "svg");
+    assert.match(svgResult.empty.status, /没有可显示的图形/);
+    assert.equal(svgResult.empty.unchanged, true);
     assert.match(svgResult.oversized.status, /SVG 超过 20KB 上限/);
     assert.deepEqual(svgResult.cleared, { kind: "prism", svg: "" });
 
@@ -639,6 +649,49 @@ async function main() {
     assert.equal(rejectedImage.oversized.unchanged, true);
     assert.match(rejectedImage.unsupported.status, /仅支持/);
     assert.equal(rejectedImage.unsupported.unchanged, true);
+
+    // MIME 合法但内容损坏时，不保存假图片或显示成功。
+    await page.evaluate(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["not a png"], "broken.png", { type: "image/png" }));
+      const input = document.querySelector('input[type="file"]');
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change"));
+    });
+    await page.waitForFunction(() =>
+      document.querySelector(".gc-style-status").textContent.includes("图片损坏"),
+    );
+    assert.equal(await page.evaluate(() => window.__gqc.config.icon.image), imageApplied.src);
+
+    // 旧 SVG 文件读取在用户清除资源后完成，必须丢弃旧结果。
+    const staleUpload = await page.evaluate(async () => {
+      const file = new File(["unused"], "slow.svg", { type: "image/svg+xml" });
+      let finish;
+      Object.defineProperty(file, "text", {
+        value: () => new Promise((resolve) => { finish = resolve; }),
+      });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      const input = document.querySelector('input[type="file"]');
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change"));
+      document.querySelector('[data-gc-action="clear-custom"]').click();
+      finish('<svg><circle cx="8" cy="8" r="6"/></svg>');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return { kind: window.__gqc.config.icon.kind, svg: window.__gqc.config.icon.svg };
+    });
+    assert.deepEqual(staleUpload, { kind: "prism", svg: "" });
+
+    // 恢复有效图片，继续验证重载与存储回滚。
+    await page.evaluate((base64) => {
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], "dot.png", { type: "image/png" }));
+      const input = document.querySelector('input[type="file"]');
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change"));
+    }, TINY_PNG_BASE64);
+    await page.waitForFunction(() => window.__gqc.config.icon.kind === "image");
 
     // 刷新后图片配置恢复。
     await page.reload();
