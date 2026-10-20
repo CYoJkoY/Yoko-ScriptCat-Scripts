@@ -496,9 +496,11 @@
 
   /**
    * /app 本身不含账号索引。首屏主动请求前只从「当前文档实际加载过的同源资源」
-   * 里补一次账号前缀：资源条目属于本次页面加载，能证明是当前账号的路径。
-   * 不扫描站内链接——账号切换器里可能同时存在其他账号的 /u/<n> 链接，
-   * 拿来推断会把别的账号用量写进当前缓存。
+   * 里补一次账号前缀：性能条目属于本次页面加载，且只认本次会话发往
+   * batchexecute / BardChatUi 的请求——这些路径的 /u/<n> 由当前登录态决定。
+   * 不扫描站内链接，也不采信 /usage 请求：账号切换器里可能同时存在其他账号的
+   * /u/<n> 链接，裸 /usage 又可能落到默认账号，拿来推断会把别的账号用量
+   * 写进当前缓存。/usage 的账号前缀只在该请求通过路径校验后由调用方记录。
    */
   function discoverAccountPrefix() {
     const current = getAccountPrefix();
@@ -507,7 +509,7 @@
       const entries = window.performance.getEntriesByType("resource");
       for (const entry of entries) {
         if (!entry || typeof entry.name !== "string") continue;
-        if (!/\/BardChatUi\/|batchexecute|\/usage\/?$/.test(entry.name)) continue;
+        if (!/\/BardChatUi\/|batchexecute/.test(entry.name)) continue;
         noteAccountPrefix(entry.name);
       }
     } catch {
@@ -534,17 +536,21 @@
    * 最终地址必须与候选自身的账号路径一致。
    * 只判断结尾是不是 /usage 不够：/u/3/usage 被重定向到 /u/0/usage 时，
    * 正文属于另一个账号，不能记在 /u/3 名下，也不能据此打开后台标签页。
+   *
+   * 只有候选是裸 /usage、且调用方确认当前页没有账号前缀时，才允许 Google
+   * 把它解析成 /u/<n>/usage（allowBareRedirect）。一旦知道当前账号，最终
+   * 路径落到任何 /u/<n> 都必须与候选逐字一致，避免把默认账号的页面
+   * 记到当前账号名下。
    */
-  function isSameUsagePath(finalPath, candidatePath) {
+  function isSameUsagePath(finalPath, candidatePath, allowBareRedirect = false) {
     const normalize = (path) =>
       typeof path === "string" ? path.replace(/\/+$/, "") : "";
     const target = normalize(candidatePath);
     if (!target) return false;
     const final = normalize(finalPath);
     if (final === target) return true;
-    // 裸 /usage 就是「当前登录账号」的用量页，Google 会把它解析/重定向到 /u/<n>/usage。
-    // 这种重定向仍属同一账号，是无前缀场景下唯一不需要猜账号索引的通道。
-    return target === "/usage" && /^\/u\/\d+\/usage$/.test(final);
+    if (target !== "/usage" || allowBareRedirect !== true) return false;
+    return /^\/u\/\d+\/usage$/.test(final);
   }
 
   /**
@@ -2857,22 +2863,28 @@
           cache: "no-store",
           signal: controller.signal,
         });
-        const finalPath = (() => {
+        const finalUrl = (() => {
           try {
-            return new URL(response.url || candidateUrl, window.location.href)
-              .pathname;
+            return new URL(response.url || candidateUrl, window.location.href);
           } catch {
-            return "";
+            return null;
           }
         })();
-        const sameAccount = isSameUsagePath(finalPath, candidatePath);
+        // 必须仍在本站，且路径属于同一账号。只有本来就不知道账号前缀时，
+        // 才允许裸 /usage 被解析成 /u/<n>/usage。
+        const sameAccount =
+          finalUrl !== null &&
+          finalUrl.origin === window.location.origin &&
+          isSameUsagePath(finalUrl.pathname, candidatePath, prefix === "");
         quotaState.usagePageStatus = {
           url: shortenUrl(candidateUrl),
           status: response.status,
           finalUrl: shortenUrl(response.url || ""),
           redirected: response.redirected === true,
           missing:
-            response.redirected === true && !/\/usage\/?$/.test(finalPath),
+            response.redirected === true && !/\/usage\/?$/.test(
+              finalUrl ? finalUrl.pathname : "",
+            ),
           sameAccount,
         };
         if (!sameAccount) continue;
@@ -2934,6 +2946,9 @@
         resolve(null);
         return;
       }
+      // 与探测一致：裸 /usage 的账号解析只在未知前缀时成立。
+      const allowBareRedirect =
+        requestedPath === "/usage" && getAccountPrefix() === "";
 
       usageParseDiag.frameAttempts += 1;
       if (probeIframeEl && probeIframeEl.parentNode) {
@@ -2982,7 +2997,7 @@
       const verifyFramePath = (frameDoc) => {
         try {
           const framePath = new URL(frameDoc.URL, window.location.href).pathname;
-          if (!isSameUsagePath(framePath, requestedPath)) {
+          if (!isSameUsagePath(framePath, requestedPath, allowBareRedirect)) {
             usageParseDiag.frameRedirected = true;
             done(null, "官方 /usage 页面重定向到了其他账号");
             return false;
@@ -3269,21 +3284,20 @@
   }
 
   /**
-   * 判断这次手动点击是否值得提前占住后台标签页。
+   * 判断这次手动同步是否值得提前占住后台标签页。
    *
-   * 只有同时满足才占位：手动点击、不在官方 /usage 页面、官方 RPC 已经连续失败、
-   * 同源 iframe 处于不可用冷却期、当前没有同步在跑。前两条避免正常刷新时多余开页；
-   * 后两条保证占位确实用得上，且连点最多只产生一个标签页。
+   * 只有同时满足才占位：不在官方 /usage 页面、官方 RPC 已经连续失败、
+   * 同源 iframe 处于不可用冷却期。前两条避免正常刷新时多余开页；
+   * 后两条保证占位确实用得上。调用点位于 syncOfficialUsage 的同步段、
+   * 且已确认没有进行中的同步，因此一次同步最多只产生一个标签页。
    * 返回 null 表示这次同步只能走静默通道。
    */
-  function maybeReserveHelperWindow(isManualClick) {
-    if (!isManualClick) return null;
+  function maybeReserveHelperWindow() {
     if (/\/usage\/?$/.test(window.location.pathname)) return null;
     if (automaticFailureCount <= 0) return null;
     // 只有 iframe 已经被判为不可用（处于冷却期）时，后台页才确实可能用得上；
     // 仅凭一次 RPC 失败就占位会在刷新时闪出多余的空白标签页。
     if (Date.now() >= renderedUsageFrameBlockedUntil) return null;
-    if (activeSyncPromise !== null) return null;
     return reserveUsageHelperWindow();
   }
 
@@ -3434,19 +3448,24 @@
    * 后台标签页只服务手动点击，并且只在官方 RPC 已连续失败、且当前没有同步在跑时
    * 于点击的同步阶段提前占位：正常同步与连点都不会多出空白标签页。
    */
-  async function syncOfficialUsage(isManualClick = false, reservedWindow = null) {
+  async function syncOfficialUsage(isManualClick = false) {
     const onUsagePage = /\/usage\/?$/.test(window.location.pathname);
-    let manualHelperWindow = reservedWindow;
+    let manualHelperWindow = null;
 
     if (activeSyncPromise !== null) {
       // 已有同步在跑就复用它：连点既不重复发请求，也不会闪出第二个空白页。
       // 手动点击在这里只更新阶段文案，让用户看到「确实被受理了」。
-      closeUsageHelperWindow(manualHelperWindow);
       if (isManualClick) {
         quotaState.syncPhase = "等待进行中的同步结束";
         updateUI();
       }
       return activeSyncPromise;
+    }
+
+    // 后台页占位必须在任何 await 之前完成：window.open 依赖用户激活。
+    // 放在 activeSyncPromise 判空之后，连续点击只有第一次能占位。
+    if (isManualClick) {
+      manualHelperWindow = maybeReserveHelperWindow();
     }
 
     if (!isManualClick && document.visibilityState === "hidden") return false;
@@ -4402,8 +4421,8 @@
         title: "立即同步官方最新用量与重置时间",
         onclick: (e) => {
           e.stopPropagation();
-          // 必须在点击的同步阶段占位：异步之后再 window.open 会被浏览器拦截。
-          syncOfficialUsage(true, maybeReserveHelperWindow(true));
+          // syncOfficialUsage 会在同步段占位后台页，晚于任何 await 会被浏览器拦截。
+          syncOfficialUsage(true);
         },
       },
       [refreshSvg],

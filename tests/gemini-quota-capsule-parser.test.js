@@ -106,6 +106,11 @@ assert.equal(isSameUsagePath("/u/0/usage", "/u/3/usage"), false);
 assert.equal(isSameUsagePath("/app", "/u/3/usage"), false);
 assert.equal(isSameUsagePath("/u/1/usage", ""), false);
 assert.equal(isSameUsagePath(null, "/u/1/usage"), false);
+// 裸 /usage 只在明确允许（当前页无账号前缀）时才接受账号解析后的地址；
+// 已知前缀的候选即便允许也不能落到别的 /u/<n>。
+assert.equal(isSameUsagePath("/u/2/usage", "/usage"), false);
+assert.equal(isSameUsagePath("/u/2/usage", "/usage", true), true);
+assert.equal(isSameUsagePath("/u/2/usage", "/u/1/usage", true), false);
 
 // 无前缀页面从同源请求观察账号索引；有前缀时当前页优先
 assert.equal(window.__gqc._test.getAccountPrefix(), "");

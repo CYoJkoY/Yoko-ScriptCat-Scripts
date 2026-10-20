@@ -7,6 +7,7 @@
 // 缺少 Playwright 时失败，避免把未执行的浏览器验证误报为通过。
 
 const fs = require("node:fs");
+const http = require("node:http");
 const path = require("node:path");
 const assert = require("node:assert/strict");
 
@@ -1080,6 +1081,96 @@ async function main() {
         await bareContext.close();
       }
     }
+    // 场景 E：真实 302。Playwright 的 route.fulfill 不会让浏览器跟随重定向
+    // （实测直接连接失败），因此用本地 HTTP 服务产生真实的重定向链：
+    // /u/1/usage → /u/2/usage。目标页面能解析出用量，但账号索引不同，
+    // 探测与 iframe 都必须丢弃正文，且不得写入缓存。
+    {
+      const redirectHits = [];
+      const redirectServer = http.createServer((request, response) => {
+        const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+        redirectHits.push(pathname);
+        if (pathname === "/u/1/usage") {
+          response.writeHead(302, { location: "/u/2/usage" });
+          response.end();
+          return;
+        }
+        if (pathname === "/u/2/usage") {
+          response.writeHead(200, {
+            "content-type": "text/html; charset=utf-8",
+          });
+          response.end(usageHtml);
+          return;
+        }
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(emptyHtml);
+      });
+      await new Promise((resolve) =>
+        redirectServer.listen(0, "127.0.0.1", resolve),
+      );
+      const redirectPort = redirectServer.address().port;
+      const redirectContext = await browser.newContext();
+      try {
+        await redirectContext.addInitScript({ content: topFrameOnlySource });
+        const redirectApp = await redirectContext.newPage();
+        await redirectApp.goto(
+          `http://127.0.0.1:${redirectPort}/u/1/app`,
+        );
+        const redirectDeadline = Date.now() + 30000;
+        let redirectSnapshot = null;
+        while (Date.now() < redirectDeadline) {
+          redirectSnapshot = await redirectApp.evaluate(() => ({
+            syncing: window.__gqc.state.isSyncing,
+            usagePage: window.__gqc.state.usagePageStatus,
+            diagnostics: window.__gqc.dump().diagnostics,
+          }));
+          if (
+            redirectSnapshot.syncing === false &&
+            redirectSnapshot.usagePage !== null
+          ) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.ok(redirectSnapshot.usagePage, "探测未记录 /usage 体检结果");
+        assert.equal(redirectSnapshot.usagePage.redirected, true);
+        assert.equal(redirectSnapshot.usagePage.sameAccount, false);
+        assert.ok(
+          redirectSnapshot.usagePage.finalUrl.endsWith("/u/2/usage"),
+          "最终地址异常：" + redirectSnapshot.usagePage.finalUrl,
+        );
+        assert.equal(
+          redirectSnapshot.diagnostics.usageFrameRedirected,
+          true,
+          "iframe 未识别跨账号重定向",
+        );
+        assert.equal(redirectSnapshot.diagnostics.usageFrameParsed, false);
+        const redirectState = await redirectApp.evaluate(() => ({
+          fiveHour: window.__gqc.state.fiveHour.usedPct,
+          weekly: window.__gqc.state.weekly.usedPct,
+          cache: localStorage.getItem(window.__gqc._test.officialCacheKey()),
+        }));
+        assert.equal(redirectState.fiveHour, null, "跨账号正文写入了 5H");
+        assert.equal(redirectState.weekly, null, "跨账号正文写入了 7D");
+        assert.equal(redirectState.cache, null, "跨账号正文写入了缓存");
+        assert.ok(redirectHits.includes("/u/2/usage"), "未跟随真实重定向");
+        assert.equal(redirectContext.pages().length, 1);
+        assert.equal(
+          redirectApp.url(),
+          `http://127.0.0.1:${redirectPort}/u/1/app`,
+        );
+        console.log(
+          "跨账号重定向拦截通过：302 → /u/2/usage 的正文未写入状态或缓存。",
+        );
+      } finally {
+        await redirectContext.close();
+        await new Promise((resolve) => {
+          redirectServer.close(() => resolve());
+          redirectServer.closeAllConnections?.();
+        });
+      }
+    }
+
     console.log(`连续更新审计（每形态 1000 次）：${JSON.stringify(audit)}`);
 
     console.log(
