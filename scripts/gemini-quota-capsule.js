@@ -25,6 +25,9 @@
     { key: "ring", text: "圆环" },
     { key: "disk", text: "圆盘" },
     { key: "decay", text: "崩坏" },
+    { key: "segments", text: "分段" },
+    { key: "battery", text: "电池" },
+    { key: "columns", text: "双柱" },
   ];
   // =========================================================================
   // 1. 常量与持久化配置
@@ -3286,6 +3289,22 @@
       border-radius: 999px;
       transition: width 0.3s ease, background-color 0.3s ease;
     }
+    .gc-inline-track[data-mode="segments"] {
+      height: 6px;
+      border-radius: 0;
+      /* 遮罩将连续进度切成五格，填充比例仍保持精确。 */
+      mask-image: repeating-linear-gradient(to right, #000 0 4px, transparent 4px 5px);
+      -webkit-mask-image: repeating-linear-gradient(to right, #000 0 4px, transparent 4px 5px);
+    }
+    .gc-inline-track[data-mode="battery"] {
+      height: 9px;
+      border: 1px solid #94a3b8;
+      border-radius: 2px;
+    }
+    .gc-inline-track[data-mode="battery"] .gc-inline-fill {
+      /* 电池内胆改用小圆角，避免在方形外壳里出现胶囊形的圆头。 */
+      border-radius: 1px;
+    }
     .gc-capsule-head:focus-visible, .gc-choice-btn:focus-visible {
       outline: 2px solid #38bdf8;
       outline-offset: 2px;
@@ -3525,7 +3544,7 @@
       type: "button",
       "aria-label": "切换额度进度形态",
       className: "gc-capsule-head",
-      title: "点击切换指示器形态（横条 / 圆环 / 圆盘 / 崩坏）",
+      title: "点击切换指示器形态（横条 / 圆环 / 圆盘 / 崩坏 / 分段 / 电池 / 双柱）",
       onclick: (e) => {
         e.stopPropagation();
         cycleStyleMode();
@@ -3777,7 +3796,7 @@
     const color7d = getProgressColor(used7d);
 
     // 始终保留相同宽度的槽位，隐藏图形时不移除布局空间。
-    const inlineMode = mode === "bar";
+    const inlineMode = mode === "bar" || mode === "segments" || mode === "battery";
     for (const track of [track5hEl, track7dEl]) {
       track.style.visibility = inlineMode ? "visible" : "hidden";
       track.dataset.mode = mode;
@@ -3793,6 +3812,29 @@
         style: `width:8px; height:13px; border-radius:999px; background:linear-gradient(180deg, ${color.hex} 50%, rgba(255,255,255,0.18) 50%); border:1px solid rgba(255,255,255,0.28);`,
       });
       headSlotEl.appendChild(miniPill);
+      return;
+    }
+
+    if (mode === "columns") {
+      // 左列为 5 小时、右列为每周；填充越高表示消耗越多。
+      const columns = svgEl("svg", {
+        viewBox: "0 0 16 16", width: "16", height: "16", "aria-hidden": "true",
+      }, []);
+      for (const [index, ratio] of [used5h, used7d].entries()) {
+        const x = String(2 + index * 7);
+        // 固定两位小数，避免浮点误差在 SVG 属性里留下 9.119999999999999 之类的长尾。
+        const fillHeight = (ratio * 14).toFixed(2);
+        const fillTop = (15 - ratio * 14).toFixed(2);
+        columns.appendChild(svgEl("rect", {
+          x, y: "1", width: "5", height: "14", rx: "1",
+          fill: "rgba(255,255,255,0.14)",
+        }));
+        columns.appendChild(svgEl("rect", {
+          x, y: fillTop, width: "5",
+          height: fillHeight, rx: "1", fill: getProgressColor(ratio).hex,
+        }));
+      }
+      headSlotEl.appendChild(columns);
       return;
     }
 
