@@ -63,15 +63,10 @@ assert.equal(
   usageText.weekly.resetAt,
   new Date("2026-10-23T17:30:00").getTime(),
 );
-const usageUrls = window.__gqc._test.getOfficialUsageUrls();
+// 未知账号前缀时不猜测 /u/0 ~ /u/3，只请求裸 /usage。
 assert.equal(
-  JSON.stringify(usageUrls),
-  JSON.stringify([
-    "https://gemini.google.com/u/0/usage",
-    "https://gemini.google.com/u/1/usage",
-    "https://gemini.google.com/u/2/usage",
-    "https://gemini.google.com/u/3/usage",
-  ]),
+  window.__gqc._test.getOfficialUsageUrl(),
+  "https://gemini.google.com/usage",
 );
 
 // 后台用量页同步：地址只在 hash 上带 nonce，不污染服务端路由与查询参数
@@ -119,9 +114,14 @@ window.__gqc._test.noteAccountPrefix(
 );
 assert.equal(window.__gqc._test.getAccountPrefix(), "/u/2");
 assert.equal(
-  JSON.stringify(window.__gqc._test.getOfficialUsageUrls()),
-  JSON.stringify(["https://gemini.google.com/u/2/usage"]),
+  window.__gqc._test.getOfficialUsageUrl(),
+  "https://gemini.google.com/u/2/usage",
 );
+// 同一文档只认首次可信观察，冲突索引不得覆盖已记录的前缀。
+window.__gqc._test.noteAccountPrefix(
+  "https://gemini.google.com/u/3/_/BardChatUi/data/batchexecute",
+);
+assert.equal(window.__gqc._test.getAccountPrefix(), "/u/2");
 window.__gqc._test.noteAccountPrefix("https://example.com/u/9/usage");
 assert.equal(window.__gqc._test.getAccountPrefix(), "/u/2");
 window.__gqc._test.noteAccountPrefix("https://gemini.google.com/app");

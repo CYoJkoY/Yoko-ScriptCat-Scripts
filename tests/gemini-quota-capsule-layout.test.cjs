@@ -804,6 +804,21 @@ async function main() {
     const topFrameOnlySource =
       "if (window.top === window.self) {\n" + originalSource + "\n}";
 
+    // <style> 正文不属于可见文本。旧版只剔除 <script>，样式里的百分比会
+    // 混进 textContent，被按行解析当成用量。
+    const styleStrippedText = await page.evaluate(() => {
+      const doc = window.__gqc._test.parseHtmlDocument(
+        "<!doctype html><html><body><style>.meter{width:99%}</style>" +
+          "<p>12% used</p><p>Resets in 2 hr</p></body></html>",
+      );
+      return doc && doc.body ? doc.body.textContent : null;
+    });
+    assert.ok(
+      styleStrippedText && styleStrippedText.includes("12% used"),
+      "清理后的文本缺少用量",
+    );
+    assert.ok(!styleStrippedText.includes("99%"), "style 正文混入了可见文本");
+
     // 页面时钟可能被 Playwright 接管，页内轮询不会自行推进；统一从 Node 侧观察。
     const waitForState = async (target, expected, timeoutMs = 30000) => {
       const deadline = Date.now() + timeoutMs;
@@ -1081,6 +1096,175 @@ async function main() {
         await bareContext.close();
       }
     }
+    // 场景 F：/app 上裸 /usage 由 Google 302 到 /u/2/usage。探测先拿到空壳，
+    // 但这次解析给出了账号索引；随后的 iframe 必须改用 /u/2，不能退回裸 /usage
+    // 或继续按旧账号请求——否则探测知道的账号到 iframe 阶段就丢了。
+    {
+      const prefixHits = [];
+      const prefixServer = http.createServer((request, response) => {
+        const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+        prefixHits.push(pathname);
+        if (pathname === "/usage") {
+          response.writeHead(302, { location: "/u/2/usage" });
+          response.end();
+          return;
+        }
+        if (pathname === "/u/2/usage") {
+          // 探测的 fetch 拿到空壳；同源 iframe 的真实渲染才带用量文本。
+          const isIframe = request.headers["sec-fetch-dest"] === "iframe";
+          response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          response.end(isIframe ? usageHtml : emptyHtml);
+          return;
+        }
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(emptyHtml);
+      });
+      await new Promise((resolve) => prefixServer.listen(0, "127.0.0.1", resolve));
+      const prefixPort = prefixServer.address().port;
+      const prefixContext = await browser.newContext();
+      try {
+        await prefixContext.addInitScript({ content: topFrameOnlySource });
+        const prefixApp = await prefixContext.newPage();
+        let prefixPopupCount = 0;
+        prefixApp.on("popup", () => (prefixPopupCount += 1));
+        await prefixApp.goto(`http://127.0.0.1:${prefixPort}/app`);
+        const prefixState = await waitForState(
+          prefixApp,
+          { fiveHour: 12, weekly: 68 },
+          60000,
+        );
+        const prefixSnapshot = await prefixApp.evaluate(() => ({
+          usagePage: window.__gqc.state.usagePageStatus,
+          diagnostics: window.__gqc.dump().diagnostics,
+        }));
+        assert.equal(
+          prefixSnapshot.usagePage.assumedAccount,
+          true,
+          "未标记默认账号解析",
+        );
+        assert.equal(prefixSnapshot.usagePage.resolvedPrefix, "/u/2");
+        assert.equal(
+          prefixSnapshot.diagnostics.usageFrameParsed,
+          true,
+          "iframe 未接管探测到的账号",
+        );
+        assert.ok(prefixHits.includes("/usage"), "未请求裸 /usage");
+        assert.ok(!prefixHits.includes("/u/1/usage"), "探测后仍按旧账号请求");
+        assert.equal(prefixState.error, "");
+        assert.equal(prefixPopupCount, 0);
+        assert.equal(prefixContext.pages().length, 1);
+        assert.equal(prefixApp.url(), `http://127.0.0.1:${prefixPort}/app`);
+        console.log(
+          "默认账号解析通过：/app 的裸 /usage 302 → /u/2/usage 后，iframe 用 /u/2 取到 12% / 68%。",
+        );
+      } finally {
+        await prefixContext.close();
+        await new Promise((resolve) => {
+          prefixServer.close(() => resolve());
+          prefixServer.closeAllConnections?.();
+        });
+      }
+    }
+
+    // 场景 G：自动同步已失败、iframe 处于冷却期；随后官方 RPC 恢复。
+    // 手动点击必须在同步段预留后台页，但 RPC 成功时预留页要立即关闭，
+    // 且不得再请求 /usage。
+    {
+      const recoveredUsagePaths = [];
+      let recoveredRpcHealthy = false;
+      let recoveredPopupCount = 0;
+      const recoveredContext = await browser.newContext();
+      try {
+        await recoveredContext.route("https://gemini.google.com/**", (route) => {
+          const request = route.request();
+          const url = new URL(request.url());
+          if (url.pathname.endsWith("/batchexecute")) {
+            if (!recoveredRpcHealthy) {
+              return route.fulfill({ status: 503, body: "Unavailable" });
+            }
+            const now = Date.now();
+            const payload = [
+              2,
+              [
+                [2400, 0.21, 1, [[Math.floor(now / 1000) + 7200, 0]]],
+                [48106, 0.68, 2, [[Math.floor(now / 1000) + 259200, 0]]],
+              ],
+              false,
+            ];
+            const frame = JSON.stringify([
+              ["wrb.fr", "jSf9Qc", JSON.stringify(payload), null],
+            ]);
+            return route.fulfill({ contentType: "application/json", body: frame });
+          }
+          if (url.pathname.endsWith("/usage")) {
+            recoveredUsagePaths.push(url.pathname);
+            return route.fulfill({ contentType: "text/html", body: emptyHtml });
+          }
+          return route.fulfill({ contentType: "text/html", body: emptyHtml });
+        });
+        await recoveredContext.addInitScript(() => {
+          window.WIZ_global_data = { SNlM0e: "test-token", cfb2h: "build", FdrFJe: "session" };
+        });
+        await recoveredContext.addInitScript({ content: topFrameOnlySource });
+        const recoveredApp = await recoveredContext.newPage();
+        recoveredApp.on("popup", () => (recoveredPopupCount += 1));
+        await recoveredApp.goto("https://gemini.google.com/u/1/app");
+        const recoveryDeadline = Date.now() + 60000;
+        let recoveryBlocked = null;
+        while (Date.now() < recoveryDeadline) {
+          recoveryBlocked = await recoveredApp.evaluate(() => ({
+            blocked: window.__gqc.dump().diagnostics.usageFrameBlocked,
+            syncing: window.__gqc.state.isSyncing,
+            error: window.__gqc.state.lastError,
+          }));
+          if (recoveryBlocked.blocked === true && recoveryBlocked.syncing === false) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.equal(recoveryBlocked.blocked, true, "同源 iframe 未被判定为不可用");
+        assert.match(recoveryBlocked.error, /503/, "RPC 失败原因应保留在状态里");
+        assert.equal(recoveredPopupCount, 0, "自动同步不得打开标签页");
+        const usageHitsBeforeClick = recoveredUsagePaths.length;
+        recoveredRpcHealthy = true;
+        await recoveredApp.evaluate(() => {
+          document
+            .querySelector('.gc-btn-icon[title="立即同步官方最新用量与重置时间"]')
+            .click();
+        });
+        const recoveredState = await waitForState(
+          recoveredApp,
+          { fiveHour: 21, weekly: 68 },
+          60000,
+        );
+        assert.equal(recoveredState.error, "", "RPC 恢复后应清除错误状态");
+        assert.equal(recoveredPopupCount, 1, "手动刷新应预留一个后台页");
+        const closeDeadline = Date.now() + 15000;
+        while (
+          recoveredContext.pages().length > 1 &&
+          Date.now() < closeDeadline
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.equal(
+          recoveredContext.pages().length,
+          1,
+          "RPC 成功时预留的后台页未关闭",
+        );
+        assert.equal(
+          recoveredUsagePaths.length,
+          usageHitsBeforeClick,
+          "RPC 成功后仍请求了 /usage",
+        );
+        assert.equal(recoveredApp.url(), "https://gemini.google.com/u/1/app");
+        console.log(
+          "预留页回收通过：自动失败后 RPC 恢复，手动刷新关闭空后台页且不再请求 /usage。",
+        );
+      } finally {
+        await recoveredContext.close();
+      }
+    }
+
     // 场景 E：真实 302。Playwright 的 route.fulfill 不会让浏览器跟随重定向
     // （实测直接连接失败），因此用本地 HTTP 服务产生真实的重定向链：
     // /u/1/usage → /u/2/usage。目标页面能解析出用量，但账号索引不同，

@@ -23,7 +23,7 @@
 1. 当前页就是 `/usage` 时直接读主 DOM，不额外发请求。
 2. 重放官方页面自己发出过的 `jSf9Qc` 请求，保留 Google 实际使用的参数编码。
 3. 用当前登录态自建 `batchexecute`：`f.req` 的调用参数是 JSON 文本 `"[]"`，不是裸数组；source-path 为当前账号的 `/usage`。
-4. 静默 GET `/usage`：已知账号前缀时请求 `/u/<n>/usage`，否则请求裸 `/usage`（当前账号页）。从 SSR HTML 中解析，跨账号重定向一律不采信。
+4. 静默 GET `/usage`：已知账号前缀时请求 `/u/<n>/usage`，否则请求裸 `/usage`，由 Google 解析到默认登录账号。`/app` 上这次解析属于尽力而为的默认账号归属（待确认）；已知前缀的候选如果最终落到别的 `/u/<n>/usage`，正文一律丢弃。
 5. 隐藏的同源 iframe 加载同一地址：当静态 HTML 拿不到可解析文本、或只拿到一个窗口时，用真实渲染补齐。
 6. 只有手动点击刷新才走最后一级——在后台标签页读取 `/usage` 文本；自动同步永远不会走到这里。
 
@@ -206,7 +206,7 @@ __gqc.setDebug(true)   // 打开调试日志
 | `usageRpcId` / `usageRpcError` | 主动 RPC 的 rpcId 与失败原因 |
 | `usageHelperAttempts` / `usageHelperOK` / `usageHelperReason` | 后台顶层标签页的尝试次数 / 是否成功 / 失败原因 |
 | `usageHelperError` | 手动后台标签页最终失败原因（自动同步不会写这一项） |
-| `usagePage` | 最近一次静默 GET 的状态码、最终地址、是否重定向、是否同账号 |
+| `usagePage` | 最近一次静默 GET 的状态码、最终地址、是否重定向、是否同账号；`resolvedPrefix` 为最终地址里的 `/u/<n>`，`assumedAccount` 表示裸 `/usage` 被解析到默认账号（`/app` 上待确认） |
 
 同步期间 state.syncPhase 为「静默同步官方用量」，结束清空。失败保留 lastError 并自动退避重试，不自动打开页面。
 
@@ -249,9 +249,10 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 
 - 恢复并重排静默同步链路：主 DOM → 重放官方 RPC → 自建 RPC → 静默 GET `/usage` → 隐藏同源 iframe；自动同步不跳转、不打开可见标签页。后台标签页降为手动刷新专属兜底，避免旧版「一闪而过」回归。
 - 修正 `DOMParser` 文本结构：解析前在块级边界补换行并剔除 `script` / `style` 正文。此前 `innerText` 恒为空、`textContent` 把两个窗口粘成一行，探测只能解析出 5H，随后错误回落到开页面。
-- 账号前缀未知时不再整段跳过静默兜底：裸 `/usage` 就是当前登录账号的页面，可用于 GET 探测、iframe 与手动后台页；前缀观察只采信本次会话的 API 请求，裸 `/usage` 的账号解析仅在未知前缀时放行；解析前仍校验最终路径，跨账号重定向一律丢弃。
+- 账号前缀未知时不再整段跳过静默兜底：裸 `/usage` 可用于 GET 探测、iframe 与手动后台页；它的账号归属由 Google 决定，在 `/app` 上记为尽力而为的默认账号解析（待确认），只有已知前缀时才能拒绝其他账号路径。前缀观察只采信本次会话的 API 请求，同一文档只认首次观察；解析前仍校验最终路径，已知前缀的候选落到别的账号一律丢弃。
+- `usagePageStatus` 新增 `resolvedPrefix` / `assumedAccount` 诊断；账号前缀扫描改为从最近一次资源请求倒序查找、命中即停，结果不依赖条目顺序；同一文档内冲突的账号索引不会覆盖已记录的前缀。`parseHtmlDocument` 现在确实剔除 `<style>` 正文（此前只剔除 `<script>`，与文档描述不符）；未被生产链路使用的 `/u/0` ~ `/u/3` 猜测函数已移除。
 - 手动后台标签页在 RPC 连续失败且无同步在跑时，于同步段（任何 await 之前）预留，连点最多产生一个标签页；`__gqc.dump().diagnostics` 新增 `usageFrameAttempts` / `usageFrameParsed` / `usageFrameBlocked` / `usageHelperError` 等字段。
-- 回归覆盖五种静默链路形态（RPC 正常、RPC 503 下 GET / iframe 兜底、全部失败时手动后台页、无前缀 `/app`、真实 302 跨账号拦截），均断言不产生可见标签页、不改变地址；真实登录账号与 Google 页面结构仍待确认。
+- 回归覆盖七种静默链路形态（RPC 正常、RPC 503 下 GET / iframe 兜底、全部失败时手动后台页、无前缀 `/app`、真实 302 跨账号拦截、`/app` 裸 `/usage` 解析到 `/u/2` 后由 iframe 取数、自动失败后 RPC 恢复时手动预留页自动关闭），均断言不产生可见标签页、不改变地址；真实登录账号与 Google 页面结构仍待确认。
 
 ### v1.0.2
 

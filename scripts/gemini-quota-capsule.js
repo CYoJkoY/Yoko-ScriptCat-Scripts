@@ -482,7 +482,11 @@
       const parsed = new URL(url, window.location.href);
       if (parsed.origin !== window.location.origin) return;
       const match = parsed.pathname.match(/^(\/u\/\d+)\//);
-      if (match) observedAccountPrefix = match[1];
+      if (!match) return;
+      // 同一文档只认第一次可信观察：后续若出现别的索引（切换账号或多账号资源），
+      // 保留既有前缀，避免把两个账号的用量写进同一份状态与缓存。
+      if (observedAccountPrefix && observedAccountPrefix !== match[1]) return;
+      observedAccountPrefix = match[1];
     } catch {
       // 地址无法解析时保留既有前缀
     }
@@ -507,10 +511,13 @@
     if (current) return current;
     try {
       const entries = window.performance.getEntriesByType("resource");
-      for (const entry of entries) {
+      // 性能条目按开始时间升序；倒序取最近一次请求，命中即停，结果不依赖扫描顺序。
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = entries[index];
         if (!entry || typeof entry.name !== "string") continue;
         if (!/\/BardChatUi\/|batchexecute/.test(entry.name)) continue;
         noteAccountPrefix(entry.name);
+        if (getAccountPrefix()) break;
       }
     } catch {
       // 性能条目不可用时保留空前缀，等待后续网络观察
@@ -520,16 +527,6 @@
 
   function getOfficialUsageUrl() {
     return `${window.location.origin}${getAccountPrefix()}/usage`;
-  }
-
-  function getOfficialUsageUrls() {
-    const primary = getOfficialUsageUrl();
-    if (getAccountPrefix()) return [primary];
-    // /app 没有账号前缀时，登录态用量页仍使用 /u/<index>/usage。
-    // 只探测有限的账号索引，不把 /app 的 HTML 当作用量数据。
-    return [0, 1, 2, 3].map(
-      (index) => `${window.location.origin}/u/${index}/usage`,
-    );
   }
 
   /**
@@ -1964,6 +1961,7 @@
       // script/style 的内容不属于可见文本，留着会被当成正文拼进最后一个区块。
       const textFriendly = rawHtml
         .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
         .replace(
           /<\/(?:p|div|h[1-6]|li|tr|td|section|article|main|header|footer|aside|nav)\s*>|<br\s*\/?>/gi,
           (tag) => `${tag}\n`,
@@ -2872,20 +2870,30 @@
         })();
         // 必须仍在本站，且路径属于同一账号。只有本来就不知道账号前缀时，
         // 才允许裸 /usage 被解析成 /u/<n>/usage。
+        const finalPath = finalUrl ? finalUrl.pathname : "";
         const sameAccount =
           finalUrl !== null &&
           finalUrl.origin === window.location.origin &&
-          isSameUsagePath(finalUrl.pathname, candidatePath, prefix === "");
+          isSameUsagePath(finalPath, candidatePath, prefix === "");
+        const resolvedPrefixMatch = finalPath.match(/^(\/u\/\d+)(?=\/)/);
+        const resolvedPrefix = resolvedPrefixMatch
+          ? resolvedPrefixMatch[1]
+          : "";
         quotaState.usagePageStatus = {
           url: shortenUrl(candidateUrl),
           status: response.status,
           finalUrl: shortenUrl(response.url || ""),
           redirected: response.redirected === true,
           missing:
-            response.redirected === true && !/\/usage\/?$/.test(
-              finalUrl ? finalUrl.pathname : "",
-            ),
+            response.redirected === true && !/\/usage\/?$/.test(finalPath),
           sameAccount,
+          resolvedPrefix,
+          // /app 没有账号索引时，裸 /usage 的账号归属由 Google 的默认账号解析决定。
+          // 这是尽力而为的归属，不等于已验证当前页面所展示的账号（待确认）。
+          assumedAccount:
+            sameAccount === true &&
+            candidatePath === "/usage" &&
+            resolvedPrefix !== "",
         };
         if (!sameAccount) continue;
         noteAccountPrefix(response.url || candidateUrl);
@@ -5319,8 +5327,7 @@
      * 因此正确用法是直接调用：__gqc.probeUsage()
      */
     async probeUsage() {
-      const paths = getOfficialUsageUrls();
-      const url = paths[0];
+      const url = getOfficialUsageUrl();
       const resp = await origFetch.call(window, url, {
         method: "GET",
         credentials: "include",
@@ -5526,7 +5533,6 @@
       parseUsageDocument,
       parseHtmlDocument,
       parseOfficialUsageText,
-      getOfficialUsageUrls,
       extractInitDataBlocks,
       scanBalancedArray,
       normalizePctValue,
@@ -5540,6 +5546,7 @@
       formatRemainingHuman,
       isSameUsagePath,
       getAccountPrefix,
+      getOfficialUsageUrl,
       noteAccountPrefix,
 
     },
