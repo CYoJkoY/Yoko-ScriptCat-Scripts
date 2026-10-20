@@ -126,11 +126,37 @@ window.location.pathname = "/u/1/app";
 assert.equal(window.__gqc._test.getAccountPrefix(), "/u/1");
 window.location.pathname = "/app";
 
-// iframe 空白判定留宽限期，不能沿用「空白即永久停用」的旧口径
-assert.equal(
-  Number.isInteger(window.__gqc._test.USAGE_FRAME_BLANK_GRACE_MS),
-  true,
-);
-assert.equal(window.__gqc._test.USAGE_FRAME_BLANK_GRACE_MS > 0, true);
-
 console.log("quota parser tests passed");
+
+// Official Usage RPC: enum selects the window, unknown buckets are ignored.
+const api = window.__gqc._test;
+const reset5 = Math.floor(now / 1000) + 7200;
+const reset7 = Math.floor(now / 1000) + 259200;
+const payload = [2, [[2400, 0.123, 1, [[reset5, 500000000]]], [48106, 0.68, 2, [[reset7, 0]]], [100, 0.8, 4, [[reset5, 0]]]], false];
+const rpc = api.parseUsageRpcPayload(payload, now);
+assert.equal(rpc.fiveHour.usedPct, 12);
+assert.equal(rpc.fiveHour.pct, 88);
+assert.equal(rpc.fiveHour.resetAt, reset5 * 1000 + 500);
+assert.equal(rpc.weekly.usedPct, 68);
+assert.equal(rpc.weekly.resetAt, reset7 * 1000);
+assert.equal(api.parseUsageRpcPayload(null, now), null);
+for (const fraction of [-1, 1.1, NaN, Infinity, '0.2']) {
+  assert.equal(api.parseUsageRpcPayload([2, [[100, fraction, 1, [[reset5, 0]]]]], now), null);
+}
+assert.equal(api.parseUsageRpcPayload([2, [payload[1][0], payload[1][0]]], now), null);
+assert.equal(api.buildOfficialUsageRequest(), null);
+window.WIZ_global_data = {SNlM0e: 'token&+', cfb2h: 'build', FdrFJe: 'session'};
+window.location.pathname = '/u/1/app';
+const request = api.buildOfficialUsageRequest();
+const rpcUrl = new URL(request.url);
+assert.equal(rpcUrl.pathname, '/u/1/_/BardChatUi/data/batchexecute');
+assert.equal(rpcUrl.searchParams.get('source-path'), '/u/1/usage');
+const body = new URLSearchParams(request.body);
+assert.equal(body.get('at'), 'token&+');
+assert.deepEqual(JSON.parse(body.get('f.req')), [[['jSf9Qc', [], null, 'generic']]]);
+assert.equal(api.officialCacheKey().endsWith(':/u/1'), true);
+window.location.pathname = '/u/2/app';
+assert.equal(api.officialCacheKey().endsWith(':/u/2'), true);
+const raw = JSON.stringify([['wrb.fr', 'jSf9Qc', JSON.stringify(payload)]]);
+assert.equal(api.parseUsageRpcPayload(api.parseBatchExecuteResponse(raw)[0].payload, now).weekly.pct, 32);
+console.log('official usage RPC tests passed');

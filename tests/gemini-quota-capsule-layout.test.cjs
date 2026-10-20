@@ -255,37 +255,58 @@ async function main() {
     const context = await browser.newContext();
     try {
       const usagePaths = [];
+      let rpcCount = 0;
+      let used = 12;
+      let popupCount = 0;
+      let failRpc = false;
       await context.route("https://gemini.google.com/**", (route) => {
         const request = route.request();
         const url = new URL(request.url());
-        const isUsage = url.pathname.endsWith("/usage");
-        if (isUsage) usagePaths.push(url.pathname);
-        const text = isUsage && request.isNavigationRequest()
-          ? "<main><h1>Usage limits</h1><h2>Current usage</h2><p>12% used</p><p>Resets in 2 hr</p><h2>Weekly limit</h2><p>68% used</p><p>Resets in 3 days</p></main>"
-          : "";
-        return route.fulfill({ contentType: "text/html",
-          body: `<!doctype html><html><body>${text}</body></html>` });
+        if (url.pathname.endsWith("/usage")) usagePaths.push(url.pathname);
+        if (url.pathname.endsWith("/batchexecute")) {
+          rpcCount += 1;
+          if (failRpc) return route.fulfill({status: 503, body: "Unavailable"});
+          assert.equal(url.pathname, "/u/1/_/BardChatUi/data/batchexecute");
+          assert.equal(url.searchParams.get("source-path"), "/u/1/usage");
+          const params = new URLSearchParams(request.postData());
+          assert.equal(params.get("at"), "test-token");
+          assert.deepEqual(JSON.parse(params.get("f.req")), [[["jSf9Qc", [], null, "generic"]]]);
+          const now = Date.now();
+          const payload = [2, [[2400, used / 100, 1, [[Math.floor(now / 1000) + 7200, 0]]], [48106, 0.68, 2, [[Math.floor(now / 1000) + 259200, 0]]], [100, 0.9, 4, [[Math.floor(now / 1000) + 3600, 0]]]], false];
+          const frame = JSON.stringify([["wrb.fr", "jSf9Qc", JSON.stringify(payload), null]]);
+          return route.fulfill({contentType: "application/json", body: frame});
+        }
+        return route.fulfill({contentType: "text/html", body: "<!doctype html><html><body></body></html>"});
       });
+      await context.addInitScript(() => { window.WIZ_global_data = {SNlM0e: "test-token", cfb2h: "build", FdrFJe: "session"}; });
       await context.addInitScript({ content: originalSource });
       const app = await context.newPage();
+      app.on("popup", () => popupCount += 1);
       await app.goto("https://gemini.google.com/u/1/app");
-      await app.locator('.gc-btn-icon[title="立即同步官方最新用量与重置时间"]').waitFor();
-      const popupReady = app.waitForEvent("popup");
-      await app.evaluate(() => {
-        const refresh = document.querySelector('.gc-btn-icon[title="立即同步官方最新用量与重置时间"]');
-        refresh.click();
-        refresh.click();
-        refresh.click();
-      });
-      const popup = await popupReady;
-      await app.waitForFunction(() => window.__gqc.state.isSyncing === false &&
-        window.__gqc.state.fiveHour.usedPct === 12 && window.__gqc.state.weekly.usedPct === 68);
-      if (popup.isClosed() === false) await popup.waitForEvent("close");
-      assert.ok(usagePaths.length > 0);
-      assert.ok(usagePaths.every((entry) => entry === "/u/1/usage"),
-        `请求了其他账号：${usagePaths.join(",")}`);
-      assert.equal(context.pages().length, 1, "后台用量页未关闭或重复刷新创建多余窗口");
-      console.log("完整刷新链路通过：/u/1/app → 后台 /u/1/usage 文本 → 回传 12% / 68% → 自动关闭，连续点击无多余窗口。");
+      await app.waitForFunction(() => window.__gqc.state.fiveHour.usedPct === 12);
+      assert.equal(rpcCount, 1, "启动时自动获取，无需点击");
+      used = 23;
+      await app.evaluate(() => { window.__gqc.sync(); window.__gqc.sync(); window.__gqc.sync(); });
+      await app.waitForFunction(() => window.__gqc.state.isSyncing === false && window.__gqc.state.fiveHour.usedPct === 23);
+      assert.equal(rpcCount, 2, "连续刷新只发送一个请求");
+      await app.clock.install();
+      used = 34;
+      await app.clock.fastForward(190000);
+      await app.waitForFunction(() => window.__gqc.state.fiveHour.usedPct === 34);
+      failRpc = true;
+      assert.equal(await app.evaluate(() => window.__gqc.sync()), false);
+      assert.equal(await app.evaluate(() => window.__gqc.state.fiveHour.usedPct), 34);
+      assert.match(await app.evaluate(() => window.__gqc.state.lastError), /503/);
+      failRpc = false;
+      used = 45;
+      await app.clock.fastForward(30000);
+      await app.waitForFunction(() => window.__gqc.state.fiveHour.usedPct === 45);
+      assert.equal(await app.evaluate(() => window.__gqc.state.lastError), "");
+      assert.equal(popupCount, 0);
+      assert.deepEqual(usagePaths, []);
+      assert.equal(context.pages().length, 1);
+      assert.equal(app.url(), "https://gemini.google.com/u/1/app");
+      console.log("静默刷新链路通过：启动自动获取、手动连点去重、周期自动更新，无 popup 或 Usage 页面请求。");
     } finally {
       await context.close();
     }
