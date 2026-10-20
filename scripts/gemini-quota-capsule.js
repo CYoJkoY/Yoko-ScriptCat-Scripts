@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.9.4
-// @description  document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与官方用量页面，按窗口精确分流 5H / 7D 用量，重置倒计时基于官方重置时刻实时计算。
+// @version      1.0.0
+// @description  document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与官方用量页面，按窗口精确分流 5H / 7D 用量；装饰图标与两段进度独立配置，支持图片、SVG 与组件 CSS。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/gemini-quota-capsule.js
@@ -18,8 +18,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.9.4";
-  // 指示器形态清单：cycleStyleMode() 与设置面板共用，顺序即点击徽章时的轮换顺序。
+  const SCRIPT_VERSION = "1.0.0";
+  // 进度图形清单：5H 与 7D 各自选择，互不影响。
   const INDICATOR_MODES = [
     { key: "bar", text: "横条" },
     { key: "ring", text: "圆环" },
@@ -29,6 +29,38 @@
     { key: "battery", text: "电池" },
     { key: "columns", text: "双柱" },
   ];
+  const PROGRESS_MODE_CHOICES = [
+    ...INDICATOR_MODES,
+    { key: "none", text: "隐藏" },
+  ];
+  // 装饰图标与进度图形彻底分离：点击头部只轮换这里的内置装饰。
+  const ORNAMENT_MODES = [
+    { key: "prism", text: "棱镜" },
+    { key: "spark", text: "星芒" },
+    { key: "orbit", text: "轨道" },
+    { key: "capsule", text: "胶囊" },
+    { key: "bolt", text: "闪电" },
+    { key: "none", text: "无" },
+  ];
+  const CUSTOM_ORNAMENT_KINDS = ["image", "svg"];
+  const CSS_TARGETS = [
+    { key: "container", text: "胶囊容器" },
+    { key: "head", text: "装饰图标" },
+    { key: "five-hour", text: "5 小时组" },
+    { key: "weekly", text: "每周组" },
+    { key: "badge", text: "标签" },
+    { key: "counter", text: "百分比" },
+    { key: "progress", text: "进度图形" },
+    { key: "timer", text: "倒计时" },
+    { key: "divider", text: "分隔线" },
+    { key: "actions", text: "操作区" },
+    { key: "drawer", text: "设置抽屉" },
+  ];
+  const MAX_IMAGE_BYTES = 256 * 1024;
+  const MAX_IMAGE_DATA_URL_CHARS = 420 * 1024;
+  const MAX_SVG_CHARS = 20 * 1024;
+  const MAX_CSS_CHARS = 8 * 1024;
+  const SVG_NS = "http://www.w3.org/2000/svg";
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
@@ -65,40 +97,133 @@
     unverifiedFull: 0, // 低置信度且无重置时刻的「已用 100%」
   };
 
+  const DEFAULT_COMPONENT_CSS = Object.freeze({
+    container: "",
+    head: "",
+    "five-hour": "",
+    weekly: "",
+    badge: "",
+    counter: "",
+    progress: "",
+    timer: "",
+    divider: "",
+    actions: "",
+    drawer: "",
+  });
   const DEFAULT_CONFIG = {
-    styleMode: "bar", // 可选形态见 INDICATOR_MODES；保留原有默认值
+    // 兼容旧版：两段进度尚未分开时，用它初始化 5H 与 7D。
+    styleMode: "bar",
     pos: { right: 20, bottom: 78 },
+    icon: { kind: "prism", image: "", svg: "" },
+    metrics: { fiveHour: "bar", weekly: "bar" },
+    css: { ...DEFAULT_COMPONENT_CSS },
+    debug: false,
   };
+
+  function isProgressMode(value) {
+    return PROGRESS_MODE_CHOICES.some((mode) => mode.key === value);
+  }
+
+  function isOrnamentPreset(value) {
+    return ORNAMENT_MODES.some((mode) => mode.key === value);
+  }
+
+  function isSafeCssText(value) {
+    if (typeof value !== "string") return false;
+    if (value.length > MAX_CSS_CHARS) return false;
+    // 编辑器只接受声明；大括号、尖括号和外部 @import 都可能闭合当前作用域
+    // 或引入额外样式，进而改写宿主页面，因此整段拒绝。
+    return !/[{}<>]|@import|expression\s*\(|javascript\s*:/i.test(
+      value,
+    );
+  }
+
+  function normalizeConfig(parsed) {
+    const source = parsed && typeof parsed === "object" ? parsed : {};
+    const legacyMode = INDICATOR_MODES.some(
+      (mode) => mode.key === source.styleMode,
+    )
+      ? source.styleMode
+      : DEFAULT_CONFIG.styleMode;
+    const rawIcon =
+      source.icon && typeof source.icon === "object" ? source.icon : {};
+    const image =
+      typeof rawIcon.image === "string" &&
+      rawIcon.image.length <= MAX_IMAGE_DATA_URL_CHARS &&
+      /^data:image\/(?:png|jpeg|webp|gif|avif);base64,[A-Za-z0-9+/=]+$/.test(
+        rawIcon.image,
+      )
+        ? rawIcon.image
+        : "";
+    // SVG 在渲染前还会走 DOMParser + 白名单清洗，这里只做体积与类型检查。
+    const svg =
+      typeof rawIcon.svg === "string" &&
+      rawIcon.svg.length <= MAX_SVG_CHARS
+        ? rawIcon.svg
+        : "";
+    let iconKind = "prism";
+    if (isOrnamentPreset(rawIcon.kind)) {
+      iconKind = rawIcon.kind;
+    } else if (rawIcon.kind === "image" && image) {
+      iconKind = "image";
+    } else if (rawIcon.kind === "svg" && svg) {
+      iconKind = "svg";
+    }
+    const rawMetrics =
+      source.metrics && typeof source.metrics === "object"
+        ? source.metrics
+        : {};
+    const css = { ...DEFAULT_COMPONENT_CSS };
+    const rawCss = source.css && typeof source.css === "object" ? source.css : {};
+    for (const target of CSS_TARGETS) {
+      if (isSafeCssText(rawCss[target.key])) {
+        css[target.key] = rawCss[target.key];
+      }
+    }
+    return {
+      styleMode: legacyMode,
+      pos: {
+        right:
+          source.pos && typeof source.pos.right === "number"
+            ? source.pos.right
+            : DEFAULT_CONFIG.pos.right,
+        bottom:
+          source.pos && typeof source.pos.bottom === "number"
+            ? source.pos.bottom
+            : DEFAULT_CONFIG.pos.bottom,
+      },
+      icon: { kind: iconKind, image, svg },
+      metrics: {
+        fiveHour: isProgressMode(rawMetrics.fiveHour)
+          ? rawMetrics.fiveHour
+          : legacyMode,
+        weekly: isProgressMode(rawMetrics.weekly)
+          ? rawMetrics.weekly
+          : legacyMode,
+      },
+      css,
+      // v0.9.4 的调试开关是普通配置项；归一化不能把它悄悄丢掉。
+      debug: source.debug === true,
+    };
+  }
 
   function loadConfig() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY_CFG);
-      if (!raw) return { ...DEFAULT_CONFIG };
-      const parsed = JSON.parse(raw);
-      return {
-        ...DEFAULT_CONFIG,
-        ...parsed,
-        pos: {
-          right:
-            parsed && parsed.pos && typeof parsed.pos.right === "number"
-              ? parsed.pos.right
-              : DEFAULT_CONFIG.pos.right,
-          bottom:
-            parsed && parsed.pos && typeof parsed.pos.bottom === "number"
-              ? parsed.pos.bottom
-              : DEFAULT_CONFIG.pos.bottom,
-        },
-      };
+      if (!raw) return normalizeConfig(null);
+      return normalizeConfig(JSON.parse(raw));
     } catch {
-      return { ...DEFAULT_CONFIG };
+      return normalizeConfig(null);
     }
   }
 
   function saveConfig(cfg) {
     try {
       localStorage.setItem(STORAGE_KEY_CFG, JSON.stringify(cfg));
+      return true;
     } catch (err) {
       console.warn("[Gemini Quota] 保存配置失败:", err);
+      return false;
     }
   }
 
@@ -147,6 +272,156 @@
       }
     }
     return elem;
+  }
+
+  // 定时刷新会频繁重算同一状态；仅在值变化时写 DOM，避免无意义的
+  // MutationObserver 记录、样式重算与文本节点替换。
+  function setTextIfChanged(node, value) {
+    if (node && node.textContent !== value) node.textContent = value;
+  }
+
+  function setVarIfChanged(node, name, value) {
+    if (node && node.style.getPropertyValue(name) !== value) {
+      node.style.setProperty(name, value);
+    }
+  }
+
+  function setTitleIfChanged(node, value) {
+    if (node && node.title !== value) node.title = value;
+  }
+
+  function setAttrIfChanged(node, name, value) {
+    if (node && node.getAttribute(name) !== value) node.setAttribute(name, value);
+  }
+
+  // 自定义 SVG 只接受静态绘图标签与属性；脚本、事件、外链和 foreignObject
+  // 一律丢弃。所有 id 加前缀，避免与宿主页面或内置图形互相覆盖。
+  const SVG_ALLOWED_TAGS = new Set([
+    "svg", "g", "path", "circle", "ellipse", "rect", "line", "polyline",
+    "polygon", "defs", "linearGradient", "radialGradient", "stop", "clipPath",
+    "mask",
+  ]);
+  const SVG_ALLOWED_ATTRS = new Set([
+    "viewBox", "preserveAspectRatio", "width", "height", "x", "y", "x1",
+    "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry", "d", "points",
+    "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width",
+    "stroke-linecap", "stroke-linejoin", "stroke-opacity",
+    "stroke-dasharray", "stroke-dashoffset", "opacity", "transform",
+    "offset", "stop-color", "stop-opacity", "gradientUnits",
+    "gradientTransform", "clipPathUnits", "clip-path", "clip-rule",
+    "mask", "id", "vector-effect",
+  ]);
+  let svgIdSeq = 0;
+
+  function sanitizeSvg(source) {
+    if (typeof source !== "string" || !source.trim()) {
+      return { node: null, error: "SVG 内容为空" };
+    }
+    if (source.length > MAX_SVG_CHARS) {
+      return { node: null, error: `SVG 超过 ${MAX_SVG_CHARS / 1024}KB 上限` };
+    }
+    let parsed;
+    try {
+      parsed = new DOMParser().parseFromString(source, "image/svg+xml");
+    } catch {
+      return { node: null, error: "SVG 无法解析" };
+    }
+    const sourceRoot = parsed.documentElement;
+    if (
+      !sourceRoot ||
+      sourceRoot.localName !== "svg" ||
+      parsed.querySelector("parsererror")
+    ) {
+      return { node: null, error: "请输入完整的 SVG 根元素" };
+    }
+
+    const idMap = new Map();
+    const prefix = `gc-user-svg-${(++svgIdSeq).toString(36)}-`;
+    // 根元素自身也可能被 <use>/url(#id) 引用，不能只遍历后代。
+    for (const node of [sourceRoot, ...sourceRoot.querySelectorAll("[id]")]) {
+      const id = node.getAttribute("id");
+      if (/^[A-Za-z_][A-Za-z0-9_.:-]{0,63}$/.test(id)) {
+        idMap.set(id, `${prefix}${id}`);
+      }
+    }
+
+    let nodeCount = 0;
+    const copyNode = (sourceNode, depth) => {
+      if (depth > 12 || nodeCount > 500) return null;
+      if (sourceNode.nodeType !== Node.ELEMENT_NODE) return null;
+      const tag = sourceNode.localName;
+      if (!SVG_ALLOWED_TAGS.has(tag)) return null;
+      nodeCount += 1;
+      const target = document.createElementNS(SVG_NS, tag);
+      for (const attr of sourceNode.attributes) {
+        const name = attr.name;
+        if (!SVG_ALLOWED_ATTRS.has(name)) continue;
+        let value = attr.value;
+        if (value.length > 2048) continue;
+        if (name === "id") {
+          value = idMap.get(value) || `${prefix}${nodeCount}`;
+        } else {
+          value = value.replace(
+            /url\(\s*['"]?#([A-Za-z_][A-Za-z0-9_.:-]*)['"]?\s*\)/g,
+            (match, id) => (idMap.has(id) ? `url(#${idMap.get(id)})` : "none"),
+          );
+        }
+        // 只允许已重写过的内部 url(#id)；剥掉这些引用后仍有 url(...)
+        // 说明它指向外部资源，直接丢弃该属性。
+        const withoutInternalRefs = value.replace(
+          /url\(\s*['"]?#[A-Za-z_][A-Za-z0-9_.:-]*['"]?\s*\)/gi,
+          "",
+        );
+        if (/url\s*\(/i.test(withoutInternalRefs)) continue;
+        if (/javascript:|data:text\/html/i.test(value)) continue;
+        target.setAttribute(name, value);
+      }
+      for (const child of sourceNode.childNodes) {
+        const copied = copyNode(child, depth + 1);
+        if (copied) target.appendChild(copied);
+      }
+      return target;
+    };
+
+    const root = copyNode(sourceRoot, 0);
+    if (!root || nodeCount === 0) {
+      return { node: null, error: "SVG 中没有可显示的图形" };
+    }
+    if (!root.getAttribute("viewBox")) {
+      const width = Number.parseFloat(sourceRoot.getAttribute("width"));
+      const height = Number.parseFloat(sourceRoot.getAttribute("height"));
+      root.setAttribute(
+        "viewBox",
+        Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+          ? `0 0 ${width} ${height}`
+          : "0 0 16 16",
+      );
+    }
+    root.setAttribute("aria-hidden", "true");
+    root.setAttribute("focusable", "false");
+    return { node: root, error: "" };
+  }
+
+  function buildCustomCss() {
+    const rules = [];
+    for (const target of CSS_TARGETS) {
+      const declarations = config.css[target.key];
+      if (!declarations) continue;
+      rules.push(
+        `#gc-pill-root [data-gc-part="${target.key}"] {\n${declarations}\n}`,
+      );
+    }
+    return rules.join("\n");
+  }
+
+  function applyCustomCss() {
+    let style = document.getElementById("gc-pill-custom-style");
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "gc-pill-custom-style";
+      (document.head || document.documentElement).appendChild(style);
+    }
+    style.textContent = buildCustomCss();
   }
 
   // =========================================================================
@@ -2878,7 +3153,7 @@
       padding: 0;
       border: 0;
       background: transparent;
-      color: inherit;
+      color: var(--gc-accent, #10b981);
       width: 16px;
       height: 16px;
       position: relative;
@@ -2887,6 +3162,16 @@
       justify-content: center;
       flex-shrink: 0;
       cursor: pointer;
+      transition: color 0.2s ease, transform 0.2s ease;
+    }
+    .gc-capsule-head:hover { transform: translateY(-0.5px) scale(1.06); }
+    .gc-ornament-svg, .gc-ornament-image {
+      width: 16px;
+      height: 16px;
+      display: block;
+      object-fit: contain;
+      border-radius: 4px;
+      pointer-events: none;
     }
 
     .gc-metric-group {
@@ -2902,6 +3187,7 @@
       padding: 1.5px 3.5px;
       border-radius: 3px;
       background: rgba(255, 255, 255, 0.08);
+      color: var(--gc-badge-color, #f8fafc);
       line-height: 1;
     }
     .gc-pill-counter {
@@ -2922,8 +3208,20 @@
       text-overflow: ellipsis;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 9.5px;
-      color: #94a3b8;
+      color: var(--gc-timer-color, #94a3b8);
       font-variant-numeric: tabular-nums;
+    }
+
+    .gc-progress-slot {
+      width: 24px;
+      height: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      overflow: visible;
+      box-sizing: border-box;
+      color: var(--gc-progress-color, #10b981);
     }
 
     .gc-inline-track {
@@ -2932,8 +3230,7 @@
       background: rgba(255, 255, 255, 0.12);
       border-radius: 999px;
       overflow: hidden;
-      display: inline-block;
-      visibility: hidden;
+      display: block;
       box-sizing: border-box;
       flex-shrink: 0;
     }
@@ -3082,7 +3379,9 @@
       position: absolute;
       bottom: calc(100% + 6px);
       right: 0;
-      width: 230px;
+      width: 300px;
+      max-width: calc(100vw - 24px);
+      max-height: min(78vh, 620px);
       background: rgba(15, 17, 23, 0.98);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 9px;
@@ -3094,6 +3393,8 @@
       gap: 7px;
       z-index: 10000000;
       white-space: normal;
+      box-sizing: border-box;
+      overflow: hidden;
     }
     #gc-pill-drawer.gc-active { display: flex; }
     .gc-drawer-title {
@@ -3105,10 +3406,43 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-shrink: 0;
+    }
+    .gc-drawer-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 2px;
+    }
+    .gc-drawer-body::-webkit-scrollbar { width: 4px; }
+    .gc-drawer-body::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.16);
+      border-radius: 999px;
+    }
+    .gc-drawer-section {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .gc-section-label {
+      font-size: 9px;
+      font-weight: 600;
+      color: #94a3b8;
+      letter-spacing: 0.2px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     .gc-mode-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+    }
+    .gc-ornament-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
       gap: 4px;
     }
     .gc-choice-btn {
@@ -3129,6 +3463,68 @@
       color: #fff;
       font-weight: 600;
     }
+    .gc-choice-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .gc-custom-row {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .gc-small-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #cbd5e1;
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 9px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .gc-small-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
+    .gc-small-btn.active { border-color: #38bdf8; color: #7dd3fc; }
+    .gc-editor {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .gc-editor[hidden] { display: none; }
+    .gc-textarea, .gc-select {
+      width: 100%;
+      box-sizing: border-box;
+      background: rgba(2, 6, 23, 0.72);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 5px;
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 9.5px;
+      line-height: 1.45;
+      padding: 5px 6px;
+      resize: vertical;
+      outline: none;
+    }
+    .gc-textarea:focus, .gc-select:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px rgba(56,189,248,0.3);
+    }
+    .gc-textarea { min-height: 66px; }
+    .gc-css-textarea { min-height: 56px; }
+    .gc-select { min-height: 26px; resize: none; padding: 3px 6px; }
+    .gc-editor-actions {
+      display: flex;
+      gap: 4px;
+      justify-content: flex-end;
+    }
+    .gc-style-status {
+      min-height: 12px;
+      font-size: 9px;
+      line-height: 1.35;
+      color: #64748b;
+      overflow-wrap: anywhere;
+    }
+    .gc-style-status.error { color: #fb7185; }
+    .gc-style-status.ok { color: #34d399; }
     .gc-drawer-status {
       font-size: 9.5px;
       color: #94a3b8;
@@ -3163,38 +3559,232 @@
   let headSlotEl = null;
 
   let group5hEl = null;
-  let badge5hEl = null;
   let usage5hTextEl = null;
-  let track5hEl = null;
-  let fill5hEl = null;
+  let progress5hEl = null;
   let timer5hTextEl = null;
 
   let group7dEl = null;
-  let badge7dEl = null;
   let usage7dTextEl = null;
-  let track7dEl = null;
-  let fill7dEl = null;
+  let progress7dEl = null;
   let timer7dTextEl = null;
 
   let syncDotEl = null;
   let btnRefreshEl = null;
   let statusSourceEl = null;
   let statusSyncTimeEl = null;
-  const choiceBtns = [];
-  let lastIndicatorRender = null;
+  let styleStatusEl = null;
+  let svgEditorEl = null;
+  let svgTextareaEl = null;
+  let cssTextareaEl = null;
+  let cssTargetSelectEl = null;
+  let fileInputEl = null;
+  let imageBtnEl = null;
+  let svgBtnEl = null;
+  const ornamentBtns = [];
+  const progressBtns = { fiveHour: [], weekly: [] };
+  let iconRevision = 0;
+  let lastOrnamentRender = null;
+  let customSvgCache = { source: "", node: null };
+  const progressCache = {
+    fiveHour: { key: "" },
+    weekly: { key: "" },
+  };
 
-  function cycleStyleMode() {
-    const modes = INDICATOR_MODES.map((mode) => mode.key);
-    const nextIdx = (modes.indexOf(config.styleMode) + 1) % modes.length;
-    config.styleMode = modes[nextIdx];
-    saveConfig(config);
+  function setStyleStatus(message, kind = "") {
+    if (!styleStatusEl) return;
+    styleStatusEl.textContent = message;
+    styleStatusEl.className = `gc-style-status${kind ? ` ${kind}` : ""}`;
+  }
+
+  function cycleOrnamentMode() {
+    const modes = ORNAMENT_MODES.map((mode) => mode.key);
+    const current = modes.indexOf(config.icon.kind);
+    const nextIdx = current < 0 ? 0 : (current + 1) % modes.length;
+    const previous = config.icon.kind;
+    config.icon.kind = modes[nextIdx];
+    iconRevision += 1;
+    if (!saveConfig(config)) {
+      config.icon.kind = previous;
+      iconRevision += 1;
+      setStyleStatus("保存失败：本地存储空间不足，请减小图片或清理站点数据。", "error");
+      updateUI();
+      return;
+    }
+    setStyleStatus("已切换装饰图标。", "ok");
     updateUI();
+  }
+
+  function setOrnament(kind, values = {}) {
+    const previous = { ...config.icon };
+    config.icon.kind = kind;
+    if (typeof values.image === "string") config.icon.image = values.image;
+    if (typeof values.svg === "string") config.icon.svg = values.svg;
+    iconRevision += 1;
+    if (!saveConfig(config)) {
+      config.icon = previous;
+      iconRevision += 1;
+      setStyleStatus("保存失败：本地存储空间不足，请改用更小的图片或清理站点数据。", "error");
+      updateUI();
+      return false;
+    }
+    updateUI();
+    return true;
+  }
+
+  function setProgressMode(metricKey, mode) {
+    if (
+      (metricKey !== "fiveHour" && metricKey !== "weekly") ||
+      !isProgressMode(mode)
+    ) {
+      return;
+    }
+    const previous = config.metrics[metricKey];
+    const previousLegacyMode = config.styleMode;
+    config.metrics[metricKey] = mode;
+    // 旧字段继续跟随 5H，便于仍读取 styleMode 的外部配置平滑迁移。
+    if (metricKey === "fiveHour") config.styleMode = mode;
+    if (!saveConfig(config)) {
+      config.metrics[metricKey] = previous;
+      if (metricKey === "fiveHour") config.styleMode = previousLegacyMode;
+      setStyleStatus("保存失败：无法写入本地存储。", "error");
+      return;
+    }
+    setStyleStatus("样式已保存。", "ok");
+    updateUI();
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleImageFile(file) {
+    if (!file) return;
+    if (file.size > MAX_IMAGE_BYTES) {
+      setStyleStatus(`图片超过 ${MAX_IMAGE_BYTES / 1024}KB 上限。`, "error");
+      return;
+    }
+    const isSvg =
+      file.type === "image/svg+xml" || /\.svg$/i.test(file.name || "");
+    try {
+      if (isSvg) {
+        const text = await file.text();
+        const checked = sanitizeSvg(text);
+        if (!checked.node) {
+          setStyleStatus(checked.error, "error");
+          return;
+        }
+        if (setOrnament("svg", { svg: text })) {
+          setStyleStatus("SVG 图标已应用。", "ok");
+        }
+        return;
+      }
+      if (!/^image\/(png|jpeg|webp|gif|avif)$/i.test(file.type)) {
+        setStyleStatus("仅支持 PNG、JPEG、WebP、GIF、AVIF 或 SVG。", "error");
+        return;
+      }
+      const dataUrl = await readFileAsDataUrl(file);
+      if (!dataUrl.startsWith("data:image/") || dataUrl.length > MAX_IMAGE_DATA_URL_CHARS) {
+        setStyleStatus("图片编码后体积过大，请压缩后重试。", "error");
+        return;
+      }
+      if (setOrnament("image", { image: dataUrl })) {
+        setStyleStatus("图片图标已应用。", "ok");
+      }
+    } catch (err) {
+      setStyleStatus(`读取图片失败：${err && err.message ? err.message : "未知错误"}`, "error");
+    }
+  }
+
+  function applySvgSource(source) {
+    const checked = sanitizeSvg(source);
+    if (!checked.node) {
+      setStyleStatus(checked.error, "error");
+      return false;
+    }
+    if (!setOrnament("svg", { svg: source })) return false;
+    setStyleStatus("SVG 图标已应用。", "ok");
+    return true;
+  }
+
+  function toggleSvgEditor(show) {
+    if (!svgEditorEl) return;
+    const open = typeof show === "boolean" ? show : svgEditorEl.hidden;
+    svgEditorEl.hidden = !open;
+    if (open) {
+      svgTextareaEl.value = config.icon.kind === "svg" ? config.icon.svg : "";
+      svgTextareaEl.focus();
+    }
+  }
+
+  function refreshCssEditor() {
+    if (!cssTextareaEl || !cssTargetSelectEl) return;
+    cssTextareaEl.value = config.css[cssTargetSelectEl.value] || "";
+  }
+
+  function applyComponentCss() {
+    const target = cssTargetSelectEl.value;
+    const value = cssTextareaEl.value.trim();
+    if (value && !isSafeCssText(value)) {
+      setStyleStatus(
+        `CSS 不可用：上限 ${MAX_CSS_CHARS / 1024}KB，且不能包含大括号、尖括号、@import、expression() 或 javascript:。`,
+        "error",
+      );
+      return;
+    }
+    const previous = config.css[target];
+    config.css[target] = value;
+    if (!saveConfig(config)) {
+      config.css[target] = previous;
+      cssTextareaEl.value = previous;
+      setStyleStatus("CSS 保存失败：本地存储空间不足。", "error");
+      return;
+    }
+    applyCustomCss();
+    setStyleStatus(value ? "组件 CSS 已应用。" : "该组件的自定义 CSS 已清空。", "ok");
+  }
+
+  function clearComponentCss() {
+    const target = cssTargetSelectEl.value;
+    const previous = config.css[target];
+    config.css[target] = "";
+    if (!saveConfig(config)) {
+      config.css[target] = previous;
+      cssTextareaEl.value = previous;
+      setStyleStatus("CSS 保存失败：本地存储空间不足。", "error");
+      return;
+    }
+    cssTextareaEl.value = "";
+    applyCustomCss();
+    setStyleStatus("该组件的自定义 CSS 已恢复默认。", "ok");
+  }
+
+  function syncStyleChoices() {
+    for (const btn of ornamentBtns) {
+      const active = btn.dataset.ornament === config.icon.kind;
+      btn.classList.toggle("active", active);
+      setAttrIfChanged(btn, "aria-pressed", String(active));
+    }
+    for (const [key, buttons] of Object.entries(progressBtns)) {
+      for (const btn of buttons) {
+        const active = btn.dataset.mode === config.metrics[key];
+        btn.classList.toggle("active", active);
+        setAttrIfChanged(btn, "aria-pressed", String(active));
+      }
+    }
+    if (imageBtnEl) imageBtnEl.classList.toggle("active", config.icon.kind === "image");
+    if (svgBtnEl) svgBtnEl.classList.toggle("active", config.icon.kind === "svg");
   }
 
   function createDOM() {
     const existing = document.getElementById("gc-pill-root");
     if (existing) {
       rootEl = existing;
+      applyCustomCss();
       return;
     }
 
@@ -3202,36 +3792,41 @@
 
     headSlotEl = el("button", {
       type: "button",
-      "aria-label": "切换额度进度形态",
+      "aria-label": "切换装饰图标",
+      "data-gc-part": "head",
       className: "gc-capsule-head",
-      title: "点击切换指示器形态（横条 / 圆环 / 圆盘 / 崩坏 / 分段 / 电池 / 双柱）",
+      title: "点击轮换装饰图标（棱镜 / 星芒 / 轨道 / 胶囊 / 闪电 / 无）",
       onclick: (e) => {
         e.stopPropagation();
-        cycleStyleMode();
+        cycleOrnamentMode();
       },
     });
 
-    badge5hEl = el("span", { className: "gc-pill-badge" }, ["5小时"]);
-    usage5hTextEl = el("span", { className: "gc-pill-counter" }, ["--%"]);
-    fill5hEl = el("div", { className: "gc-inline-fill" });
-    track5hEl = el("div", { className: "gc-inline-track" }, [fill5hEl]);
-    timer5hTextEl = el("span", { className: "gc-pill-timer" }, ["同步中"]);
-    group5hEl = el("div", { className: "gc-metric-group" }, [
+    const badge5hEl = el("span", { className: "gc-pill-badge", "data-gc-part": "badge" }, ["5小时"]);
+    usage5hTextEl = el("span", { className: "gc-pill-counter", "data-gc-part": "counter" }, ["--%"]);
+    progress5hEl = el("span", {
+      className: "gc-progress-slot",
+      "data-gc-part": "progress",
+    });
+    timer5hTextEl = el("span", { className: "gc-pill-timer", "data-gc-part": "timer" }, ["同步中"]);
+    group5hEl = el("div", { className: "gc-metric-group", "data-gc-part": "five-hour" }, [
       badge5hEl,
       usage5hTextEl,
-      track5hEl,
+      progress5hEl,
       timer5hTextEl,
     ]);
 
-    badge7dEl = el("span", { className: "gc-pill-badge" }, ["每周"]);
-    usage7dTextEl = el("span", { className: "gc-pill-counter" }, ["--%"]);
-    fill7dEl = el("div", { className: "gc-inline-fill" });
-    track7dEl = el("div", { className: "gc-inline-track" }, [fill7dEl]);
-    timer7dTextEl = el("span", { className: "gc-pill-timer" }, ["同步中"]);
-    group7dEl = el("div", { className: "gc-metric-group" }, [
+    const badge7dEl = el("span", { className: "gc-pill-badge", "data-gc-part": "badge" }, ["每周"]);
+    usage7dTextEl = el("span", { className: "gc-pill-counter", "data-gc-part": "counter" }, ["--%"]);
+    progress7dEl = el("span", {
+      className: "gc-progress-slot",
+      "data-gc-part": "progress",
+    });
+    timer7dTextEl = el("span", { className: "gc-pill-timer", "data-gc-part": "timer" }, ["同步中"]);
+    group7dEl = el("div", { className: "gc-metric-group", "data-gc-part": "weekly" }, [
       badge7dEl,
       usage7dTextEl,
-      track7dEl,
+      progress7dEl,
       timer7dTextEl,
     ]);
 
@@ -3298,46 +3893,206 @@
       [gearSvg],
     );
 
-    const actionsBox = el("div", { className: "gc-pill-actions" }, [
+    const actionsBox = el("div", { className: "gc-pill-actions", "data-gc-part": "actions" }, [
       syncDotEl,
       btnRefreshEl,
       btnSettings,
     ]);
 
-    pillContainerEl = el("div", { className: "gc-pill-container" }, [
+    pillContainerEl = el("div", { className: "gc-pill-container", "data-gc-part": "container" }, [
       headSlotEl,
       group5hEl,
-      el("div", { className: "gc-v-divider" }),
+      el("div", { className: "gc-v-divider", "data-gc-part": "divider" }),
       group7dEl,
-      el("div", { className: "gc-v-divider" }),
+      el("div", { className: "gc-v-divider", "data-gc-part": "divider" }),
       actionsBox,
     ]);
 
-    const drawerTitle = el("div", { className: "gc-drawer-title" }, [
-      el("span", {}, ["指示器形态"]),
-      el("span", { style: "font-size:9px; color:#64748b;" }, [
-        "官方数据源",
-      ]),
-    ]);
-
-    choiceBtns.length = 0;
-    const modes = INDICATOR_MODES;
-    for (const m of modes) {
+    ornamentBtns.length = 0;
+    for (const mode of ORNAMENT_MODES) {
       const btn = el(
         "button",
         {
-          className: `gc-choice-btn ${config.styleMode === m.key ? "active" : ""}`,
+          className: "gc-choice-btn",
+          title: `装饰图标：${mode.text}`,
           onclick: () => {
-            config.styleMode = m.key;
-            saveConfig(config);
-            updateUI();
+            if (config.icon.kind === mode.key) return;
+            if (setOrnament(mode.key)) {
+              setStyleStatus(`已切换为「${mode.text}」装饰。`, "ok");
+            }
           },
         },
-        [m.text],
+        [mode.text],
       );
-      btn.dataset.style = m.key;
-      choiceBtns.push(btn);
+      btn.dataset.ornament = mode.key;
+      ornamentBtns.push(btn);
     }
+
+    const buildProgressGrid = (metricKey) => {
+      const buttons = [];
+      for (const mode of PROGRESS_MODE_CHOICES) {
+        const btn = el(
+          "button",
+          {
+            className: "gc-choice-btn",
+            title: `进度样式：${mode.text}`,
+            onclick: () => setProgressMode(metricKey, mode.key),
+          },
+          [mode.text],
+        );
+        btn.dataset.mode = mode.key;
+        buttons.push(btn);
+      }
+      progressBtns[metricKey] = buttons;
+      return el(
+        "div",
+        { className: "gc-mode-grid", "data-gc-metric": metricKey },
+        buttons,
+      );
+    };
+
+    fileInputEl = el("input", {
+      type: "file",
+      accept: "image/png,image/jpeg,image/webp,image/gif,image/avif,image/svg+xml",
+      style: "display:none;",
+    });
+    fileInputEl.addEventListener("change", async () => {
+      const file = fileInputEl.files && fileInputEl.files[0];
+      fileInputEl.value = "";
+      await handleImageFile(file);
+    });
+
+    imageBtnEl = el("button", {
+      className: "gc-small-btn",
+      "data-gc-action": "image-upload",
+      title: `本地图片，最大 ${MAX_IMAGE_BYTES / 1024}KB`,
+      onclick: (e) => {
+        e.stopPropagation();
+        fileInputEl.click();
+      },
+    }, ["上传图片"]);
+    svgBtnEl = el("button", {
+      className: "gc-small-btn",
+      "data-gc-action": "svg-editor",
+      title: "粘贴 SVG 源码，脚本会按白名单清洗",
+      onclick: (e) => {
+        e.stopPropagation();
+        toggleSvgEditor();
+      },
+    }, ["输入 SVG"]);
+    const clearCustomBtn = el("button", {
+      className: "gc-small-btn",
+      "data-gc-action": "clear-custom",
+      onclick: (e) => {
+        e.stopPropagation();
+        const previous = { ...config.icon };
+        config.icon.image = "";
+        config.icon.svg = "";
+        if (CUSTOM_ORNAMENT_KINDS.includes(config.icon.kind)) config.icon.kind = "prism";
+        iconRevision += 1;
+        if (!saveConfig(config)) {
+          config.icon = previous;
+          iconRevision += 1;
+          setStyleStatus("清除失败：无法写入本地存储。", "error");
+          updateUI();
+          return;
+        }
+        toggleSvgEditor(false);
+        setStyleStatus("已清除上传的图片与 SVG 资源。", "ok");
+        updateUI();
+      },
+    }, ["清除资源"]);
+
+    svgTextareaEl = el("textarea", {
+      className: "gc-textarea",
+      maxlength: String(MAX_SVG_CHARS),
+      spellcheck: "false",
+      placeholder: '<svg viewBox="0 0 16 16"><path d="..." fill="currentColor"/></svg>',
+    });
+    svgEditorEl = el("div", { className: "gc-editor", hidden: true }, [
+      el("div", { style: "font-size:9px; color:#64748b;" }, [
+        `仅保留静态图形与渐变，上限 ${MAX_SVG_CHARS / 1024}KB。`,
+      ]),
+      svgTextareaEl,
+      el("div", { className: "gc-editor-actions" }, [
+        el("button", {
+          className: "gc-small-btn",
+          "data-gc-action": "svg-cancel",
+          onclick: () => toggleSvgEditor(false),
+        }, ["取消"]),
+        el("button", {
+          className: "gc-small-btn",
+          "data-gc-action": "svg-apply",
+          onclick: () => {
+            if (applySvgSource(svgTextareaEl.value)) toggleSvgEditor(false);
+          },
+        }, ["应用 SVG"]),
+      ]),
+    ]);
+
+    cssTargetSelectEl = el("select", { className: "gc-select" }, CSS_TARGETS.map(
+      (target) => el("option", { value: target.key }, [target.text]),
+    ));
+    cssTargetSelectEl.addEventListener("change", refreshCssEditor);
+    cssTextareaEl = el("textarea", {
+      className: "gc-textarea gc-css-textarea",
+      maxlength: String(MAX_CSS_CHARS),
+      spellcheck: "false",
+      placeholder: "background: rgba(56,189,248,.12); border-color: #38bdf8;",
+    });
+
+    styleStatusEl = el("div", { className: "gc-style-status" });
+
+    const drawerTitle = el("div", { className: "gc-drawer-title" }, [
+      el("span", {}, ["组件样式"]),
+      el("span", { style: "font-size:9px; color:#64748b;" }, ["本地即时生效"]),
+    ]);
+
+    const drawerBody = el("div", { className: "gc-drawer-body" }, [
+      styleStatusEl,
+      el("div", { className: "gc-drawer-section" }, [
+        el("div", { className: "gc-section-label" }, [
+          el("span", {}, ["装饰图标"]),
+          el("span", { style: "color:#475569;" }, ["点击胶囊头部也可轮换"]),
+        ]),
+        el("div", { className: "gc-ornament-grid" }, ornamentBtns),
+        el("div", { className: "gc-custom-row" }, [
+          imageBtnEl,
+          svgBtnEl,
+          clearCustomBtn,
+          fileInputEl,
+        ]),
+        svgEditorEl,
+      ]),
+      el("div", { className: "gc-drawer-section" }, [
+        el("div", { className: "gc-section-label" }, [el("span", {}, ["5 小时进度"])]),
+        buildProgressGrid("fiveHour"),
+      ]),
+      el("div", { className: "gc-drawer-section" }, [
+        el("div", { className: "gc-section-label" }, [el("span", {}, ["每周进度"])]),
+        buildProgressGrid("weekly"),
+      ]),
+      el("div", { className: "gc-drawer-section" }, [
+        el("div", { className: "gc-section-label" }, [
+          el("span", {}, ["组件 CSS"]),
+          el("span", { style: "color:#475569;" }, ["只填声明"]),
+        ]),
+        cssTargetSelectEl,
+        cssTextareaEl,
+        el("div", { className: "gc-editor-actions" }, [
+          el("button", {
+            className: "gc-small-btn",
+            "data-gc-action": "css-clear",
+            onclick: clearComponentCss,
+          }, ["恢复默认"]),
+          el("button", {
+            className: "gc-small-btn",
+            "data-gc-action": "css-apply",
+            onclick: applyComponentCss,
+          }, ["应用 CSS"]),
+        ]),
+      ]),
+    ]);
 
     statusSourceEl = el("div", {}, ["数据源: 正在连接官方接口..."]);
     statusSyncTimeEl = el("div", { style: "color:#64748b;" }, ["上次同步: --"]);
@@ -3350,9 +4105,9 @@
       ["打开官方 /usage 页面核对"],
     );
 
-    drawerEl = el("div", { id: "gc-pill-drawer" }, [
+    drawerEl = el("div", { id: "gc-pill-drawer", "data-gc-part": "drawer" }, [
       drawerTitle,
-      el("div", { className: "gc-mode-grid" }, choiceBtns),
+      drawerBody,
       el("div", { className: "gc-drawer-status" }, [
         statusSourceEl,
         statusSyncTimeEl,
@@ -3371,6 +4126,8 @@
 
     (document.body || document.documentElement).appendChild(rootEl);
 
+    applyCustomCss();
+    refreshCssEditor();
     bindDragEvents();
     updateUI();
   }
@@ -3442,204 +4199,294 @@
     });
   }
 
-  function renderIndicatorHead(mode, usedRatio5h, usedRatio7d) {
+  function clampRatio(value) {
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+  }
+
+  function createOrnamentSvg(kind, ratio) {
+    const common = {
+      viewBox: "0 0 16 16",
+      class: "gc-ornament-svg",
+      "aria-hidden": "true",
+    };
+    // 同一页面可能同时渲染多个预览，渐变 / 裁剪的 id 必须逐次唯一。
+    const uid = `gc-orn-${(++svgIdSeq).toString(36)}`;
+    if (kind === "spark") {
+      return svgEl("svg", common, [
+        svgEl("path", {
+          d: "M8 .9c.42 3.9 2.8 6.28 6.7 6.7-3.9.42-6.28 2.8-6.7 6.7-.42-3.9-2.8-6.28-6.7-6.7C5.2 7.18 7.58 4.8 8 .9Z",
+          fill: "currentColor",
+        }),
+        svgEl("circle", { cx: "8", cy: "8", r: "1.15", fill: "#fff", opacity: ".9" }),
+      ]);
+    }
+    if (kind === "orbit") {
+      return svgEl("svg", common, [
+        svgEl("circle", {
+          cx: "8", cy: "8", r: "5.2", fill: "none",
+          stroke: "rgba(255,255,255,.2)", "stroke-width": ".8",
+        }),
+        svgEl("ellipse", {
+          cx: "8", cy: "8", rx: "6.5", ry: "2.7", fill: "none",
+          stroke: "currentColor", "stroke-width": "1.15",
+          transform: "rotate(-32 8 8)",
+        }),
+        svgEl("ellipse", {
+          cx: "8", cy: "8", rx: "6.2", ry: "2.4", fill: "none",
+          stroke: "currentColor", "stroke-width": ".55", opacity: ".38",
+          transform: "rotate(58 8 8)",
+        }),
+        svgEl("circle", { cx: "12.1", cy: "4.3", r: "1.35", fill: "currentColor" }),
+        svgEl("circle", { cx: "12.1", cy: "4.3", r: ".5", fill: "#fff", opacity: ".75" }),
+      ]);
+    }
+    if (kind === "capsule") {
+      const fillHeight = Math.max(0.8, 11.6 * ratio);
+      const fillTop = 12.6 - fillHeight;
+      return svgEl("svg", common, [
+        svgEl("defs", {}, [
+          svgEl("clipPath", { id: `${uid}-clip` }, [
+            svgEl("rect", { x: "4.6", y: "1.4", width: "6.8", height: "13.2", rx: "3.4" }),
+          ]),
+        ]),
+        svgEl("rect", {
+          x: "4.6", y: "1.4", width: "6.8", height: "13.2", rx: "3.4",
+          fill: "rgba(255,255,255,.07)", stroke: "currentColor", "stroke-width": "1.15",
+        }),
+        svgEl("rect", {
+          x: "4.6", y: String(fillTop.toFixed(2)), width: "6.8",
+          height: String(fillHeight.toFixed(2)), fill: "currentColor",
+          "clip-path": `url(#${uid}-clip)`, opacity: ".92",
+        }),
+        svgEl("rect", {
+          x: "6.2", y: "3.2", width: "1.25", height: "4.6", rx: ".62",
+          fill: "#fff", opacity: ".38",
+        }),
+      ]);
+    }
+    if (kind === "bolt") {
+      return svgEl("svg", common, [
+        svgEl("path", {
+          d: "M9.6.9 3.5 8.8h3.4l-.6 6.3 6.2-8.3H9.1l.5-5.9Z",
+          fill: "currentColor",
+        }),
+        svgEl("path", {
+          d: "M9.6.9 3.5 8.8h2.2L8.4 4l1.2-3.1Z",
+          fill: "#fff", opacity: ".28",
+        }),
+      ]);
+    }
+    if (kind === "none") return null;
+    // 默认棱镜：分面折射，避免旧版「半绿半灰的小药丸」。
+    return svgEl("svg", common, [
+      svgEl("defs", {}, [
+        svgEl("linearGradient", {
+          id: `${uid}-fill`, x1: "2", y1: "1", x2: "14", y2: "15",
+          gradientUnits: "userSpaceOnUse",
+        }, [
+          svgEl("stop", { offset: "0", "stop-color": "currentColor", "stop-opacity": ".98" }),
+          svgEl("stop", { offset: "1", "stop-color": "currentColor", "stop-opacity": ".32" }),
+        ]),
+      ]),
+      svgEl("path", {
+        d: "M8 1.1 13.7 4.4v6.9L8 14.9 2.3 11.3V4.4Z",
+        fill: `url(#${uid}-fill)`,
+      }),
+      svgEl("path", {
+        d: "M8 1.1v13.8M2.3 4.4l11.4 6.9M13.7 4.4 2.3 11.3",
+        fill: "none", stroke: "rgba(255,255,255,.5)", "stroke-width": ".55",
+        "stroke-linejoin": "round",
+      }),
+      svgEl("path", {
+        d: "M8 1.1 13.7 4.4 8 7.8 2.3 4.4Z",
+        fill: "#fff", "fill-opacity": ".24",
+      }),
+    ]);
+  }
+
+  function renderOrnament(usedRatio5h, usedRatio7d) {
     if (!headSlotEl) return;
+    const used5h = clampRatio(usedRatio5h);
+    const used7d = clampRatio(usedRatio7d);
+    const dominant = Math.max(used5h, used7d);
+    const color = getProgressColor(dominant).hex;
+    const kind = config.icon.kind;
+    if (headSlotEl.style.getPropertyValue("--gc-accent") !== color) {
+      headSlotEl.style.setProperty("--gc-accent", color);
+    }
+    const key = [
+      kind,
+      iconRevision,
+      kind === "capsule" ? dominant.toFixed(3) : "",
+    ].join("|");
+    if (lastOrnamentRender && lastOrnamentRender.key === key) return;
+    lastOrnamentRender = { key };
 
-    const used5h = Math.max(0, Math.min(1, usedRatio5h));
-    const used7d = Math.max(0, Math.min(1, usedRatio7d));
-    // 倒计时每秒更新，但图形只依赖形态与两段用量。输入未变时保留节点，
-    // 避免重复创建 SVG / CSS 图形及重启崩坏动画。
-    if (lastIndicatorRender !== null &&
-        lastIndicatorRender.head === headSlotEl &&
-        lastIndicatorRender.mode === mode &&
-        lastIndicatorRender.used5h === used5h &&
-        lastIndicatorRender.used7d === used7d) return;
-    lastIndicatorRender = { head: headSlotEl, mode, used5h, used7d };
     headSlotEl.textContent = "";
-    // 入参即「已用」比例：填充量与颜色同向，用得越多条越满
-    const dominantRatio = Math.max(used5h, used7d);
-    const dominantUsed = dominantRatio;
-    const color = getProgressColor(dominantUsed);
-    const color5h = getProgressColor(used5h);
-    const color7d = getProgressColor(used7d);
+    headSlotEl.dataset.gcOrnament = kind;
+    if (kind === "none") return;
 
-    // 始终保留相同宽度的槽位，隐藏图形时不移除布局空间。
-    const inlineMode = mode === "bar" || mode === "segments" || mode === "battery";
-    for (const track of [track5hEl, track7dEl]) {
-      track.style.visibility = inlineMode ? "visible" : "hidden";
-      track.dataset.mode = mode;
-    }
-    if (inlineMode) {
-      fill5hEl.style.width = `${Math.min(100, Math.round(used5h * 100))}%`;
-      fill5hEl.style.backgroundColor = color5h.hex;
-
-      fill7dEl.style.width = `${Math.min(100, Math.round(used7d * 100))}%`;
-      fill7dEl.style.backgroundColor = color7d.hex;
-
-      const miniPill = el("div", {
-        style: `width:8px; height:13px; border-radius:999px; background:linear-gradient(180deg, ${color.hex} 50%, rgba(255,255,255,0.18) 50%); border:1px solid rgba(255,255,255,0.28);`,
+    if (kind === "image" && config.icon.image) {
+      const img = el("img", {
+        className: "gc-ornament-image",
+        src: config.icon.image,
+        alt: "",
+        draggable: "false",
+        decoding: "async",
       });
-      headSlotEl.appendChild(miniPill);
+      img.addEventListener("error", () => {
+        headSlotEl.textContent = "";
+        headSlotEl.appendChild(createOrnamentSvg("prism", dominant));
+      }, { once: true });
+      headSlotEl.appendChild(img);
       return;
     }
 
-    if (mode === "columns") {
-      // 左列为 5 小时、右列为每周；填充越高表示消耗越多。
-      const columns = svgEl("svg", {
-        viewBox: "0 0 16 16", width: "16", height: "16", "aria-hidden": "true",
-      }, []);
-      for (const [index, ratio] of [used5h, used7d].entries()) {
-        const x = String(2 + index * 7);
-        // 固定两位小数，避免浮点误差在 SVG 属性里留下 9.119999999999999 之类的长尾。
-        const fillHeight = (ratio * 14).toFixed(2);
-        const fillTop = (15 - ratio * 14).toFixed(2);
-        columns.appendChild(svgEl("rect", {
-          x, y: "1", width: "5", height: "14", rx: "1",
-          fill: "rgba(255,255,255,0.14)",
-        }));
-        columns.appendChild(svgEl("rect", {
-          x, y: fillTop, width: "5",
-          height: fillHeight, rx: "1", fill: getProgressColor(ratio).hex,
-        }));
+    if (kind === "svg" && config.icon.svg) {
+      if (customSvgCache.source !== config.icon.svg) {
+        const checked = sanitizeSvg(config.icon.svg);
+        customSvgCache = { source: config.icon.svg, node: checked.node };
       }
-      headSlotEl.appendChild(columns);
-      return;
+      if (customSvgCache.node) {
+        const node = customSvgCache.node.cloneNode(true);
+        node.setAttribute("class", "gc-ornament-svg");
+        node.setAttribute("aria-hidden", "true");
+        headSlotEl.appendChild(node);
+        return;
+      }
     }
 
+    const preset = createOrnamentSvg(kind, dominant);
+    if (preset) headSlotEl.appendChild(preset);
+  }
+
+  function createProgressNode(mode, ratio) {
+    if (mode === "none") return null;
+    if (mode === "bar" || mode === "segments" || mode === "battery") {
+      const fill = el("div", { className: "gc-inline-fill" });
+      fill.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
+      fill.style.backgroundColor = "var(--gc-progress-color)";
+      const track = el("div", { className: "gc-inline-track" }, [fill]);
+      if (mode !== "bar") track.dataset.mode = mode;
+      return track;
+    }
     if (mode === "ring") {
       const radius = 5.8;
       const circumference = 2 * Math.PI * radius;
-      const strokeOffset =
-        circumference - Math.min(1, dominantRatio) * circumference;
-
-      const ringSvg = svgEl(
-        "svg",
-        {
-          viewBox: "0 0 16 16",
-          style: "transform: rotate(-90deg); width:16px; height:16px;",
-        },
-        [
-          svgEl("circle", {
-            cx: "8",
-            cy: "8",
-            r: String(radius),
-            stroke: "rgba(255, 255, 255, 0.14)",
-            "stroke-width": "2",
-            fill: "none",
-          }),
-          svgEl("circle", {
-            cx: "8",
-            cy: "8",
-            r: String(radius),
-            "stroke-width": "2",
-            "stroke-linecap": "round",
-            fill: "none",
-            stroke: color.hex,
-            style: `stroke-dasharray: ${circumference}; stroke-dashoffset: ${strokeOffset}; transition: stroke-dashoffset 0.35s ease;`,
-          }),
-        ],
-      );
-      headSlotEl.appendChild(ringSvg);
-      return;
+      const offset = circumference - ratio * circumference;
+      return svgEl("svg", {
+        viewBox: "0 0 16 16",
+        style: "transform: rotate(-90deg); width:16px; height:16px;",
+        "aria-hidden": "true",
+      }, [
+        svgEl("circle", {
+          cx: "8", cy: "8", r: String(radius), stroke: "rgba(255,255,255,.14)",
+          "stroke-width": "2", fill: "none",
+        }),
+        svgEl("circle", {
+          cx: "8", cy: "8", r: String(radius), "stroke-width": "2",
+          "stroke-linecap": "round", fill: "none", stroke: "var(--gc-progress-color)",
+          style: `stroke-dasharray:${circumference};stroke-dashoffset:${offset};`,
+        }),
+      ]);
     }
-
     if (mode === "disk") {
-      const degrees = Math.min(360, Math.round(dominantRatio * 360));
-      const diskBox = el(
-        "div",
-        {
-          className: "gc-disk-box",
-          style: `background: conic-gradient(${color.hex} 0deg ${degrees}deg, rgba(255,255,255,0.12) ${degrees}deg 360deg);`,
-        },
-        [el("div", { className: "gc-disk-core" })],
-      );
-      headSlotEl.appendChild(diskBox);
-      return;
+      const degrees = Math.min(360, Math.round(ratio * 360));
+      return el("div", {
+        className: "gc-disk-box",
+        style: `background:conic-gradient(var(--gc-progress-color) 0deg ${degrees}deg, rgba(255,255,255,.12) ${degrees}deg 360deg);`,
+      }, [el("div", { className: "gc-disk-core" })]);
     }
-
     if (mode === "decay") {
-      const r = Math.min(1.2, dominantUsed);
+      const r = Math.min(1.2, ratio);
       const isCritical = r >= 0.88;
       const drift = r * 4;
       const rot = r * 24;
-
       const shardsData = [
-        {
-          clip: "polygon(0% 0%, 55% 0%, 42% 45%, 0% 50%)",
-          dx: -drift * 0.7,
-          dy: -drift * 0.7,
-          dr: -rot * 0.8,
-        },
-        {
-          clip: "polygon(55% 0%, 100% 0%, 100% 48%, 42% 45%)",
-          dx: drift * 0.6,
-          dy: -drift * 0.6,
-          dr: rot * 0.6,
-        },
-        {
-          clip: "polygon(0% 50%, 42% 45%, 52% 70%, 0% 100%)",
-          dx: -drift * 0.9,
-          dy: drift * 0.4,
-          dr: -rot * 0.9,
-        },
-        {
-          clip: "polygon(42% 45%, 100% 48%, 80% 82%, 52% 70%)",
-          dx: drift * 0.4,
-          dy: drift * 0.2,
-          dr: rot * 0.4,
-        },
+        { clip: "polygon(0% 0%, 55% 0%, 42% 45%, 0% 50%)", dx: -drift * 0.7, dy: -drift * 0.7, dr: -rot * 0.8 },
+        { clip: "polygon(55% 0%, 100% 0%, 100% 48%, 42% 45%)", dx: drift * 0.6, dy: -drift * 0.6, dr: rot * 0.6 },
+        { clip: "polygon(0% 50%, 42% 45%, 52% 70%, 0% 100%)", dx: -drift * 0.9, dy: drift * 0.4, dr: -rot * 0.9 },
+        { clip: "polygon(42% 45%, 100% 48%, 80% 82%, 52% 70%)", dx: drift * 0.4, dy: drift * 0.2, dr: rot * 0.4 },
       ];
-
-      const shardNodes = shardsData.map((s) => {
-        const transform = `translate(${s.dx.toFixed(1)}px, ${s.dy.toFixed(1)}px) rotate(${s.dr.toFixed(1)}deg)`;
-        return el("div", {
-          className: "gc-decay-shard",
-          style: `clip-path: ${s.clip}; -webkit-clip-path: ${s.clip}; background: ${color.hex}; transform: ${transform};`,
-        });
-      });
-
-      const body = el(
-        "div",
-        { className: `gc-decay-body ${isCritical ? "gc-state-critical" : ""}` },
-        shardNodes,
-      );
-      headSlotEl.appendChild(
-        el("div", { className: "gc-decay-capsule" }, [body]),
-      );
+      const shards = shardsData.map((shard) => el("div", {
+        className: "gc-decay-shard",
+        style: `clip-path:${shard.clip};-webkit-clip-path:${shard.clip};background:var(--gc-progress-color);transform:translate(${shard.dx.toFixed(1)}px, ${shard.dy.toFixed(1)}px) rotate(${shard.dr.toFixed(1)}deg);`,
+      }));
+      const body = el("div", {
+        className: `gc-decay-body ${isCritical ? "gc-state-critical" : ""}`,
+      }, shards);
+      return el("div", { className: "gc-decay-capsule" }, [body]);
     }
+    if (mode === "columns") {
+      const usedHeight = ratio * 14;
+      const restHeight = (1 - ratio) * 14;
+      return svgEl("svg", {
+        viewBox: "0 0 16 16", width: "16", height: "16", "aria-hidden": "true",
+      }, [
+        svgEl("rect", { x: "2", y: "1", width: "4", height: "14", rx: "1", fill: "rgba(255,255,255,.08)" }),
+        svgEl("rect", { x: "9", y: "1", width: "4", height: "14", rx: "1", fill: "rgba(255,255,255,.08)" }),
+        svgEl("rect", {
+          x: "2", y: (15 - usedHeight).toFixed(2), width: "4",
+          height: usedHeight.toFixed(2), rx: "1", fill: "var(--gc-progress-color)",
+        }),
+        svgEl("rect", {
+          x: "9", y: (15 - restHeight).toFixed(2), width: "4",
+          height: restHeight.toFixed(2), rx: "1", fill: "rgba(255,255,255,.32)",
+        }),
+      ]);
+    }
+    return null;
+  }
+
+  function renderProgressSlot(slot, mode, ratio, cache) {
+    if (!slot) return;
+    const normalized = clampRatio(ratio);
+    const color = getProgressColor(normalized).hex;
+    const key = `${mode}|${normalized.toFixed(4)}|${color}`;
+    setVarIfChanged(slot.parentElement, "--gc-progress-color", color);
+    if (cache.key === key) return;
+    cache.key = key;
+    slot.textContent = "";
+    slot.dataset.mode = mode;
+    const node = createProgressNode(mode, normalized);
+    if (node) slot.appendChild(node);
+  }
+
+  // 颜色写在指标组上而不是具体节点上：用户对 badge / timer / progress 的
+  // 自定义 CSS 可以覆盖继承值，不需要与内联样式争夺优先级。
+  function setMetricColorVars(groupNode, badgeColor, timerColor) {
+    setVarIfChanged(groupNode, "--gc-badge-color", badgeColor);
+    setVarIfChanged(groupNode, "--gc-timer-color", timerColor);
   }
 
   function renderMetricUnit(
     metric,
     isWeekly,
     label,
-    badgeNode,
     usageNode,
     timerNode,
     groupNode,
   ) {
     if (!metric) {
-      badgeNode.style.color = "#94a3b8";
-      usageNode.textContent = "--%";
-      timerNode.textContent = quotaState.isSyncing ? "同步中" : "待同步";
-      timerNode.style.color = "#64748b";
-      groupNode.title = formatTooltip(label, metric);
+      setMetricColorVars(groupNode, "#94a3b8", "#64748b");
+      setTextIfChanged(usageNode, "--%");
+      setTextIfChanged(timerNode, quotaState.isSyncing ? "同步中" : "待同步");
+      setTitleIfChanged(groupNode, formatTooltip(label, metric));
       return 0;
     }
 
     if (metric.pct === null) {
-      badgeNode.style.color = "#94a3b8";
-      usageNode.textContent = "--%";
+      setMetricColorVars(groupNode, "#94a3b8", "#64748b");
+      setTextIfChanged(usageNode, "--%");
       if (metric.resetAt && metric.resetAt > Date.now()) {
         const remaining = metric.resetAt - Date.now();
-        timerNode.textContent = formatCompactCountdown(remaining, isWeekly);
-        timerNode.style.color = "#94a3b8";
-        timerNode.title = `距官方重置 ${formatRemainingHuman(remaining)}`;
+        setTextIfChanged(timerNode, formatCompactCountdown(remaining, isWeekly));
+        setVarIfChanged(groupNode, "--gc-timer-color", "#94a3b8");
+        setTitleIfChanged(timerNode, `距官方重置 ${formatRemainingHuman(remaining)}`);
       } else {
-        timerNode.textContent = quotaState.isSyncing ? "同步中" : "待同步";
-        timerNode.style.color = "#64748b";
+        setTextIfChanged(timerNode, quotaState.isSyncing ? "同步中" : "待同步");
       }
-      groupNode.title = formatTooltip(label, metric);
+      setTitleIfChanged(groupNode, formatTooltip(label, metric));
       return 0;
     }
 
@@ -3652,16 +4499,15 @@
     const usedRatio = usedPct / 100;
     const color = getProgressColor(usedRatio);
 
-    badgeNode.style.color = color.hex;
-    usageNode.textContent = `${usedPct}%`;
+    setMetricColorVars(groupNode, color.hex, color.hex);
+    setTextIfChanged(usageNode, `${usedPct}%`);
 
     const now = Date.now();
     if (metric.resetAt && metric.resetAt > now) {
       // 倒计时永远 = 官方重置时刻 − 当前时间，每秒重算
       const remaining = metric.resetAt - now;
-      timerNode.textContent = formatCompactCountdown(remaining, isWeekly);
-      timerNode.style.color = color.hex;
-      timerNode.title = `距官方重置 ${formatRemainingHuman(remaining)}`;
+      setTextIfChanged(timerNode, formatCompactCountdown(remaining, isWeekly));
+      setTitleIfChanged(timerNode, `距官方重置 ${formatRemainingHuman(remaining)}`);
     } else if (metric.rawResetText) {
       // 拿不到官方时间戳时才退化为文案：以抓取时刻为锚点解析，保证倒计时仍在递减
       const anchor = metric.updatedAt > 0 ? metric.updatedAt : now;
@@ -3669,22 +4515,23 @@
         metric.rawResetText,
         anchor,
       );
-      timerNode.textContent =
+      setTextIfChanged(
+        timerNode,
         parsed !== null && parsed > now
           ? formatCompactCountdown(parsed - now, isWeekly)
-          : metric.rawResetText.slice(0, 10);
-      timerNode.style.color = color.hex;
-      timerNode.title = metric.rawResetText;
+          : metric.rawResetText.slice(0, 10),
+      );
+      setTitleIfChanged(timerNode, metric.rawResetText);
     } else if (usedPct >= 100) {
       // 已用 100% 表示额度耗尽，不是「已重置」
-      timerNode.textContent = "已用尽";
-      timerNode.style.color = "#f43f5e";
+      setTextIfChanged(timerNode, "已用尽");
+      setVarIfChanged(groupNode, "--gc-timer-color", "#f43f5e");
     } else {
-      timerNode.textContent = "官方实时";
-      timerNode.style.color = "#94a3b8";
+      setTextIfChanged(timerNode, "官方实时");
+      setVarIfChanged(groupNode, "--gc-timer-color", "#94a3b8");
     }
 
-    groupNode.title = formatTooltip(label, metric);
+    setTitleIfChanged(groupNode, formatTooltip(label, metric));
     return usedRatio;
   }
 
@@ -3721,7 +4568,6 @@
       quotaState.fiveHour,
       false,
       "5 小时窗口",
-      badge5hEl,
       usage5hTextEl,
       timer5hTextEl,
       group5hEl,
@@ -3731,19 +4577,32 @@
       quotaState.weekly,
       true,
       "每周窗口",
-      badge7dEl,
       usage7dTextEl,
       timer7dTextEl,
       group7dEl,
     );
 
-    renderIndicatorHead(config.styleMode, ratio5h, ratio7d);
+    renderOrnament(ratio5h, ratio7d);
+    renderProgressSlot(
+      progress5hEl,
+      config.metrics.fiveHour,
+      ratio5h,
+      progressCache.fiveHour,
+    );
+    renderProgressSlot(
+      progress7dEl,
+      config.metrics.weekly,
+      ratio7d,
+      progressCache.weekly,
+    );
 
-    btnRefreshEl.classList.toggle("gc-spinning", quotaState.isSyncing);
+    if (btnRefreshEl.classList.contains("gc-spinning") !== quotaState.isSyncing) {
+      btnRefreshEl.classList.toggle("gc-spinning", quotaState.isSyncing);
+    }
 
     const hasOfficialData =
       quotaState.fiveHour.pct !== null || quotaState.weekly.pct !== null;
-    syncDotEl.className = `gc-sync-dot ${
+    const dotClass = `gc-sync-dot ${
       quotaState.isSyncing
         ? "syncing"
         : hasOfficialData
@@ -3752,6 +4611,7 @@
             ? "error"
             : ""
     }`;
+    if (syncDotEl.className !== dotClass) syncDotEl.className = dotClass;
 
     const timeStr =
       quotaState.lastSyncTime > 0
@@ -3766,19 +4626,17 @@
     };
 
     // 同步进行中优先显示当前阶段，让「点了刷新」立刻有可见反馈
-    statusSourceEl.textContent =
+    setTextIfChanged(
+      statusSourceEl,
       quotaState.isSyncing && quotaState.syncPhase
         ? `状态: ${quotaState.syncPhase}…`
         : quotaState.lastError
           ? `状态: ${quotaState.lastError}`
-          : `数据源: ${sourceMap[quotaState.source] || "官方直连"}`;
-    statusSyncTimeEl.textContent = `最后同步: ${timeStr}`;
+          : `数据源: ${sourceMap[quotaState.source] || "官方直连"}`,
+    );
+    setTextIfChanged(statusSyncTimeEl, `最后同步: ${timeStr}`);
 
-    for (const btn of choiceBtns) {
-      const selected = btn.dataset.style === config.styleMode;
-      btn.classList.toggle("active", selected);
-      btn.setAttribute("aria-pressed", String(selected));
-    }
+    syncStyleChoices();
   }
 
   // =========================================================================
@@ -4014,7 +4872,16 @@
         version: SCRIPT_VERSION,
         at: new Date().toISOString(),
         href: window.location.href,
-        config: { ...config },
+        // 配置里的图片与 SVG 可能占数百 KB，导出时只保留体量，避免控制台被资源正文淹没。
+        config: {
+          ...config,
+          icon: {
+            kind: config.icon.kind,
+            imageChars: config.icon.image.length,
+            svgChars: config.icon.svg.length,
+          },
+          css: { ...config.css },
+        },
         state: {
           source: quotaState.source,
           isSyncing: quotaState.isSyncing,
