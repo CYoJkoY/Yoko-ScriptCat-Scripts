@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Port
 // @namespace    https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts
-// @version      0.1.1
-// @description  AI 中转站卡片管理、标签交集筛选与自定义 JS 签到。
+// @version      0.1.2
+// @description  本地管理你收藏的 AI 中转站：标签取交集、搜索、导入导出与按需签到。数据只保存在脚本管理器，不上传、不含推广链接。
 // @author       Yoko
 // @match        https://*/*
 // @match        http://*/*
 // @run-at       document-end
 // @noframes
+// @icon         data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'64'%20height%3D'64'%20viewBox%3D'0%200%2064%2064'%3E%3Crect%20width%3D'64'%20height%3D'64'%20rx%3D'14'%20fill%3D'%230d151b'%2F%3E%3Cg%20fill%3D'none'%20stroke%3D'%236ee7b7'%20stroke-width%3D'4'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'12'%20y%3D'12'%20width%3D'40'%20height%3D'16'%20rx%3D'4'%2F%3E%3Crect%20x%3D'12'%20y%3D'36'%20width%3D'40'%20height%3D'16'%20rx%3D'4'%2F%3E%3Cpath%20d%3D'M20%2020h.01M20%2044h.01'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
@@ -15,13 +16,17 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_openInTab
 // @grant        unsafeWindow
-// @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/port.js
-// @downloadURL  https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/port.js
+// @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts
+// @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
 // @license      MIT
 // ==/UserScript==
 
 (() => {
   "use strict";
+
+  // 审核说明：本脚本不加载、不拼接任何远程代码，也不向第三方发送数据。
+  // 所有卡片与签到脚本都来自用户本机编辑并保存在 GM 存储；签到脚本只在
+  // 用户点击「签到」后，于同源页面消费一次性任务时执行。
 
   // Feather Icons 4.29.2, MIT; bundled subset, no runtime CDN request.
   // See docs/port-feather-LICENSE.txt for copyright and license.
@@ -260,6 +265,8 @@
     try {
       // 用户代码在用户脚本沙箱执行，显式传入站点 window/document/fetch。
       // 不向页面注入 script 标签，避免站点 CSP 的 inline-script 限制。
+      // 这里的 card.script 不是远程下发内容：它由用户在本机编辑器中手写或粘贴，
+      // 存于 GM 存储，导入的卡片默认禁用，需逐项审阅后才会执行。
       const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
       const run = new AsyncFunction("window", "document", "fetch", "signal", "waitFor", card.script);
       const pageFetch = (input, options = {}) => unsafeWindow.fetch(input, { ...options, signal: controller.signal });
