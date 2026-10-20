@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.9.1
+// @version      0.9.2
 // @description  document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与官方用量页面，按窗口精确分流 5H / 7D 用量，重置倒计时基于官方重置时刻实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.9.1";
+  const SCRIPT_VERSION = "0.9.2";
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
@@ -26,8 +26,21 @@
   // v6 → v7：v0.8.0 把 WIZ_global_data 里的样式/模板文本当成配额，缓存里留下了
   // 大量「已用 100%」的假数据，必须整段作废，否则升级后首屏依旧是 100%。
   const STORAGE_KEY_OFFICIAL_CACHE = "__gemini_quota_official_cache_v8__";
+  // 后台用量页与当前页之间的同步桥：只传本次请求的解析结果，避免把缓存
+  // 当成实时数据，也避免依赖 10 分钟缓存窗口才能回显。
+  const STORAGE_KEY_SYNC_BRIDGE = "__gemini_quota_sync_bridge_v1__";
+  const HELPER_SYNC_HASH_KEY = "gqc-usage-sync";
 
   const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000;
+
+  // 官方 /usage 是 CSR 页面：同源 iframe 需要按桌面视口渲染，并给足首屏数据
+  // 到达的时间。1×1 的 iframe 会命中窄屏布局，用量卡片文本可能根本不渲染。
+  const USAGE_FRAME_WIDTH_PX = 1280;
+  const USAGE_FRAME_HEIGHT_PX = 900;
+  const USAGE_FRAME_TIMEOUT_MS = 12000;
+  const USAGE_HELPER_TIMEOUT_MS = 20000;
+  // 发起方额外等待一个标签页加载窗口，避免在后台页还没开始解析时先超时
+  const USAGE_HELPER_WAIT_MS = 30000;
 
   // 两个官方配额窗口的真实长度（5 小时 / 7 天），用于校验重置时间是否发生“串窗”
   const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
@@ -139,6 +152,7 @@
   const quotaState = {
     source: "init", // 'init' | 'rpc' | 'usage-page' | 'cache' | 'error'
     isSyncing: false,
+    syncPhase: "", // 当前同步阶段，仅用于「正在做什么」的可见反馈
     lastSyncTime: 0,
     lastError: "",
     fiveHour: {
@@ -1383,6 +1397,16 @@
     initHit: false,
     domHit: false,
     textHit: false,
+    frameAttempts: 0,
+    frameLoads: 0,
+    frameBlocked: false,
+    frameRedirected: false,
+    frameTimeout: false,
+    frameTextLength: 0,
+    frameParsed: false,
+    helperAttempts: 0,
+    helperOK: false,
+    helperReason: "",
   };
 
   /**
@@ -2270,6 +2294,10 @@
   // =========================================================================
   let activeSyncPromise = null;
   let probeIframeEl = null;
+  // 同源 iframe 是否已被浏览器/站点拒绝渲染：下一轮手动刷新可以直接改走
+  // 顶层后台标签页，避免每次都白白等满超时。
+  let renderedUsageFrameBlocked = false;
+  let pendingUsageHelper = null;
 
   async function replayCapturedQuotaRpc() {
     const tpl = quotaState.capturedQuotaRpc;
@@ -2313,13 +2341,38 @@
     return false;
   }
 
-  function extractViaSameOriginUsageIframe(usageUrl, timeoutMs = 8500) {
+  function readIframeDocument(iframe) {
+    try {
+      return (
+        iframe.contentDocument ||
+        (iframe.contentWindow && iframe.contentWindow.document) ||
+        null
+      );
+    } catch {
+      // 跨域或已被浏览器替换为不可读文档
+      return null;
+    }
+  }
+
+  /**
+   * 在隐藏的同源 iframe 里真实渲染官方 /usage 页面并读取可见文本。
+   *
+   * 旧实现把 iframe 压成 1×1：Gemini 的响应式布局会命中窄屏分支，
+   * 「Current usage / Weekly limit」这类卡片文本可能被隐藏，innerText 里自然找不到。
+   * 这里保留桌面视口尺寸并整体移出可视区域，让页面按 PC 布局渲染。
+   * 另外不再只在 load 事件后才轮询：CSR 页面数据到达与 load 完成没有先后保证。
+   */
+  function extractViaSameOriginUsageIframe(
+    usageUrl,
+    timeoutMs = USAGE_FRAME_TIMEOUT_MS,
+  ) {
     return new Promise((resolve) => {
       if (!document.body) {
         resolve(null);
         return;
       }
 
+      usageParseDiag.frameAttempts += 1;
       if (probeIframeEl && probeIframeEl.parentNode) {
         probeIframeEl.parentNode.removeChild(probeIframeEl);
       }
@@ -2328,8 +2381,17 @@
         src: usageUrl,
         "aria-hidden": "true",
         tabindex: "-1",
-        style:
-          "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:-9999px;border:0;",
+        style: [
+          "position:fixed",
+          `width:${USAGE_FRAME_WIDTH_PX}px`,
+          `height:${USAGE_FRAME_HEIGHT_PX}px`,
+          "opacity:0",
+          "pointer-events:none",
+          "left:-20000px",
+          "top:0",
+          "border:0",
+          "z-index:-1",
+        ].join(";"),
       });
       probeIframeEl = iframe;
 
@@ -2350,15 +2412,26 @@
         resolve(res);
       };
 
+      // permanent 只给「站点明确拒绝嵌入 / 只返回空白文档」这类确定性结论；
+      // 网络层的 error 事件可能只是临时断网，不关闭后续的 iframe 通道。
+      const markBlocked = (reason, permanent = true) => {
+        usageParseDiag.frameBlocked = true;
+        usageParseDiag.helperReason = reason;
+        if (permanent) renderedUsageFrameBlocked = true;
+      };
+
       const tryExtract = () => {
         try {
-          const iDoc =
-            iframe.contentDocument ||
-            (iframe.contentWindow && iframe.contentWindow.document);
+          const iDoc = readIframeDocument(iframe);
           if (!iDoc || !iDoc.body) return;
+          const text = iDoc.body.innerText || iDoc.body.textContent || "";
+          if (text.length > usageParseDiag.frameTextLength) {
+            usageParseDiag.frameTextLength = text.length;
+          }
           const result = parseUsageDocument(iDoc, "");
           if (!result) return;
 
+          usageParseDiag.frameParsed = true;
           const has5h =
             result.fiveHour &&
             (result.fiveHour.pct !== null || result.fiveHour.resetAt !== null);
@@ -2386,12 +2459,32 @@
       };
 
       iframe.addEventListener("load", () => {
+        usageParseDiag.frameLoads += 1;
+        const iDoc = readIframeDocument(iframe);
+        if (!iDoc) {
+          // X-Frame-Options / CSP frame-ancestors 拒绝渲染：继续等下去也没有文本
+          markBlocked("官方 /usage 页面拒绝被同源 iframe 嵌入");
+          done(null);
+          return;
+        }
+        // URL 仍是 about:blank：iframe 实际没加载到 /usage，继续等也不会有文本
+        if (iDoc.URL === "about:blank") {
+          markBlocked("同源 iframe 只拿到了空白文档");
+          done(null);
+          return;
+        }
+        try {
+          if (iDoc.URL && !iDoc.URL.startsWith(window.location.origin)) {
+            usageParseDiag.frameRedirected = true;
+            done(null);
+            return;
+          }
+        } catch {
+          // 忽略 URL 解析异常，继续走文本解析
+        }
         tryExtract();
         try {
-          const iDoc =
-            iframe.contentDocument ||
-            (iframe.contentWindow && iframe.contentWindow.document);
-          if (iDoc && iDoc.body) {
+          if (iDoc.body) {
             observer = new MutationObserver(() => tryExtract());
             observer.observe(iDoc.body, {
               childList: true,
@@ -2402,28 +2495,375 @@
         } catch {
           // 走定时轮询
         }
-        pollId = setInterval(tryExtract, 300);
       });
 
-      iframe.addEventListener("error", () => done(null));
+      iframe.addEventListener("error", () => {
+        markBlocked("同源 iframe 加载官方 /usage 页面失败", false);
+        done(null);
+      });
+
       document.body.appendChild(iframe);
-      setTimeout(() => done(cachedResult || null), timeoutMs);
+      // load 之前就开始轮询：用户可能在 CSR 首屏文本就绪前点刷新
+      pollId = setInterval(tryExtract, 300);
+      setTimeout(() => {
+        if (finished) return;
+        if (!cachedResult) usageParseDiag.frameTimeout = true;
+        done(cachedResult || null);
+      }, timeoutMs);
     });
+  }
+
+  /**
+   * 后台用量页标记：https://gemini.google.com/u/<n>/usage#gqc-usage-sync=<nonce>
+   * 只用于脚本自己打开的顶层标签页。hash 不会发给服务器，也不参与页面路由。
+   */
+  function readHelperSyncNonce() {
+    try {
+      const hash = window.location.hash || "";
+      if (!hash.startsWith("#")) return null;
+      const params = new URLSearchParams(hash.slice(1));
+      const nonce = params.get(HELPER_SYNC_HASH_KEY);
+      return typeof nonce === "string" && nonce ? nonce : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function buildUsageHelperUrl(nonce, preferredUrl) {
+    const base = preferredUrl || getOfficialUsageUrl();
+    const url = new URL(base, window.location.origin);
+    url.hash = `${HELPER_SYNC_HASH_KEY}=${encodeURIComponent(nonce)}`;
+    return url.toString();
+  }
+
+  function readSyncBridgePayload(raw) {
+    if (typeof raw !== "string" || !raw) return null;
+    try {
+      const payload = JSON.parse(raw);
+      if (!payload || typeof payload !== "object") return null;
+      if (typeof payload.nonce !== "string" || !payload.nonce) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  function applyUsageHelperPayload(payload) {
+    if (!payload || payload.ok !== true) return false;
+    if (!payload.fiveHour && !payload.weekly) return false;
+    const committed = commitOfficialQuota(
+      {
+        timestamp:
+          typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)
+            ? payload.timestamp
+            : Date.now(),
+        fiveHour: payload.fiveHour || null,
+        weekly: payload.weekly || null,
+        strategy: "usage-text",
+      },
+      "usage-page",
+      false,
+    );
+    if (committed) usageParseDiag.textHit = true;
+    return committed;
+  }
+
+  /**
+   * 顶层后台标签页模式：只有完整的官方 /usage 页面才会渲染出真实文本。
+   * 解析成功后把结果写到同步桥，原页面通过 storage 事件立即取回；
+   * 本页完成写入后自动关闭，不留下常驻标签页。
+   */
+  function runUsageHelperSync(nonce) {
+    const deadline = Date.now() + USAGE_HELPER_TIMEOUT_MS;
+    let finished = false;
+    let partialResult = null;
+    let partialTimer = null;
+    let pollId = null;
+
+    const finish = (result, reason) => {
+      if (finished) return;
+      finished = true;
+      if (pollId) clearInterval(pollId);
+      if (partialTimer) clearTimeout(partialTimer);
+
+      let payload;
+      if (result) {
+        result.timestamp = Date.now();
+        commitOfficialQuota(result, "usage-page", true);
+        payload = {
+          nonce,
+          ok: true,
+          timestamp: result.timestamp,
+          fiveHour: result.fiveHour || null,
+          weekly: result.weekly || null,
+          reason: "",
+        };
+      } else {
+        payload = {
+          nonce,
+          ok: false,
+          timestamp: Date.now(),
+          fiveHour: null,
+          weekly: null,
+          reason: reason || "官方 /usage 页面未返回可解析的用量文本",
+        };
+      }
+
+      try {
+        localStorage.setItem(STORAGE_KEY_SYNC_BRIDGE, JSON.stringify(payload));
+      } catch {
+        // 存储不可用时仍保留官方缓存写入（若成功）
+      }
+      try {
+        history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search,
+        );
+      } catch {
+        // 忽略地址栏清理失败
+      }
+      setTimeout(() => {
+        try {
+          window.close();
+        } catch {
+          // 浏览器可能拒绝关闭非脚本打开的窗口
+        }
+      }, 250);
+    };
+
+    const attempt = () => {
+      if (finished) return;
+      if (!document.body) {
+        if (Date.now() >= deadline) finish(null, "官方 /usage 页面尚未就绪");
+        return;
+      }
+      const parsed = parseUsageDocument(document, "");
+      if (parsed && (parsed.fiveHour || parsed.weekly)) {
+        const has5h =
+          parsed.fiveHour &&
+          (parsed.fiveHour.pct !== null || parsed.fiveHour.resetAt !== null);
+        const has7d =
+          parsed.weekly &&
+          (parsed.weekly.pct !== null || parsed.weekly.resetAt !== null);
+        if (has5h && has7d) {
+          finish(parsed, "");
+          return;
+        }
+        partialResult = parsed;
+        if (!partialTimer) {
+          partialTimer = setTimeout(() => {
+            if (partialResult) finish(partialResult, "");
+            else finish(null, "官方 /usage 页面未在限时内给出完整用量");
+          }, 1500);
+        }
+        return;
+      }
+      if (Date.now() >= deadline) {
+        if (partialResult) finish(partialResult, "");
+        else finish(null, "官方 /usage 页面未在限时内呈现用量文本");
+      }
+    };
+
+    document.addEventListener("DOMContentLoaded", attempt, { once: true });
+    pollId = setInterval(attempt, 400);
+    attempt();
+  }
+
+  /**
+   * 在用户手势的同步阶段先占一个后台标签页（about:blank）。
+   *
+   * 浏览器只认点击发生的同步阶段：等 fetch / iframe 轮番失败后再 window.open
+   * 会被弹窗拦截策略直接拒绝，用户看到的就是「点刷新没有任何反应」。
+   * 先占位、拿到真实 /usage 地址后再导航过去，既不提前发请求，也不会被拦截。
+   */
+  function reserveUsageHelperWindow() {
+    let helperWindow = null;
+    try {
+      helperWindow = window.open("about:blank", "_blank");
+    } catch {
+      helperWindow = null;
+    }
+    if (!helperWindow) return null;
+    try {
+      helperWindow.blur();
+      window.focus();
+    } catch {
+      // 某些浏览器不允许主动切回焦点
+    }
+    return helperWindow;
+  }
+
+  function closeUsageHelperWindow(helperWindow) {
+    if (!helperWindow) return;
+    try {
+      if (!helperWindow.closed) helperWindow.close();
+    } catch {
+      // 忽略关闭失败
+    }
+  }
+
+  function requestUsageHelperSync(preferredUrl, reservedWindow = null) {
+    if (pendingUsageHelper && pendingUsageHelper.promise) {
+      return pendingUsageHelper.promise;
+    }
+
+    const nonce = `${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+    const helperUrl = buildUsageHelperUrl(nonce, preferredUrl);
+
+    let helperWindow = reservedWindow;
+    if (helperWindow) {
+      let stillOpen = false;
+      try {
+        stillOpen = !helperWindow.closed;
+      } catch {
+        stillOpen = false;
+      }
+      if (stillOpen) {
+        try {
+          // about:blank 与当前页同源，允许直接导航到官方用量页
+          helperWindow.location.replace(helperUrl);
+        } catch {
+          closeUsageHelperWindow(helperWindow);
+          helperWindow = null;
+        }
+      } else {
+        helperWindow = null;
+      }
+    }
+    if (!helperWindow) {
+      try {
+        helperWindow = window.open(helperUrl, "_blank");
+      } catch {
+        helperWindow = null;
+      }
+    }
+    if (!helperWindow) {
+      usageParseDiag.helperReason = "浏览器拦截了后台用量页窗口";
+      return Promise.resolve({
+        ok: false,
+        reason: usageParseDiag.helperReason,
+      });
+    }
+
+    usageParseDiag.helperAttempts += 1;
+    try {
+      helperWindow.blur();
+      window.focus();
+    } catch {
+      // 某些浏览器不允许主动切回焦点
+    }
+
+    const promise = new Promise((resolve) => {
+      let settled = false;
+      let pollId = null;
+      let timer = null;
+      let closedCheckScheduled = false;
+
+      const finish = (payload) => {
+        if (settled) return;
+        settled = true;
+        if (pollId) clearInterval(pollId);
+        if (timer) clearTimeout(timer);
+        if (pendingUsageHelper && pendingUsageHelper.nonce === nonce) {
+          pendingUsageHelper = null;
+        }
+        const ok = !!(payload && payload.ok === true);
+        usageParseDiag.helperOK = ok;
+        if (payload && typeof payload.reason === "string" && payload.reason) {
+          usageParseDiag.helperReason = payload.reason;
+        }
+        if (!ok) {
+          try {
+            if (!helperWindow.closed) helperWindow.close();
+          } catch {
+            // 忽略关闭失败
+          }
+        }
+        resolve(
+          payload || {
+            ok: false,
+            reason: "后台用量页未返回同步结果",
+          },
+        );
+      };
+
+      const readBridge = () => {
+        if (settled) return;
+        try {
+          const payload = readSyncBridgePayload(
+            localStorage.getItem(STORAGE_KEY_SYNC_BRIDGE),
+          );
+          if (payload && payload.nonce === nonce) finish(payload);
+        } catch {
+          // 忽略存储读取异常
+        }
+      };
+
+      pendingUsageHelper = { nonce, finish, promise: null, window: helperWindow };
+
+      pollId = setInterval(() => {
+        readBridge();
+        if (settled) return;
+        let closed = false;
+        try {
+          closed = !!helperWindow.closed;
+        } catch {
+          closed = false;
+        }
+        if (closed && !closedCheckScheduled) {
+          closedCheckScheduled = true;
+          setTimeout(() => {
+            readBridge();
+            if (!settled) {
+              finish({
+                ok: false,
+                reason: "后台用量页已关闭，但没有返回可解析的用量文本",
+              });
+            }
+          }, 500);
+        }
+      }, 250);
+
+      timer = setTimeout(() => {
+        readBridge();
+        if (!settled) {
+          finish({
+            ok: false,
+            reason: "后台用量页未在限时内返回用量文本",
+          });
+        }
+      }, USAGE_HELPER_WAIT_MS);
+    });
+
+    pendingUsageHelper.promise = promise;
+    return promise;
   }
 
   async function syncOfficialUsage(isManualClick = false) {
     if (activeSyncPromise) return activeSyncPromise;
 
+    const onUsagePage = /\/usage\/?$/.test(window.location.pathname);
+    // 手动刷新且不在官方 /usage 页面时，先在本次点击的同步阶段占住后台标签页。
+    // 之后无论走 RPC、HTML 直读还是后台页，都能保证有一个可用的窗口句柄。
+    const manualHelperWindow =
+      isManualClick && !onUsagePage ? reserveUsageHelperWindow() : null;
+
     quotaState.isSyncing = true;
     if (isManualClick) {
       quotaState.lastError = "";
+      quotaState.syncPhase = "同步官方 /usage 页面文本";
+    } else {
+      quotaState.syncPhase = "后台同步官方用量";
     }
     updateUI();
 
     activeSyncPromise = (async () => {
       try {
         // 0. 当前处于 /usage 页面时直接解析主 DOM
-        if (window.location.pathname.endsWith("/usage")) {
+        if (onUsagePage) {
           const direct = parseUsageDocument(document, "");
           if (direct && commitOfficialQuota(direct, "usage-page", true)) {
             return true;
@@ -2438,6 +2878,7 @@
         const usageUrls = getOfficialUsageUrls();
         let usagePageMissing = true;
         let usageUrl = usageUrls[0];
+        let probedUsageUrl = null;
         for (const candidateUrl of usageUrls) {
           usageUrl = candidateUrl;
           let resp;
@@ -2468,6 +2909,7 @@
             missing: usagePageMissing,
           };
           if (resp.ok && !usagePageMissing) {
+            probedUsageUrl = candidateUrl;
             const rawHtml = await resp.text();
             const doc = parseHtmlDocument(rawHtml);
             const fromFetch = doc
@@ -2483,15 +2925,57 @@
           }
         }
 
-        // 3. 同源隐藏 Iframe 等待 CSR 异步节点加载（/usage 不存在时直接跳过）
-        if (!usagePageMissing) {
-          const fromIframe = await extractViaSameOriginUsageIframe(usageUrl);
+        // 3. 手动刷新且不在 /usage：顶层后台标签页读取同一份官方页面文本。
+        //    只有顶层页面才会按 PC 布局完整渲染「Current usage / Weekly limit」；
+        //    同源 iframe 可能被 frame-ancestors 拒绝或只拿到空白文档。
+        //    人工点击优先走这条通路，避免把 12 秒 iframe 超时压在用户等待上。
+        let helperError = "";
+        // 文本通道只接受两种确定地址：探测通过的候选，或当前账号自身的路径。
+        // 无账号前缀且四个候选全部探测失败时，/u/3 之类的猜测地址可能把别的
+        // 账号额度写进缓存，此时宁可报「通道不可用」也不猜账号。
+        const verifiedUsageUrl =
+          probedUsageUrl || (getAccountPrefix() ? usageUrl : "");
+        if (isManualClick && !onUsagePage && verifiedUsageUrl) {
+          quotaState.syncPhase = "后台读取官方 /usage 页面文本";
+          updateUI();
+          const helperResult = await requestUsageHelperSync(
+            verifiedUsageUrl,
+            manualHelperWindow,
+          );
+          if (
+            helperResult &&
+            helperResult.ok === true &&
+            applyUsageHelperPayload(helperResult)
+          ) {
+            return true;
+          }
+          helperError =
+            helperResult && typeof helperResult.reason === "string"
+              ? helperResult.reason
+              : "后台官方 /usage 页面未返回用量文本";
+        }
+
+        // 4. 同源隐藏 Iframe 等待 CSR 异步节点加载
+        //    /usage 已重定向、或已被站点拒绝嵌入时直接跳过，不白等超时。
+        if (
+          !usagePageMissing &&
+          !renderedUsageFrameBlocked &&
+          verifiedUsageUrl
+        ) {
+          const fromIframe = await extractViaSameOriginUsageIframe(
+            verifiedUsageUrl,
+          );
           if (
             fromIframe &&
             commitOfficialQuota(fromIframe, "usage-page", true)
           ) {
             return true;
           }
+        }
+
+        if (helperError) {
+          quotaState.lastError = helperError;
+          return false;
         }
 
         quotaState.lastError = usagePageMissing
@@ -2504,7 +2988,10 @@
         return false;
       } finally {
         quotaState.isSyncing = false;
+        quotaState.syncPhase = "";
         activeSyncPromise = null;
+        // 没走后台页或后台页已结束时，把预留的空白标签页一并关掉
+        closeUsageHelperWindow(manualHelperWindow);
         updateUI();
       }
     })();
@@ -3437,9 +3924,13 @@
       init: "等待首次同步",
     };
 
-    statusSourceEl.textContent = quotaState.lastError
-      ? `状态: ${quotaState.lastError}`
-      : `数据源: ${sourceMap[quotaState.source] || "官方直连"}`;
+    // 同步进行中优先显示当前阶段，让「点了刷新」立刻有可见反馈
+    statusSourceEl.textContent =
+      quotaState.isSyncing && quotaState.syncPhase
+        ? `状态: ${quotaState.syncPhase}…`
+        : quotaState.lastError
+          ? `状态: ${quotaState.lastError}`
+          : `数据源: ${sourceMap[quotaState.source] || "官方直连"}`;
     statusSyncTimeEl.textContent = `最后同步: ${timeStr}`;
 
     for (const btn of choiceBtns) {
@@ -3462,11 +3953,30 @@
   }
 
   function bootstrap() {
+    // 由当前页打开的顶层后台标签页：只负责读取官方 /usage 页面文本、
+    // 写回同步桥并自动关闭，不渲染胶囊 UI。
+    const helperNonce = readHelperSyncNonce();
+    if (helperNonce) {
+      runUsageHelperSync(helperNonce);
+      return;
+    }
+
     restoreCachedOfficialQuota();
 
     window.addEventListener("storage", (e) => {
       if (e.key === STORAGE_KEY_OFFICIAL_CACHE) {
         restoreCachedOfficialQuota();
+        return;
+      }
+      if (e.key === STORAGE_KEY_SYNC_BRIDGE && e.newValue) {
+        const payload = readSyncBridgePayload(e.newValue);
+        if (
+          payload &&
+          pendingUsageHelper &&
+          payload.nonce === pendingUsageHelper.nonce
+        ) {
+          pendingUsageHelper.finish(payload);
+        }
       }
     });
 
@@ -3514,6 +4024,13 @@
     },
     sync() {
       return syncOfficialUsage(true);
+    },
+    /**
+     * 调试用：直接请求一次后台用量页同步（会新开一个后台标签页）。
+     * 浏览器通常只在用户手势内放行弹窗，控制台调用可能被拦截并返回 ok:false。
+     */
+    helperSync() {
+      return requestUsageHelperSync(getOfficialUsageUrls()[0], null);
     },
     parseResetText(text, nowMs = Date.now()) {
       return parseOfficialResetTextToTimestamp(text, nowMs);
@@ -3655,6 +4172,7 @@
         state: {
           source: quotaState.source,
           isSyncing: quotaState.isSyncing,
+          syncPhase: quotaState.syncPhase,
           lastSyncTime: quotaState.lastSyncTime,
           lastError: quotaState.lastError,
           fiveHour: { ...quotaState.fiveHour },
@@ -3680,6 +4198,17 @@
           responses: responseRing.length,
           usageBlocks: usageParseDiag.blocks,
           usageInitHit: usageParseDiag.initHit,
+          // 官方 /usage 文本通道：iframe 与后台标签页各自的进展
+          usageFrameAttempts: usageParseDiag.frameAttempts,
+          usageFrameLoads: usageParseDiag.frameLoads,
+          usageFrameBlocked: usageParseDiag.frameBlocked,
+          usageFrameRedirected: usageParseDiag.frameRedirected,
+          usageFrameTimeout: usageParseDiag.frameTimeout,
+          usageFrameTextLength: usageParseDiag.frameTextLength,
+          usageFrameParsed: usageParseDiag.frameParsed,
+          usageHelperAttempts: usageParseDiag.helperAttempts,
+          usageHelperOK: usageParseDiag.helperOK,
+          usageHelperReason: usageParseDiag.helperReason,
           // 拒绝计数：解释「为什么这次没数字」，避免再去猜官方字段
           rejected: { ...parseRejectDiag },
           usagePage: quotaState.usagePageStatus,
@@ -3717,6 +4246,9 @@
       pctHintFromKey,
       extractMetricFromCardText,
       commitOfficialQuota,
+      buildUsageHelperUrl,
+      readHelperSyncNonce,
+      readSyncBridgePayload,
       formatCompactCountdown,
       formatRemainingHuman,
     },

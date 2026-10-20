@@ -74,4 +74,28 @@ assert.equal(
   ]),
 );
 
+// 后台用量页同步：地址只在 hash 上带 nonce，不污染服务端路由与查询参数
+assert.equal(
+  window.__gqc._test.buildUsageHelperUrl(
+    "n1",
+    "https://gemini.google.com/u/1/usage",
+  ),
+  "https://gemini.google.com/u/1/usage#gqc-usage-sync=n1",
+);
+
+window.location.hash = "#gqc-usage-sync=abc";
+assert.equal(window.__gqc._test.readHelperSyncNonce(), "abc");
+window.location.hash = "#app";
+assert.equal(window.__gqc._test.readHelperSyncNonce(), null);
+
+const bridgePayload = window.__gqc._test.readSyncBridgePayload(
+  JSON.stringify({ nonce: "n1", ok: true, fiveHour: null, weekly: null }),
+);
+assert.equal(bridgePayload.nonce, "n1");
+assert.equal(window.__gqc._test.readSyncBridgePayload("not-json"), null);
+assert.equal(
+  window.__gqc._test.readSyncBridgePayload(JSON.stringify({ ok: true })),
+  null,
+);
+
 console.log("quota parser tests passed");
