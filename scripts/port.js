@@ -620,6 +620,8 @@ return "已点击签到，请核对站点提示";` }, [original.script]);
     // 输入法组合、长按重复与 AltGr（等价 Ctrl+Alt）不触发，避免干扰正常输入。
     if (event.repeat || event.isComposing || event.getModifierState?.("AltGraph") === true) return;
     if (!matchesHotkey(event, readHotkey())) return;
+    // 站点在 window 捕获阶段调用 stopPropagation 时，同目标的监听仍会执行；
+    // 这里不因 defaultPrevented 放弃，保证快捷键在页面拦截下依然可用。
     event.preventDefault();
     event.stopPropagation();
     openPort();

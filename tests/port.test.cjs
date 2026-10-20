@@ -314,6 +314,33 @@ async function main() {
     await hotkeyDialog.waitFor({ state: "visible" });
     await hotkeyPage.close();
 
+    // 页面在 window 捕获阶段拦截 keydown（preventDefault + stopPropagation）后，同目标的脚本监听仍应触发。
+    const intercepted = await context.newPage();
+    await intercepted.goto("https://intercept.example/");
+    await intercepted.evaluate(() => {
+      window.addEventListener("keydown", (event) => { event.preventDefault(); event.stopPropagation(); }, true);
+    });
+    await inject(intercepted);
+    await intercepted.keyboard.press("Control+Alt+P");
+    await intercepted.locator("#port-manager").locator("dialog").first().waitFor({ state: "visible" });
+    await intercepted.close();
+
+    // 未命中组合键时必须原样放行，避免脚本吞掉站点自身的键盘操作。
+    const passthrough = await context.newPage();
+    await passthrough.goto("https://passthrough.example/");
+    await passthrough.evaluate(() => {
+      window.__portPageKeys = [];
+      document.addEventListener("keydown", (event) => {
+        if (event.code.startsWith("Key")) window.__portPageKeys.push([event.code, event.defaultPrevented]);
+      }, true);
+    });
+    await inject(passthrough);
+    await passthrough.keyboard.press("Control+Alt+K");
+    await passthrough.keyboard.press("Control+Alt+P");
+    await passthrough.locator("#port-manager").locator("dialog").first().waitFor({ state: "visible" });
+    assert.deepEqual(await passthrough.evaluate(() => window.__portPageKeys), [["KeyK", false]], "只有完整命中快捷键才应接管页面键盘事件");
+    await passthrough.close();
+
     // 损坏卡片中断列表并提示具体存储键，避免静默丢弃数据。
     store["port:v1:card:corrupt-demo"] = { name: "", url: "ftp://corrupt.example/" };
     const corrupt = await context.newPage();
@@ -324,7 +351,7 @@ async function main() {
     assert.equal(await corrupt.evaluate(() => document.querySelector("#port-manager").shadowRoot.querySelectorAll("article").length), 0);
     await corrupt.close();
     delete store["port:v1:card:corrupt-demo"];
-    console.log("Port browser tests passed: CRUD, AND tags, search, upload, shared storage, task origin/replay, import/export, narrow layout, insecure-context id, open failure, script failures, task cleanup, polling, aria-pressed, dialog focus, hotkey");
+    console.log("Port browser tests passed: CRUD, AND tags, search, upload, shared storage, task origin/replay, import/export, narrow layout, insecure-context id, open failure, script failures, task cleanup, polling, aria-pressed, dialog focus, hotkey, keydown isolation");
   } finally { await browser.close(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
