@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.9.2
+// @version      0.9.3
 // @description  document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与官方用量页面，按窗口精确分流 5H / 7D 用量，重置倒计时基于官方重置时刻实时计算。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -18,7 +18,14 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "0.9.2";
+  const SCRIPT_VERSION = "0.9.3";
+  // 指示器形态清单：cycleStyleMode() 与设置面板共用，顺序即点击徽章时的轮换顺序。
+  const INDICATOR_MODES = [
+    { key: "bar", text: "横条" },
+    { key: "ring", text: "圆环" },
+    { key: "disk", text: "圆盘" },
+    { key: "decay", text: "崩坏" },
+  ];
   // =========================================================================
   // 1. 常量与持久化配置
   // =========================================================================
@@ -63,7 +70,7 @@
   };
 
   const DEFAULT_CONFIG = {
-    styleMode: "bar", // 'bar' | 'ring' | 'disk' | 'decay'
+    styleMode: "bar", // 可选形态见 INDICATOR_MODES；保留原有默认值
     pos: { right: 20, bottom: 78 },
   };
 
@@ -3212,6 +3219,10 @@
     .gc-pill-container:hover { border-color: rgba(255, 255, 255, 0.28); }
 
     .gc-capsule-head {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
       width: 16px;
       height: 16px;
       position: relative;
@@ -3238,6 +3249,9 @@
       line-height: 1;
     }
     .gc-pill-counter {
+      display: inline-block;
+      width: 4ch;
+      flex-shrink: 0;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 11px;
       font-weight: 700;
@@ -3245,6 +3259,11 @@
       font-variant-numeric: tabular-nums;
     }
     .gc-pill-timer {
+      display: inline-block;
+      width: 8ch;
+      flex-shrink: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 9.5px;
       color: #94a3b8;
@@ -3257,13 +3276,19 @@
       background: rgba(255, 255, 255, 0.12);
       border-radius: 999px;
       overflow: hidden;
-      display: none;
+      display: inline-block;
+      visibility: hidden;
+      box-sizing: border-box;
       flex-shrink: 0;
     }
     .gc-inline-fill {
       height: 100%;
       border-radius: 999px;
       transition: width 0.3s ease, background-color 0.3s ease;
+    }
+    .gc-capsule-head:focus-visible, .gc-choice-btn:focus-visible {
+      outline: 2px solid #38bdf8;
+      outline-offset: 2px;
     }
 
     .gc-v-divider {
@@ -3480,7 +3505,7 @@
   const choiceBtns = [];
 
   function cycleStyleMode() {
-    const modes = ["bar", "ring", "disk", "decay"];
+    const modes = INDICATOR_MODES.map((mode) => mode.key);
     const nextIdx = (modes.indexOf(config.styleMode) + 1) % modes.length;
     config.styleMode = modes[nextIdx];
     saveConfig(config);
@@ -3496,7 +3521,9 @@
 
     injectStyles();
 
-    headSlotEl = el("div", {
+    headSlotEl = el("button", {
+      type: "button",
+      "aria-label": "切换额度进度形态",
       className: "gc-capsule-head",
       title: "点击切换指示器形态（横条 / 圆环 / 圆盘 / 崩坏）",
       onclick: (e) => {
@@ -3615,12 +3642,7 @@
     ]);
 
     choiceBtns.length = 0;
-    const modes = [
-      { key: "bar", text: "横条" },
-      { key: "ring", text: "圆环" },
-      { key: "disk", text: "圆盘" },
-      { key: "decay", text: "崩坏" },
-    ];
+    const modes = INDICATOR_MODES;
     for (const m of modes) {
       const btn = el(
         "button",
@@ -3754,12 +3776,16 @@
     const color5h = getProgressColor(used5h);
     const color7d = getProgressColor(used7d);
 
-    if (mode === "bar") {
-      track5hEl.style.display = "inline-block";
+    // 始终保留相同宽度的槽位，隐藏图形时不移除布局空间。
+    const inlineMode = mode === "bar";
+    for (const track of [track5hEl, track7dEl]) {
+      track.style.visibility = inlineMode ? "visible" : "hidden";
+      track.dataset.mode = mode;
+    }
+    if (inlineMode) {
       fill5hEl.style.width = `${Math.min(100, Math.round(used5h * 100))}%`;
       fill5hEl.style.backgroundColor = color5h.hex;
 
-      track7dEl.style.display = "inline-block";
       fill7dEl.style.width = `${Math.min(100, Math.round(used7d * 100))}%`;
       fill7dEl.style.backgroundColor = color7d.hex;
 
@@ -3769,9 +3795,6 @@
       headSlotEl.appendChild(miniPill);
       return;
     }
-
-    track5hEl.style.display = "none";
-    track7dEl.style.display = "none";
 
     if (mode === "ring") {
       const radius = 5.8;
@@ -4042,7 +4065,9 @@
     statusSyncTimeEl.textContent = `最后同步: ${timeStr}`;
 
     for (const btn of choiceBtns) {
-      btn.classList.toggle("active", btn.dataset.style === config.styleMode);
+      const selected = btn.dataset.style === config.styleMode;
+      btn.classList.toggle("active", selected);
+      btn.setAttribute("aria-pressed", String(selected));
     }
   }
 
