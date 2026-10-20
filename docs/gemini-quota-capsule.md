@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：0.9.3
+- 版本：0.9.4
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -16,18 +16,17 @@
 
 ## 二、数据来源（按优先级）
 
-| 优先级 | 通道 | 说明 |
-| --- | --- | --- |
-| 0 | 当前页就是 `/usage` | 直接解析页面可见文本，不发起额外请求 |
-| 1 | 捕获并重放 `batchexecute`（`wrb.fr` 帧） | document-start 包装 `fetch` / `XMLHttpRequest`，命中配额帧后保存请求模板，后续直接重放。帧内只认结构化 `GXU_*` 池，不做标签猜测 |
-| 2 | 同源 `GET /usage` | 逐个探测候选地址（当前账号路径优先；无前缀时先从同源请求观察真实账号索引，观察不到才退回 `/u/0` ~ `/u/3` 有限探测）；只有 `resp.ok` 且最终地址与候选的 `/u/<n>/usage` 完全一致的响应才解析。登录态下该请求通常拿不到额度字段（CSR 页面），只作地址探测与 SSR / 内嵌 blob 兜底 |
-| 3 | 后台顶层标签页读取 `/usage`（仅手动刷新） | 当前不在 `/usage` 时，先在点击的同步阶段占一个 `about:blank` 窗口，探测到可用地址后导航到 `/usage#gqc-usage-sync=<nonce>`：后台页解析可见文本 → 写同步桥 → 自动关闭。只有顶层页面才会按 PC 布局渲染额度卡片 |
-| 4 | 隐藏同源 iframe 探测 `/usage` | 以 1280×900 桌面视口渲染并移出可视区域（1×1 会命中窄屏布局，卡片文本可能根本不渲染），`load` 之前就开始轮询；被明确拒绝嵌入时永久停用该通道，空白文档留 1.5 秒宽限后只放弃本轮 |
-| 5 | `AF_initDataCallback` 内嵌 blob | 仅兜底，且禁用标签启发式：它是页面内嵌数据 blob，与配额无关的 `session` / `week` / 样式文本极多 |
-| 6 | 本地缓存 | 仅用于首屏回显，恢复时 `updatedAt = 0`，会被任何新数据立即覆盖 |
+### v0.9.4 同步行为
 
-自动同步间隔 3 分钟；聊天响应返回后 1.8 秒追加一次静默同步；窗口到期瞬间再补一次。
-手动刷新（胶囊上的刷新按钮或 `__gqc.sync()`）与自动同步的区别：只有手动刷新且当前不在 `/usage` 时才会打开后台顶层标签页，自动同步不打开任何窗口。
+正常刷新现已直接请求官方 Usage 页面使用的同源 batchexecute RPC（jSf9Qc）。请求的 source-path 为当前账号的 /usage；实际不打开标签页、不创建 iframe、不 GET 用量页面、不改变当前地址。RPC 失败且当前页本身是 /usage 时，读取现有 DOM 文本。被动网络观察仍保留。
+
+启动后 500ms 自动请求；每 10 秒检查一次，超过 3 分钟未成功更新则补刷。聊天响应结束后 1.8 秒触发，回前台且数据过期时补刷。隐藏页面暂停自动请求，在途请求复用；成功后自动请求至少间隔 10 秒。失败退避 20、40、80、160、180 秒，手动刷新绕过退避。RPC 含响应体读取最多等待 12 秒。
+
+响应桶按 period 枚举分流：1 为五小时、2 为每周，未知枚举忽略。严格验证已用比例和官方重置时间，纳秒换算至毫秒；不从重置时刻猜测桶类型。
+
+缓存键为原 v8 键加冒号及账号路径（/u/1 等，无前缀为 default）。旧共享缓存不迁移，以免误读其他账号用量。Google 内部 RPC 可能变更，真实登录态和油猴管理器行为待确认。
+
+helperSync 仅保留为显式调试入口，会新开页面。短期缓存只用于首屏回显；当前页面文本解析与已有结构化字段观察继续保留。
 
 ## 三、解析策略
 
@@ -75,10 +74,10 @@
 优先按官方页面文本解析百分比与重置提示：
 
 - `/u/<账号>/usage` 页面中的 `Current usage` 和 `Weekly limit` 是两个明确的文本分段；每段只读取其中的 `N% used` 与紧邻的 `Resets ...`，不再从整页任意数字猜窗口归属。
-- 当主页面是 `/app` 时，脚本先从同源请求（`batchexecute` 等）的路径里观察真实账号索引 `/u/<n>`，据此只请求该账号的 `/usage`；观察不到时才有限探测 `/u/0/usage` 至 `/u/3/usage`。
-- 探测结果必须与候选地址的账号路径完全一致：`/u/3/usage` 被重定向到 `/u/0/usage` 时正文属于另一个账号，既不写入缓存，也不据此打开后台标签页，而是继续换下一个候选。
-- 同一份文本有三条取得路径，共用同一个 `parseUsageDocument`：当前页就是 `/usage` 时直接读主 DOM；手动刷新且不在 `/usage` 时由后台顶层标签页读取并通过 `__gemini_quota_sync_bridge_v1__` 回传；其余情况用隐藏同源 iframe 读取。
-- 后台顶层标签页与 iframe 都必须按桌面视口渲染：Gemini 的窄屏布局会把 `Current usage` / `Weekly limit` 卡片文本藏起来，`innerText` 里自然找不到。
+- 无前缀页面从同源请求观察账号路径，主动 RPC 仅请求当前账号，不猜测多个账号。
+- 主动 RPC 返回时再次验证账号路径，忽略请求期间已切换账号的旧响应。
+- 当前页是 /usage 且 RPC 失败时读取现有页面文本；显式调试入口 helperSync 可另开页面读取。
+
 - 例如 `1% used` 会转换为剩余 99%，`2% used` 会转换为剩余 98%；`Resets at 3:43 PM` 与 `Resets Oct 23 at 7:43 AM` 分别作为 5 小时和每周窗口的官方重置时刻。
 - 只有官方文本分段缺失时，才继续使用 DOM 卡片、进度条和结构化响应作为补缺路径。
 
@@ -134,21 +133,18 @@
 | Key | 用途 |
 | --- | --- |
 | `__gemini_quota_capsule_cfg_v5__` | 形态、拖拽位置、调试开关 |
-| `__gemini_quota_official_cache_v8__` | 最近一次官方配额快照（含 `pct` 剩余 / `usedPct` 已用 / `confidence` / `updatedAt`） |
+| 原缓存键 + 冒号 + 账号路径 | 按 /u/n 或 default 隔离；旧共享缓存不迁移 |
 | `__gemini_quota_sync_bridge_v1__` | 后台用量页 → 当前页的单次同步结果（带 `nonce`，写完即被读取），不作为数据源 |
 
 源码顶部常量：
 
 | 常量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `AUTO_SYNC_INTERVAL_MS` | 3 分钟 | 自动同步间隔 |
+| `AUTO_SYNC_INTERVAL_MS` | 3 分钟 | 数据过期阈值 |
 | `FIVE_HOUR_MS` / `WEEK_MS` | 5h / 7d | 窗口长度，用于重置时间校验 |
 | `RESET_SLACK_MS` | 30 分钟 | 允许的服务端/本地时钟抖动 |
 | `FRESH_MS` | 10 分钟 | 置信度保护的有效期 |
 | `MAX_CACHE_AGE_MS` | 10 分钟 | 缓存允许回显的最大年龄 |
-| `USAGE_FRAME_WIDTH_PX` / `USAGE_FRAME_HEIGHT_PX` | 1280 / 900 | 隐藏 iframe 的桌面视口尺寸 |
-| `USAGE_FRAME_TIMEOUT_MS` | 12 秒 | iframe 等待额度文本的上限 |
-| `USAGE_FRAME_BLANK_GRACE_MS` | 1.5 秒 | iframe 拿到空白文档后的宽限时间，避免把临时初始化误判为拒绝嵌入 |
 | `USAGE_HELPER_TIMEOUT_MS` | 20 秒 | 后台顶层标签页自行解析的上限 |
 | `USAGE_HELPER_WAIT_MS` | 30 秒 | 当前页等待后台页回传的上限 |
 
@@ -188,13 +184,13 @@ __gqc.setDebug(true)   // 打开调试日志
 
 | 字段 | 含义 |
 | --- | --- |
-| `usageFrameAttempts` / `usageFrameLoads` | iframe 尝试次数 / 实际触发 `load` 的次数 |
-| `usageFrameBlocked` / `usageFrameRedirected` | 站点拒绝嵌入（`frame-ancestors`）、iframe 被重定向离开 `/usage` |
-| `usageFrameTimeout` | 等到超时也没有可解析文本 |
-| `usageFrameTextLength` / `usageFrameParsed` | iframe 内可见文本长度 / 是否解析出用量 |
+
+
+
+
 | `usageHelperAttempts` / `usageHelperOK` / `usageHelperReason` | 后台顶层标签页的尝试次数 / 是否成功 / 失败原因 |
 
-`__gqc.dump().state.syncPhase` 是当前同步阶段：点刷新后先显示「同步官方 /usage 页面文本」，改走后台页时变成「后台读取官方 /usage 页面文本」，同步结束清空。控制台直接调用 `helperSync()` 不在用户手势里，浏览器通常会拦截弹窗并返回 `ok:false`（`reason: 浏览器拦截了后台用量页窗口`）；要验证该通道请直接点胶囊上的刷新按钮。
+同步期间 state.syncPhase 为「静默同步官方用量」，结束清空。失败保留 lastError 并自动退避重试，不自动打开页面。
 
 ## 九、回归验证
 
@@ -221,14 +217,20 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - **当前没有已验证的官方额度字段。** `GXU_*` / `getUsageInfo.pools` 尚未在真实响应中出现；附件取证只确认登录态请求成功触发了 `BardChatUi/data/batchexecute?rpcids=ESY5D`，响应长度约 166 字节，但旧探针没有保存其正文，因此尚不能判断它是否与配额有关。脚本不得把 spinner 的 `aria-valuenow`、WIZ 全局文本或无方向百分比当作配额。
 - 当前版本会保留最近几条受限长度的 batchexecute 响应用于诊断，并记录 `nonQuotaResponses` / `responseReadFailures`；只有通过结构化字段验证的响应才会写入胶囊。
 - 百分比若是无方向词的裸数字（既非 `used` 也非 `remaining`），只能按官方页面默认口径「已用」解释；这类来源不会被当成高置信度数据。
-- `/usage` 页面是纯前端渲染、不产生可捕获帧，只能依赖可见文本通道（后台顶层标签页 / 同源 iframe）。
-- 手动刷新且不在 `/usage` 时会在后台打开一个 `/usage` 标签页，解析完成后自动关闭；若浏览器弹窗策略拦截该窗口，胶囊会显示「浏览器拦截了后台用量页窗口」，需要在站点权限里允许弹出窗口。该通道依赖官方页面结构与登录态，目前尚未在带登录态的线上环境实测（待确认）。
-- 自动同步（3 分钟周期）不打开任何窗口，只走捕获 RPC 与同源请求 / iframe；被站点拒绝嵌入后 iframe 通道停用，此后自动同步只能依赖 RPC 与 SSR。
+
+
+
 - 窗口翻篇的瞬间会显示 `--%`，直到下一次同步（≤3 分钟，或点刷新按钮）拿回新窗口的真实数字。
 - 多账号切换后最多等待一个同步周期（≤3 分钟）才会刷新；可点刷新按钮或调用 `__gqc.sync()`。
 - `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
 
 ## 十一、版本历史
+
+### v0.9.4
+
+- 官方用量 RPC 静默刷新、启动及周期自动同步、回前台补刷、请求超时与失败退避。
+- 移除正常刷新中的 iframe、页面探测与弹窗占位；缓存按账号隔离。
+- 解析与浏览器自动刷新回归通过；真实登录态待确认。
 
 ### v0.9.3
 
