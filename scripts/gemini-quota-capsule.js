@@ -3220,6 +3220,13 @@
     }
     .gc-pill-container:active { cursor: grabbing; }
     .gc-pill-container:hover { border-color: rgba(255, 255, 255, 0.28); }
+    @media (max-width: 420px) {
+      #gc-pill-root .gc-pill-container { gap: 1px; }
+      #gc-pill-root .gc-metric-group { gap: 1px; }
+      #gc-pill-root .gc-pill-badge { padding-inline: 1px; }
+      #gc-pill-root .gc-pill-counter { font-size: 10px; }
+      #gc-pill-root .gc-pill-timer { font-size: 8px; }
+    }
 
     .gc-capsule-head {
       padding: 0;
@@ -3305,7 +3312,7 @@
       /* 电池内胆改用小圆角，避免在方形外壳里出现胶囊形的圆头。 */
       border-radius: 1px;
     }
-    .gc-capsule-head:focus-visible, .gc-choice-btn:focus-visible {
+    .gc-capsule-head:focus-visible, .gc-choice-btn:focus-visible, .gc-btn-icon:focus-visible {
       outline: 2px solid #38bdf8;
       outline-offset: 2px;
     }
@@ -3418,6 +3425,12 @@
       100% { transform: translate(0, 0) rotate(0deg); }
     }
     .gc-state-critical { animation: gc-jitter 0.18s infinite linear; }
+    @media (prefers-reduced-motion: reduce) {
+      #gc-pill-root *, #gc-pill-root *::before, #gc-pill-root *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
 
     #gc-pill-drawer {
       position: absolute;
@@ -3522,6 +3535,7 @@
   let statusSourceEl = null;
   let statusSyncTimeEl = null;
   const choiceBtns = [];
+  let lastIndicatorRender = null;
 
   function cycleStyleMode() {
     const modes = INDICATOR_MODES.map((mode) => mode.key);
@@ -3784,10 +3798,18 @@
 
   function renderIndicatorHead(mode, usedRatio5h, usedRatio7d) {
     if (!headSlotEl) return;
-    headSlotEl.textContent = "";
 
     const used5h = Math.max(0, Math.min(1, usedRatio5h));
     const used7d = Math.max(0, Math.min(1, usedRatio7d));
+    // 倒计时每秒更新，但图形只依赖形态与两段用量。输入未变时保留节点，
+    // 避免重复创建 SVG / CSS 图形及重启崩坏动画。
+    if (lastIndicatorRender !== null &&
+        lastIndicatorRender.head === headSlotEl &&
+        lastIndicatorRender.mode === mode &&
+        lastIndicatorRender.used5h === used5h &&
+        lastIndicatorRender.used7d === used7d) return;
+    lastIndicatorRender = { head: headSlotEl, mode, used5h, used7d };
+    headSlotEl.textContent = "";
     // 入参即「已用」比例：填充量与颜色同向，用得越多条越满
     const dominantRatio = Math.max(used5h, used7d);
     const dominantUsed = dominantRatio;

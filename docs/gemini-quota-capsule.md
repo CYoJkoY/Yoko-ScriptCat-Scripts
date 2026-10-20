@@ -124,7 +124,8 @@
 - 胶囊展示 **5 小时** / **每周** 两组**已用**百分比与倒计时（徽章文案即「5小时」「每周」），悬停显示已用 / 剩余、官方重置时刻、剩余时长与频次用量。
   显示口径是「已用」：百分比越高表示用得越多，与状态里的 `pct`（剩余）相反，换算只发生在渲染层。
 - 左侧徽章切换指示形态，共 7 种：横条 / 圆环 / 圆盘 / 崩坏 / 分段 / 电池 / 双柱（`bar` / `ring` / `disk` / `decay` / `segments` / `battery` / `columns`）。填充量与配色同向，均按「已用」绘制（`<50%` 翡翠绿、`<75%` 琥珀金、`<90%` 炽烈橙、`≥90%` 崩坏猩红）。徽章是原生 `button`，可点击也可键盘聚焦后切换。
-- 横条 / 分段 / 电池三种形态共用两段 24px 进度槽位；圆环 / 圆盘 / 崩坏 / 双柱把图形画在徽章内，槽位只隐藏（`visibility: hidden`）而不移除，因此切换任何形态都不会改变胶囊整体宽度。百分比与倒计时文本按固定字宽（`4ch` / `8ch`）渲染，位数变化同样不撑宽胶囊。
+- 横条 / 分段 / 电池三种形态共用两段 24px 进度槽位；圆环 / 圆盘 / 崩坏 / 双柱把图形画在徽章内，槽位只隐藏（`visibility: hidden`）而不移除，因此切换任何形态都不会改变胶囊整体宽度。百分比与倒计时文本按固定字宽（`4ch` / `8ch`）渲染，位数变化同样不撑宽胶囊。420px 以下统一压缩间距和字号，以适配窄窗口，形态切换仍保持宽度一致。
+- 形态和用量未变化时复用徽章节点，每秒倒计时更新不再重建图形；系统启用减少动态效果时关闭动画与过渡，刷新和设置按钮保留键盘焦点提示。
 - 已用达到 100% 时倒计时位置显示「已用尽」。
 - 拖拽位置、形态写入 `localStorage`，刷新后恢复。
 
@@ -201,7 +202,7 @@ __gqc.setDebug(true)   // 打开调试日志
 
 1. 语法检查：`node --check scripts/gemini-quota-capsule.js`
 2. 解析器回归：`node tests/gemini-quota-capsule-parser.test.js`
-3. 布局回归：`node tests/gemini-quota-capsule-layout.test.cjs` —— 用 Playwright 在空白页注入脚本（把入口 `bootstrap()` 换成 `createDOM()`），对 3 组用量（0 / 42 / 100）× 7 种形态逐个切换，断言胶囊宽度在所有组合下完全一致、两段槽位恒为 24px、徽章内图形节点数恒为 1。未装 Playwright 时自动跳过（退出码 0）；本机运行需 `$env:GQC_PLAYWRIGHT_MODULE='<playwright 模块目录>'`，浏览器通道可用 `$env:GQC_BROWSER_CHANNEL` 指定，默认先试 `msedge` 再试随包 Chromium。
+3. 布局回归：`node tests/gemini-quota-capsule-layout.test.cjs` —— 用 Playwright 在空白页注入脚本（把入口 `bootstrap()` 换成 `createDOM()`），对 3 组用量（0 / 42 / 100）× 7 种形态逐个切换，断言胶囊宽度在所有组合下完全一致、两段槽位恒为 24px、徽章内图形节点数恒为 1。另覆盖 320 / 375 / 768px 窗口、每形态连续 1000 次更新的节点复用与用量变化重绘、双柱独立比例、键盘轮换与重载恢复、减少动态效果及未知 / 用尽 / 到期 / 同步中状态。缺少 Playwright 时失败，防止未执行却误报通过；本机运行需 `$env:GQC_PLAYWRIGHT_MODULE='<playwright 模块目录>'`，浏览器通道可用 `$env:GQC_BROWSER_CHANNEL` 指定，默认先试 `msedge` 再试随包 Chromium。
 4. 语义自测：在页面控制台用 `__gqc._test` 直接调用纯函数，例如
 
 ```js
@@ -232,7 +233,7 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 ### v0.9.3
 
 - **新增三种额度消耗形态**：分段（`segments`）、电池（`battery`）、双柱（`columns`），与原有横条 / 圆环 / 圆盘 / 崩坏共 7 种。分段用 repeating-linear-gradient 遮罩把两段进度条切成五格，填充比例仍按「已用」精确渲染；电池给进度条描一圈边框、填充即电量；双柱在徽章内用两个 SVG 柱分别表示 5 小时与每周，柱高按「已用」比例。所有形态沿用同一套「已用」口径与颜色阈值（`<50%` 翡翠绿、`<75%` 琥珀金、`<90%` 炽烈橙、`≥90%` 崩坏猩红）。
-- **修复切换形态时胶囊宽度变化**：根因有两处。其一，两段进度槽位 `.gc-inline-track` 原先只在横条模式下 `display:none`、其余模式不占位，切到非横条形态后槽位消失，胶囊整体宽度随之收窄；现改为始终保留槽位，非横条形态只设 `visibility:hidden` 隐藏图形而不移除布局空间。其二，百分比与倒计时文本长度会随数值变化（`0%` ↔ `100%`、`05:30:00` ↔ `3d 12h`）而撑宽或收窄，现将 `.gc-pill-counter` 固定为 `4ch`、`.gc-pill-timer` 固定为 `8ch` 并省略溢出。修复后 7 种形态 × 任意用量下胶囊宽度恒定。
+- **修复切换形态时胶囊宽度变化**：根因有两处。其一，两段进度槽位 `.gc-inline-track` 原先只在横条模式下显示、其余模式 `display:none` 不占位，切到非横条形态后槽位消失，胶囊整体宽度随之收窄；现改为始终保留槽位，非横条形态只设 `visibility:hidden` 隐藏图形而不移除布局空间。其二，百分比与倒计时文本长度会随数值变化（`0%` ↔ `100%`、`05:30:00` ↔ `3d 12h`）而撑宽或收窄，现将 `.gc-pill-counter` 固定为 `4ch`、`.gc-pill-timer` 固定为 `8ch` 并省略溢出。修复后 7 种形态 × 任意用量下胶囊宽度恒定。
 - 形态清单集中到 `INDICATOR_MODES` 常量，`cycleStyleMode()` 与设置面板共用，避免两处列表漂移；左侧徽章由 `div` 改为原生 `button`（`type=button` + `aria-label`），设置面板按钮补 `aria-pressed`，可键盘操作。
 - `DEFAULT_CONFIG.styleMode` 默认值仍为 `bar`，配置 Key（`__gemini_quota_capsule_cfg_v5__`）、缓存键（v8）与置信度保护均未改动。
 
