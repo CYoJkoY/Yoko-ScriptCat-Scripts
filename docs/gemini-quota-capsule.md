@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：1.0.1
+- 版本：1.0.3
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -16,11 +16,18 @@
 
 ## 二、数据来源（按优先级）
 
-### v0.9.4 同步行为
+### 1.0.3 同步行为
 
-正常刷新现已直接请求官方 Usage 页面使用的同源 batchexecute RPC（jSf9Qc）。请求的 source-path 为当前账号的 /usage；实际不打开标签页、不创建 iframe、不 GET 用量页面、不改变当前地址。RPC 失败且当前页本身是 /usage 时，读取现有 DOM 文本。被动网络观察仍保留。
+同步按「静默优先」的顺序逐级尝试，每一级都使用当前登录态：
 
-启动后 500ms 自动请求；每 10 秒检查一次，超过 3 分钟未成功更新则补刷。聊天响应结束后 1.8 秒触发，回前台且数据过期时补刷。隐藏页面暂停自动请求，在途请求复用；成功后自动请求至少间隔 10 秒。失败退避 20、40、80、160、180 秒，手动刷新绕过退避。RPC 含响应体读取最多等待 12 秒。
+1. 当前页就是 `/usage` 时直接读主 DOM，不额外发请求。
+2. 重放官方页面自己发出过的 `jSf9Qc` 请求，保留 Google 实际使用的参数编码。
+3. 用当前登录态自建 `batchexecute`：`f.req` 的调用参数是 JSON 文本 `"[]"`，不是裸数组；source-path 为当前账号的 `/usage`。
+4. 静默 GET `/usage`：已知账号前缀时请求 `/u/<n>/usage`，否则请求裸 `/usage`，由 Google 解析到默认登录账号。`/app` 上这次解析属于尽力而为的默认账号归属（待确认）；已知前缀的候选如果最终落到别的 `/u/<n>/usage`，正文一律丢弃。
+5. 隐藏的同源 iframe 加载同一地址：当静态 HTML 拿不到可解析文本、或只拿到一个窗口时，用真实渲染补齐。
+6. 只有手动点击刷新才走最后一级——在后台标签页读取 `/usage` 文本；自动同步永远不会走到这里。
+
+自动路径不跳转、不打开可见标签页、不改变地址栏，因此旧版「一闪而过」不会回来。启动后 500ms 自动请求；每 10 秒检查一次，超过 3 分钟未成功更新则补刷。聊天响应结束后 1.8 秒触发，回前台且数据过期时补刷。隐藏页面暂停自动请求，在途请求复用；成功后自动请求至少间隔 10 秒。失败退避 20、40、80、160、180 秒，手动刷新绕过退避。每个请求含响应体读取最多等待 12 秒。后台标签页只在官方 RPC 连续失败、同源 iframe 处于冷却期、且当前没有同步在跑时，于同步开始的同步段（任何 await 之前）预留；连点复用同一次同步，最多产生一个标签页。
 
 响应桶按 period 枚举分流：1 为五小时、2 为每周，未知枚举忽略。严格验证已用比例和官方重置时间，纳秒换算至毫秒；不从重置时刻猜测桶类型。
 
@@ -74,9 +81,10 @@ helperSync 仅保留为显式调试入口，会新开页面。短期缓存只用
 优先按官方页面文本解析百分比与重置提示：
 
 - `/u/<账号>/usage` 页面中的 `Current usage` 和 `Weekly limit` 是两个明确的文本分段；每段只读取其中的 `N% used` 与紧邻的 `Resets ...`，不再从整页任意数字猜窗口归属。
-- 无前缀页面从同源请求观察账号路径，主动 RPC 仅请求当前账号，不猜测多个账号。
+- 无前缀页面只从本次会话发往 `batchexecute` / `BardChatUi` 的请求路径观察账号，不采信站内链接或 `/usage` 请求（后者可能落到默认账号）。主动 RPC 仅请求当前账号，不猜测多个账号。静默 GET 与 iframe 在未知前缀时使用裸 `/usage`——它就是当前登录账号的页面；只有这种「确实不知道前缀」的场景才允许最终路径被解析成 `/u/<n>/usage`，已知前缀时最终路径必须与候选逐字一致，落到其他账号则丢弃。
 - 主动 RPC 返回时再次验证账号路径，忽略请求期间已切换账号的旧响应。
-- 当前页是 /usage 且 RPC 失败时读取现有页面文本；显式调试入口 helperSync 可另开页面读取。
+- 当前页是 /usage 且 RPC 失败时读取现有页面文本；RPC 全部失败时依次尝试静默 GET 探测与隐藏 iframe，两者都拿不到时才由手动刷新启用后台标签页。
+- `DOMParser` 产出的文档不参与布局：`innerText` 恒为空，`textContent` 又把相邻块级元素粘成一行（`12% usedResets in 2 hrWeekly limit...`）。解析前需在块级边界补换行并剔除 `script` / `style` 正文，否则按行分段只能读到第一个窗口——这是旧版 GET 探测「只解析出 5H、随后回落开页面」的根因。
 
 - 例如 `1% used` 会转换为剩余 99%，`2% used` 会转换为剩余 98%；`Resets at 3:43 PM` 与 `Resets Oct 23 at 7:43 AM` 分别作为 5 小时和每周窗口的官方重置时刻。
 - 只有官方文本分段缺失时，才继续使用 DOM 卡片、进度条和结构化响应作为补缺路径。
@@ -149,6 +157,9 @@ helperSync 仅保留为显式调试入口，会新开页面。短期缓存只用
 | `RESET_SLACK_MS` | 30 分钟 | 允许的服务端/本地时钟抖动 |
 | `FRESH_MS` | 10 分钟 | 置信度保护的有效期 |
 | `MAX_CACHE_AGE_MS` | 10 分钟 | 缓存允许回显的最大年龄 |
+| `USAGE_FRAME_TIMEOUT_MS` | 12 秒 | 静默 GET / 隐藏 iframe 的单次等待上限 |
+| `USAGE_FRAME_BLANK_GRACE_MS` | 1.5 秒 | iframe 文档空白时的额外等待，仍空白才判定不可用 |
+| `USAGE_FRAME_RETRY_COOLDOWN_MS` | 10 分钟 | 同源 iframe 被判定不可用后的冷却期，避免反复试错 |
 | `USAGE_HELPER_TIMEOUT_MS` | 20 秒 | 后台顶层标签页自行解析的上限 |
 | `USAGE_HELPER_WAIT_MS` | 30 秒 | 当前页等待后台页回传的上限 |
 
@@ -189,11 +200,13 @@ __gqc.setDebug(true)   // 打开调试日志
 
 | 字段 | 含义 |
 | --- | --- |
-
-
-
-
+| `usageFrameAttempts` / `usageFrameLoads` | 隐藏 iframe 的创建次数 / 加载完成次数 |
+| `usageFrameBlocked` / `usageFrameRedirected` / `usageFrameTimeout` / `usageFrameReason` | iframe 是否因空白、跨账号重定向或超时被判为不可用，以及具体原因 |
+| `usageFrameTextLength` / `usageFrameParsed` | iframe 读到的文本长度 / 是否解析出用量 |
+| `usageRpcId` / `usageRpcError` | 主动 RPC 的 rpcId 与失败原因 |
 | `usageHelperAttempts` / `usageHelperOK` / `usageHelperReason` | 后台顶层标签页的尝试次数 / 是否成功 / 失败原因 |
+| `usageHelperError` | 手动后台标签页最终失败原因（自动同步不会写这一项） |
+| `usagePage` | 最近一次静默 GET 的状态码、最终地址、是否重定向、是否同账号；`resolvedPrefix` 为最终地址里的 `/u/<n>`，`assumedAccount` 表示裸 `/usage` 被解析到默认账号（`/app` 上待确认） |
 
 同步期间 state.syncPhase 为「静默同步官方用量」，结束清空。失败保留 lastError 并自动退避重试，不自动打开页面。
 
@@ -203,7 +216,7 @@ __gqc.setDebug(true)   // 打开调试日志
 
 1. 语法检查：`node --check scripts/gemini-quota-capsule.js`
 2. 解析器回归：`node tests/gemini-quota-capsule-parser.test.js`
-3. 布局回归：`node tests/gemini-quota-capsule-layout.test.cjs` —— 用 Playwright 在空白页注入脚本（把入口 `bootstrap()` 换成 `createDOM()`），穷举 6 种装饰 × 8 种进度 × 3 组用量（0 / 42 / 100），断言胶囊宽度在所有组合下完全一致、两段槽位恒为 24px、装饰与进度节点在数值不变时保持复用。另覆盖两段进度独立选择、320 / 375 / 768px 窗口、每种进度连续 1000 次更新的节点复用与用量变化重绘、双柱独立比例、键盘轮换与重载恢复、旧配置迁移、图片格式与体积校验、SVG 清洗、组件 CSS 的应用 / 拒绝 / 清除 / 刷新后恢复、CSS 变量无需 `!important` 的覆盖、写入失败回滚、减少动态效果及未知 / 用尽 / 到期 / 同步中状态。缺少 Playwright 时失败，防止未执行却误报通过；本机运行需 `$env:GQC_PLAYWRIGHT_MODULE='<playwright 模块目录>'`，浏览器通道可用 `$env:GQC_BROWSER_CHANNEL` 指定，默认先试 `msedge` 再试随包 Chromium。
+3. 布局回归：`node tests/gemini-quota-capsule-layout.test.cjs` —— 用 Playwright 在空白页注入脚本（把入口 `bootstrap()` 换成 `createDOM()`），穷举 6 种装饰 × 8 种进度 × 3 组用量（0 / 42 / 100），断言胶囊宽度在所有组合下完全一致、两段槽位恒为 24px、装饰与进度节点在数值不变时保持复用。另覆盖两段进度独立选择、320 / 375 / 768px 窗口、每种进度连续 1000 次更新的节点复用与用量变化重绘、双柱独立比例、键盘轮换与重载恢复、旧配置迁移、图片格式与体积校验、SVG 清洗、组件 CSS 的应用 / 拒绝 / 清除 / 刷新后恢复、CSS 变量无需 `!important` 的覆盖、写入失败回滚、减少动态效果及未知 / 用尽 / 到期 / 同步中状态。缺少 Playwright 时失败，防止未执行却误报通过；本机运行需 `$env:GQC_PLAYWRIGHT_MODULE='<playwright 模块目录>'`，浏览器通道可用 `$env:GQC_BROWSER_CHANNEL` 指定，默认先试 `msedge` 再试随包 Chromium。静默同步链路另覆盖五种形态：RPC 正常、RPC 503 时由静默 GET 与隐藏 iframe 兜底、两者都失败时手动后台页、无账号前缀的 /app 直取裸 /usage，以及本地 HTTP 服务产生的真实 302（/u/1/usage → /u/2/usage）跨账号拦截（断言不写状态与缓存）；均断言不产生可见标签页、不改变当前地址，探测成功时不再创建 iframe。
 4. 语义自测：在页面控制台用 `__gqc._test` 直接调用纯函数，例如
 
 ```js
@@ -221,6 +234,7 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 
 - **真实登录态下的官方字段、RPC 端点与油猴管理器兼容性待确认。** `GXU_*` / `getUsageInfo.pools` 的字段命名、`jSf9Qc` 响应形态和 `/usage` 页面文本都可能随 Google 更新而变化；本地回归只覆盖解析器与伪 DOM，尚未在真实登录账号与 ScriptCat / Tampermonkey / Violentmonkey 的每种组合中逐一验证。持续显示 `--%` 时先查看 `__gqc.dump().diagnostics` 与 `__gqc.report()`。脚本不得把 spinner 的 `aria-valuenow`、WIZ 全局文本或无方向百分比当作配额。
 - 当前版本会保留最近几条受限长度的 batchexecute 响应用于诊断，并记录 `nonQuotaResponses` / `responseReadFailures`；只有通过结构化字段验证的响应才会写入胶囊。
+- 自动同步为了保持静默，依赖登录态 GET 与隐藏同源 iframe。若 Google 对 `/usage` 增加跨域限制或强制前端跳转，这两级都会失败，胶囊只显示 `--%` 与 `lastError`，此时手动刷新仍可走后台标签页兜底。iframe 会加载一次官方页面，被判定空白后有 10 分钟冷却。
 - 百分比若是无方向词的裸数字（既非 `used` 也非 `remaining`），只能按官方页面默认口径「已用」解释；这类来源不会被当成高置信度数据。
 
 
@@ -230,6 +244,22 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
 
 ## 十一、版本历史
+
+### v1.0.3
+
+- 恢复并重排静默同步链路：主 DOM → 重放官方 RPC → 自建 RPC → 静默 GET `/usage` → 隐藏同源 iframe；自动同步不跳转、不打开可见标签页。后台标签页降为手动刷新专属兜底，避免旧版「一闪而过」回归。
+- 修正 `DOMParser` 文本结构：解析前在块级边界补换行并剔除 `script` / `style` 正文。此前 `innerText` 恒为空、`textContent` 把两个窗口粘成一行，探测只能解析出 5H，随后错误回落到开页面。
+- 账号前缀未知时不再整段跳过静默兜底：裸 `/usage` 可用于 GET 探测、iframe 与手动后台页；它的账号归属由 Google 决定，在 `/app` 上记为尽力而为的默认账号解析（待确认），只有已知前缀时才能拒绝其他账号路径。前缀观察只采信本次会话的 API 请求，同一文档只认首次观察；解析前仍校验最终路径，已知前缀的候选落到别的账号一律丢弃。
+- `usagePageStatus` 新增 `resolvedPrefix` / `assumedAccount` 诊断；账号前缀扫描改为从最近一次资源请求倒序查找、命中即停，结果不依赖条目顺序；同一文档内冲突的账号索引不会覆盖已记录的前缀。`parseHtmlDocument` 现在确实剔除 `<style>` 正文（此前只剔除 `<script>`，与文档描述不符）；未被生产链路使用的 `/u/0` ~ `/u/3` 猜测函数已移除。
+- 手动后台标签页在 RPC 连续失败且无同步在跑时，于同步段（任何 await 之前）预留，连点最多产生一个标签页；`__gqc.dump().diagnostics` 新增 `usageFrameAttempts` / `usageFrameParsed` / `usageFrameBlocked` / `usageHelperError` 等字段。
+- 回归覆盖七种静默链路形态（RPC 正常、RPC 503 下 GET / iframe 兜底、全部失败时手动后台页、无前缀 `/app`、真实 302 跨账号拦截、`/app` 裸 `/usage` 解析到 `/u/2` 后由 iframe 取数、自动失败后 RPC 恢复时手动预留页自动关闭），均断言不产生可见标签页、不改变地址；真实登录账号与 Google 页面结构仍待确认。
+
+### v1.0.2
+
+- 修正官方用量 RPC 的 `f.req` 参数形态：调用参数按官方页面与已知实现的形态改为 JSON 文本 `"[]"`。1.0.1 传裸数组 `[]` 与协议不一致，是取数失败的首要代码缺陷；服务端对裸数组的具体响应尚未抓包确认。
+- 解析 `jSf9Qc` 时不再把 `row[0]` 当作有效性判据：该字段的语义随账号与窗口变化，耗尽时可能为 0，旧守卫会丢弃有效行。已用比例接受任意非负有限数并钳制到 100%，同一窗口的重复行取第一条有效值，不再因单个异常行丢弃整包数据。
+- 在读取响应后重新校验账号路径，避免切换账号时把旧响应写进新账号缓存；`__gqc.dump().diagnostics` 新增 `usageRpcId` 与 `usageRpcError`，便于区分 HTTP、重定向、账号切换和空用量响应。
+- 解析器与浏览器静默刷新回归已覆盖 `"[]"` 形态、耗尽额度和超额比例；真实登录账号与 Google RPC 变更仍待确认。
 
 ### v1.0.1
 
