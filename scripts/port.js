@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Port
 // @namespace    https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts
-// @version      0.1.1
-// @description  AI 中转站卡片管理、标签交集筛选与自定义 JS 签到。
+// @version      0.2.0
+// @description  本地管理你收藏的 AI 中转站：标签取交集、搜索、导入导出与按需签到。数据只保存在脚本管理器，不上传、不含推广链接。
 // @author       Yoko
 // @match        https://*/*
 // @match        http://*/*
 // @run-at       document-end
 // @noframes
+// @icon         data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'64'%20height%3D'64'%20viewBox%3D'0%200%2064%2064'%3E%3Crect%20width%3D'64'%20height%3D'64'%20rx%3D'14'%20fill%3D'%230d151b'%2F%3E%3Cg%20fill%3D'none'%20stroke%3D'%236ee7b7'%20stroke-width%3D'4'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'12'%20y%3D'12'%20width%3D'40'%20height%3D'16'%20rx%3D'4'%2F%3E%3Crect%20x%3D'12'%20y%3D'36'%20width%3D'40'%20height%3D'16'%20rx%3D'4'%2F%3E%3Cpath%20d%3D'M20%2020h.01M20%2044h.01'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
@@ -15,13 +16,17 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_openInTab
 // @grant        unsafeWindow
-// @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/port.js
-// @downloadURL  https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/port.js
+// @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts
+// @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
 // @license      MIT
 // ==/UserScript==
 
 (() => {
   "use strict";
+
+  // 审核说明：本脚本不加载、不拼接任何远程代码，也不向第三方发送数据。
+  // 所有卡片与签到脚本都来自用户本机编辑并保存在 GM 存储；签到脚本只在
+  // 用户点击「签到」后，于同源页面消费一次性任务时执行。
 
   // Feather Icons 4.29.2, MIT; bundled subset, no runtime CDN request.
   // See docs/port-feather-LICENSE.txt for copyright and license.
@@ -59,6 +64,8 @@
   const JOB_TTL = 5 * 60 * 1000;
   const RUN_TIMEOUT = 30000;
   const JOB_EXPIRED = "已取消：任务已过期（5 分钟内有效）";
+  const HOTKEY_KEY = "port:v1:setting:hotkey";
+  const HOTKEY_DEFAULT = "ctrl+alt+p";
 
   // 用户脚本可在普通 HTTP 页面运行，此时 crypto.randomUUID 因非安全上下文而缺失；
   // getRandomValues 在非安全上下文仍可用，逐级回退保证任意页面都能生成唯一本地键。
@@ -260,6 +267,8 @@
     try {
       // 用户代码在用户脚本沙箱执行，显式传入站点 window/document/fetch。
       // 不向页面注入 script 标签，避免站点 CSP 的 inline-script 限制。
+      // 这里的 card.script 不是远程下发内容：它由用户在本机编辑器中手写或粘贴，
+      // 存于 GM 存储，导入的卡片默认禁用，需逐项审阅后才会执行。
       const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
       const run = new AsyncFunction("window", "document", "fetch", "signal", "waitFor", card.script);
       const pageFetch = (input, options = {}) => unsafeWindow.fetch(input, { ...options, signal: controller.signal });
@@ -506,20 +515,117 @@ return "已点击签到，请核对站点提示";` }, [original.script]);
     let pollId = null;
     dialog.addEventListener("close", () => { clearInterval(pollId); pollId = null; });
     return () => {
-      if (dialog.open) return;
+      // 编辑器是第二层模态：此时只保留当前焦点，不再抢焦点。
+      if (editor.open) return;
+      if (dialog.open) { search.focus(); return; }
       refresh(); dialog.showModal(); search.focus();
       pollId = setInterval(() => safeAction(renderResults), 1500);
     };
   }
 
-  // No floating UI or page scans on unrelated websites; open from the userscript menu.
+  // 快捷键接受 ctrl/control、alt/option、shift、meta/cmd/command/win 别名，
+  // 主键限定为单个字母、数字或 F1–F12，存储统一为小写、固定修饰键顺序。
+  const MODIFIER_ALIASES = {
+    ctrl: "ctrl", control: "ctrl",
+    alt: "alt", option: "alt", opt: "alt",
+    shift: "shift",
+    meta: "meta", cmd: "meta", command: "meta", win: "meta", super: "meta",
+  };
+
+  function hotkeyKey(value) {
+    if (/^[a-z]$/.test(value) || /^[0-9]$/.test(value)) return value;
+    const fn = /^f([1-9]|1[0-2])$/.exec(value);
+    return fn === null ? null : `f${fn[1]}`;
+  }
+
+  function parseHotkey(value) {
+    if (typeof value !== "string") return null;
+    const text = value.trim().toLowerCase();
+    if (text === "off" || text === "关闭" || text === "禁用") return "off";
+    if (text === "") return null;
+    const parts = text.split("+").map((part) => part.trim()).filter((part) => part !== "");
+    if (parts.length < 2 || parts.length > 5) return null;
+    const modifiers = new Set();
+    let key = null;
+    for (const part of parts) {
+      const modifier = MODIFIER_ALIASES[part];
+      if (modifier !== undefined) {
+        // 同一修饰键重复出现视为无效输入，避免 ctrl+ctrl+p 这类歧义配置。
+        if (modifiers.has(modifier)) return null;
+        modifiers.add(modifier);
+        continue;
+      }
+      if (key !== null) return null;
+      key = hotkeyKey(part);
+      if (key === null) return null;
+    }
+    if (modifiers.size === 0 || key === null) return null;
+    return [...["ctrl", "alt", "shift", "meta"].filter((modifier) => modifiers.has(modifier)), key].join("+");
+  }
+
+  function readHotkey() {
+    const parsed = parseHotkey(GM_getValue(HOTKEY_KEY, HOTKEY_DEFAULT));
+    // 存储被手工改坏时回退默认值，避免快捷键静默失效。
+    return parsed === null ? HOTKEY_DEFAULT : parsed;
+  }
+
+  function hotkeyCode(key) {
+    if (/^[a-z]$/.test(key)) return `Key${key.toUpperCase()}`;
+    if (/^[0-9]$/.test(key)) return `Digit${key}`;
+    return `F${key.slice(1)}`;
+  }
+
+  function matchesHotkey(event, hotkey) {
+    if (hotkey === "off") return false;
+    const parts = hotkey.split("+");
+    const key = parts[parts.length - 1];
+    const ctrl = parts.includes("ctrl");
+    const alt = parts.includes("alt");
+    const shift = parts.includes("shift");
+    const meta = parts.includes("meta");
+    // 修饰键必须完全相等：Ctrl+Alt+P 不应被 Ctrl+Alt+Shift+P 触发。
+    if (event.ctrlKey !== ctrl || event.altKey !== alt || event.shiftKey !== shift || event.metaKey !== meta) return false;
+    return event.code === hotkeyCode(key);
+  }
+
+  // No floating UI or page scans on unrelated websites; open from the menu or hotkey.
   let openManager = null;
-  GM_registerMenuCommand("Port · 打开中转站管理", () => {
+  function openPort() {
     try {
       if (openManager === null) openManager = mountManager();
       openManager();
     } catch (error) { console.error("[Port] 打开失败", error); alert(`Port：${errorText(error)}`); }
-  });
+  }
+
+  function configureHotkey() {
+    const input = prompt("Port 快捷键（例如 ctrl+alt+p；输入 off 关闭）：", readHotkey());
+    if (input === null) return;
+    const next = parseHotkey(input);
+    if (next === null) {
+      alert("快捷键格式无效：至少一个修饰键（ctrl / alt / shift / meta）+ 一个字母、数字或 F1–F12。");
+      return;
+    }
+    try {
+      GM_setValue(HOTKEY_KEY, next);
+    } catch (error) {
+      alert(`Port：保存快捷键失败：${errorText(error)}`);
+      return;
+    }
+    alert(next === "off" ? "Port 快捷键已关闭。" : `Port 快捷键已设为 ${next.toUpperCase()}。`);
+  }
+
+  GM_registerMenuCommand("Port · 打开中转站管理", openPort, "p");
+  GM_registerMenuCommand("Port · 快捷键设置", configureHotkey);
+  window.addEventListener("keydown", (event) => {
+    // 输入法组合、长按重复与 AltGr（等价 Ctrl+Alt）不触发，避免干扰正常输入。
+    if (event.repeat || event.isComposing || event.getModifierState?.("AltGraph") === true) return;
+    if (!matchesHotkey(event, readHotkey())) return;
+    // 站点在 window 捕获阶段调用 stopPropagation 时，同目标的监听仍会执行；
+    // 这里不因 defaultPrevented 放弃，保证快捷键在页面拦截下依然可用。
+    event.preventDefault();
+    event.stopPropagation();
+    openPort();
+  }, true);
   // 先处理当前地址栏携带的任务，让过期任务也能清理参数并写回结果，再清扫其余过期任务。
   executeTask().catch((error) => { console.error("[Port] 任务启动失败", error); alert(`Port 签到失败：${errorText(error)}`); });
   for (const key of GM_listValues().filter((entry) => entry.startsWith(JOB_PREFIX))) {

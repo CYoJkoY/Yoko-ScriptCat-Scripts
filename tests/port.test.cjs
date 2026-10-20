@@ -24,7 +24,10 @@ async function main() {
         window.GM_setValue = (key, value) => { portStore[key] = value; window.persist(key, value); };
         window.GM_deleteValue = (key) => { delete portStore[key]; window.persist(key, null); };
         window.GM_listValues = () => Object.keys(portStore);
-        window.GM_registerMenuCommand = (label, callback) => { window.openPort = callback; };
+        window.GM_registerMenuCommand = (label, callback) => {
+          if (label.includes("打开")) window.openPort = callback;
+          if (label.includes("快捷键")) window.configureHotkey = callback;
+        };
         window.GM_openInTab = (url) => { window.openedUrl = url; };
         window.unsafeWindow = window;
       }, structuredClone(store));
@@ -284,6 +287,60 @@ async function main() {
     await polledRoot.getByRole("button", { name: "关闭", exact: true }).click();
     await polled.close();
 
+    // 全局快捷键：默认 Ctrl+Alt+P 打开并聚焦搜索；修饰键必须完全匹配；off 与非法配置可预期。
+    const hotkeyPage = await context.newPage();
+    await hotkeyPage.goto("https://hotkey.example/");
+    await inject(hotkeyPage);
+    const hotkeyRoot = hotkeyPage.locator("#port-manager");
+    const hotkeyDialog = hotkeyRoot.locator("dialog").first();
+    await hotkeyPage.keyboard.press("Control+Alt+P");
+    await hotkeyDialog.waitFor({ state: "visible" });
+    assert.equal(await hotkeyPage.evaluate(() => document.querySelector("#port-manager").shadowRoot.activeElement?.getAttribute("type")), "search", "快捷键打开后应聚焦搜索框");
+    await hotkeyPage.keyboard.press("Control+Alt+Shift+P");
+    assert.equal(await hotkeyRoot.locator("dialog[open]").count(), 1, "多按 Shift 不应重复打开");
+    await hotkeyPage.keyboard.press("Escape");
+    await hotkeyPage.waitForFunction(() => document.querySelector("#port-manager").shadowRoot.querySelector("dialog").open === false);
+    await hotkeyPage.evaluate(() => window.GM_setValue("port:v1:setting:hotkey", "off"));
+    await hotkeyPage.keyboard.press("Control+Alt+P");
+    await hotkeyPage.waitForTimeout(200);
+    assert.equal(await hotkeyRoot.locator("dialog[open]").count(), 0, "off 后快捷键不得打开面板");
+    await hotkeyPage.evaluate(() => window.GM_setValue("port:v1:setting:hotkey", "shift+control+u"));
+    await hotkeyPage.keyboard.press("Control+Shift+U");
+    await hotkeyDialog.waitFor({ state: "visible" });
+    await hotkeyPage.keyboard.press("Escape");
+    await hotkeyPage.waitForFunction(() => document.querySelector("#port-manager").shadowRoot.querySelector("dialog").open === false);
+    await hotkeyPage.evaluate(() => window.GM_setValue("port:v1:setting:hotkey", "ctrl+ctrl+p"));
+    await hotkeyPage.keyboard.press("Control+Alt+P");
+    await hotkeyDialog.waitFor({ state: "visible" });
+    await hotkeyPage.close();
+
+    // 页面在 window 捕获阶段拦截 keydown（preventDefault + stopPropagation）后，同目标的脚本监听仍应触发。
+    const intercepted = await context.newPage();
+    await intercepted.goto("https://intercept.example/");
+    await intercepted.evaluate(() => {
+      window.addEventListener("keydown", (event) => { event.preventDefault(); event.stopPropagation(); }, true);
+    });
+    await inject(intercepted);
+    await intercepted.keyboard.press("Control+Alt+P");
+    await intercepted.locator("#port-manager").locator("dialog").first().waitFor({ state: "visible" });
+    await intercepted.close();
+
+    // 未命中组合键时必须原样放行，避免脚本吞掉站点自身的键盘操作。
+    const passthrough = await context.newPage();
+    await passthrough.goto("https://passthrough.example/");
+    await passthrough.evaluate(() => {
+      window.__portPageKeys = [];
+      document.addEventListener("keydown", (event) => {
+        if (event.code.startsWith("Key")) window.__portPageKeys.push([event.code, event.defaultPrevented]);
+      }, true);
+    });
+    await inject(passthrough);
+    await passthrough.keyboard.press("Control+Alt+K");
+    await passthrough.keyboard.press("Control+Alt+P");
+    await passthrough.locator("#port-manager").locator("dialog").first().waitFor({ state: "visible" });
+    assert.deepEqual(await passthrough.evaluate(() => window.__portPageKeys), [["KeyK", false]], "只有完整命中快捷键才应接管页面键盘事件");
+    await passthrough.close();
+
     // 损坏卡片中断列表并提示具体存储键，避免静默丢弃数据。
     store["port:v1:card:corrupt-demo"] = { name: "", url: "ftp://corrupt.example/" };
     const corrupt = await context.newPage();
@@ -294,7 +351,7 @@ async function main() {
     assert.equal(await corrupt.evaluate(() => document.querySelector("#port-manager").shadowRoot.querySelectorAll("article").length), 0);
     await corrupt.close();
     delete store["port:v1:card:corrupt-demo"];
-    console.log("Port browser tests passed: CRUD, AND tags, search, upload, shared storage, task origin/replay, import/export, narrow layout, insecure-context id, open failure, script failures, task cleanup, polling, aria-pressed, dialog focus");
+    console.log("Port browser tests passed: CRUD, AND tags, search, upload, shared storage, task origin/replay, import/export, narrow layout, insecure-context id, open failure, script failures, task cleanup, polling, aria-pressed, dialog focus, hotkey, keydown isolation");
   } finally { await browser.close(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
