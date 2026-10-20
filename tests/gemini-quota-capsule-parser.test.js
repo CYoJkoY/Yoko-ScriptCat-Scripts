@@ -98,4 +98,39 @@ assert.equal(
   null,
 );
 
+// 账号路径一致性：重定向到别的账号后，正文不能记在候选名下
+const isSameUsagePath = window.__gqc._test.isSameUsagePath;
+assert.equal(isSameUsagePath("/u/1/usage", "/u/1/usage"), true);
+assert.equal(isSameUsagePath("/u/1/usage/", "/u/1/usage"), true);
+assert.equal(isSameUsagePath("/u/0/usage", "/u/3/usage"), false);
+assert.equal(isSameUsagePath("/app", "/u/3/usage"), false);
+assert.equal(isSameUsagePath("/u/1/usage", ""), false);
+assert.equal(isSameUsagePath(null, "/u/1/usage"), false);
+
+// 无前缀页面从同源请求观察账号索引；有前缀时当前页优先
+assert.equal(window.__gqc._test.getAccountPrefix(), "");
+window.__gqc._test.noteAccountPrefix(
+  "https://gemini.google.com/u/2/_/BardChatUi/data/batchexecute",
+);
+assert.equal(window.__gqc._test.getAccountPrefix(), "/u/2");
+assert.equal(
+  JSON.stringify(window.__gqc._test.getOfficialUsageUrls()),
+  JSON.stringify(["https://gemini.google.com/u/2/usage"]),
+);
+window.__gqc._test.noteAccountPrefix("https://example.com/u/9/usage");
+assert.equal(window.__gqc._test.getAccountPrefix(), "/u/2");
+window.__gqc._test.noteAccountPrefix("https://gemini.google.com/app");
+assert.equal(window.__gqc._test.getAccountPrefix(), "/u/2");
+
+window.location.pathname = "/u/1/app";
+assert.equal(window.__gqc._test.getAccountPrefix(), "/u/1");
+window.location.pathname = "/app";
+
+// iframe 空白判定留宽限期，不能沿用「空白即永久停用」的旧口径
+assert.equal(
+  Number.isInteger(window.__gqc._test.USAGE_FRAME_BLANK_GRACE_MS),
+  true,
+);
+assert.equal(window.__gqc._test.USAGE_FRAME_BLANK_GRACE_MS > 0, true);
+
 console.log("quota parser tests passed");

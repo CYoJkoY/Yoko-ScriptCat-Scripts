@@ -38,6 +38,9 @@
   const USAGE_FRAME_WIDTH_PX = 1280;
   const USAGE_FRAME_HEIGHT_PX = 900;
   const USAGE_FRAME_TIMEOUT_MS = 12000;
+  // iframe 首次 load 可能对应初始化文档；留一段宽限再判定「只拿到空白」，
+  // 避免把一次临时空白误当成站点拒绝嵌入并永久停用该通道。
+  const USAGE_FRAME_BLANK_GRACE_MS = 1500;
   const USAGE_HELPER_TIMEOUT_MS = 20000;
   // 发起方额外等待一个标签页加载窗口，避免在后台页还没开始解析时先超时
   const USAGE_HELPER_WAIT_MS = 30000;
@@ -181,9 +184,26 @@
     usagePageStatus: null,
   };
 
+  // 当前页没有 /u/<n> 前缀时（例如 /app），用同源请求里观察到的账号前缀补位：
+  // batchexecute 等请求的路径一定携带真实账号索引，比逐个猜 /u/0 ~ /u/3 可靠。
+  let observedAccountPrefix = "";
+
+  function noteAccountPrefix(url) {
+    if (typeof url !== "string" || !url) return;
+    try {
+      const parsed = new URL(url, window.location.href);
+      if (parsed.origin !== window.location.origin) return;
+      const match = parsed.pathname.match(/^(\/u\/\d+)\//);
+      if (match) observedAccountPrefix = match[1];
+    } catch {
+      // 地址无法解析时保留既有前缀
+    }
+  }
+
   function getAccountPrefix() {
     const match = window.location.pathname.match(/^(\/u\/\d+)\b/);
-    return match ? match[1] : "";
+    if (match) return match[1];
+    return observedAccountPrefix;
   }
 
   function getOfficialUsageUrl() {
@@ -198,6 +218,18 @@
     return [0, 1, 2, 3].map(
       (index) => `${window.location.origin}/u/${index}/usage`,
     );
+  }
+
+  /**
+   * 最终地址必须与候选自身的账号路径一致。
+   * 只判断结尾是不是 /usage 不够：/u/3/usage 被重定向到 /u/0/usage 时，
+   * 正文属于另一个账号，不能记在 /u/3 名下，也不能据此打开后台标签页。
+   */
+  function isSameUsagePath(finalPath, candidatePath) {
+    const normalize = (path) =>
+      typeof path === "string" ? path.replace(/\/+$/, "") : "";
+    const target = normalize(candidatePath);
+    return !!target && normalize(finalPath) === target;
   }
 
   /**
@@ -2228,6 +2260,7 @@
       typeof args[0] === "string"
         ? args[0]
         : (args[0] && typeof args[0].url === "string" && args[0].url) || "";
+    noteAccountPrefix(url);
     const reqInit = args[1] || {};
     const reqBody = typeof reqInit.body === "string" ? reqInit.body : "";
 
@@ -2255,6 +2288,7 @@
 
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
     this.__gc_url = typeof url === "string" ? url : String(url || "");
+    noteAccountPrefix(this.__gc_url);
     return origXhrOpen.call(this, method, url, ...rest);
   };
 
@@ -2400,10 +2434,12 @@
       let pollId = null;
       let cachedResult = null;
       let debounceTimer = null;
+      let blankTimer = null;
 
       const done = (res) => {
         if (finished) return;
         finished = true;
+        if (blankTimer) clearTimeout(blankTimer);
         if (debounceTimer) clearTimeout(debounceTimer);
         if (observer) observer.disconnect();
         if (pollId) clearInterval(pollId);
@@ -2418,6 +2454,32 @@
         usageParseDiag.frameBlocked = true;
         usageParseDiag.helperReason = reason;
         if (permanent) renderedUsageFrameBlocked = true;
+      };
+
+      /**
+       * about:blank 可能是 iframe 导航过程中的临时初始化文档，也可能被浏览器拦截。
+       * 只有过了宽限期仍是空白才放弃本次读取；并且不下「永久停用」的结论，
+       * 否则一次时序抖动就会让后续刷新再也走不到 iframe 通道。
+       */
+      const checkBlankAfterGrace = () => {
+        if (blankTimer) return;
+        blankTimer = setTimeout(() => {
+          blankTimer = null;
+          if (finished) return;
+          const pendingDoc = readIframeDocument(iframe);
+          if (!pendingDoc) {
+            // 文档不可读说明 frame-ancestors / X-Frame-Options 确实生效
+            markBlocked("官方 /usage 页面拒绝被同源 iframe 嵌入");
+            done(null);
+            return;
+          }
+          if (pendingDoc.URL !== "about:blank") {
+            // 宽限期内已完成导航，交给 load 回调继续解析
+            return;
+          }
+          markBlocked("同源 iframe 只拿到了空白文档", false);
+          done(null);
+        }, USAGE_FRAME_BLANK_GRACE_MS);
       };
 
       const tryExtract = () => {
@@ -2460,6 +2522,10 @@
 
       iframe.addEventListener("load", () => {
         usageParseDiag.frameLoads += 1;
+        if (blankTimer) {
+          clearTimeout(blankTimer);
+          blankTimer = null;
+        }
         const iDoc = readIframeDocument(iframe);
         if (!iDoc) {
           // X-Frame-Options / CSP frame-ancestors 拒绝渲染：继续等下去也没有文本
@@ -2467,10 +2533,9 @@
           done(null);
           return;
         }
-        // URL 仍是 about:blank：iframe 实际没加载到 /usage，继续等也不会有文本
+        // URL 仍是 about:blank：先给一次宽限，仍在空白则本轮回退，不作永久判定
         if (iDoc.URL === "about:blank") {
-          markBlocked("同源 iframe 只拿到了空白文档");
-          done(null);
+          checkBlankAfterGrace();
           return;
         }
         try {
@@ -2879,8 +2944,16 @@
         let usagePageMissing = true;
         let usageUrl = usageUrls[0];
         let probedUsageUrl = null;
+        let usagePageReachable = false;
         for (const candidateUrl of usageUrls) {
           usageUrl = candidateUrl;
+          const candidatePath = (() => {
+            try {
+              return new URL(candidateUrl, window.location.href).pathname;
+            } catch {
+              return "";
+            }
+          })();
           let resp;
           try {
             resp = await origFetch.call(window, candidateUrl, {
@@ -2899,6 +2972,9 @@
               return "";
             }
           })();
+          // 落到别的账号路径（典型是 /u/3 → /u/0）时正文属于他人账号，
+          // 既不能写入缓存，也不能据此刻度开后台页，直接换下一个候选。
+          const sameAccount = isSameUsagePath(finalPath, candidatePath);
           usagePageMissing =
             !!resp.redirected && !/\/usage\/?$/.test(finalPath);
           quotaState.usagePageStatus = {
@@ -2907,7 +2983,10 @@
             finalUrl: shortenUrl(resp.url || ""),
             redirected: !!resp.redirected,
             missing: usagePageMissing,
+            sameAccount,
           };
+          if (!sameAccount) continue;
+          if (!usagePageMissing) usagePageReachable = true;
           if (resp.ok && !usagePageMissing) {
             probedUsageUrl = candidateUrl;
             const rawHtml = await resp.text();
@@ -2924,6 +3003,9 @@
             break;
           }
         }
+        // 以「是否有候选真正落到同账号 /usage」收口，避免最后一个候选的
+        // 重定向状态覆盖前面的探测结论，影响后续 iframe 判定与报错文案。
+        usagePageMissing = !usagePageReachable;
 
         // 3. 手动刷新且不在 /usage：顶层后台标签页读取同一份官方页面文本。
         //    只有顶层页面才会按 PC 布局完整渲染「Current usage / Weekly limit」；
@@ -2979,7 +3061,7 @@
         }
 
         quotaState.lastError = usagePageMissing
-          ? "本次 /usage 通道不可用（已重定向到其他页面），等待官方 RPC 数据"
+          ? "本次 /usage 通道不可用（未落到当前账号的用量页），等待官方 RPC 数据"
           : "暂未从官方响应获取到已验证的配额字段";
         return false;
       } catch (err) {
@@ -4251,6 +4333,10 @@
       readSyncBridgePayload,
       formatCompactCountdown,
       formatRemainingHuman,
+      isSameUsagePath,
+      getAccountPrefix,
+      noteAccountPrefix,
+      USAGE_FRAME_BLANK_GRACE_MS,
     },
   };
 

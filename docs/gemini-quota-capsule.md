@@ -20,9 +20,9 @@
 | --- | --- | --- |
 | 0 | 当前页就是 `/usage` | 直接解析页面可见文本，不发起额外请求 |
 | 1 | 捕获并重放 `batchexecute`（`wrb.fr` 帧） | document-start 包装 `fetch` / `XMLHttpRequest`，命中配额帧后保存请求模板，后续直接重放。帧内只认结构化 `GXU_*` 池，不做标签猜测 |
-| 2 | 同源 `GET /usage` | 逐个探测候选地址（当前账号路径优先，无前缀时按 `/u/0` ~ `/u/3` 有限探测）；只有 `resp.ok` 且最终地址仍在 `/usage` 的响应才解析。登录态下该请求通常拿不到额度字段（CSR 页面），只作地址探测与 SSR / 内嵌 blob 兜底 |
+| 2 | 同源 `GET /usage` | 逐个探测候选地址（当前账号路径优先；无前缀时先从同源请求观察真实账号索引，观察不到才退回 `/u/0` ~ `/u/3` 有限探测）；只有 `resp.ok` 且最终地址与候选的 `/u/<n>/usage` 完全一致的响应才解析。登录态下该请求通常拿不到额度字段（CSR 页面），只作地址探测与 SSR / 内嵌 blob 兜底 |
 | 3 | 后台顶层标签页读取 `/usage`（仅手动刷新） | 当前不在 `/usage` 时，先在点击的同步阶段占一个 `about:blank` 窗口，探测到可用地址后导航到 `/usage#gqc-usage-sync=<nonce>`：后台页解析可见文本 → 写同步桥 → 自动关闭。只有顶层页面才会按 PC 布局渲染额度卡片 |
-| 4 | 隐藏同源 iframe 探测 `/usage` | 以 1280×900 桌面视口渲染并移出可视区域（1×1 会命中窄屏布局，卡片文本可能根本不渲染），`load` 之前就开始轮询；被拒绝嵌入或只拿到空白文档时停用该通道 |
+| 4 | 隐藏同源 iframe 探测 `/usage` | 以 1280×900 桌面视口渲染并移出可视区域（1×1 会命中窄屏布局，卡片文本可能根本不渲染），`load` 之前就开始轮询；被明确拒绝嵌入时永久停用该通道，空白文档留 1.5 秒宽限后只放弃本轮 |
 | 5 | `AF_initDataCallback` 内嵌 blob | 仅兜底，且禁用标签启发式：它是页面内嵌数据 blob，与配额无关的 `session` / `week` / 样式文本极多 |
 | 6 | 本地缓存 | 仅用于首屏回显，恢复时 `updatedAt = 0`，会被任何新数据立即覆盖 |
 
@@ -75,7 +75,8 @@
 优先按官方页面文本解析百分比与重置提示：
 
 - `/u/<账号>/usage` 页面中的 `Current usage` 和 `Weekly limit` 是两个明确的文本分段；每段只读取其中的 `N% used` 与紧邻的 `Resets ...`，不再从整页任意数字猜窗口归属。
-- 当主页面是 `/app` 时，脚本会有限探测登录态账号路径 `/u/0/usage` 至 `/u/3/usage`；只有最终地址仍在 `/usage` 的响应才会解析。
+- 当主页面是 `/app` 时，脚本先从同源请求（`batchexecute` 等）的路径里观察真实账号索引 `/u/<n>`，据此只请求该账号的 `/usage`；观察不到时才有限探测 `/u/0/usage` 至 `/u/3/usage`。
+- 探测结果必须与候选地址的账号路径完全一致：`/u/3/usage` 被重定向到 `/u/0/usage` 时正文属于另一个账号，既不写入缓存，也不据此打开后台标签页，而是继续换下一个候选。
 - 同一份文本有三条取得路径，共用同一个 `parseUsageDocument`：当前页就是 `/usage` 时直接读主 DOM；手动刷新且不在 `/usage` 时由后台顶层标签页读取并通过 `__gemini_quota_sync_bridge_v1__` 回传；其余情况用隐藏同源 iframe 读取。
 - 后台顶层标签页与 iframe 都必须按桌面视口渲染：Gemini 的窄屏布局会把 `Current usage` / `Weekly limit` 卡片文本藏起来，`innerText` 里自然找不到。
 - 例如 `1% used` 会转换为剩余 99%，`2% used` 会转换为剩余 98%；`Resets at 3:43 PM` 与 `Resets Oct 23 at 7:43 AM` 分别作为 5 小时和每周窗口的官方重置时刻。
@@ -145,6 +146,7 @@
 | `MAX_CACHE_AGE_MS` | 10 分钟 | 缓存允许回显的最大年龄 |
 | `USAGE_FRAME_WIDTH_PX` / `USAGE_FRAME_HEIGHT_PX` | 1280 / 900 | 隐藏 iframe 的桌面视口尺寸 |
 | `USAGE_FRAME_TIMEOUT_MS` | 12 秒 | iframe 等待额度文本的上限 |
+| `USAGE_FRAME_BLANK_GRACE_MS` | 1.5 秒 | iframe 拿到空白文档后的宽限时间，避免把临时初始化误判为拒绝嵌入 |
 | `USAGE_HELPER_TIMEOUT_MS` | 20 秒 | 后台顶层标签页自行解析的上限 |
 | `USAGE_HELPER_WAIT_MS` | 30 秒 | 当前页等待后台页回传的上限 |
 
@@ -232,6 +234,8 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - 隐藏同源 iframe 从 1×1 改为 1280×900 桌面视口并移出可视区域：1×1 会命中窄屏布局，`Current usage` / `Weekly limit` 文本可能不渲染。轮询不再等 `load` 事件，CSR 文本就绪即取。
 - iframe 新增「拒绝嵌入 / 空白文档 / 被重定向」判定：命中后本轮直接跳过，不再白等 12 秒超时；网络层 `error` 只记诊断，不永久关闭该通道。
 - 文本通道只接受确定地址：`/app` 无账号前缀且四个候选全部探测失败时，不再按 `/u/3/usage` 之类的猜测地址解析，避免把别的账号额度写进缓存。
+- 账号隔离细化：无 `/u/<n>` 前缀时从同源请求路径观察真实账号索引，优先只请求该账号；`/usage` 探测要求最终路径与候选账号路径完全一致，`/u/3/usage` 跳到 `/u/0/usage` 时判为不可用并继续下一个候选，`usagePageStatus` 增加 `sameAccount` 诊断字段。
+- iframe 的 `about:blank` 不再立即永久停用通道：留 `USAGE_FRAME_BLANK_GRACE_MS` 宽限，仍空白则只结束本轮；宽限后文档不可读（跨源）才判定为站点拒绝嵌入。
 - `__gqc.dump()` 新增 `state.syncPhase` 与 `usageFrame*` / `usageHelper*` 诊断字段；新增 `__gqc.helperSync()` 单独触发后台用量页读取；解析器回归测试补充后台同步桥的 URL / nonce / payload 断言。
 
 ### v0.9.1
