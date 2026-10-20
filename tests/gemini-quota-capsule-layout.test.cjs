@@ -791,95 +791,294 @@ async function main() {
     }
     assert.deepEqual(pageErrors, []);
 
-    // 使用未修改入口的完整脚本，模拟官方 CSR 用量页：GET 无数据，
-    // 顶层后台页才有可见文本，验证刷新按钮到跨页回传的完整链路。
-    const context = await browser.newContext();
-    try {
+    // 官方 /usage 是纯 CSR 页面：网络层返回固定文本，避免依赖真实登录态。
+    const usageHtml =
+      "<!doctype html><html><body><main><h1>Usage limits</h1>" +
+      "<h2>Current usage</h2><p>12% used</p><p>Resets in 2 hr</p>" +
+      "<h2>Weekly limit</h2><p>68% used</p><p>Resets in 3 days</p>" +
+      "</main></body></html>";
+    const emptyHtml = "<!doctype html><html><body></body></html>";
+    // @noframes：真实用户脚本只在顶层文档执行。测试注入必须显式模拟，
+    // 否则隐藏 iframe 也会跑一遍 bootstrap，把兜底链路变成自我递归。
+    const topFrameOnlySource =
+      "if (window.top === window.self) {\n" + originalSource + "\n}";
+
+    // 页面时钟可能被 Playwright 接管，页内轮询不会自行推进；统一从 Node 侧观察。
+    const waitForState = async (target, expected, timeoutMs = 30000) => {
+      const deadline = Date.now() + timeoutMs;
+      let snapshot = null;
+      while (Date.now() < deadline) {
+        snapshot = await target.evaluate(() => ({
+          used: window.__gqc.state.fiveHour.usedPct,
+          weekly: window.__gqc.state.weekly.usedPct,
+          syncing: window.__gqc.state.isSyncing,
+          error: window.__gqc.state.lastError,
+        }));
+        if (
+          snapshot.syncing === false &&
+          snapshot.used === expected.fiveHour &&
+          (expected.weekly === undefined || snapshot.weekly === expected.weekly)
+        ) {
+          return snapshot;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error("等待用量状态超时：" + JSON.stringify(snapshot));
+    };
+
+    // 场景 A：RPC 正常。启动自动获取、连点去重、到期自动更新；
+    // 全程不请求 /usage、不打开标签页、不跳转。
+    {
       const usagePaths = [];
       let rpcCount = 0;
       let used = 12;
       let popupCount = 0;
-      let failRpc = false;
-      await context.route("https://gemini.google.com/**", (route) => {
-        const request = route.request();
-        const url = new URL(request.url());
-        if (url.pathname.endsWith("/usage")) usagePaths.push(url.pathname);
-        if (url.pathname.endsWith("/batchexecute")) {
-          rpcCount += 1;
-          if (failRpc) return route.fulfill({ status: 503, body: "Unavailable" });
-          assert.equal(url.pathname, "/u/1/_/BardChatUi/data/batchexecute");
-          assert.equal(url.searchParams.get("source-path"), "/u/1/usage");
-          const params = new URLSearchParams(request.postData());
-          assert.equal(params.get("at"), "test-token");
-          const freq = JSON.parse(params.get("f.req"));
-          // f.req 的 args 是二次编码后的 JSON 文本；裸数组会被服务端拒绝。
-          assert.equal(typeof freq[0][0][1], "string");
-          assert.deepEqual(freq, [[["jSf9Qc", "[]", null, "generic"]]]);
-          const now = Date.now();
-          const payload = [
-            2,
-            [
-              [2400, used / 100, 1, [[Math.floor(now / 1000) + 7200, 0]]],
-              [48106, 0.68, 2, [[Math.floor(now / 1000) + 259200, 0]]],
-              [100, 0.9, 4, [[Math.floor(now / 1000) + 3600, 0]]],
-            ],
-            false,
-          ];
-          const frame = JSON.stringify([
-            ["wrb.fr", "jSf9Qc", JSON.stringify(payload), null],
-          ]);
-          return route.fulfill({ contentType: "application/json", body: frame });
-        }
-        return route.fulfill({
-          contentType: "text/html",
-          body: "<!doctype html><html><body></body></html>",
+      const context = await browser.newContext();
+      try {
+        await context.route("https://gemini.google.com/**", (route) => {
+          const request = route.request();
+          const url = new URL(request.url());
+          if (url.pathname.endsWith("/usage")) usagePaths.push(url.pathname);
+          if (url.pathname.endsWith("/batchexecute")) {
+            rpcCount += 1;
+            assert.equal(url.pathname, "/u/1/_/BardChatUi/data/batchexecute");
+            assert.equal(url.searchParams.get("source-path"), "/u/1/usage");
+            const params = new URLSearchParams(request.postData());
+            assert.equal(params.get("at"), "test-token");
+            const freq = JSON.parse(params.get("f.req"));
+            // f.req 的 args 是二次编码后的 JSON 文本；与 1.0.1 的裸数组形态不同。
+            assert.equal(typeof freq[0][0][1], "string");
+            assert.deepEqual(freq, [[["jSf9Qc", "[]", null, "generic"]]]);
+            const now = Date.now();
+            const payload = [
+              2,
+              [
+                [2400, used / 100, 1, [[Math.floor(now / 1000) + 7200, 0]]],
+                [48106, 0.68, 2, [[Math.floor(now / 1000) + 259200, 0]]],
+                [100, 0.9, 4, [[Math.floor(now / 1000) + 3600, 0]]],
+              ],
+              false,
+            ];
+            const frame = JSON.stringify([
+              ["wrb.fr", "jSf9Qc", JSON.stringify(payload), null],
+            ]);
+            return route.fulfill({ contentType: "application/json", body: frame });
+          }
+          return route.fulfill({ contentType: "text/html", body: emptyHtml });
         });
-      });
-      await context.addInitScript(() => {
-        window.WIZ_global_data = {
-          SNlM0e: "test-token",
-          cfb2h: "build",
-          FdrFJe: "session",
-        };
-      });
-      await context.addInitScript({ content: originalSource });
-      const app = await context.newPage();
-      app.on("popup", () => (popupCount += 1));
-      await app.goto("https://gemini.google.com/u/1/app");
-      await app.waitForFunction(() => window.__gqc.state.fiveHour.usedPct === 12);
-      assert.equal(rpcCount, 1, "启动时自动获取，无需点击");
-      used = 23;
-      await app.evaluate(() => {
-        window.__gqc.sync();
-        window.__gqc.sync();
-        window.__gqc.sync();
-      });
-      await app.waitForFunction(
-        () => window.__gqc.state.isSyncing === false && window.__gqc.state.fiveHour.usedPct === 23,
-      );
-      assert.equal(rpcCount, 2, "连续刷新只发送一个请求");
-      await app.clock.install();
-      used = 34;
-      await app.clock.fastForward(190000);
-      await app.waitForFunction(() => window.__gqc.state.fiveHour.usedPct === 34);
-      failRpc = true;
-      assert.equal(await app.evaluate(() => window.__gqc.sync()), false);
-      assert.equal(await app.evaluate(() => window.__gqc.state.fiveHour.usedPct), 34);
-      assert.match(await app.evaluate(() => window.__gqc.state.lastError), /503/);
-      failRpc = false;
-      used = 45;
-      await app.clock.fastForward(30000);
-      await app.waitForFunction(() => window.__gqc.state.fiveHour.usedPct === 45);
-      assert.equal(await app.evaluate(() => window.__gqc.state.lastError), "");
-      assert.equal(popupCount, 0);
-      assert.deepEqual(usagePaths, []);
-      assert.equal(context.pages().length, 1);
-      assert.equal(app.url(), "https://gemini.google.com/u/1/app");
-      console.log(
-        "静默刷新链路通过：启动自动获取、手动连点去重、周期自动更新，无 popup 或 Usage 页面请求。",
-      );
-    } finally {
-      await context.close();
+        await context.addInitScript(() => {
+          window.WIZ_global_data = {
+            SNlM0e: "test-token",
+            cfb2h: "build",
+            FdrFJe: "session",
+          };
+        });
+        await context.addInitScript({ content: topFrameOnlySource });
+        const app = await context.newPage();
+        app.on("popup", () => (popupCount += 1));
+        await app.goto("https://gemini.google.com/u/1/app");
+        await waitForState(app, { fiveHour: 12 }, 30000);
+        assert.equal(rpcCount, 1, "启动时自动获取，无需点击");
+        assert.equal(popupCount, 0, "自动同步不得打开标签页");
+        used = 23;
+        await app.evaluate(() => {
+          window.__gqc.sync();
+          window.__gqc.sync();
+          window.__gqc.sync();
+        });
+        await waitForState(app, { fiveHour: 23 }, 30000);
+        assert.equal(rpcCount, 2, "连续刷新只发送一个请求");
+        await app.clock.install();
+        used = 34;
+        await app.clock.fastForward(190000);
+        await waitForState(app, { fiveHour: 34 }, 30000);
+        assert.equal(await app.evaluate(() => window.__gqc.state.lastError), "");
+        assert.equal(popupCount, 0);
+        assert.deepEqual(usagePaths, []);
+        assert.equal(context.pages().length, 1);
+        assert.equal(app.url(), "https://gemini.google.com/u/1/app");
+        console.log(
+          "静默 RPC 链路通过：启动自动获取、连点去重、到期自动更新，无 popup 或 /usage 请求。",
+        );
+      } finally {
+        await context.close();
+      }
+    }
+
+    // 场景 B：RPC 503。GET 探测只拿到空壳，隐藏同源 iframe 渲染出用量文本后回填；
+    // 仍然不跳转、不开标签页，且只请求当前账号的 /u/1/usage。
+    {
+      const frameUsagePaths = [];
+      let frameRpcCount = 0;
+      let framePopupCount = 0;
+      const frameContext = await browser.newContext();
+      try {
+        await frameContext.route("https://gemini.google.com/**", (route) => {
+          const request = route.request();
+          const url = new URL(request.url());
+          if (url.pathname.endsWith("/batchexecute")) {
+            frameRpcCount += 1;
+            return route.fulfill({ status: 503, body: "Unavailable" });
+          }
+          if (url.pathname.endsWith("/usage")) {
+            frameUsagePaths.push(url.pathname);
+            const isSubframeDocument =
+              request.isNavigationRequest() && request.frame().parentFrame() !== null;
+            return route.fulfill({
+              contentType: "text/html",
+              body: isSubframeDocument ? usageHtml : emptyHtml,
+            });
+          }
+          return route.fulfill({ contentType: "text/html", body: emptyHtml });
+        });
+        await frameContext.addInitScript(() => {
+          window.WIZ_global_data = { SNlM0e: "test-token", cfb2h: "build", FdrFJe: "session" };
+        });
+        await frameContext.addInitScript({ content: topFrameOnlySource });
+        const frameApp = await frameContext.newPage();
+        frameApp.on("popup", () => (framePopupCount += 1));
+        await frameApp.goto("https://gemini.google.com/u/1/app");
+        const frameState = await waitForState(frameApp, { fiveHour: 12, weekly: 68 }, 60000);
+        assert.equal(frameState.error, "", "兜底成功后应清除 RPC 失败状态");
+        assert.ok(frameRpcCount >= 1, "应至少尝试一次官方 RPC");
+        assert.ok(frameUsagePaths.length >= 1, "未触发 /usage 兜底");
+        assert.ok(
+          frameUsagePaths.every((entry) => entry === "/u/1/usage"),
+          "请求了其他账号：" + frameUsagePaths.join(","),
+        );
+        const frameDiagnostics = await frameApp.evaluate(
+          () => window.__gqc.dump().diagnostics,
+        );
+        assert.ok(frameDiagnostics.usageFrameAttempts >= 1, "未走同源 iframe 兜底");
+        assert.equal(frameDiagnostics.usageFrameParsed, true);
+        assert.equal(framePopupCount, 0, "静默兜底不得打开标签页");
+        assert.equal(frameContext.pages().length, 1, "静默兜底不得留下多余页面");
+        assert.equal(frameApp.url(), "https://gemini.google.com/u/1/app");
+        console.log(
+          "静默 iframe 兜底通过：RPC 503 时仍取到 12% / 68%，无 popup、无跳转。",
+        );
+      } finally {
+        await frameContext.close();
+      }
+    }
+
+    // 场景 C：RPC 与同源 iframe 都失效。自动同步保持静默失败，
+    // 手动刷新才在后台标签页里读同一份官方页面文本，回传后自动关闭。
+    {
+      const helperUsagePaths = [];
+      let helperPopupCount = 0;
+      const helperContext = await browser.newContext();
+      try {
+        await helperContext.route("https://gemini.google.com/**", (route) => {
+          const request = route.request();
+          const url = new URL(request.url());
+          if (url.pathname.endsWith("/batchexecute")) {
+            return route.fulfill({ status: 503, body: "Unavailable" });
+          }
+          if (url.pathname.endsWith("/usage")) {
+            helperUsagePaths.push(url.pathname);
+            // 只有顶层后台标签页渲染用量文本；同源 iframe 与 GET 探测只拿到空壳。
+            const isTopLevelDocument =
+              request.isNavigationRequest() && request.frame().parentFrame() === null;
+            return route.fulfill({
+              contentType: "text/html",
+              body: isTopLevelDocument ? usageHtml : emptyHtml,
+            });
+          }
+          return route.fulfill({ contentType: "text/html", body: emptyHtml });
+        });
+        await helperContext.addInitScript(() => {
+          window.WIZ_global_data = { SNlM0e: "test-token", cfb2h: "build", FdrFJe: "session" };
+        });
+        await helperContext.addInitScript({ content: topFrameOnlySource });
+        const helperApp = await helperContext.newPage();
+        helperApp.on("popup", () => (helperPopupCount += 1));
+        await helperApp.goto("https://gemini.google.com/u/1/app");
+        // 先让自动同步跑完并把 iframe 判为不可用：只有此时手动点击才值得占位。
+        const blockedDeadline = Date.now() + 60000;
+        let blocked = null;
+        while (Date.now() < blockedDeadline) {
+          blocked = await helperApp.evaluate(() => ({
+            blocked: window.__gqc.dump().diagnostics.usageFrameBlocked,
+            syncing: window.__gqc.state.isSyncing,
+            error: window.__gqc.state.lastError,
+          }));
+          if (blocked.blocked === true && blocked.syncing === false) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.equal(blocked.blocked, true, "同源 iframe 未被判定为不可用");
+        assert.match(blocked.error, /503/, "RPC 失败原因应保留在状态里");
+        assert.equal(helperPopupCount, 0, "自动同步不得打开标签页");
+        await helperApp.evaluate(() => {
+          const refresh = document.querySelector(
+            '.gc-btn-icon[title="立即同步官方最新用量与重置时间"]',
+          );
+          refresh.click();
+          refresh.click();
+          refresh.click();
+        });
+        const helperState = await waitForState(helperApp, { fiveHour: 12, weekly: 68 }, 60000);
+        assert.equal(helperState.error, "", "后台页回传成功后应清除错误状态");
+        // 后台页写完同步桥后自行关闭，给它一个短暂的收尾窗口。
+        const closeDeadline = Date.now() + 15000;
+        while (helperContext.pages().length > 1 && Date.now() < closeDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.equal(helperPopupCount, 1, "手动刷新只占一个后台标签页");
+        assert.ok(helperUsagePaths.length >= 1, "未请求官方 /usage");
+        assert.ok(
+          helperUsagePaths.every((entry) => entry === "/u/1/usage"),
+          "请求了其他账号：" + helperUsagePaths.join(","),
+        );
+        assert.equal(helperContext.pages().length, 1, "后台用量页未自动关闭");
+        assert.equal(helperApp.url(), "https://gemini.google.com/u/1/app");
+        console.log(
+          "手动兜底通过：RPC 与 iframe 均失效时，后台 /u/1/usage 回传 12% / 68% 并自动关闭。",
+        );
+      } finally {
+        await helperContext.close();
+      }
+    }
+
+    // 场景 D：/app 上没有 /u/<n> 前缀。裸 /usage 就是当前登录账号的用量页，
+    // 探测直接取数；不应因为「不知道前缀」而整条链路失效，也不应猜测 RPC 端点。
+    {
+      const bareUsagePaths = [];
+      let bareRpcCount = 0;
+      let barePopupCount = 0;
+      const bareContext = await browser.newContext();
+      try {
+        await bareContext.route("https://gemini.google.com/**", (route) => {
+          const url = new URL(route.request().url());
+          if (url.pathname.endsWith("/batchexecute")) {
+            bareRpcCount += 1;
+            return route.fulfill({ status: 500, body: "should not happen" });
+          }
+          if (url.pathname.endsWith("/usage")) {
+            bareUsagePaths.push(url.pathname);
+            return route.fulfill({ contentType: "text/html", body: usageHtml });
+          }
+          return route.fulfill({ contentType: "text/html", body: emptyHtml });
+        });
+        await bareContext.addInitScript({ content: topFrameOnlySource });
+        const bareApp = await bareContext.newPage();
+        bareApp.on("popup", () => (barePopupCount += 1));
+        await bareApp.goto("https://gemini.google.com/app");
+        const bareState = await waitForState(bareApp, { fiveHour: 12, weekly: 68 }, 30000);
+        assert.equal(bareRpcCount, 0, "无账号前缀时不应猜测 RPC 端点");
+        assert.deepEqual(bareUsagePaths, ["/usage"], "应只请求当前账号的裸 /usage");
+        const bareDiagnostics = await bareApp.evaluate(
+          () => window.__gqc.dump().diagnostics,
+        );
+        assert.equal(bareDiagnostics.usageFrameAttempts, 0, "探测已成功，不应再开 iframe");
+        assert.equal(barePopupCount, 0);
+        assert.equal(bareContext.pages().length, 1);
+        assert.equal(bareApp.url(), "https://gemini.google.com/app");
+        assert.equal(bareState.error, "");
+        console.log("无前缀静默探测通过：/app 下直接 GET /usage 取到 12% / 68%。");
+      } finally {
+        await bareContext.close();
+      }
     }
     console.log(`连续更新审计（每形态 1000 次）：${JSON.stringify(audit)}`);
 

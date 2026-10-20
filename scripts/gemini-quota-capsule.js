@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.2
+// @version      1.0.3
 // @description  document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与官方用量页面，按窗口精确分流 5H / 7D 用量；装饰图标与两段进度独立配置，支持图片、SVG 与组件 CSS。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "1.0.2";
+  const SCRIPT_VERSION = "1.0.3";
   // 进度图形清单：5H 与 7D 各自选择，互不影响。
   const INDICATOR_MODES = [
     { key: "bar", text: "横条" },
@@ -76,6 +76,13 @@
   const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000;
   const AUTO_SYNC_HEARTBEAT_MS = 10000;
 
+  // /usage 是 CSR 页面：同源 iframe 需要桌面视口并给足数据到达时间。
+  // 1×1 会命中窄屏布局，官方用量卡片可能完全不渲染。
+  const USAGE_FRAME_WIDTH_PX = 1280;
+  const USAGE_FRAME_HEIGHT_PX = 900;
+  const USAGE_FRAME_TIMEOUT_MS = 12000;
+  const USAGE_FRAME_BLANK_GRACE_MS = 1500;
+  const USAGE_FRAME_RETRY_COOLDOWN_MS = 10 * 60 * 1000;
   const USAGE_HELPER_TIMEOUT_MS = 20000;
   // 发起方额外等待一个标签页加载窗口，避免在后台页还没开始解析时先超时
   const USAGE_HELPER_WAIT_MS = 30000;
@@ -487,6 +494,28 @@
     return observedAccountPrefix;
   }
 
+  /**
+   * /app 本身不含账号索引。首屏主动请求前只从「当前文档实际加载过的同源资源」
+   * 里补一次账号前缀：资源条目属于本次页面加载，能证明是当前账号的路径。
+   * 不扫描站内链接——账号切换器里可能同时存在其他账号的 /u/<n> 链接，
+   * 拿来推断会把别的账号用量写进当前缓存。
+   */
+  function discoverAccountPrefix() {
+    const current = getAccountPrefix();
+    if (current) return current;
+    try {
+      const entries = window.performance.getEntriesByType("resource");
+      for (const entry of entries) {
+        if (!entry || typeof entry.name !== "string") continue;
+        if (!/\/BardChatUi\/|batchexecute|\/usage\/?$/.test(entry.name)) continue;
+        noteAccountPrefix(entry.name);
+      }
+    } catch {
+      // 性能条目不可用时保留空前缀，等待后续网络观察
+    }
+    return getAccountPrefix();
+  }
+
   function getOfficialUsageUrl() {
     return `${window.location.origin}${getAccountPrefix()}/usage`;
   }
@@ -510,7 +539,12 @@
     const normalize = (path) =>
       typeof path === "string" ? path.replace(/\/+$/, "") : "";
     const target = normalize(candidatePath);
-    return !!target && normalize(finalPath) === target;
+    if (!target) return false;
+    const final = normalize(finalPath);
+    if (final === target) return true;
+    // 裸 /usage 就是「当前登录账号」的用量页，Google 会把它解析/重定向到 /u/<n>/usage。
+    // 这种重定向仍属同一账号，是无前缀场景下唯一不需要猜账号索引的通道。
+    return target === "/usage" && /^\/u\/\d+\/usage$/.test(final);
   }
 
   /**
@@ -1717,6 +1751,7 @@
     frameTimeout: false,
     frameTextLength: 0,
     frameParsed: false,
+    frameReason: "",
     helperAttempts: 0,
     helperOK: false,
     helperReason: "",
@@ -1917,7 +1952,17 @@
       const Parser =
         frame.contentWindow && frame.contentWindow.DOMParser;
       if (typeof Parser !== "function") return null;
-      return new Parser().parseFromString(rawHtml, "text/html");
+      // DOMParser 产出的文档不参与布局：innerText 恒为空，textContent 又会把相邻
+      // 块级元素粘成一行（"12% usedResets in 2 hrWeekly limit..."），按行切片的
+      // 解析会失真。解析前在块级边界补换行，等价于真实渲染出来的文本结构。
+      // script/style 的内容不属于可见文本，留着会被当成正文拼进最后一个区块。
+      const textFriendly = rawHtml
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+        .replace(
+          /<\/(?:p|div|h[1-6]|li|tr|td|section|article|main|header|footer|aside|nav)\s*>|<br\s*\/?>/gi,
+          (tag) => `${tag}\n`,
+        );
+      return new Parser().parseFromString(textFriendly, "text/html");
     } catch {
       return null;
     } finally {
@@ -2606,20 +2651,22 @@
   // 5. 主动官方同步器
   // =========================================================================
   let activeSyncPromise = null;
+  let probeIframeEl = null;
+  let renderedUsageFrameBlockedUntil = 0;
   let pendingUsageHelper = null;
 
   // Internal RPC used by the official Usage page; Google can rotate its ID.
   const USAGE_RPC_ID = "jSf9Qc";
   // f.req 是二次编码：每个调用是 [rpcid, JSON 文本, null, "generic"]。
-  // 这里必须是字符串 "[]"；传裸数组 [] 会被服务端当作非法参数并回空帧，
-  // 于是「请求成功但解析不到用量」——这是 1.0.1 直接取数失败的根因。
+  // 官方页面与已知实现都传字符串 "[]"；1.0.1 传裸数组 [] 与协议形态不一致，
+  // 会导致请求取不到可解析的用量。服务端对裸数组的具体响应尚未抓包确认。
   const USAGE_RPC_ARGS = "[]";
   const RPC_TIMEOUT_MS = 12000;
   let nextAutomaticSyncAt = 0;
   let automaticFailureCount = 0;
   let deferredAutomaticSync = null;
-  // 最近一次 RPC 失败原因，只用于 __gqc.dump() 定位，不进入 UI 文案。
-  const usageSyncDiag = { rpcError: "" };
+  // 最近一次同步失败原因，只用于 __gqc.dump() 定位，不进入 UI 文案。
+  const usageSyncDiag = { rpcError: "", helperError: "" };
 
   function officialCacheKey() {
     return STORAGE_KEY_OFFICIAL_CACHE + ":" + (getAccountPrefix() || "default");
@@ -2630,14 +2677,15 @@
     const result = { timestamp: nowMs, fiveHour: null, weekly: null };
     for (const row of payload[1]) {
       if (!Array.isArray(row)) continue;
-      // row[0] 是「剩余额度」而不是上限：耗尽时为 0，绝不能拿它当有效性判据。
+      // row[0] 的语义随账号与窗口变化，耗尽时可能为 0；它不是协议规定的
+      // 有效性判据，旧版要求 > 0 会把仅剩的窗口一起丢掉。
       const [, fraction, period, resets] = row;
       const kind = period === 1 ? "fiveHour" : period === 2 ? "weekly" : null;
       if (kind === null) continue;
       // 同一窗口出现多行时以第一行为准，不因兄弟行异常把整包用量作废。
       if (result[kind] !== null) continue;
-      // 超额时 server 会给出 >1 的比例，钳制到 100% 已用即可，不必丢弃。
-      if (typeof fraction !== "number" || !Number.isFinite(fraction) || fraction < 0 || fraction > 1.5) continue;
+      // 超额时 server 可能给出任意 >1 的比例，钳制到 100% 已用即可，不必丢弃。
+      if (typeof fraction !== "number" || !Number.isFinite(fraction) || fraction < 0) continue;
       if (!Array.isArray(resets) || !Array.isArray(resets[0])) continue;
       const [seconds, nanos = 0] = resets[0];
       if (!Number.isSafeInteger(seconds) || !Number.isInteger(nanos) || nanos < 0 || nanos >= 1e9) continue;
@@ -2656,7 +2704,8 @@
     if (!wiz || typeof wiz.SNlM0e !== "string" || wiz.SNlM0e.length === 0) return null;
     const rpcId = USAGE_RPC_ID;
     const args = USAGE_RPC_ARGS;
-    const prefix = getAccountPrefix();
+    const prefix = discoverAccountPrefix();
+    if (!prefix) return null;
     const url = new URL(prefix + "/_/BardChatUi/data/batchexecute", window.location.origin);
     const params = { rpcids: rpcId, "source-path": prefix + "/usage",
       hl: "en", _reqid: String(Date.now() % 900000 + 100000), rt: "c" };
@@ -2690,6 +2739,7 @@
   async function requestOfficialUsageRpc() {
     const request = buildOfficialUsageRequest();
     if (request === null) {
+      usageSyncDiag.rpcError = "官方页面登录参数尚未就绪";
       quotaState.lastError = "官方页面登录参数尚未就绪，将自动重试";
       return false;
     }
@@ -2715,6 +2765,321 @@
       quotaState.lastError = usageSyncDiag.rpcError;
     }
     return false;
+  }
+
+  /**
+   * 优先重放官方页面自己发出过的 jSf9Qc 请求。它能保留 Google 后续调整过的
+   * args 形态；只在请求确实来自当前账号的 /usage 时使用，避免串账号。
+   */
+  async function replayCapturedQuotaRpc() {
+    const captured = quotaState.capturedQuotaRpc;
+    if (
+      !captured ||
+      captured.rpcId !== USAGE_RPC_ID ||
+      typeof captured.url !== "string" ||
+      typeof captured.body !== "string"
+    ) {
+      return false;
+    }
+    const prefix = discoverAccountPrefix();
+    if (!prefix) return false;
+    try {
+      const url = new URL(captured.url, window.location.origin);
+      if (url.origin !== window.location.origin) return false;
+      const pathPrefix = url.pathname.match(/^(\/u\/\d+)\//);
+      if (!pathPrefix || pathPrefix[1] !== prefix) return false;
+
+      const body = new URLSearchParams(captured.body);
+      const wiz = window.WIZ_global_data;
+      if (
+        wiz &&
+        typeof wiz.SNlM0e === "string" &&
+        wiz.SNlM0e.length > 0 &&
+        body.has("at")
+      ) {
+        body.set("at", wiz.SNlM0e);
+      }
+      const response = await origFetch.call(window, url.href, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          "X-Same-Domain": "1",
+        },
+        body: body.toString(),
+      });
+      if (!response.ok || response.redirected === true) return false;
+      const frames = parseBatchExecuteResponse(await response.text());
+      if (getAccountPrefix() !== prefix) return false;
+      for (const frame of frames) {
+        if (frame.rpcId !== USAGE_RPC_ID) continue;
+        const parsed = parseUsageRpcPayload(frame.payload);
+        if (parsed !== null && commitOfficialQuota(parsed, "rpc", true)) {
+          usageSyncDiag.rpcError = "";
+          return true;
+        }
+      }
+    } catch {
+      // 精确请求失败时继续用页面 token 构造同 RPC；原因由后续诊断覆盖。
+    }
+    return false;
+  }
+
+  /**
+   * 静默探测官方 /usage 页面：带登录态 GET，解析 SSR HTML 内嵌的用量数据。
+   *
+   * 已知 /u/<n> 前缀时只试该前缀；未知时只试裸 /usage——Google 按当前登录账号
+   * 解析它，重定向到 /u/<n>/usage 仍属同一账号。不遍历 /u/0 ~ /u/3：
+   * 那些地址会直接返回其他账号的页面，路径校验也无法区分。
+   * 落到其他账号路径的正文一律丢弃，绝不写进当前缓存。
+   */
+  async function probeUsagePage() {
+    const origin = window.location.origin;
+    const prefix = discoverAccountPrefix();
+    const candidates = prefix
+      ? [origin + prefix + "/usage"]
+      : [origin + "/usage"];
+    for (const candidateUrl of candidates) {
+      const candidatePath = (() => {
+        try {
+          return new URL(candidateUrl, window.location.href).pathname;
+        } catch {
+          return "";
+        }
+      })();
+      if (!candidatePath) continue;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), USAGE_FRAME_TIMEOUT_MS);
+      try {
+        const response = await origFetch.call(window, candidateUrl, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const finalPath = (() => {
+          try {
+            return new URL(response.url || candidateUrl, window.location.href)
+              .pathname;
+          } catch {
+            return "";
+          }
+        })();
+        const sameAccount = isSameUsagePath(finalPath, candidatePath);
+        quotaState.usagePageStatus = {
+          url: shortenUrl(candidateUrl),
+          status: response.status,
+          finalUrl: shortenUrl(response.url || ""),
+          redirected: response.redirected === true,
+          missing:
+            response.redirected === true && !/\/usage\/?$/.test(finalPath),
+          sameAccount,
+        };
+        if (!sameAccount) continue;
+        noteAccountPrefix(response.url || candidateUrl);
+        if (!response.ok) continue;
+        const rawHtml = await response.text();
+        const doc = parseHtmlDocument(rawHtml);
+        if (doc === null) continue;
+        const parsed = parseUsageDocument(doc, rawHtml);
+        if (parsed === null) continue;
+        if (!parsed.fiveHour && !parsed.weekly) continue;
+        return { result: parsed, url: candidateUrl };
+      } catch {
+        // 网络错误或超时：换下一个候选，最终原因由同步层统一记录
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return null;
+  }
+
+  function readIframeDocument(iframe) {
+    try {
+      return (
+        iframe.contentDocument ||
+        (iframe.contentWindow && iframe.contentWindow.document) ||
+        null
+      );
+    } catch {
+      // frame-ancestors / X-Frame-Options 生效时文档不可读
+      return null;
+    }
+  }
+
+  function markUsageFrameUnavailable(reason) {
+    usageParseDiag.frameBlocked = true;
+    usageParseDiag.frameReason = reason;
+    renderedUsageFrameBlockedUntil =
+      Date.now() + USAGE_FRAME_RETRY_COOLDOWN_MS;
+  }
+
+  /**
+   * 在移出可视区域的同源 iframe 中真实渲染官方 /usage 页面。
+   * 这是 RPC 不可用时的静默兜底；只接受请求路径与最终路径完全一致的账号。
+   */
+  function extractViaSameOriginUsageIframe(
+    usageUrl,
+    timeoutMs = USAGE_FRAME_TIMEOUT_MS,
+  ) {
+    return new Promise((resolve) => {
+      if (!document.body) {
+        resolve(null);
+        return;
+      }
+      let requestedPath = "";
+      try {
+        requestedPath = new URL(usageUrl, window.location.href).pathname;
+      } catch {
+        resolve(null);
+        return;
+      }
+
+      usageParseDiag.frameAttempts += 1;
+      if (probeIframeEl && probeIframeEl.parentNode) {
+        probeIframeEl.parentNode.removeChild(probeIframeEl);
+      }
+      const iframe = el("iframe", {
+        src: usageUrl,
+        "aria-hidden": "true",
+        tabindex: "-1",
+        style: [
+          "position:fixed",
+          `width:${USAGE_FRAME_WIDTH_PX}px`,
+          `height:${USAGE_FRAME_HEIGHT_PX}px`,
+          "opacity:0",
+          "pointer-events:none",
+          "left:-20000px",
+          "top:0",
+          "border:0",
+          "z-index:-1",
+        ].join(";"),
+      });
+      probeIframeEl = iframe;
+
+      let finished = false;
+      let observer = null;
+      let pollId = null;
+      let partialTimer = null;
+      let blankTimer = null;
+      let timeoutId = null;
+      let partialResult = null;
+
+      const done = (result, unavailableReason = "") => {
+        if (finished) return;
+        finished = true;
+        if (pollId) clearInterval(pollId);
+        if (partialTimer) clearTimeout(partialTimer);
+        if (blankTimer) clearTimeout(blankTimer);
+        if (timeoutId) clearTimeout(timeoutId);
+        if (observer) observer.disconnect();
+        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        if (probeIframeEl === iframe) probeIframeEl = null;
+        if (unavailableReason) markUsageFrameUnavailable(unavailableReason);
+        resolve(result);
+      };
+
+      const verifyFramePath = (frameDoc) => {
+        try {
+          const framePath = new URL(frameDoc.URL, window.location.href).pathname;
+          if (!isSameUsagePath(framePath, requestedPath)) {
+            usageParseDiag.frameRedirected = true;
+            done(null, "官方 /usage 页面重定向到了其他账号");
+            return false;
+          }
+          // 裸 /usage 被解析到 /u/<n>/usage 时，这里也是可信的账号前缀来源。
+          noteAccountPrefix(frameDoc.URL);
+          return true;
+        } catch {
+          usageParseDiag.frameRedirected = true;
+          done(null, "官方 /usage 页面地址无法校验");
+          return false;
+        }
+      };
+
+      const tryExtract = () => {
+        if (finished) return;
+        const frameDoc = readIframeDocument(iframe);
+        if (!frameDoc || !frameDoc.body) return;
+        if (!frameDoc.URL || frameDoc.URL === "about:blank") return;
+        if (!verifyFramePath(frameDoc)) return;
+
+        const text = frameDoc.body.innerText || frameDoc.body.textContent || "";
+        usageParseDiag.frameTextLength = Math.max(
+          usageParseDiag.frameTextLength,
+          text.length,
+        );
+        const parsed = parseUsageDocument(frameDoc, "");
+        if (!parsed || (!parsed.fiveHour && !parsed.weekly)) return;
+        usageParseDiag.frameParsed = true;
+        const has5h = !!(
+          parsed.fiveHour &&
+          (parsed.fiveHour.pct !== null || parsed.fiveHour.resetAt !== null)
+        );
+        const has7d = !!(
+          parsed.weekly &&
+          (parsed.weekly.pct !== null || parsed.weekly.resetAt !== null)
+        );
+        if (has5h && has7d) {
+          done(parsed);
+          return;
+        }
+        partialResult = parsed;
+        if (!partialTimer) {
+          partialTimer = setTimeout(() => done(partialResult), 1200);
+        }
+      };
+
+      iframe.addEventListener("load", () => {
+        usageParseDiag.frameLoads += 1;
+        if (blankTimer) {
+          clearTimeout(blankTimer);
+          blankTimer = null;
+        }
+        const frameDoc = readIframeDocument(iframe);
+        if (!frameDoc) {
+          done(null, "官方 /usage 页面拒绝被同源 iframe 嵌入");
+          return;
+        }
+        if (!frameDoc.URL || frameDoc.URL === "about:blank") {
+          blankTimer = setTimeout(() => {
+            blankTimer = null;
+            const pendingDoc = readIframeDocument(iframe);
+            if (!pendingDoc || !pendingDoc.URL || pendingDoc.URL === "about:blank") {
+              done(null, "同源 iframe 只拿到了空白文档");
+            }
+          }, USAGE_FRAME_BLANK_GRACE_MS);
+          return;
+        }
+        if (!verifyFramePath(frameDoc)) return;
+        tryExtract();
+        try {
+          if (frameDoc.body) {
+            observer = new MutationObserver(tryExtract);
+            observer.observe(frameDoc.body, {
+              childList: true,
+              subtree: true,
+              characterData: true,
+            });
+          }
+        } catch {
+          // 轮询仍然覆盖 CSR 更新
+        }
+      });
+      iframe.addEventListener("error", () => {
+        done(null, "同源 iframe 加载官方 /usage 页面失败");
+      });
+
+      document.body.appendChild(iframe);
+      pollId = setInterval(tryExtract, 300);
+      timeoutId = setTimeout(() => {
+        if (partialResult) done(partialResult);
+        else {
+          usageParseDiag.frameTimeout = true;
+          done(null, "官方 /usage 页面未在限时内呈现用量文本");
+        }
+      }, timeoutMs);
+    });
   }
 
   function readHelperSyncNonce() {
@@ -2877,6 +3242,23 @@
    * 会被弹窗拦截策略直接拒绝，用户看到的就是「点刷新没有任何反应」。
    * 先占位、拿到真实 /usage 地址后再导航过去，既不提前发请求，也不会被拦截。
    */
+  function reserveUsageHelperWindow() {
+    let helperWindow = null;
+    try {
+      helperWindow = window.open("about:blank", "_blank");
+    } catch {
+      helperWindow = null;
+    }
+    if (!helperWindow) return null;
+    try {
+      helperWindow.blur();
+      window.focus();
+    } catch {
+      // 某些浏览器不允许主动切回焦点
+    }
+    return helperWindow;
+  }
+
   function closeUsageHelperWindow(helperWindow) {
     if (!helperWindow) return;
     try {
@@ -2884,6 +3266,25 @@
     } catch {
       // 忽略关闭失败
     }
+  }
+
+  /**
+   * 判断这次手动点击是否值得提前占住后台标签页。
+   *
+   * 只有同时满足才占位：手动点击、不在官方 /usage 页面、官方 RPC 已经连续失败、
+   * 同源 iframe 处于不可用冷却期、当前没有同步在跑。前两条避免正常刷新时多余开页；
+   * 后两条保证占位确实用得上，且连点最多只产生一个标签页。
+   * 返回 null 表示这次同步只能走静默通道。
+   */
+  function maybeReserveHelperWindow(isManualClick) {
+    if (!isManualClick) return null;
+    if (/\/usage\/?$/.test(window.location.pathname)) return null;
+    if (automaticFailureCount <= 0) return null;
+    // 只有 iframe 已经被判为不可用（处于冷却期）时，后台页才确实可能用得上；
+    // 仅凭一次 RPC 失败就占位会在刷新时闪出多余的空白标签页。
+    if (Date.now() >= renderedUsageFrameBlockedUntil) return null;
+    if (activeSyncPromise !== null) return null;
+    return reserveUsageHelperWindow();
   }
 
   function requestUsageHelperSync(preferredUrl, reservedWindow = null) {
@@ -3025,8 +3426,29 @@
     return promise;
   }
 
-  async function syncOfficialUsage(isManualClick = false) {
-    if (activeSyncPromise !== null) return activeSyncPromise;
+  /**
+   * 静默优先的同步顺序：当前 /usage 主 DOM → 重放官方 RPC → 自建 RPC →
+   * 用量页静默探测（GET /usage）→ 隐藏同源 iframe → 手动点击时的后台标签页。
+   *
+   * 自动同步只走前五条：既不跳转也不弹窗，因此旧版「一闪而过」不会被带回来。
+   * 后台标签页只服务手动点击，并且只在官方 RPC 已连续失败、且当前没有同步在跑时
+   * 于点击的同步阶段提前占位：正常同步与连点都不会多出空白标签页。
+   */
+  async function syncOfficialUsage(isManualClick = false, reservedWindow = null) {
+    const onUsagePage = /\/usage\/?$/.test(window.location.pathname);
+    let manualHelperWindow = reservedWindow;
+
+    if (activeSyncPromise !== null) {
+      // 已有同步在跑就复用它：连点既不重复发请求，也不会闪出第二个空白页。
+      // 手动点击在这里只更新阶段文案，让用户看到「确实被受理了」。
+      closeUsageHelperWindow(manualHelperWindow);
+      if (isManualClick) {
+        quotaState.syncPhase = "等待进行中的同步结束";
+        updateUI();
+      }
+      return activeSyncPromise;
+    }
+
     if (!isManualClick && document.visibilityState === "hidden") return false;
     if (!isManualClick && Date.now() < nextAutomaticSyncAt) {
       if (deferredAutomaticSync === null) {
@@ -3042,21 +3464,80 @@
       deferredAutomaticSync = null;
     }
     quotaState.isSyncing = true;
-    quotaState.syncPhase = "静默同步官方用量";
+    quotaState.syncPhase = isManualClick ? "同步官方用量" : "静默同步官方用量";
     quotaState.lastError = "";
+    usageSyncDiag.helperError = "";
     updateUI();
     activeSyncPromise = (async () => {
       let ok = false;
       try {
-        ok = await requestOfficialUsageRpc();
-        if (!ok && window.location.pathname.split("/").filter(Boolean).at(-1) === "usage") {
-          ok = commitOfficialQuota(parseUsageDocument(document, ""), "usage-page", true);
+        // 0. 已经站在 /usage 上时直接读主 DOM，不额外发请求
+        if (onUsagePage) {
+          ok = commitOfficialQuota(
+            parseUsageDocument(document, ""),
+            "usage-page",
+            true,
+          );
+        }
+        // 1. 重放官方页面自己发出过的请求，保留 Google 调整过的参数形态
+        if (!ok) ok = await replayCapturedQuotaRpc();
+        // 2. 用页面登录态自建 batchexecute
+        if (!ok) ok = await requestOfficialUsageRpc();
+
+        // 3. 静默兜底：带登录态 GET 官方 /usage，解析 SSR 内嵌的用量数据。
+        //    无 /u/<n> 前缀时用裸 /usage（当前账号页），不再因前缀缺失而整段跳过。
+        if (!ok && !onUsagePage) {
+          const probe = await probeUsagePage();
+          const probeResult = probe && probe.result;
+          if (
+            probeResult &&
+            (probeResult.fiveHour || probeResult.weekly) &&
+            commitOfficialQuota(probeResult, "usage-page", true)
+          ) {
+            ok = !!(probeResult.fiveHour && probeResult.weekly);
+          }
+        }
+
+        // 4. 隐藏同源 iframe 渲染官方 /usage：探测失败或只拿到一半指标时补位。
+        const usageUrl = getOfficialUsageUrl();
+        if (!ok && Date.now() >= renderedUsageFrameBlockedUntil) {
+          const fromIframe = await extractViaSameOriginUsageIframe(usageUrl);
+          ok = !!(
+            fromIframe && commitOfficialQuota(fromIframe, "usage-page", true)
+          );
+        }
+
+        // 5. 最后兜底只服务手动点击：在后台标签页里读同一份官方页面文本。
+        //    自动同步永远不走到这里，保证无跳转、无闪烁。
+        if (!ok && isManualClick && !onUsagePage) {
+          quotaState.syncPhase = "后台读取官方 /usage 页面文本";
+          updateUI();
+          const helperResult = await requestUsageHelperSync(
+            usageUrl,
+            manualHelperWindow,
+          );
+          // 句柄已交给后台页，由它自己关闭，避免提前掐断读取
+          manualHelperWindow = null;
+          ok = !!(
+            helperResult &&
+            helperResult.ok === true &&
+            applyUsageHelperPayload(helperResult)
+          );
+          if (!ok) {
+            usageSyncDiag.helperError =
+              helperResult && typeof helperResult.reason === "string" &&
+              helperResult.reason
+                ? helperResult.reason
+                : "后台官方 /usage 页面未返回用量文本";
+            quotaState.lastError = usageSyncDiag.helperError;
+          }
         }
         return ok;
       } catch (error) {
         quotaState.lastError = error instanceof Error ? error.message : "官方同步失败";
         return false;
       } finally {
+        closeUsageHelperWindow(manualHelperWindow);
         automaticFailureCount = ok ? 0 : Math.min(automaticFailureCount + 1, 5);
         nextAutomaticSyncAt = Date.now() + (ok ? AUTO_SYNC_HEARTBEAT_MS : Math.min(AUTO_SYNC_INTERVAL_MS, AUTO_SYNC_HEARTBEAT_MS * 2 ** automaticFailureCount));
         quotaState.isSyncing = false;
@@ -3921,7 +4402,8 @@
         title: "立即同步官方最新用量与重置时间",
         onclick: (e) => {
           e.stopPropagation();
-          syncOfficialUsage(true);
+          // 必须在点击的同步阶段占位：异步之后再 window.open 会被浏览器拦截。
+          syncOfficialUsage(true, maybeReserveHelperWindow(true));
         },
       },
       [refreshSvg],
@@ -4799,7 +5281,8 @@
      * 浏览器通常只在用户手势内放行弹窗，控制台调用可能被拦截并返回 ok:false。
      */
     helperSync() {
-      return requestUsageHelperSync(getOfficialUsageUrls()[0], null);
+      // 裸 /usage 是当前登录账号的用量页；有 /u/<n> 前缀时由 getOfficialUsageUrl() 带上。
+      return requestUsageHelperSync(getOfficialUsageUrl(), null);
     },
     parseResetText(text, nowMs = Date.now()) {
       return parseOfficialResetTextToTimestamp(text, nowMs);
@@ -4984,11 +5467,13 @@
           usageFrameTimeout: usageParseDiag.frameTimeout,
           usageFrameTextLength: usageParseDiag.frameTextLength,
           usageFrameParsed: usageParseDiag.frameParsed,
+          usageFrameReason: usageParseDiag.frameReason,
           usageHelperAttempts: usageParseDiag.helperAttempts,
           usageHelperOK: usageParseDiag.helperOK,
           usageHelperReason: usageParseDiag.helperReason,
           usageRpcId: USAGE_RPC_ID,
           usageRpcError: usageSyncDiag.rpcError,
+          usageHelperError: usageSyncDiag.helperError,
           // 拒绝计数：解释「为什么这次没数字」，避免再去猜官方字段
           rejected: { ...parseRejectDiag },
           usagePage: quotaState.usagePageStatus,

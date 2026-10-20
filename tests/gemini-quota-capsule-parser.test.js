@@ -140,9 +140,14 @@ assert.equal(rpc.fiveHour.resetAt, reset5 * 1000 + 500);
 assert.equal(rpc.weekly.usedPct, 68);
 assert.equal(rpc.weekly.resetAt, reset7 * 1000);
 assert.equal(api.parseUsageRpcPayload(null, now), null);
-for (const fraction of [-0.01, 1.6, NaN, Infinity, '0.2']) {
+for (const fraction of [-0.01, NaN, Infinity, '0.2']) {
   assert.equal(api.parseUsageRpcPayload([2, [[100, fraction, 1, [[reset5, 0]]]]], now), null);
 }
+
+// 超用比例只做上限钳制，不能整行丢弃：否则耗尽后反而拿不到用量。
+const overage = api.parseUsageRpcPayload([2, [[0, 2.2, 1, [[reset5, 0]]]], false], now);
+assert.equal(overage.fiveHour.usedPct, 100);
+assert.equal(overage.fiveHour.pct, 0);
 
 // row[0] 是剩余额度：耗尽时为 0；fraction 超额时钳制到 100% 已用。
 const exhausted = api.parseUsageRpcPayload(
