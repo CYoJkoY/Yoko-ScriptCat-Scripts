@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Port
 // @namespace    https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts
-// @version      0.1.0
+// @version      0.1.1
 // @description  AI 中转站卡片管理、标签交集筛选与自定义 JS 签到。
 // @author       Yoko
 // @match        https://*/*
@@ -58,6 +58,22 @@
   const MAX_IMAGE = 350000;
   const JOB_TTL = 5 * 60 * 1000;
   const RUN_TIMEOUT = 30000;
+  const JOB_EXPIRED = "已取消：任务已过期（5 分钟内有效）";
+
+  // 用户脚本可在普通 HTTP 页面运行，此时 crypto.randomUUID 因非安全上下文而缺失；
+  // getRandomValues 在非安全上下文仍可用，逐级回退保证任意页面都能生成唯一本地键。
+  function newId() {
+    const source = typeof crypto === "undefined" ? null : crypto;
+    if (source !== null && typeof source.randomUUID === "function") return source.randomUUID();
+    if (source !== null && typeof source.getRandomValues === "function") {
+      const bytes = source.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+      return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
+    }
+    return `t${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
 
   function record(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -65,7 +81,12 @@
 
   function webUrl(value) {
     if (typeof value !== "string") throw new Error("网址必须是文本");
-    const url = new URL(value);
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error("请填写完整的 http(s) 网址");
+    }
     if (!["https:", "http:"].includes(url.protocol) || url.username !== "" || url.password !== "") {
       throw new Error("请填写不含账号密码的完整 http(s) 网址");
     }
@@ -101,13 +122,18 @@
 
   function listCards() {
     const cards = [];
+    const brokenKeys = [];
     for (const key of GM_listValues().filter((entry) => entry.startsWith(CARD_PREFIX))) {
       try {
         cards.push({ ...normalizeCard(GM_getValue(key)), id: key.slice(CARD_PREFIX.length) });
       } catch (error) {
         console.error("[Port] 无法读取卡片", key, error);
-        throw new Error("存在损坏的卡片数据，请先导出备份后检查脚本存储");
+        brokenKeys.push(key);
       }
+    }
+    if (brokenKeys.length > 0) {
+      // 保守策略：宁可中断列表，也不静默丢弃用户数据；同时给出具体存储键便于手动修复。
+      throw new Error(`存在 ${brokenKeys.length} 张损坏的卡片数据：${brokenKeys.slice(0, 3).join("、")}${brokenKeys.length > 3 ? " 等" : ""}；请在脚本管理器的存储中检查这些键`);
     }
     return cards.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
   }
@@ -146,19 +172,43 @@
     GM_setValue(RESULT_PREFIX + id, { text: text.slice(0, 300), at: Date.now() });
   }
 
+  // 过期任务可能晚于一次新的成功签到才被清扫，此时保留终态结果，避免覆盖成「已取消」。
+  function saveExpiredIfPending(id) {
+    const result = GM_getValue(RESULT_PREFIX + id, null);
+    const text = record(result) && typeof result.text === "string" ? result.text : "";
+    const pending = text === "" || text.startsWith("等待目标页执行") || text.startsWith("正在执行");
+    if (pending) saveResult(id, JOB_EXPIRED);
+  }
+
   function queueCheckin(card) {
     if (card.enabled !== true || card.script.trim() === "") throw new Error("请先编辑卡片，填写并启用签到脚本");
-    const token = crypto.randomUUID();
+    // 先构造目标地址，非法网址不会留下无人消费的任务键。
+    const target = new URL(card.checkinUrl);
+    const token = newId();
     // 每个任务独立键，跨页面写入不会覆盖其他站点的任务。
     GM_setValue(JOB_PREFIX + token, { id: card.id, url: card.checkinUrl, createdAt: Date.now() });
-    const target = new URL(card.checkinUrl);
     target.searchParams.set(TASK_PARAM, token);
+    // 先写入等待状态，避免目标页抢先写回结果后被这里覆盖。
+    saveResult(card.id, "等待目标页执行（5 分钟内有效）");
     try {
       GM_openInTab(target.href, { active: true, setParent: true });
-      saveResult(card.id, "等待目标页执行（5 分钟内有效）");
     } catch (error) {
       GM_deleteValue(JOB_PREFIX + token);
+      // 打开失败时写回失败结果，不让卡片停在旧的「等待执行」提示。
+      saveResult(card.id, `打开签到页失败：${errorText(error)}`);
       throw error;
+    }
+  }
+
+  // 仅清理本脚本令牌；未知参数可能属于站点自身，保持地址栏原样。
+  function clearTaskParam(url) {
+    const cleaned = new URL(url.href);
+    cleaned.searchParams.delete(TASK_PARAM);
+    try {
+      history.replaceState(history.state, "", cleaned.href);
+    } catch (error) {
+      // 地址栏清理失败不应丢失任务结果；任务已消费，刷新后不会重复执行。
+      console.error("[Port] 无法从地址栏清理任务参数", error);
     }
   }
 
@@ -167,20 +217,39 @@
     const token = current.searchParams.get(TASK_PARAM);
     if (token === null) return;
     const job = GM_getValue(JOB_PREFIX + token, null);
-    if (!record(job) || typeof job.url !== "string" || typeof job.id !== "string" ||
-      typeof job.createdAt !== "number" || Date.now() - job.createdAt > JOB_TTL || job.createdAt > Date.now()) return;
-    const target = new URL(job.url);
+    // 未知令牌不做任何清理，避免误删站点自身的同名参数。
+    if (!record(job) || typeof job.url !== "string" || typeof job.id !== "string" || typeof job.createdAt !== "number") return;
+    let target;
+    try {
+      target = new URL(job.url);
+    } catch {
+      GM_deleteValue(JOB_PREFIX + token);
+      clearTaskParam(current);
+      saveResult(job.id, "已取消：任务网址无效");
+      return;
+    }
     // 允许登录跳转到同源页面，但不会在另一站点消费任务或运行脚本。
     if (target.origin !== current.origin) return;
     GM_deleteValue(JOB_PREFIX + token);
-    current.searchParams.delete(TASK_PARAM);
-    history.replaceState(history.state, "", current.href);
+    clearTaskParam(current);
+    const elapsed = Date.now() - job.createdAt;
+    if (elapsed > JOB_TTL || elapsed < 0) {
+      saveExpiredIfPending(job.id);
+      return;
+    }
     const value = GM_getValue(CARD_PREFIX + job.id, null);
     if (value === null) {
       saveResult(job.id, "已取消：卡片已删除");
       return;
     }
-    const card = normalizeCard(value);
+    let card;
+    try {
+      card = normalizeCard(value);
+    } catch (error) {
+      // 卡片数据损坏时写回可见结果，避免只在外层弹 alert 而丢失任务反馈。
+      saveResult(job.id, `执行失败：${errorText(error)}`);
+      return;
+    }
     if (card.enabled !== true || card.checkinUrl !== job.url) {
       saveResult(job.id, "已取消：卡片配置已变更或脚本已禁用");
       return;
@@ -195,7 +264,11 @@
       const run = new AsyncFunction("window", "document", "fetch", "signal", "waitFor", card.script);
       const pageFetch = (input, options = {}) => unsafeWindow.fetch(input, { ...options, signal: controller.signal });
       const waitFor = async (selector, ms = 10000) => {
-        const deadline = Date.now() + Math.min(20000, Math.max(0, Number(ms)));
+        if (typeof selector !== "string") throw new Error("waitFor 需要 CSS 选择器文本");
+        const requested = Number(ms);
+        // 显式拒绝非有限数值：Math.max/min 遇 NaN 会让等待立即结束，掩盖脚本错误。
+        if (!Number.isFinite(requested)) throw new Error("waitFor 的等待毫秒数必须是有限数值");
+        const deadline = Date.now() + Math.min(20000, Math.max(0, requested));
         do {
           if (controller.signal.aborted) throw new Error("执行已超时");
           const found = document.querySelector(selector);
@@ -266,7 +339,7 @@
     const status = node("footer", { role: "status", "aria-live": "polite" }, ["本地存储 · 多选标签取交集 · 签到由你触发"]);
     const tagList = node("div", { class: "tags", "aria-label": "按标签筛选" });
     const grid = node("div", { class: "grid" });
-    const search = node("input", { type: "search", placeholder: "搜索名称、网址、备注或标签…", "aria-label": "搜索中转站", oninput: () => { query = search.value; renderCards(); } });
+    const search = node("input", { type: "search", placeholder: "搜索名称、网址、备注或标签…", "aria-label": "搜索中转站", oninput: () => { query = search.value; refreshCards(); } });
     const importFile = node("input", { type: "file", accept: ".json,application/json", hidden: "" });
     const safeAction = (action) => {
       try { action(); } catch (error) { status.textContent = errorText(error); }
@@ -280,9 +353,8 @@
       }
     }
 
-    function renderCards() {
+    function renderCards(cards) {
       safeAction(() => {
-        const cards = listCards();
         const visible = cards.filter((card) => matches(card, selected, query));
         grid.replaceChildren();
         for (const card of visible) {
@@ -305,10 +377,12 @@
       });
     }
 
-    function renderTags() {
-      const tags = [...new Set(listCards().flatMap((card) => card.tags))].sort((left, right) => left.localeCompare(right, "zh-CN"));
+    function renderTags(cards) {
+      const tags = [...new Set(cards.flatMap((card) => card.tags))].sort((left, right) => left.localeCompare(right, "zh-CN"));
       selected = selected.filter((tag) => tags.includes(tag));
-      tagList.replaceChildren(button("全部站点", () => { selected = []; refresh(); }));
+      const allTags = button("全部站点", () => { selected = []; refresh(); });
+      allTags.setAttribute("aria-pressed", String(selected.length === 0));
+      tagList.replaceChildren(allTags);
       for (const tag of tags) {
         const control = button(tag, () => { selected = selected.includes(tag) ? selected.filter((item) => item !== tag) : [...selected, tag]; refresh(); });
         control.setAttribute("aria-pressed", String(selected.includes(tag)));
@@ -316,7 +390,10 @@
       }
     }
 
-    function refresh() { safeAction(() => { renderTags(); renderCards(); }); }
+    // 刷新只读取一次卡片，标签与卡片列表使用同一份快照，避免两次读取结果不一致。
+    function refresh() { safeAction(() => { const cards = listCards(); renderTags(cards); renderCards(cards); }); }
+
+    function refreshCards() { safeAction(() => renderCards(listCards())); }
 
     async function readImage(file) {
       if (file === undefined) return null;
@@ -376,7 +453,7 @@ return "已点击签到，请核对站点提示";` }, [original.script]);
         try {
           const uploaded = await readImage(upload.files[0]);
           const value = normalizeCard({ name: name.value, url: url.value, checkinUrl: checkinUrl.value, tags: tags.value, notes: notes.value, script: code.value, enabled: enabled.checked, icon: uploaded ?? (icon.value === "uploaded" ? original.icon : icon.value) });
-          GM_setValue(CARD_PREFIX + (existing ? card.id : crypto.randomUUID()), value);
+          GM_setValue(CARD_PREFIX + (existing ? card.id : newId()), value);
           editor.close(); refresh();
         } catch (failure) { error.textContent = errorText(failure); }
         finally { save.disabled = false; }
@@ -405,11 +482,14 @@ return "已点击签到，请核对站点提示";` }, [original.script]);
         const written = [];
         try {
           for (const card of cards) {
-            const key = CARD_PREFIX + crypto.randomUUID();
+            const key = CARD_PREFIX + newId();
             GM_setValue(key, card); written.push(key);
           }
         } catch (failure) {
-          for (const key of written) GM_deleteValue(key);
+          // 回滚失败不能吞掉原始导入错误，逐项记录后继续抛出。
+          for (const key of written) {
+            try { GM_deleteValue(key); } catch (rollbackError) { console.error("[Port] 回滚导入失败", key, rollbackError); }
+          }
           throw failure;
         }
         refresh(); status.textContent = `已导入 ${cards.length} 张卡片；签到脚本均已禁用，请逐项审阅后启用`;
@@ -440,10 +520,14 @@ return "已点击签到，请核对站点提示";` }, [original.script]);
       openManager();
     } catch (error) { console.error("[Port] 打开失败", error); alert(`Port：${errorText(error)}`); }
   });
-  // 清理过期的一次性任务，不读写其他脚本的存储。
+  // 先处理当前地址栏携带的任务，让过期任务也能清理参数并写回结果，再清扫其余过期任务。
+  executeTask().catch((error) => { console.error("[Port] 任务启动失败", error); alert(`Port 签到失败：${errorText(error)}`); });
   for (const key of GM_listValues().filter((entry) => entry.startsWith(JOB_PREFIX))) {
     const job = GM_getValue(key, null);
-    if (!record(job) || typeof job.createdAt !== "number" || Date.now() - job.createdAt > JOB_TTL) GM_deleteValue(key);
+    if (!record(job) || typeof job.createdAt !== "number") { GM_deleteValue(key); continue; }
+    if (Date.now() - job.createdAt <= JOB_TTL) continue;
+    GM_deleteValue(key);
+    // 写回取消结果，避免卡片长期停留在「等待目标页执行」。
+    if (typeof job.id === "string") saveExpiredIfPending(job.id);
   }
-  executeTask().catch((error) => { console.error("[Port] 任务启动失败", error); alert(`Port 签到失败：${errorText(error)}`); });
 })();
