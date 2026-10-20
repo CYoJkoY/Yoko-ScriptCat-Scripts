@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：1.0.1
+- 版本：1.0.2
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -18,7 +18,7 @@
 
 ### v0.9.4 同步行为
 
-正常刷新现已直接请求官方 Usage 页面使用的同源 batchexecute RPC（jSf9Qc）。请求的 source-path 为当前账号的 /usage；实际不打开标签页、不创建 iframe、不 GET 用量页面、不改变当前地址。RPC 失败且当前页本身是 /usage 时，读取现有 DOM 文本。被动网络观察仍保留。
+正常刷新现已直接请求官方 Usage 页面使用的同源 batchexecute RPC（jSf9Qc）。`f.req` 的调用参数是二次编码的 JSON 文本 `"[]"`，不是裸数组；请求的 source-path 为当前账号的 /usage；实际不打开标签页、不创建 iframe、不 GET 用量页面、不改变当前地址。RPC 失败且当前页本身是 /usage 时，读取现有 DOM 文本。被动网络观察仍保留。
 
 启动后 500ms 自动请求；每 10 秒检查一次，超过 3 分钟未成功更新则补刷。聊天响应结束后 1.8 秒触发，回前台且数据过期时补刷。隐藏页面暂停自动请求，在途请求复用；成功后自动请求至少间隔 10 秒。失败退避 20、40、80、160、180 秒，手动刷新绕过退避。RPC 含响应体读取最多等待 12 秒。
 
@@ -230,6 +230,13 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
 
 ## 十一、版本历史
+
+### v1.0.2
+
+- 修正官方用量 RPC 的 `f.req` 参数形态：调用参数必须是 JSON 文本 `"[]"`，1.0.1 传裸数组 `[]` 会被服务端当作非法参数，表现为请求成功但响应没有可解析的用量字段。
+- 解析 `jSf9Qc` 时不再要求 `row[0]`（剩余额度）为正数；额度耗尽时该值为 0。已用比例允许 0–1.5 并钳制到 100%，同一窗口的重复行取第一条有效值，不再因单个异常行丢弃整包数据。
+- 恢复请求前后账号路径的严格一致性检查；`__gqc.dump().diagnostics` 新增 `usageRpcId` 与 `usageRpcError`，便于区分 HTTP、重定向、账号切换和空用量响应。
+- 解析器与浏览器静默刷新回归已覆盖 `"[]"` 形态、耗尽额度和超额比例；真实登录账号与 Google RPC 变更仍待确认。
 
 ### v1.0.1
 

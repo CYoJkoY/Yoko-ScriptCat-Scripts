@@ -140,20 +140,41 @@ assert.equal(rpc.fiveHour.resetAt, reset5 * 1000 + 500);
 assert.equal(rpc.weekly.usedPct, 68);
 assert.equal(rpc.weekly.resetAt, reset7 * 1000);
 assert.equal(api.parseUsageRpcPayload(null, now), null);
-for (const fraction of [-1, 1.1, NaN, Infinity, '0.2']) {
+for (const fraction of [-0.01, 1.6, NaN, Infinity, '0.2']) {
   assert.equal(api.parseUsageRpcPayload([2, [[100, fraction, 1, [[reset5, 0]]]]], now), null);
 }
-assert.equal(api.parseUsageRpcPayload([2, [payload[1][0], payload[1][0]]], now), null);
+
+// row[0] 是剩余额度：耗尽时为 0；fraction 超额时钳制到 100% 已用。
+const exhausted = api.parseUsageRpcPayload(
+  [2, [[0, 1.2, 1, [[reset5, 0]]], [0, 1.5, 2, [[reset7, 0]]]], false],
+  now,
+);
+assert.equal(exhausted.fiveHour.usedPct, 100);
+assert.equal(exhausted.fiveHour.pct, 0);
+assert.equal(exhausted.weekly.usedPct, 100);
+assert.equal(exhausted.weekly.pct, 0);
+
+// 同窗口重复行取第一条有效值，兄弟行异常不影响另一窗口。
+const duplicated = api.parseUsageRpcPayload(
+  [2, [[100, 0.2, 1, [[reset5, 0]]], [100, 0.7, 1, [[reset5, 0]]], [0, 'bad', 2, [[reset7, 0]]]], false],
+  now,
+);
+assert.equal(duplicated.fiveHour.usedPct, 20);
+assert.equal(duplicated.weekly, null);
+
 assert.equal(api.buildOfficialUsageRequest(), null);
 window.WIZ_global_data = {SNlM0e: 'token&+', cfb2h: 'build', FdrFJe: 'session'};
 window.location.pathname = '/u/1/app';
 const request = api.buildOfficialUsageRequest();
 const rpcUrl = new URL(request.url);
 assert.equal(rpcUrl.pathname, '/u/1/_/BardChatUi/data/batchexecute');
+assert.equal(rpcUrl.searchParams.get('rpcids'), 'jSf9Qc');
 assert.equal(rpcUrl.searchParams.get('source-path'), '/u/1/usage');
+assert.equal(rpcUrl.searchParams.get('bl'), 'build');
+assert.equal(rpcUrl.searchParams.get('f.sid'), 'session');
 const body = new URLSearchParams(request.body);
 assert.equal(body.get('at'), 'token&+');
-assert.deepEqual(JSON.parse(body.get('f.req')), [[['jSf9Qc', [], null, 'generic']]]);
+assert.deepEqual(JSON.parse(body.get('f.req')), [[['jSf9Qc', '[]', null, 'generic']]]);
 assert.equal(api.officialCacheKey().endsWith(':/u/1'), true);
 window.location.pathname = '/u/2/app';
 assert.equal(api.officialCacheKey().endsWith(':/u/2'), true);

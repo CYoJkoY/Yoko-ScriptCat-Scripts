@@ -811,9 +811,10 @@ async function main() {
           assert.equal(url.searchParams.get("source-path"), "/u/1/usage");
           const params = new URLSearchParams(request.postData());
           assert.equal(params.get("at"), "test-token");
-          assert.deepEqual(JSON.parse(params.get("f.req")), [
-            [["jSf9Qc", [], null, "generic"]],
-          ]);
+          const freq = JSON.parse(params.get("f.req"));
+          // f.req 的 args 是二次编码后的 JSON 文本；裸数组会被服务端拒绝。
+          assert.equal(typeof freq[0][0][1], "string");
+          assert.deepEqual(freq, [[["jSf9Qc", "[]", null, "generic"]]]);
           const now = Date.now();
           const payload = [
             2,

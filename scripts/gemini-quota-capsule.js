@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Quota Capsule
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.1
+// @version      1.0.2
 // @description  document-start 拦截 XHR/Fetch batchexecute (wrb.fr) 与官方用量页面，按窗口精确分流 5H / 7D 用量；装饰图标与两段进度独立配置，支持图片、SVG 与组件 CSS。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/gemini-quota-capsule.js
@@ -18,7 +18,7 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "1.0.1";
+  const SCRIPT_VERSION = "1.0.2";
   // 进度图形清单：5H 与 7D 各自选择，互不影响。
   const INDICATOR_MODES = [
     { key: "bar", text: "横条" },
@@ -2610,10 +2610,16 @@
 
   // Internal RPC used by the official Usage page; Google can rotate its ID.
   const USAGE_RPC_ID = "jSf9Qc";
+  // f.req 是二次编码：每个调用是 [rpcid, JSON 文本, null, "generic"]。
+  // 这里必须是字符串 "[]"；传裸数组 [] 会被服务端当作非法参数并回空帧，
+  // 于是「请求成功但解析不到用量」——这是 1.0.1 直接取数失败的根因。
+  const USAGE_RPC_ARGS = "[]";
   const RPC_TIMEOUT_MS = 12000;
   let nextAutomaticSyncAt = 0;
   let automaticFailureCount = 0;
   let deferredAutomaticSync = null;
+  // 最近一次 RPC 失败原因，只用于 __gqc.dump() 定位，不进入 UI 文案。
+  const usageSyncDiag = { rpcError: "" };
 
   function officialCacheKey() {
     return STORAGE_KEY_OFFICIAL_CACHE + ":" + (getAccountPrefix() || "default");
@@ -2624,17 +2630,20 @@
     const result = { timestamp: nowMs, fiveHour: null, weekly: null };
     for (const row of payload[1]) {
       if (!Array.isArray(row)) continue;
-      const [limit, fraction, period, resets] = row;
+      // row[0] 是「剩余额度」而不是上限：耗尽时为 0，绝不能拿它当有效性判据。
+      const [, fraction, period, resets] = row;
       const kind = period === 1 ? "fiveHour" : period === 2 ? "weekly" : null;
-      if (kind === null || typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0 ||
-          typeof fraction !== "number" || !Number.isFinite(fraction) || fraction < 0 || fraction > 1) continue;
+      if (kind === null) continue;
+      // 同一窗口出现多行时以第一行为准，不因兄弟行异常把整包用量作废。
+      if (result[kind] !== null) continue;
+      // 超额时 server 会给出 >1 的比例，钳制到 100% 已用即可，不必丢弃。
+      if (typeof fraction !== "number" || !Number.isFinite(fraction) || fraction < 0 || fraction > 1.5) continue;
       if (!Array.isArray(resets) || !Array.isArray(resets[0])) continue;
       const [seconds, nanos = 0] = resets[0];
       if (!Number.isSafeInteger(seconds) || !Number.isInteger(nanos) || nanos < 0 || nanos >= 1e9) continue;
       const resetAt = toEpochMs(seconds * 1000 + Math.floor(nanos / 1e6), nowMs);
       if (resetAt === null) continue;
-      if (result[kind] !== null) return null;
-      const usedPct = Math.round(fraction * 100);
+      const usedPct = Math.min(100, Math.max(0, Math.round(fraction * 100)));
       result[kind] = sanitizeMetric({
         pct: 100 - usedPct, usedPct, resetAt, confidence: CONFIDENCE.pools,
       }, kind, nowMs);
@@ -2645,17 +2654,37 @@
   function buildOfficialUsageRequest() {
     const wiz = window.WIZ_global_data;
     if (!wiz || typeof wiz.SNlM0e !== "string" || wiz.SNlM0e.length === 0) return null;
+    const rpcId = USAGE_RPC_ID;
+    const args = USAGE_RPC_ARGS;
     const prefix = getAccountPrefix();
     const url = new URL(prefix + "/_/BardChatUi/data/batchexecute", window.location.origin);
-    const params = { rpcids: USAGE_RPC_ID, "source-path": prefix + "/usage",
+    const params = { rpcids: rpcId, "source-path": prefix + "/usage",
       hl: "en", _reqid: String(Date.now() % 900000 + 100000), rt: "c" };
     if (typeof wiz.cfb2h === "string") params.bl = wiz.cfb2h;
     if (typeof wiz.FdrFJe === "string") params["f.sid"] = wiz.FdrFJe;
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     const body = new URLSearchParams({
-      "f.req": JSON.stringify([[[USAGE_RPC_ID, [], null, "generic"]]]), at: wiz.SNlM0e,
+      "f.req": JSON.stringify([[[rpcId, args, null, "generic"]]]), at: wiz.SNlM0e,
     }).toString();
-    return { url: url.href, body, prefix };
+    return { url: url.href, body, prefix, rpcId };
+  }
+
+  /** 用页面自己的登录态发一次 batchexecute，返回解码后的 wrb.fr 帧。 */
+  async function postUsageRpc(url, body) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
+    try {
+      const response = await origFetch.call(window, url, {
+        method: "POST", credentials: "include", signal: controller.signal,
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Same-Domain": "1" },
+        body,
+      });
+      if (!response.ok) throw new Error("官方用量请求失败 (HTTP " + response.status + ")");
+      if (response.redirected === true) throw new Error("官方用量请求发生重定向，已忽略响应");
+      return parseBatchExecuteResponse(await response.text());
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async function requestOfficialUsageRpc() {
@@ -2664,28 +2693,26 @@
       quotaState.lastError = "官方页面登录参数尚未就绪，将自动重试";
       return false;
     }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
     try {
-      const response = await origFetch.call(window, request.url, {
-        method: "POST", credentials: "include", signal: controller.signal,
-        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Same-Domain": "1" },
-        body: request.body,
-      });
-      if (!response.ok) throw new Error("官方用量请求失败 (HTTP " + response.status + ")");
-      if (response.redirected === true) throw new Error("官方用量请求发生重定向，已忽略响应");
-      const frames = parseBatchExecuteResponse(await response.text());
-      if (getAccountPrefix() !== request.prefix) throw new Error("账号已变化，已忽略旧账号响应");
-      for (const frame of frames) {
-        if (frame.rpcId !== USAGE_RPC_ID) continue;
-        const parsed = parseUsageRpcPayload(frame.payload);
-        if (parsed !== null && commitOfficialQuota(parsed, "rpc", true)) return true;
+      const frames = await postUsageRpc(request.url, request.body);
+      const currentPrefix = getAccountPrefix();
+      if (currentPrefix !== request.prefix) {
+        throw new Error("账号已变化，已忽略旧账号响应");
       }
+      for (const frame of frames) {
+        if (frame.rpcId !== request.rpcId) continue;
+        const parsed = parseUsageRpcPayload(frame.payload);
+        if (parsed !== null && commitOfficialQuota(parsed, "rpc", true)) {
+          usageSyncDiag.rpcError = "";
+          return true;
+        }
+      }
+      usageSyncDiag.rpcError = "响应未包含可验证的用量字段";
       quotaState.lastError = "官方响应未包含可验证的用量字段，将自动重试";
     } catch (error) {
-      quotaState.lastError = error instanceof Error ? error.message : "官方用量请求失败";
-    } finally {
-      clearTimeout(timeout);
+      usageSyncDiag.rpcError =
+        error instanceof Error ? error.message : "官方用量请求失败";
+      quotaState.lastError = usageSyncDiag.rpcError;
     }
     return false;
   }
@@ -4960,6 +4987,8 @@
           usageHelperAttempts: usageParseDiag.helperAttempts,
           usageHelperOK: usageParseDiag.helperOK,
           usageHelperReason: usageParseDiag.helperReason,
+          usageRpcId: USAGE_RPC_ID,
+          usageRpcError: usageSyncDiag.rpcError,
           // 拒绝计数：解释「为什么这次没数字」，避免再去猜官方字段
           rejected: { ...parseRejectDiag },
           usagePage: quotaState.usagePageStatus,
