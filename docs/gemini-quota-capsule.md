@@ -2,7 +2,7 @@
 
 面向 Google Gemini Web 端的用户脚本（UserScript）：在页面右下角以可拖拽胶囊展示当前账号的「5 小时窗口」与「7 天周窗口」真实用量，以及基于官方重置时刻实时递减的倒计时。
 
-- 版本：0.9.4
+- 版本：1.0.1
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
@@ -120,19 +120,23 @@ helperSync 仅保留为显式调试入口，会新开页面。短期缓存只用
 
 ## 六、UI 与交互
 
-- 胶囊展示 **5 小时** / **每周** 两组**已用**百分比与倒计时（徽章文案即「5小时」「每周」），悬停显示已用 / 剩余、官方重置时刻、剩余时长与频次用量。
-  显示口径是「已用」：百分比越高表示用得越多，与状态里的 `pct`（剩余）相反，换算只发生在渲染层。
-- 左侧徽章切换指示形态，共 7 种：横条 / 圆环 / 圆盘 / 崩坏 / 分段 / 电池 / 双柱（`bar` / `ring` / `disk` / `decay` / `segments` / `battery` / `columns`）。填充量与配色同向，均按「已用」绘制（`<50%` 翡翠绿、`<75%` 琥珀金、`<90%` 炽烈橙、`≥90%` 崩坏猩红）。徽章是原生 `button`，可点击也可键盘聚焦后切换。
-- 横条 / 分段 / 电池三种形态共用两段 24px 进度槽位；圆环 / 圆盘 / 崩坏 / 双柱把图形画在徽章内，槽位只隐藏（`visibility: hidden`）而不移除，因此切换任何形态都不会改变胶囊整体宽度。百分比与倒计时文本按固定字宽（`4ch` / `8ch`）渲染，位数变化同样不撑宽胶囊。420px 以下统一压缩间距和字号，以适配窄窗口，形态切换仍保持宽度一致。
-- 形态和用量未变化时复用徽章节点，每秒倒计时更新不再重建图形；系统启用减少动态效果时关闭动画与过渡，刷新和设置按钮保留键盘焦点提示。
+- 胶囊由三段独立组件组成：左侧**装饰图标**、**5 小时组**、**每周组**。装饰与两段进度分别选择样式，互不影响；默认装饰为棱镜，两段进度均为横条。
+- 胶囊展示 **5 小时** / **每周** 两组**已用**百分比与倒计时（标签文案即「5小时」「每周」），悬停显示已用 / 剩余、官方重置时刻、剩余时长与频次用量。显示口径是「已用」：百分比越高表示用得越多，与状态里的 `pct`（剩余）相反，换算只发生在渲染层。
+- 装饰图标共 6 种预设：棱镜 / 星芒 / 轨道 / 胶囊 / 闪电 / 无（`prism` / `spark` / `orbit` / `capsule` / `bolt` / `none`）。点击胶囊头部可轮换，也可在设置抽屉中直接选择；头部是原生 `button`，支持键盘聚焦。「无」仍保留 16×16 槽位，切换时不会改变宽度。
+- 5 小时与每周各自独立选择进度样式，共 8 种：横条 / 圆环 / 圆盘 / 崩坏 / 分段 / 电池 / 双柱 / 无（`bar` / `ring` / `disk` / `decay` / `segments` / `battery` / `columns` / `none`）。所有图形都绘制在固定 24×14 的进度槽位内，按「已用」比例填充（`<50%` 翡翠绿、`<75%` 琥珀金、`<90%` 炽烈橙、`≥90%` 崩坏猩红）。
+- 点击胶囊右侧齿轮打开「组件样式」抽屉，可分别设置装饰预设、图片或 SVG、两段进度样式，以及 11 个组件目标的 CSS：胶囊容器、装饰图标、5 小时组、每周组、标签、百分比、进度图形、倒计时、分隔线、操作区、设置抽屉。
+- 图片图标支持 PNG / JPEG / WebP / GIF / AVIF，原文件上限 256KB；SVG 可直接粘贴源码或上传 `.svg` 文件，上限 20KB。SVG 经 `DOMParser` 白名单清洗：移除脚本、事件属性、`foreignObject`、`image` 与外部引用，重写内部 id；图片与 SVG 只替换装饰图标，不影响两段进度。
+- 组件 CSS 只接受声明（例如 `background`、`color`、`border-radius`），单个目标上限 8KB；含 `{}`、`<>`、`@import`、`expression()` 或 `javascript:` 的整段拒绝，避免闭合当前规则后改写宿主页面。内置配色通过 `--gc-accent`、`--gc-badge-color`、`--gc-timer-color`、`--gc-progress-color` 暴露，用户 CSS 设置对应 `color` 或变量即可覆盖，不需要 `!important`。
+- 固定槽位配合百分比 `4ch`、倒计时 `8ch` 的字宽，切换内置样式、图片或 SVG 都不会改变胶囊整体宽度。自定义 CSS 若修改 `width`、`padding`、`font-size`、`margin` 等尺寸属性，会按用户声明改变胶囊宽度；需要保持宽度时只改颜色、背景、圆角、阴影等不影响布局的属性。420px 以下统一压缩间距和字号，仍保持宽度一致。
+- 样式和用量未变化时复用装饰与进度节点，每秒倒计时更新不再重建图形；系统启用减少动态效果时关闭动画与过渡，刷新和设置按钮保留键盘焦点提示。
 - 已用达到 100% 时倒计时位置显示「已用尽」。
-- 拖拽位置、形态写入 `localStorage`，刷新后恢复。
+- 装饰、两段进度、自定义资源、组件 CSS 与拖拽位置写入 `localStorage`，刷新后恢复。
 
 ## 七、配置与存储
 
 | Key | 用途 |
 | --- | --- |
-| `__gemini_quota_capsule_cfg_v5__` | 形态、拖拽位置、调试开关 |
+| `__gemini_quota_capsule_cfg_v5__` | 装饰图标、5H / 7D 独立进度样式、自定义图片与 SVG、组件 CSS、拖拽位置、调试开关（Key 与旧版一致） |
 | 原缓存键 + 冒号 + 账号路径 | 按 /u/n 或 default 隔离；旧共享缓存不迁移 |
 | `__gemini_quota_sync_bridge_v1__` | 后台用量页 → 当前页的单次同步结果（带 `nonce`，写完即被读取），不作为数据源 |
 
@@ -167,6 +171,7 @@ __gqc.setDebug(true)   // 打开调试日志
 - `report()` 是「官方把数字放在哪」的取证入口：先打开 Gemini 自己的限额/用量弹窗、再发一条消息，然后执行它。返回内容只含**关键字附近片段**（每帧 ≤2 条、每页 ≤8 行，单条 ≤200 字符），不落整段会话；同时记录 `/usage` 体检结果、`batchexecute` 的 `rpcId` 列表与端点环。
 - 脚本未更新（或分支未合并）时，可用独立探针 `scripts/network-capture-probe.js`：整段粘贴进 Console → `__gqp.watchAll()` → 打开限额弹窗并发一条消息 → `__gqp.dump()`。它不依赖脚本版本，采集口径与 `report()` 一致。
 - `__gqc.dump().frames` 只保留命中配额关键字的响应帧（每帧截断 24KB），用于确认服务端字段命名是否再次变化。
+- `__gqc.dump().config.icon` 只输出 `kind` 与 `imageChars` / `svgChars`，不导出图片或 SVG 正文；排查装饰资源是否真的写入时看这两个字符数。
 - `__gqc.dump().endpoints` 是端点发现环：最近 24 条 URL 命中 `batchexecute` / `usage` / `quota` / `limit` 等的请求（只记 URL、状态码与长度），用来确认配额到底由哪个接口返回。
 - `__gqc.probeUsage()` 是排查「拿不到 5 小时 / 每周用量」的第一步：`blocks` 为 0 说明页面里没有 `AF_initDataCallback`（数据只走 XHR），`blocks > 0` 但 `initHit` 为 false 说明字段结构与解析器不匹配，此时看 `blockHits[].excerpt` 就能核对真实字段名。
 
@@ -198,7 +203,7 @@ __gqc.setDebug(true)   // 打开调试日志
 
 1. 语法检查：`node --check scripts/gemini-quota-capsule.js`
 2. 解析器回归：`node tests/gemini-quota-capsule-parser.test.js`
-3. 布局回归：`node tests/gemini-quota-capsule-layout.test.cjs` —— 用 Playwright 在空白页注入脚本（把入口 `bootstrap()` 换成 `createDOM()`），对 3 组用量（0 / 42 / 100）× 7 种形态逐个切换，断言胶囊宽度在所有组合下完全一致、两段槽位恒为 24px、徽章内图形节点数恒为 1。另覆盖 320 / 375 / 768px 窗口、每形态连续 1000 次更新的节点复用与用量变化重绘、双柱独立比例、键盘轮换与重载恢复、减少动态效果及未知 / 用尽 / 到期 / 同步中状态。缺少 Playwright 时失败，防止未执行却误报通过；本机运行需 `$env:GQC_PLAYWRIGHT_MODULE='<playwright 模块目录>'`，浏览器通道可用 `$env:GQC_BROWSER_CHANNEL` 指定，默认先试 `msedge` 再试随包 Chromium。
+3. 布局回归：`node tests/gemini-quota-capsule-layout.test.cjs` —— 用 Playwright 在空白页注入脚本（把入口 `bootstrap()` 换成 `createDOM()`），穷举 6 种装饰 × 8 种进度 × 3 组用量（0 / 42 / 100），断言胶囊宽度在所有组合下完全一致、两段槽位恒为 24px、装饰与进度节点在数值不变时保持复用。另覆盖两段进度独立选择、320 / 375 / 768px 窗口、每种进度连续 1000 次更新的节点复用与用量变化重绘、双柱独立比例、键盘轮换与重载恢复、旧配置迁移、图片格式与体积校验、SVG 清洗、组件 CSS 的应用 / 拒绝 / 清除 / 刷新后恢复、CSS 变量无需 `!important` 的覆盖、写入失败回滚、减少动态效果及未知 / 用尽 / 到期 / 同步中状态。缺少 Playwright 时失败，防止未执行却误报通过；本机运行需 `$env:GQC_PLAYWRIGHT_MODULE='<playwright 模块目录>'`，浏览器通道可用 `$env:GQC_BROWSER_CHANNEL` 指定，默认先试 `msedge` 再试随包 Chromium。
 4. 语义自测：在页面控制台用 `__gqc._test` 直接调用纯函数，例如
 
 ```js
@@ -214,7 +219,7 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 
 ## 十、已知限制
 
-- **当前没有已验证的官方额度字段。** `GXU_*` / `getUsageInfo.pools` 尚未在真实响应中出现；附件取证只确认登录态请求成功触发了 `BardChatUi/data/batchexecute?rpcids=ESY5D`，响应长度约 166 字节，但旧探针没有保存其正文，因此尚不能判断它是否与配额有关。脚本不得把 spinner 的 `aria-valuenow`、WIZ 全局文本或无方向百分比当作配额。
+- **真实登录态下的官方字段、RPC 端点与油猴管理器兼容性待确认。** `GXU_*` / `getUsageInfo.pools` 的字段命名、`jSf9Qc` 响应形态和 `/usage` 页面文本都可能随 Google 更新而变化；本地回归只覆盖解析器与伪 DOM，尚未在真实登录账号与 ScriptCat / Tampermonkey / Violentmonkey 的每种组合中逐一验证。持续显示 `--%` 时先查看 `__gqc.dump().diagnostics` 与 `__gqc.report()`。脚本不得把 spinner 的 `aria-valuenow`、WIZ 全局文本或无方向百分比当作配额。
 - 当前版本会保留最近几条受限长度的 batchexecute 响应用于诊断，并记录 `nonQuotaResponses` / `responseReadFailures`；只有通过结构化字段验证的响应才会写入胶囊。
 - 百分比若是无方向词的裸数字（既非 `used` 也非 `remaining`），只能按官方页面默认口径「已用」解释；这类来源不会被当成高置信度数据。
 
@@ -225,6 +230,21 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - `bard.google.com` 仅为兼容旧链接保留，实际会重定向到 `gemini.google.com`。
 
 ## 十一、版本历史
+
+### v1.0.1
+
+- 上传完成前切换装饰、清除资源或发起新上传时，丢弃旧文件的异步结果，避免覆盖用户后续操作。
+- 图片经浏览器解码成功后才保存，损坏或不支持的文件保留原图并显示错误，解码最多等待 5 秒。
+- SVG 清洗后没有实际图形（包括只有 defs、脚本或空容器）时拒绝应用，避免装饰意外变空。
+- 增加对应浏览器回归，原有静默同步、布局与节点复用回归保持通过；真实登录态及管理器兼容性仍待确认。
+
+### v1.0.0
+
+- **装饰图标与进度组件分离**：左侧装饰不再兼任进度显示，5 小时与每周各自拥有独立进度槽位和样式选择，互不覆盖。装饰提供棱镜 / 星芒 / 轨道 / 胶囊 / 闪电 / 无 6 种预设，两段进度各提供横条 / 圆环 / 圆盘 / 崩坏 / 分段 / 电池 / 双柱 / 无 8 种选择；固定 16×16 装饰槽与 24×14 进度槽保证切换时宽度不变。
+- **支持自定义装饰资源**：可上传 PNG / JPEG / WebP / GIF / AVIF（≤256KB）或粘贴、上传 SVG（≤20KB）。SVG 走 `DOMParser` 白名单清洗，移除脚本、事件属性、`foreignObject`、`image` 与外部引用，并重写内部 id；图片与 SVG 均只作用于装饰图标。
+- **组件级 CSS**：设置抽屉可为容器、装饰、两个指标组、标签、百分比、进度、倒计时、分隔线、操作区、抽屉分别填写声明，单目标上限 8KB；拒绝 `{}`、`<>`、`@import`、`expression()`、`javascript:`。内置配色改由 CSS 变量下发，用户规则无需 `!important` 即可覆盖。
+- 配置仍使用 `__gemini_quota_capsule_cfg_v5__`；旧配置的 `styleMode` 会同时迁移为 5H 与 7D 的初始进度样式，缺失字段回落到默认值。保存失败时回滚并给出可见提示。
+- 布局回归扩展到 6 装饰 × 8 进度 × 3 用量，补充图片 / SVG / CSS 校验、旧配置迁移、写入失败回滚与 CSS 变量覆盖断言；真实登录态与各用户脚本管理器的渲染仍待确认。
 
 ### v0.9.4
 
