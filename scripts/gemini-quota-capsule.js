@@ -2327,6 +2327,9 @@
   // 5. 主动官方同步器
   // =========================================================================
   let activeSyncPromise = null;
+  // 在途同步是否由用户手动触发：手动点击与手动点击之间才去重，
+  // 手动点击不能被自动同步直接吞掉。
+  let activeSyncIsManual = false;
   let probeIframeEl = null;
   // 同源 iframe 是否已被浏览器/站点拒绝渲染：下一轮手动刷新可以直接改走
   // 顶层后台标签页，避免每次都白白等满超时。
@@ -2907,14 +2910,35 @@
     return promise;
   }
 
-  async function syncOfficialUsage(isManualClick = false) {
-    if (activeSyncPromise) return activeSyncPromise;
-
+  async function syncOfficialUsage(isManualClick = false, reservedWindow = null) {
     const onUsagePage = /\/usage\/?$/.test(window.location.pathname);
+
+    if (activeSyncPromise) {
+      // 自动同步在途时，手动点击不能被直接吞掉（表现同样是「点了没反应」）：
+      // 先在用户手势里占住窗口，等前一次结束后用同一窗口补跑一次手动同步。
+      if (!isManualClick || activeSyncIsManual) {
+        // 已有手动同步在跑：复用它，顺手关掉本次重试多占的占位窗口
+        closeUsageHelperWindow(reservedWindow);
+        return activeSyncPromise;
+      }
+      const inflight = activeSyncPromise;
+      const helperWindow =
+        reservedWindow || (onUsagePage ? null : reserveUsageHelperWindow());
+      quotaState.syncPhase = "等待进行中的同步结束";
+      updateUI();
+      const inflightOk = await inflight.catch(() => false);
+      if (inflightOk === true) {
+        closeUsageHelperWindow(helperWindow);
+        return true;
+      }
+      return syncOfficialUsage(true, helperWindow);
+    }
+
     // 手动刷新且不在官方 /usage 页面时，先在本次点击的同步阶段占住后台标签页。
     // 之后无论走 RPC、HTML 直读还是后台页，都能保证有一个可用的窗口句柄。
     const manualHelperWindow =
-      isManualClick && !onUsagePage ? reserveUsageHelperWindow() : null;
+      reservedWindow ||
+      (isManualClick && !onUsagePage ? reserveUsageHelperWindow() : null);
 
     quotaState.isSyncing = true;
     if (isManualClick) {
@@ -2925,6 +2949,7 @@
     }
     updateUI();
 
+    activeSyncIsManual = isManualClick;
     activeSyncPromise = (async () => {
       try {
         // 0. 当前处于 /usage 页面时直接解析主 DOM
@@ -3072,6 +3097,7 @@
         quotaState.isSyncing = false;
         quotaState.syncPhase = "";
         activeSyncPromise = null;
+        activeSyncIsManual = false;
         // 没走后台页或后台页已结束时，把预留的空白标签页一并关掉
         closeUsageHelperWindow(manualHelperWindow);
         updateUI();

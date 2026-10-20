@@ -236,6 +236,7 @@ t.readMetricFromArrayTuple(["current session", "100%"], "fiveHour", Date.now());
 - 文本通道只接受确定地址：`/app` 无账号前缀且四个候选全部探测失败时，不再按 `/u/3/usage` 之类的猜测地址解析，避免把别的账号额度写进缓存。
 - 账号隔离细化：无 `/u/<n>` 前缀时从同源请求路径观察真实账号索引，优先只请求该账号；`/usage` 探测要求最终路径与候选账号路径完全一致，`/u/3/usage` 跳到 `/u/0/usage` 时判为不可用并继续下一个候选，`usagePageStatus` 增加 `sameAccount` 诊断字段。
 - iframe 的 `about:blank` 不再立即永久停用通道：留 `USAGE_FRAME_BLANK_GRACE_MS` 宽限，仍空白则只结束本轮；宽限后文档不可读（跨源）才判定为站点拒绝嵌入。
+- 自动同步在途时点击刷新不再被静默吞掉：先在点击手势内占住后台窗口，等前一次同步结束后复用该窗口补跑手动同步；前一次已成功则直接复用结果并关闭占位窗口。手动点击之间仍然去重，避免连点开出多个标签页。
 - `__gqc.dump()` 新增 `state.syncPhase` 与 `usageFrame*` / `usageHelper*` 诊断字段；新增 `__gqc.helperSync()` 单独触发后台用量页读取；解析器回归测试补充后台同步桥的 URL / nonce / payload 断言。
 
 ### v0.9.1
