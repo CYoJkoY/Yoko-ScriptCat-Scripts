@@ -1,9 +1,12 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.1.0
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表并在浮层中展示，按帖子去重，支持搜索与本地缓存。
+// @version      0.1.1
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表并在浮层中展示，按帖子去重，支持搜索与本地缓存。需要登录小黑盒：脚本会以浏览器内已有登录态请求小黑盒自己的评论区接口（含本地计算的请求签名），只读取当前登录账号的插眼数据；数据仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
+// @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
+// @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
+// @icon         data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff5c5c'/%3E%3Ctext x='16' y='22' font-size='17' font-family='sans-serif' font-weight='bold' fill='%23fff' text-anchor='middle'%3E%E6%88%AA%3C/text%3E%3C/svg%3E
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/heybox-up.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/heybox-up.js
 // @match        https://www.xiaoheihe.cn/*
@@ -403,7 +406,7 @@
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = "小黑盒网页收藏列表不显示插眼，收藏总数却会计入。这里单独列出插眼条目。";
+    meta.textContent = "网页收藏列表不显示插眼，收藏总数却会计入，这里单独列出。需登录：以浏览器内登录态读取本站插眼数据，仅存本机，不上传。";
 
     const search = document.createElement("div");
     search.className = "search";
@@ -498,7 +501,7 @@
     let loading = false;
 
     const updateCount = () => {
-      ui.meta.textContent = "小黑盒网页收藏列表不显示插眼，收藏总数却会计入。共 " + items.length + " 条插眼收藏。";
+      ui.meta.textContent = "网页收藏列表不显示插眼，收藏总数却会计入。共 " + items.length + " 条插眼收藏（仅本机缓存，未上传）。";
     };
 
     const load = async (force) => {
