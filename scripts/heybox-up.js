@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.1.1
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表并在浮层中展示，按帖子去重，支持搜索与本地缓存。需要登录小黑盒：脚本会以浏览器内已有登录态请求小黑盒自己的评论区接口（含本地计算的请求签名），只读取当前登录账号的插眼数据；数据仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.1.4
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。需要登录小黑盒：脚本会以浏览器内已有登录态请求小黑盒自己的评论区接口（含本地计算的请求签名），只读取当前登录账号的插眼数据；数据仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -25,7 +25,6 @@
   const CY_MAX_ITEMS = 200;
   const CACHE_TTL_MS = 10 * 60 * 1000;
   const CACHE_KEY_PREFIX = "heybox-up.cy.v1:";
-  const ENTRY_ID = "heybox-up-entry";
   const LINK_HREF_PREFIX = "/app/bbs/link/";
 
   // ==sign-core:start==
@@ -307,268 +306,215 @@
     return date.toLocaleString("zh-CN", { hour12: false });
   }
 
-  const PANEL_CSS = `
-    :host { all: initial; }
-    .entry {
-      position: fixed; right: 24px; bottom: 88px; z-index: 2147483000;
-      display: flex; align-items: center; gap: 6px;
-      padding: 10px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14);
-      background: linear-gradient(135deg, #ff5c5c, #ff8a3d); color: #fff;
-      font: 600 13px/1 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-      cursor: pointer; box-shadow: 0 10px 28px rgba(255, 92, 92, .35);
+  function createCard(item) {
+    const card = document.createElement("a");
+    card.className = "card";
+    card.href = LINK_HREF_PREFIX + item.id;
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+
+    if (item.thumb !== "") {
+      const thumb = document.createElement("img");
+      thumb.className = "thumb";
+      thumb.src = item.thumb;
+      thumb.alt = "";
+      thumb.loading = "lazy";
+      thumb.referrerPolicy = "no-referrer";
+      card.append(thumb);
     }
-    .entry:hover { filter: brightness(1.06); }
-    .panel {
-      position: fixed; right: 24px; bottom: 138px; z-index: 2147483001;
-      width: 392px; max-height: 72vh; display: flex; flex-direction: column;
-      border-radius: 16px; overflow: hidden; color: #e8ecf1;
-      background: #16181d; border: 1px solid rgba(255,255,255,.1);
-      box-shadow: 0 24px 60px rgba(0,0,0,.55);
-      font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+
+    const body = document.createElement("div");
+    body.className = "body";
+    const cardTitle = document.createElement("div");
+    cardTitle.className = "card-title";
+    cardTitle.textContent = item.title;
+    const cardText = document.createElement("div");
+    cardText.className = item.text !== "" ? "card-text" : "card-text is-empty";
+    if (item.text === "") {
+      cardText.textContent = "（无文字内容）";
+    } else {
+      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("class", "card-text-icon");
+      icon.setAttribute("viewBox", "0 0 16 16");
+      icon.setAttribute("aria-hidden", "true");
+      const iconPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      iconPath.setAttribute("fill", "currentColor");
+      iconPath.setAttribute("d", "M8 3C4.5 3 1.8 5.5 1 8c.8 2.5 3.5 5 7 5s6.2-2.5 7-5c-.8-2.5-3.5-5-7-5Zm0 8.2A3.2 3.2 0 1 1 8 4.8a3.2 3.2 0 0 1 0 6.4Zm0-1.7a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z");
+      icon.append(iconPath);
+      const content = document.createElement("span");
+      content.className = "card-text-body";
+      content.textContent = item.text;
+      cardText.append(icon, content);
+      cardText.title = item.text;
     }
-    .panel[hidden] { display: none; }
-    .head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; }
-    .title { font-size: 14px; font-weight: 700; letter-spacing: .2px; }
-    .actions { display: flex; gap: 8px; }
-    .icon-btn {
-      border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); color: #cfd6df;
-      border-radius: 8px; padding: 4px 8px; font-size: 12px; cursor: pointer;
-    }
-    .icon-btn:hover { background: rgba(255,255,255,.1); }
-    .meta { padding: 0 16px 10px; color: #97a1ad; font-size: 12px; }
-    .meta strong { color: #ffb27a; font-weight: 600; }
-    .search { margin: 0 16px 10px; }
-    .search input {
-      width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 9px;
-      border: 1px solid rgba(255,255,255,.12); background: #0f1115; color: #e8ecf1;
-      font-size: 13px; line-height: 1.4; outline: none;
-    }
-    .search input:focus { border-color: rgba(255,138,61,.7); }
-    .list { overflow-y: auto; padding: 0 10px 12px; }
+    const foot = document.createElement("div");
+    foot.className = "card-foot";
+    const kind = document.createElement("span");
+    kind.textContent = "插眼" + item.kind;
+    const time = document.createElement("span");
+    time.textContent = formatTime(item.createAt);
+    foot.append(kind, time);
+    body.append(cardTitle, cardText, foot);
+    card.append(body);
+    return card;
+  }
+
+  const FAVOUR_PATH = "/app/user/favour/content";
+  const FAVOUR_HOST_ID = "heybox-up-favour";
+  // shortcut: 依赖站点类名 .user-favour__list 及其父级 .list，站点改版时需升级。
+  const FAVOUR_LIST_SELECTOR = ".user-favour__list";
+
+  const FAVOUR_CSS = `
+    :host { display: block; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    .section { padding: 14px 8px 4px; }
+    .heading { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+    .note { font-size: 12px; opacity: .62; margin-bottom: 10px; }
     .card {
-      display: flex; gap: 10px; padding: 10px; border-radius: 12px; text-decoration: none;
-      color: inherit; border: 1px solid transparent;
+      display: flex; gap: 10px; padding: 10px; margin-bottom: 8px;
+      border-radius: 12px; text-decoration: none; color: inherit;
+      border: 1px solid rgba(127,127,127,.22);
     }
-    .card:hover { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.08); }
-    .thumb { width: 52px; height: 52px; border-radius: 9px; object-fit: cover; flex: none; background: #23262d; }
+    .card:hover { border-color: rgba(127,127,127,.45); }
+    .thumb { width: 52px; height: 52px; border-radius: 9px; object-fit: cover; flex: none; background: rgba(127,127,127,.16); }
     .body { min-width: 0; flex: 1; }
     .card-title {
       font-weight: 600; font-size: 13px; margin-bottom: 3px;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
-    .card-text { color: #9aa4b0; font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-    .card-foot { margin-top: 5px; color: #6f7a87; font-size: 11px; display: flex; gap: 10px; }
-    .state { padding: 34px 16px; text-align: center; color: #97a1ad; }
-    .state.error { color: #ff8a8a; }
-    .state button {
-      margin-top: 10px; padding: 6px 14px; border-radius: 8px; cursor: pointer;
-      border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #e8ecf1;
+    .card-text {
+      display: flex; gap: 6px; align-items: flex-start; margin-bottom: 6px;
+      font-size: 14px; line-height: 1.5; color: inherit;
     }
+    .card-text-icon { width: 15px; height: 15px; flex: none; margin-top: 2px; color: rgba(255,92,92,.85); }
+    .card-text-body { min-width: 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .card-text.is-empty { font-size: 12px; opacity: .55; }
+    .card-foot { margin-top: 5px; font-size: 11px; opacity: .6; display: flex; gap: 10px; }
   `;
 
-  function createUi() {
+  function createFavourSection() {
     const host = document.createElement("div");
-    host.id = ENTRY_ID;
+    host.id = FAVOUR_HOST_ID;
     const shadow = host.attachShadow({ mode: "open" });
-
     const style = document.createElement("style");
-    style.textContent = PANEL_CSS;
+    style.textContent = FAVOUR_CSS;
     shadow.append(style);
 
-    const entry = document.createElement("button");
-    entry.type = "button";
-    entry.className = "entry";
-    entry.textContent = "插眼收藏";
-    entry.title = "HeyBox Up：查看插眼收藏";
-
-    const panel = document.createElement("section");
-    panel.className = "panel";
-    panel.setAttribute("aria-label", "插眼收藏");
-    panel.hidden = true;
-
-    const head = document.createElement("div");
-    head.className = "head";
-    const title = document.createElement("div");
-    title.className = "title";
-    title.textContent = "插眼收藏 · HeyBox Up";
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    const refresh = document.createElement("button");
-    refresh.type = "button";
-    refresh.className = "icon-btn";
-    refresh.textContent = "刷新";
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "icon-btn";
-    close.textContent = "收起";
-    actions.append(refresh, close);
-    head.append(title, actions);
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = "网页收藏列表不显示插眼，收藏总数却会计入，这里单独列出。需登录：以浏览器内登录态读取本站插眼数据，仅存本机，不上传。";
-
-    const search = document.createElement("div");
-    search.className = "search";
-    const input = document.createElement("input");
-    input.type = "search";
-    input.placeholder = "搜索标题或插眼内容";
-    search.append(input);
-
+    const section = document.createElement("section");
+    section.className = "section";
+    const heading = document.createElement("div");
+    heading.className = "heading";
+    heading.textContent = "插眼收藏";
+    const note = document.createElement("div");
+    note.className = "note";
+    note.textContent = "正在读取插眼收藏…";
     const list = document.createElement("div");
     list.className = "list";
+    section.append(heading, note, list);
+    shadow.append(section);
 
-    panel.append(head, meta, search, list);
-    shadow.append(entry, panel);
-    (document.body || document.documentElement).append(host);
-
-    return { entry, panel, refresh, close, input, list, meta };
-  }
-
-  function renderState(ui, message, isError, onRetry) {
-    ui.list.replaceChildren();
-    const box = document.createElement("div");
-    box.className = isError ? "state error" : "state";
-    box.textContent = message;
-    if (onRetry) {
-      const retry = document.createElement("button");
-      retry.type = "button";
-      retry.textContent = "重试";
-      retry.addEventListener("click", onRetry);
-      box.append(document.createElement("br"), retry);
-    }
-    ui.list.append(box);
-  }
-
-  function renderItems(ui, items) {
-    const keyword = ui.input.value.trim().toLowerCase();
-    const visible = keyword === ""
-      ? items
-      : items.filter((item) => (item.title + " " + item.text).toLowerCase().includes(keyword));
-
-    ui.list.replaceChildren();
-    if (visible.length === 0) {
-      renderState(ui, keyword === "" ? "没有插眼收藏。" : "没有匹配的插眼收藏。", false, null);
-      return;
-    }
-
-    const fragment = document.createDocumentFragment();
-    for (const item of visible) {
-      const card = document.createElement("a");
-      card.className = "card";
-      card.href = LINK_HREF_PREFIX + item.id;
-      card.target = "_blank";
-      card.rel = "noopener noreferrer";
-
-      if (item.thumb !== "") {
-        const thumb = document.createElement("img");
-        thumb.className = "thumb";
-        thumb.src = item.thumb;
-        thumb.alt = "";
-        thumb.loading = "lazy";
-        thumb.referrerPolicy = "no-referrer";
-        card.append(thumb);
-      }
-
-      const body = document.createElement("div");
-      body.className = "body";
-      const cardTitle = document.createElement("div");
-      cardTitle.className = "card-title";
-      cardTitle.textContent = item.title;
-      const cardText = document.createElement("div");
-      cardText.className = "card-text";
-      cardText.textContent = item.text !== "" ? item.text : "（无文字内容）";
-      const foot = document.createElement("div");
-      foot.className = "card-foot";
-      const kind = document.createElement("span");
-      kind.textContent = "插眼" + item.kind;
-      const time = document.createElement("span");
-      time.textContent = formatTime(item.createAt);
-      foot.append(kind, time);
-      body.append(cardTitle, cardText, foot);
-      card.append(body);
-      fragment.append(card);
-    }
-    ui.list.append(fragment);
-  }
-
-  function boot() {
-    if (document.getElementById(ENTRY_ID)) return;
-    if (!document.documentElement) return;
-
-    const ui = createUi();
     let items = [];
-    let loading = false;
+    let started = false;
 
-    const updateCount = () => {
-      ui.meta.textContent = "网页收藏列表不显示插眼，收藏总数却会计入。共 " + items.length + " 条插眼收藏（仅本机缓存，未上传）。";
+    const readPageIds = () => {
+      const ids = new Set();
+      for (const node of document.querySelectorAll(FAVOUR_LIST_SELECTOR + ' a[href*="/bbs/link/"]')) {
+        const match = /\/bbs\/link\/(\d+)/.exec(node.getAttribute("href") || "");
+        if (match) ids.add(match[1]);
+      }
+      return ids;
     };
 
-    const load = async (force) => {
-      if (loading) return;
-      const userId = getHeyboxId();
-      if (userId === "") {
-        renderState(ui, "没有读到 heybox_id，请先登录小黑盒后再试。", true, () => load(true));
+    let renderedPageIds = -1;
+
+    const render = () => {
+      const pageIds = readPageIds();
+      renderedPageIds = pageIds.size;
+      const visible = items.filter((item) => !pageIds.has(item.id));
+      list.replaceChildren();
+      if (visible.length === 0) {
+        note.textContent = items.length === 0 ? "没有插眼收藏。" : "插眼条目已全部出现在列表中。";
         return;
       }
+      note.textContent = "共 " + visible.length + " 条插眼收藏，网页收藏列表默认不显示。";
+      const fragment = document.createDocumentFragment();
+      for (const item of visible) fragment.append(createCard(item));
+      list.append(fragment);
+    };
 
-      if (!force) {
-        const cached = readCache(userId);
-        if (cached) {
-          items = cached;
-          renderItems(ui, items);
-          updateCount();
-          return;
-        }
+    const place = () => {
+      const listNode = document.querySelector(FAVOUR_LIST_SELECTOR);
+      const parent = listNode ? listNode.parentElement : null;
+      if (!listNode || !parent) return;
+      if (host.parentNode !== parent || host.previousElementSibling !== listNode) {
+        parent.insertBefore(host, listNode.nextSibling);
       }
+      if (readPageIds().size !== renderedPageIds) render();
+    };
 
-      loading = true;
-      refresh.disabled = true;
-      renderState(ui, "正在拉取插眼收藏…", false, null);
+    const load = async () => {
+      if (started) return;
+      started = true;
+      const userId = getHeyboxId();
+      if (userId === "") {
+        note.textContent = "未登录小黑盒，无法读取插眼收藏。";
+        return;
+      }
+      const cached = readCache(userId);
+      if (cached) {
+        items = cached;
+        render();
+        place();
+        return;
+      }
       try {
-        items = await loadCyFavorites(userId, (count) => {
-          renderState(ui, "正在拉取插眼收藏… " + count + " 条", false, null);
-        });
+        items = await loadCyFavorites(userId, () => {});
         writeCache(userId, items);
-        renderItems(ui, items);
-        updateCount();
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        renderState(ui, "加载失败：" + message, true, () => load(true));
-      } finally {
-        loading = false;
-        refresh.disabled = false;
+        note.textContent = "插眼收藏读取失败：" + (error instanceof Error ? error.message : String(error));
+        return;
       }
+      render();
+      place();
     };
 
-    const openPanel = () => {
-      ui.panel.hidden = false;
-      void load(false);
-      ui.input.focus();
+    place();
+    void load();
+    return { host, place };
+  }
+
+  function watchFavourPage() {
+    if (!document.body) return;
+    let section = null;
+    let scheduled = false;
+
+    const sync = () => {
+      if (location.pathname !== FAVOUR_PATH || getHeyboxId() === "") {
+        if (section) {
+          section.host.remove();
+          section = null;
+        }
+        return;
+      }
+      if (!section) section = createFavourSection();
+      section.place();
     };
 
-    ui.entry.addEventListener("click", () => {
-      if (ui.panel.hidden) {
-        openPanel();
-      } else {
-        ui.panel.hidden = true;
-      }
-    });
-    ui.close.addEventListener("click", () => {
-      ui.panel.hidden = true;
-    });
-    ui.refresh.addEventListener("click", () => {
-      void load(true);
-    });
-    ui.input.addEventListener("input", () => {
-      renderItems(ui, items);
-      updateCount();
-    });
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        sync();
+      });
+    };
+
+    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+    sync();
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot, { once: true });
+    document.addEventListener("DOMContentLoaded", watchFavourPage, { once: true });
   } else {
-    boot();
+    watchFavourPage();
   }
 })();
