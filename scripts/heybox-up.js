@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.1.10
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生排序、回复与点赞，窄屏自动改为上下布局。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.1.11
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，窄屏自动改为上下布局。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -618,7 +618,12 @@
       flex: 1 1 auto !important;
       min-width: 0;
     }
-    /* 帖子详情：正文左栏，站点原生评论区停靠右栏，保留排序、回复、点赞等原生交互。 */
+    /* 评论排序只改 order，不动 DOM，避免打断站点自身的列表更新。 */
+    #page-bbs-link .link-comment__list {
+      display: flex !important;
+      flex-direction: column;
+    }
+    /* 帖子详情：正文左栏，原生评论区在内容容器内改为右栏，避免搬动节点丢失站点样式。 */
     @media (min-width: 1200px) {
       #page-bbs-link .content {
         width: auto !important;
@@ -633,20 +638,35 @@
         min-width: 0;
       }
       #page-bbs-link .cpt-right-side.right {
-        display: block !important;
-        width: 400px !important;
-        flex: 0 0 400px !important;
-        position: sticky !important;
-        top: 74px;
-        max-height: calc(100vh - 90px);
-        overflow: auto;
-      }
-      #page-bbs-link .cpt-right-side.right :is(.dynamic-content, .right-side-default, .bbs-link__related-recommend) {
         display: none !important;
       }
+      #page-bbs-link .hb-cpt__scroll-list.hb-bbs-link__container {
+        width: auto !important;
+        max-width: none !important;
+      }
+      #page-bbs-link .hb-bbs-link__content {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) 400px;
+        gap: 24px;
+        align-items: start;
+        width: auto !important;
+        max-width: none !important;
+      }
+      #page-bbs-link .hb-bbs-image-text {
+        grid-column: 1;
+        min-width: 0;
+      }
       #page-bbs-link .link-comment {
+        grid-column: 2;
+        position: sticky;
+        top: 88px;
+        max-height: calc(100vh - 104px);
+        overflow: auto;
         width: 100% !important;
         margin: 0 !important;
+      }
+      #page-bbs-link .link-comment .comment__comment-header {
+        top: 0 !important;
       }
     }
     @media (max-width: 1199px) {
@@ -658,20 +678,162 @@
         max-width: none !important;
       }
       #page-bbs-link .cpt-right-side.right {
-        display: block !important;
-        width: 100% !important;
-        position: static !important;
-        max-height: none;
-      }
-      #page-bbs-link .cpt-right-side.right :is(.dynamic-content, .right-side-default, .bbs-link__related-recommend) {
         display: none !important;
+      }
+      #page-bbs-link .hb-cpt__scroll-list.hb-bbs-link__container,
+      #page-bbs-link .hb-bbs-link__content {
+        width: auto !important;
+        max-width: none !important;
+      }
+      #page-bbs-link .hb-bbs-link__content {
+        display: flex;
+        flex-direction: column;
       }
       #page-bbs-link .link-comment {
         width: 100% !important;
         margin: 16px 0 0 !important;
       }
     }
+    /* 站点未覆盖的容器补齐主题底色：嵌套回复块、个人主页列表。 */
+    :root.heybox-up-theme .link-comment__comment-children {
+      background-color: var(--heybox-up-subtle) !important;
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme #page-user-profile > .content > .list {
+      background-color: var(--heybox-up-surface) !important;
+      border-color: var(--heybox-up-border) !important;
+      color: var(--heybox-up-text);
+    }
   `;
+
+  const COMMENT_SORTS = [
+    { id: "default", label: "默认" },
+    { id: "time", label: "时间" },
+    { id: "likes", label: "点赞" },
+    { id: "author", label: "作者" },
+  ];
+
+  const COMMENT_SORT_HOST_ID = "heybox-up-comment-sort";
+
+  const COMMENT_SORT_CSS = `
+    :host { display: block; margin: 0 0 8px; }
+    .bar { display: flex; align-items: center; gap: 4px; font: 12px/1.4 system-ui, sans-serif; }
+    .label { margin-right: 4px; color: var(--heybox-up-muted, #6b7280); }
+    button {
+      padding: 2px 8px; border: 1px solid transparent; border-radius: 999px;
+      background: transparent; color: var(--heybox-up-muted, #6b7280);
+      font: inherit; cursor: pointer;
+    }
+    button:hover { background: var(--heybox-up-subtle, rgba(20, 25, 30, .06)); color: var(--heybox-up-text, #14191e); }
+    button[aria-pressed="true"] {
+      border-color: var(--heybox-up-accent, #6f8db3);
+      color: var(--heybox-up-accent, #6f8db3);
+    }
+  `;
+
+  function parseCommentAge(text) {
+    const value = text.trim();
+    if (value === "" || value === "刚刚") return value === "刚刚" ? 0 : Number.POSITIVE_INFINITY;
+    if (value === "昨天") return 86400;
+    const relative = /^(\d+)\s*(秒|分钟|小时|天)前$/.exec(value);
+    if (relative) {
+      const unit = { 秒: 1, 分钟: 60, 小时: 3600, 天: 86400 }[relative[2]];
+      return Number(relative[1]) * unit;
+    }
+    const parsed = Date.parse(value.replace(/-/g, "/"));
+    return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : (Date.now() - parsed) / 1000;
+  }
+
+  function applyCommentSort(tree, mode) {
+    const list = tree.querySelector(".link-comment__list");
+    if (!list) return;
+    const items = Array.from(list.children).filter((node) => node.classList.contains("link-comment__comment-item"));
+    if (mode === "default") {
+      for (const item of items) item.style.order = "";
+      return;
+    }
+    const authorName = (document.querySelector("#page-bbs-link .link-user__username")?.textContent || "").trim();
+    const keyed = items.map((item, index) => {
+      const likes = Number((item.querySelector(".like-box__cnt")?.textContent || "0").trim()) || 0;
+      const age = parseCommentAge(item.querySelector(".info-box__create-time")?.textContent || "");
+      const name = (item.querySelector(".info-box__username")?.textContent || "").trim();
+      return { item, index, likes, age, isAuthor: authorName !== "" && name === authorName };
+    });
+    keyed.sort((a, b) => {
+      if (mode === "likes") return b.likes - a.likes || a.index - b.index;
+      if (mode === "time") return a.age - b.age || a.index - b.index;
+      if (mode === "author") return Number(b.isAuthor) - Number(a.isAuthor) || a.index - b.index;
+      return a.index - b.index;
+    });
+    keyed.forEach((entry, index) => { entry.item.style.order = String(index); });
+  }
+
+  function createCommentSort(tree, mode = "default") {
+    const host = document.createElement("div");
+    host.id = COMMENT_SORT_HOST_ID;
+    const shadow = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = COMMENT_SORT_CSS;
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = "排序";
+    bar.append(label);
+    let current = mode;
+    const buttons = COMMENT_SORTS.map((sort) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = sort.label;
+      button.dataset.sort = sort.id;
+      button.setAttribute("aria-pressed", String(sort.id === current));
+      button.addEventListener("click", () => {
+        current = sort.id;
+        for (const node of buttons) node.setAttribute("aria-pressed", String(node.dataset.sort === current));
+        applyCommentSort(tree, current);
+      });
+      bar.append(button);
+      return button;
+    });
+    shadow.append(style, bar);
+    tree.prepend(host);
+    return host;
+  }
+
+  function watchCommentSort() {
+    if (!document.body) return;
+    let host = null;
+    let mode = "default";
+    let scheduled = false;
+
+    const sync = () => {
+      if (!location.pathname.startsWith(LINK_HREF_PREFIX)) {
+        host = null;
+        mode = "default";
+        return;
+      }
+      const tree = document.querySelector("#page-bbs-link .link-comment");
+      if (!tree) return;
+      const active = host?.shadowRoot?.querySelector('button[aria-pressed="true"]');
+      if (active) mode = active.dataset.sort || "default";
+      if (!host || !host.isConnected || host.parentElement !== tree) {
+        host = createCommentSort(tree, mode);
+      }
+      applyCommentSort(tree, mode);
+    };
+
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        sync();
+      });
+    };
+
+    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+    sync();
+  }
 
   const THEME_ENTRY_CSS = `
     :host { display: inline-flex; flex: none; position: relative; }
@@ -1401,31 +1563,6 @@
     return { host, place };
   }
 
-  function watchLinkPage() {
-    if (!document.body) return;
-    let scheduled = false;
-
-    const dock = () => {
-      if (!location.pathname.startsWith(LINK_HREF_PREFIX)) return;
-      const sidebar = document.querySelector("#page-bbs-link .cpt-right-side.right");
-      const tree = document.querySelector("#page-bbs-link .link-comment");
-      if (!sidebar || !tree || tree.parentElement === sidebar) return;
-      sidebar.append(tree);
-    };
-
-    const schedule = () => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        dock();
-      });
-    };
-
-    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
-    dock();
-  }
-
   function watchFavourPage() {
     if (!document.body) return;
     let section = null;
@@ -1458,7 +1595,7 @@
 
   function boot() {
     watchTheme();
-    watchLinkPage();
+    watchCommentSort();
     watchFavourPage();
   }
 
