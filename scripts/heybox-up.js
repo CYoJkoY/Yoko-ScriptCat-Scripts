@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.3.2
+// @version      0.3.3
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -63,6 +63,27 @@
     applyHideCyPreference(value);
   }
 
+  // 首页评论预览是可选能力：关掉后浮层完全隐藏，也不接管信息流里的评论数字。
+  const COMMENT_PREVIEW_KEY = "heybox-up.commentPreview.v1";
+  const COMMENT_PREVIEW_EVENT = "heybox-up:comment-preview";
+
+  function readCommentPreviewPreference() {
+    try {
+      return localStorage.getItem(COMMENT_PREVIEW_KEY) !== "0";
+    } catch (error) {
+      return true;
+    }
+  }
+
+  function setCommentPreviewPreference(value) {
+    try {
+      localStorage.setItem(COMMENT_PREVIEW_KEY, value ? "1" : "0");
+    } catch (error) {
+      console.warn("[HeyBox Up] 保存评论预览设置失败", error);
+    }
+    document.dispatchEvent(new CustomEvent(COMMENT_PREVIEW_EVENT, { detail: value }));
+  }
+
   // 站点会在评论上带 is_cy，值可能是数字 1、字符串 "1" 或布尔 true。
   function isCyComment(comment) {
     return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
@@ -100,6 +121,7 @@
 
   let currentThemeMode = "system";
   let themeEntry = null;
+  let previewToggle = null;
 
   function readThemeMode() {
     try {
@@ -1303,6 +1325,21 @@
     .hint { font-size: 11px; line-height: 1.3; color: var(--hbu-menu-muted, #6b7280); }
     .check { margin-left: auto; font-size: 12px; color: var(--heybox-up-accent, #6f8db3); opacity: 0; }
     .item[aria-checked="true"] .check { opacity: 1; }
+    .sep { height: 1px; margin: 6px 4px; background: var(--hbu-menu-border, rgba(20, 25, 30, .12)); }
+    .item.toggle[aria-checked="true"] { background: transparent; }
+    .switch {
+      position: relative; flex: none; margin-left: auto; width: 30px; height: 16px; border-radius: 999px;
+      border: 1px solid var(--hbu-menu-border, rgba(20, 25, 30, .12));
+      background: var(--hbu-menu-hover, rgba(20, 25, 30, .06));
+      transition: border-color .15s ease;
+    }
+    .switch::after {
+      content: ""; position: absolute; top: 1px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+      background: var(--hbu-menu-muted, #6b7280);
+      transition: transform .15s ease, background .15s ease;
+    }
+    .item[aria-checked="true"] .switch { border-color: var(--heybox-up-accent, #6f8db3); }
+    .item[aria-checked="true"] .switch::after { transform: translateX(13px); background: var(--heybox-up-accent, #6f8db3); }
   `;
 
   const THEME_ICONS = {
@@ -1341,6 +1378,7 @@
     for (const item of themeEntry.items) {
       item.node.setAttribute("aria-checked", String(item.id === currentThemeMode));
     }
+    if (previewToggle) previewToggle.setAttribute("aria-checked", String(readCommentPreviewPreference()));
   }
 
   function applyTheme(mode, persist) {
@@ -1403,6 +1441,7 @@
       return { id: preset.id, node };
     });
     menu.append(...items.map((item) => item.node));
+    menu.append(createThemeMenuSeparator(), createCommentPreviewToggle());
 
     const closeMenu = () => {
       if (menu.hidden) return;
@@ -1436,6 +1475,41 @@
     title.className = "menu-title";
     title.textContent = "主题预设";
     return title;
+  }
+
+  function createThemeMenuSeparator() {
+    const line = document.createElement("div");
+    line.className = "sep";
+    line.setAttribute("role", "separator");
+    return line;
+  }
+
+  // 首页评论预览开关：与主题菜单共用一个面板，偏好只写本机 localStorage。
+  function createCommentPreviewToggle() {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "item toggle";
+    node.setAttribute("role", "menuitemcheckbox");
+    node.setAttribute("aria-checked", String(readCommentPreviewPreference()));
+    const copy = document.createElement("span");
+    copy.className = "copy";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = "首页评论预览";
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "信息流右侧直接看评论";
+    copy.append(name, hint);
+    const toggle = document.createElement("span");
+    toggle.className = "switch";
+    node.append(copy, toggle);
+    node.addEventListener("click", () => {
+      const next = !(node.getAttribute("aria-checked") === "true");
+      node.setAttribute("aria-checked", String(next));
+      setCommentPreviewPreference(next);
+    });
+    previewToggle = node;
+    return node;
   }
 
   function mountThemeEntry() {
@@ -2274,7 +2348,7 @@
     tab.className = "tab";
     tab.setAttribute("aria-label", "展开评论预览");
     tab.setAttribute("aria-expanded", "false");
-    tab.innerHTML = RAIL_ICONS.comment + "<span>评论</span>";
+    tab.innerHTML = RAIL_ICONS.comment + "<span>评论预览</span>";
 
     const dock = document.createElement("div");
     dock.className = "dock";
@@ -2460,7 +2534,7 @@
         status.textContent = "正在加载评论…";
         status.hidden = false;
       } else if (state.linkId === "") {
-        status.textContent = "点信息流里帖子的评论数字，就能在这里预览评论。";
+        status.textContent = "这里会直接显示信息流首条帖子的评论；点其他帖子的评论数字可切换。";
         status.hidden = false;
       } else if (visible.length === 0) {
         status.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
@@ -2565,6 +2639,15 @@
     const isFeedPage = () => !location.pathname.startsWith(LINK_HREF_PREFIX)
       && document.querySelector("#page-bbs-community .bbs-home__content-list") !== null;
 
+    const readFirstFeedLinkId = () => {
+      const anchor = document.querySelector("#page-bbs-community .bbs-home__content-list a[href*='/app/bbs/link/']");
+      if (!anchor) return "";
+      const match = /link\/(\d+)/.exec(anchor.getAttribute("href") || "");
+      return match ? match[1] : "";
+    };
+
+    const isEnabled = () => readCommentPreviewPreference();
+
     document.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -2574,6 +2657,7 @@
       if (!anchor) return;
       const match = /link\/(\d+)/.exec(anchor.getAttribute("href") || "");
       if (!match) return;
+      if (!isEnabled()) return;
       if (!isFeedPage()) return;
       event.preventDefault();
       event.stopPropagation();
@@ -2587,10 +2671,30 @@
     });
 
     let scheduled = false;
+    let autoOpened = false;
     const sync = () => {
       if (rail.host.parentNode !== document.body) document.body.append(rail.host);
-      rail.setActive(isFeedPage());
+      if (!isEnabled()) {
+        autoOpened = false;
+        rail.setActive(false);
+        return;
+      }
+      const active = isFeedPage();
+      rail.setActive(active);
+      if (!active) {
+        autoOpened = false;
+        return;
+      }
+      // 开启预览后，进入首页直接带出首条帖子的评论，不必先点评论数字。
+      if (!autoOpened && !rail.isOpen()) {
+        const linkId = readFirstFeedLinkId();
+        if (linkId !== "") {
+          autoOpened = true;
+          rail.open(linkId);
+        }
+      }
     };
+    document.addEventListener(COMMENT_PREVIEW_EVENT, sync);
     new MutationObserver(() => {
       if (scheduled) return;
       scheduled = true;
