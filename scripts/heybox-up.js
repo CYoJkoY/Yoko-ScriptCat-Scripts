@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.4
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、CY、文章五个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.5
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在主题菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -105,6 +105,42 @@
     document.dispatchEvent(new CustomEvent(NAV_MOTION_EVENT, { detail: value }));
   }
 
+  // 社区工作台的中间栏宽度：按视口百分比记，默认 56%，两侧等宽留白。
+  const FEED_WIDTH_KEY = "heybox-up.feedWidth.v1";
+  const FEED_WIDTH_DEFAULT = 56;
+  const FEED_WIDTH_MIN = 40;
+  const FEED_WIDTH_MAX = 76;
+
+  function normalizeFeedWidth(value) {
+    const parsed = Math.round(Number(value));
+    if (!Number.isFinite(parsed)) return FEED_WIDTH_DEFAULT;
+    return Math.min(FEED_WIDTH_MAX, Math.max(FEED_WIDTH_MIN, parsed));
+  }
+
+  function readFeedWidth() {
+    try {
+      return normalizeFeedWidth(localStorage.getItem(FEED_WIDTH_KEY));
+    } catch (error) {
+      return FEED_WIDTH_DEFAULT;
+    }
+  }
+
+  function applyFeedWidth(value) {
+    const width = normalizeFeedWidth(value);
+    document.documentElement.style.setProperty("--heybox-up-feed-pct", String(width));
+    return width;
+  }
+
+  function setFeedWidthPreference(value) {
+    const width = applyFeedWidth(value);
+    try {
+      localStorage.setItem(FEED_WIDTH_KEY, String(width));
+    } catch (error) {
+      // 隐私模式下写不进去，本次页面仍按新宽度排版。
+    }
+    return width;
+  }
+
   // 站点会在评论上带 is_cy，值可能是数字 1、字符串 "1" 或布尔 true。
   function isCyComment(comment) {
     return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
@@ -144,6 +180,7 @@
   let themeEntry = null;
   let previewToggle = null;
   let navMotionToggle = null;
+  let feedWidthChips = [];
 
   function readThemeMode() {
     try {
@@ -303,6 +340,56 @@
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-bbs-community, #page-bbs-link, .page-bbs-community, .page-bbs-link) {
       background-color: var(--heybox-up-bg) !important;
       color: var(--heybox-up-text);
+    }
+    /* 我的文章（创作者中心）：站点整页写死 #fff，深色下逐块补齐，避免只剩外框变黑。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management, #page-creator-content-management-detail) {
+      background-color: var(--heybox-up-bg) !important;
+      color: var(--heybox-up-text);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management .creator-content-management__header, #page-creator-content-management .creator-content-management__tabs, #page-creator-content-management-detail .content-detail__content-wrapper, #page-creator-content-management-detail .content-detail__section, .com-chart, #creator-preview__frame, .creator-preview-normal, .creator-draft) {
+      background-color: var(--heybox-up-surface) !important;
+      border-color: var(--heybox-up-border) !important;
+      color: var(--heybox-up-text);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management .creator-content-management__tabs::after, #page-creator-content-management .content-management-home__content + .content-management-home__content::after) {
+      background-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management .content-management-home__content:hover, #page-creator-content-management .creator-content-management__tabs .sorter:hover, .creator-content-item__operation-item:hover) {
+      background-color: var(--heybox-up-subtle) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .creator__data-indicator {
+      background-color: var(--heybox-up-subtle) !important;
+      box-shadow: 0 0 0 .5px var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .creator__data-indicator.active {
+      background-color: var(--heybox-up-surface) !important;
+      box-shadow: inset 0 0 0 1px var(--heybox-up-accent) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management .creator-content-management__header, #page-creator-content-management-detail .content-detail__title, #page-creator-content-management-detail .content-detail__section-header, .data-indicator__data, .com-chart .nav, .com-chart .selection .text, .aside-miniprogram__header, .aside-miniprogram__item--name) {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.data-indicator__title, #page-creator-content-management .creator-content-management__tabs .sorter, #page-topic-link .topic-link__sorter) {
+      color: var(--heybox-up-text-2) !important;
+    }
+    /* 频道页：整页浅灰底 + 三块白卡，连同上下固定色条一起换底。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-topic-link {
+      background-color: var(--heybox-up-bg) !important;
+      color: var(--heybox-up-text);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-topic-link::before,
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-topic-link::after {
+      background-color: var(--heybox-up-bg) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-topic-link .topic-link__panel, #page-topic-link .topic-link__header, #page-topic-link .topic-link__filter-row, #page-topic-link .topic-link__game-detail, #page-topic-link .topic-link__main::after, .topic-aside__topic-indicator, .topic__aside-miniprogram) {
+      background-color: var(--heybox-up-surface) !important;
+      border-color: var(--heybox-up-border) !important;
+      color: var(--heybox-up-text);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-topic-link .topic-link__splitline::after, .topic__aside-miniprogram .aside-miniprogram__item) {
+      background-color: var(--heybox-up-subtle) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .topic__aside-miniprogram .aside-miniprogram__item:hover {
+      background-color: var(--heybox-up-surface) !important;
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.hb-bbs-home, .bbs-home__content-list, .bbs-home__content-item, .bbs-home__topic-item, .bbs-community-hot-topic, .bbs-community__search-module, .right-side-default, .hb-cpt__scroll-list, #page-bbs-link .list, .link-tags__tag-item, .hb-cpt__popover-menu, .hb-cpt__report, .route-to-app__qrcode, .scroll-list__top-btn, .hb-cpt__loading.circle, .search-history, .search__pull-list) {
       background-color: var(--heybox-up-surface) !important;
@@ -683,7 +770,9 @@
     /* 版式：定宽阅读栏 + 卡片化信息流。站点通栏列表每行超过 90 字，长读易疲劳。 */
     :root {
       --heybox-up-page-w: 1360px;
-      --heybox-up-feed-w: min(960px, calc(100vw - 420px));
+      /* 中间栏占视口百分比，可在主题菜单里调；上限避免超宽屏上正文行过长。 */
+      --heybox-up-feed-pct: 56;
+      --heybox-up-feed-w: min(calc(var(--heybox-up-feed-pct) * 1vw), 1180px);
       --heybox-up-radius-card: 14px;
       --heybox-up-gap: 12px;
       --heybox-up-card-pad: 20px;
@@ -1490,6 +1579,22 @@
     .check { margin-left: auto; font-size: 12px; color: var(--heybox-up-accent, #6f8db3); opacity: 0; }
     .item[aria-checked="true"] .check { opacity: 1; }
     .sep { height: 1px; margin: 6px 4px; background: var(--hbu-menu-border, rgba(20, 25, 30, .12)); }
+    .field { padding: 2px 8px 6px; }
+    .field-label { padding: 0 2px 6px; font-size: 11px; letter-spacing: .08em; color: var(--hbu-menu-muted, #6b7280); }
+    .chips { display: flex; gap: 4px; }
+    .chip {
+      flex: 1 1 0; min-width: 0; padding: 5px 0; border: 1px solid var(--hbu-menu-border, rgba(20, 25, 30, .12));
+      border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 12px;
+      font-variant-numeric: tabular-nums; text-align: center; cursor: pointer;
+      transition: color .14s ease, border-color .14s ease, background .14s ease;
+    }
+    .chip:hover { background: var(--hbu-menu-hover, rgba(20, 25, 30, .06)); }
+    .chip:focus-visible { outline: 2px solid var(--heybox-up-accent, #6f8db3); outline-offset: 1px; }
+    .chip[aria-checked="true"] {
+      border-color: var(--heybox-up-accent, #6f8db3);
+      color: var(--heybox-up-accent, #6f8db3);
+      background: var(--hbu-menu-hover, rgba(20, 25, 30, .06));
+    }
     .item.toggle[aria-checked="true"] { background: transparent; }
     .switch {
       position: relative; flex: none; margin-left: auto; width: 30px; height: 16px; border-radius: 999px;
@@ -1544,6 +1649,7 @@
     }
     if (previewToggle) previewToggle.setAttribute("aria-checked", String(readCommentPreviewPreference()));
     if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
+    syncFeedWidthChips(readFeedWidth());
   }
 
   function applyTheme(mode, persist) {
@@ -1606,7 +1712,13 @@
       return { id: preset.id, node };
     });
     menu.append(...items.map((item) => item.node));
-    menu.append(createThemeMenuSeparator(), createCommentPreviewToggle(), createNavMotionToggle());
+    menu.append(
+      createThemeMenuSeparator(),
+      createCommentPreviewToggle(),
+      createNavMotionToggle(),
+      createThemeMenuSeparator(),
+      createFeedWidthControl()
+    );
 
     const closeMenu = () => {
       if (menu.hidden) return;
@@ -1703,6 +1815,46 @@
     });
     navMotionToggle = node;
     return node;
+  }
+
+  // 中栏宽度：按视口百分比分段，只改 CSS 变量，不重排 DOM。
+  const FEED_WIDTH_STEPS = [40, 48, 56, 64, 72];
+
+  function syncFeedWidthChips(value) {
+    for (const chip of feedWidthChips) {
+      chip.setAttribute("aria-checked", String(Number(chip.dataset.width) === value));
+    }
+  }
+
+  function createFeedWidthControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "中栏宽度");
+    const label = document.createElement("div");
+    label.className = "field-label";
+    label.textContent = "中栏宽度（占屏幕宽度）";
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    for (const step of FEED_WIDTH_STEPS) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.dataset.width = String(step);
+      chip.textContent = step + "%";
+      chip.title = "中栏占屏幕宽度 " + step + "%";
+      chip.setAttribute("role", "menuitemradio");
+      chip.setAttribute("aria-checked", "false");
+      chip.addEventListener("click", () => {
+        setFeedWidthPreference(step);
+        syncFeedWidthChips(step);
+      });
+      chips.append(chip);
+    }
+    wrap.append(label, chips);
+    feedWidthChips = Array.from(chips.children);
+    syncFeedWidthChips(readFeedWidth());
+    return wrap;
   }
 
   function mountThemeEntry() {
@@ -1998,6 +2150,7 @@
     if (currentThemeMode === "system") applyTheme("system", false);
   });
   applyTheme(readThemeMode(), false);
+  applyFeedWidth(readFeedWidth());
   document.addEventListener(NAV_MOTION_EVENT, (event) => applyNavMotionPreference(event.detail === true));
   applyNavMotionPreference(readNavMotionPreference());
 
@@ -4304,8 +4457,9 @@
     #heybox-up-left-rail,
     #heybox-up-right-rail {
       position: sticky;
-      top: 84px;
-      max-height: calc(100vh - 104px);
+      /* 站点搜索条 sticky 在 80px 处、高 42px；侧栏从它下方 14px 开始，避免首屏被压住。 */
+      top: 136px;
+      max-height: calc(100vh - 156px);
       overflow: auto;
       font: 13px/1.55 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: var(--heybox-up-text-2, #3c4249);
@@ -4452,11 +4606,16 @@
     @media (min-width: 1200px) {
       #page-bbs-community.heybox-up-desktop .content {
         display: grid !important;
-        width: auto !important;
-        grid-template-columns: 208px minmax(0, 1fr);
-        gap: 24px;
+        width: 100% !important;
+        /* 左右两列等宽，中间栏永远落在视口正中；两侧栏贴近中间栏而不是贴屏幕边。 */
+        grid-template-columns:
+          minmax(0, 1fr)
+          /* 中栏再宽也要给两侧栏留出 208px + 288px + 间距，否则侧栏会压到正文上。 */
+          minmax(320px, min(var(--heybox-up-feed-w), calc(100vw - 560px)))
+          minmax(0, 1fr);
+        column-gap: 24px;
         align-items: start;
-        max-width: 1192px !important;
+        max-width: none !important;
         margin: 0 auto !important;
         justify-content: stretch !important;
       }
@@ -4464,6 +4623,9 @@
         display: block;
         grid-column: 1;
         grid-row: 1;
+        justify-self: end;
+        width: 208px;
+        align-self: start;
       }
       #page-bbs-community.heybox-up-desktop .content > main.list {
         grid-column: 2;
@@ -4474,30 +4636,29 @@
         margin: 0 !important;
         flex: none !important;
       }
+      /* 左栏已有频道列表，原生横向频道条不再重复出现。 */
+      #page-bbs-community.heybox-up-desktop .bbs-home__topic-list-wrapper {
+        display: none !important;
+      }
     }
     @media (min-width: 1500px) {
       body.heybox-up-desktop-on #app > main {
-        max-width: 1552px !important;
+        max-width: none !important;
       }
       body.heybox-up-desktop-on #page-bbs-community {
         max-width: none !important;
         width: auto !important;
       }
-      #page-bbs-community.heybox-up-desktop .content {
-        max-width: 1504px !important;
-        grid-template-columns: 208px minmax(0, 1fr) 288px;
-      }
       #page-bbs-community.heybox-up-desktop .content > #heybox-up-right-rail {
         display: block;
         grid-column: 3;
         grid-row: 1;
+        justify-self: start;
+        width: 288px;
+        align-self: start;
       }
     }
     @media (min-width: 1500px) {
-      body.heybox-up-rail-open #page-bbs-community.heybox-up-desktop .content {
-        max-width: 1192px !important;
-        grid-template-columns: 208px minmax(0, 1fr);
-      }
       body.heybox-up-rail-open #page-bbs-community.heybox-up-desktop #heybox-up-right-rail {
         display: none;
       }
