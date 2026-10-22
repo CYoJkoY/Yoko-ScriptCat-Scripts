@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.8
+// @version      0.4.9
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在主题菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -939,16 +939,10 @@
         --heybox-up-card-pad: 16px;
       }
     }
-    /* 评论预览侧栏：展开时信息流让出侧栏宽度，侧栏本身在 Shadow DOM 内自绘。 */
+    /* 评论预览侧栏：展开时由桌面栅格为预览保留真实宽度，侧栏本身在 Shadow DOM 内自绘。 */
     :root { --heybox-up-rail-w: 320px; }
     @media (max-width: 1399px) {
       :root { --heybox-up-rail-w: 288px; }
-    }
-    @media (min-width: 1200px) {
-      body.heybox-up-rail-open #page-bbs-community .content {
-        padding-right: calc(var(--heybox-up-rail-w) + 48px) !important;
-        transition: padding-right .18s ease;
-      }
     }
     #page-bbs-community :is(.bbs-new-style-bottom__comment, .content-list__comment) {
       cursor: pointer;
@@ -4809,6 +4803,16 @@
         min-width: 0;
         margin: 0 !important;
         flex: none !important;
+      }
+      /* 评论预览只占右侧一列的真实宽度。旧实现再叠一层“侧栏 + 48px”右内边距，
+         会在面板与信息流之间留下近乎双倍于面板的空白，并把中栏挤向左侧。 */
+      body.heybox-up-rail-open #app > main { max-width: none !important; }
+      body.heybox-up-rail-open #page-bbs-community.heybox-up-desktop .content {
+        grid-template-columns:
+          minmax(var(--heybox-up-rail-w), 1fr)
+          minmax(320px, min(var(--heybox-up-feed-w), calc(100% - var(--heybox-up-rail-w) - var(--heybox-up-rail-w) - 48px)))
+          minmax(var(--heybox-up-rail-w), 1fr);
+        column-gap: 24px;
       }
       /* 左栏已有频道列表，原生横向频道条不再重复出现。 */
       #page-bbs-community.heybox-up-desktop .bbs-home__topic-list-wrapper {
