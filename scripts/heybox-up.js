@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.5
+// @version      0.4.6
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在主题菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -390,6 +390,20 @@
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] .topic__aside-miniprogram .aside-miniprogram__item:hover {
       background-color: var(--heybox-up-surface) !important;
+    }
+    /* 兜底扫描挂上的类：只改底色、描边与文字色，不动布局。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .heybox-up-dark-flat {
+      background-color: var(--heybox-up-surface) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .heybox-up-dark-flat-subtle {
+      background-color: var(--heybox-up-subtle) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .heybox-up-dark-edge {
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .heybox-up-dark-ink {
+      color: var(--heybox-up-text) !important;
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.hb-bbs-home, .bbs-home__content-list, .bbs-home__content-item, .bbs-home__topic-item, .bbs-community-hot-topic, .bbs-community__search-module, .right-side-default, .hb-cpt__scroll-list, #page-bbs-link .list, .link-tags__tag-item, .hb-cpt__popover-menu, .hb-cpt__report, .route-to-app__qrcode, .scroll-list__top-btn, .hb-cpt__loading.circle, .search-history, .search__pull-list) {
       background-color: var(--heybox-up-surface) !important;
@@ -1664,6 +1678,8 @@
     ensureThemeStyle();
     if (persist) writeThemeMode(currentThemeMode);
     updateThemeEntry();
+    if (preset.dark === true) scheduleDarkSweep();
+    else clearDarkSweep();
   }
 
   function createThemeEntry() {
@@ -1881,9 +1897,120 @@
       requestAnimationFrame(() => {
         scheduled = false;
         sync();
+        scheduleDarkSweep();
       });
     }).observe(document.body, { childList: true, subtree: true });
     sync();
+    scheduleDarkSweep();
+  }
+
+  // 站点把不少底色直接写在组件里，选择器一变就漏出白块。深色主题下对这些页面做一次兜底扫描：
+  // 只给近白底色、近白描边与过暗文字挂类，不改 DOM 结构；类一旦挂上就保留，避免与 hover 反复拉锯。
+  const DARK_SWEEP_ROOT_SELECTOR =
+    "#page-creator-content-management, #page-creator-content-management-detail, #page-topic-link";
+  const DARK_FLAT_CLASS = "heybox-up-dark-flat";
+  const DARK_FLAT_SUBTLE_CLASS = "heybox-up-dark-flat-subtle";
+  const DARK_EDGE_CLASS = "heybox-up-dark-edge";
+  const DARK_INK_CLASS = "heybox-up-dark-ink";
+  const DARK_SWEEP_LIMIT = 3000;
+  const DARK_SWEEP_SKIP = new Set([
+    "IMG", "VIDEO", "CANVAS", "SVG", "PATH", "USE", "IFRAME",
+    "INPUT", "TEXTAREA", "SELECT", "OPTION", "SCRIPT", "STYLE", "LINK",
+  ]);
+  const RGB_COLOR = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/;
+  let darkSweepTimer = 0;
+
+  function parseRgbColor(value) {
+    const match = RGB_COLOR.exec(value || "");
+    if (match === null) return null;
+    return {
+      r: Number(match[1]),
+      g: Number(match[2]),
+      b: Number(match[3]),
+      a: match[4] === undefined ? 1 : Number(match[4]),
+    };
+  }
+
+  function isNearWhite(color, min) {
+    return color !== null && color.a >= 0.6 && (color.r + color.g + color.b) / 3 >= min;
+  }
+
+  function hasOwnText(node) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3 && child.nodeValue.trim() !== "") return true;
+    }
+    return false;
+  }
+
+  // 找到自己的第一层不透明背景祖先（含自身），用来判断文字是否落在被兜底改暗的底色上。
+  function flatBackgroundAncestor(node) {
+    for (let el = node; el; el = el.parentElement) {
+      if (el.classList.contains(DARK_FLAT_CLASS) || el.classList.contains(DARK_FLAT_SUBTLE_CLASS)) return true;
+      const color = parseRgbColor(getComputedStyle(el).backgroundColor);
+      if (color !== null && color.a >= 0.6) return false;
+    }
+    return false;
+  }
+
+  function clearDarkSweep() {
+    const selector = "." + DARK_FLAT_CLASS + ", ." + DARK_FLAT_SUBTLE_CLASS + ", ." + DARK_EDGE_CLASS + ", ." + DARK_INK_CLASS;
+    for (const node of document.querySelectorAll(selector)) {
+      node.classList.remove(DARK_FLAT_CLASS, DARK_FLAT_SUBTLE_CLASS, DARK_EDGE_CLASS, DARK_INK_CLASS);
+    }
+  }
+
+  function sweepDarkSurfaces() {
+    if (document.documentElement.getAttribute("data-heybox-up-dark") !== "true") {
+      clearDarkSweep();
+      return;
+    }
+    const roots = document.querySelectorAll(DARK_SWEEP_ROOT_SELECTOR);
+    if (roots.length === 0) return;
+    for (const root of roots) {
+      const nodes = root.querySelectorAll("*");
+      const total = Math.min(nodes.length, DARK_SWEEP_LIMIT);
+      for (let index = 0; index < total; index += 1) {
+        const node = nodes[index];
+        if (DARK_SWEEP_SKIP.has(node.tagName) || node.id.startsWith("heybox-up")) continue;
+        const style = getComputedStyle(node);
+        if (!node.classList.contains(DARK_FLAT_CLASS) && !node.classList.contains(DARK_FLAT_SUBTLE_CLASS)) {
+          if (style.backgroundImage === "none") {
+            const bg = parseRgbColor(style.backgroundColor);
+            if (isNearWhite(bg, 240)) {
+              node.classList.add(isNearWhite(bg, 250) ? DARK_FLAT_CLASS : DARK_FLAT_SUBTLE_CLASS);
+            }
+          }
+        }
+        if (!node.classList.contains(DARK_EDGE_CLASS) && styleHasBrightEdge(style)) {
+          node.classList.add(DARK_EDGE_CLASS);
+        }
+        if (!node.classList.contains(DARK_INK_CLASS) && hasOwnText(node)) {
+          const ink = parseRgbColor(style.color);
+          if (ink !== null && (ink.r + ink.g + ink.b) / 3 < 120 && flatBackgroundAncestor(node)) {
+            node.classList.add(DARK_INK_CLASS);
+          }
+        }
+      }
+    }
+  }
+
+  // 只处理真正画出来的描边：宽 0 或 style 为 none 时，border-color 只是 color 的副本，改它没有意义。
+  function styleHasBrightEdge(style) {
+    if (style.borderStyle === "none" || style.borderStyle === "") return false;
+    if (style.borderTopWidth === "0px" && style.borderRightWidth === "0px"
+      && style.borderBottomWidth === "0px" && style.borderLeftWidth === "0px") return false;
+    return isNearWhite(parseRgbColor(style.borderTopColor), 240)
+      || isNearWhite(parseRgbColor(style.borderRightColor), 240)
+      || isNearWhite(parseRgbColor(style.borderBottomColor), 240)
+      || isNearWhite(parseRgbColor(style.borderLeftColor), 240);
+  }
+
+  function scheduleDarkSweep() {
+    if (darkSweepTimer !== 0) return;
+    darkSweepTimer = window.setTimeout(() => {
+      darkSweepTimer = 0;
+      sweepDarkSurfaces();
+    }, 350);
   }
 
   // 顶部导航只保留四个高频入口，用「SVG + 文本」替换站点原有的七个文字按钮。
