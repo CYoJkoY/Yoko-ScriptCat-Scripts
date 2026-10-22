@@ -1160,6 +1160,10 @@
     :root.heybox-up-theme[data-heybox-up-dark="true"] .scroll-list__no-more-desc::before {
       background-color: var(--heybox-up-border) !important;
     }
+    /* 文章管理页：列表末尾的“暂无更多内容”会打断卡片流，直接隐藏。 */
+    #page-creator-content-management .scroll-list__no-more-desc {
+      display: none !important;
+    }
   `;
 
   const COMMENT_SORTS = [
@@ -1719,7 +1723,7 @@
     sync();
   }
 
-  // 顶部导航只保留五个高频入口，用「SVG + 文本」替换站点原有的七个文字按钮。
+  // 顶部导航只保留四个高频入口，用「SVG + 文本」替换站点原有的七个文字按钮。
   const NAV_ID = "heybox-up-nav";
   const NAV_STYLE_ID = "heybox-up-nav-style";
   const NAV_STATIC_CLASS = "heybox-up-nav-static";
@@ -1730,7 +1734,6 @@
     { id: "home", label: "首页", href: "/" },
     { id: "community", label: "社区", href: "/app/bbs/home" },
     { id: "favour", label: "收藏", href: "/app/user/favour/content" },
-    { id: "cy", label: "CY", href: "/app/user/favour/content" + CY_HASH },
     { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" },
   ];
 
@@ -1738,7 +1741,6 @@
     home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-home"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></g></svg>',
     community: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-community"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></g></svg>',
     favour: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-favour"><path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"/></g></svg>',
-    cy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-cy"><path d="M2.8 12S6.4 5.8 12 5.8 21.2 12 21.2 12 17.6 18.2 12 18.2 2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.6"/></g></svg>',
     article: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-article"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 16.5h6"/></g></svg>',
   };
 
@@ -1793,7 +1795,6 @@
     .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home, .hbu-nav-link.is-active .hbu-ico-home { animation: hbu-nav-home .55s cubic-bezier(.3, .7, .3, 1); }
     .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community, .hbu-nav-link.is-active .hbu-ico-community { animation: hbu-nav-community .55s cubic-bezier(.3, .7, .3, 1); }
     .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour, .hbu-nav-link.is-active .hbu-ico-favour { animation: hbu-nav-favour .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-cy, .hbu-nav-link:focus-visible .hbu-ico-cy, .hbu-nav-link.is-active .hbu-ico-cy { animation: hbu-nav-cy .6s ease; }
     .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article, .hbu-nav-link.is-active .hbu-ico-article { animation: hbu-nav-article .55s cubic-bezier(.3, .7, .3, 1); }
     @keyframes hbu-nav-home {
       0%, 100% { transform: translateY(0); }
@@ -1808,10 +1809,6 @@
     @keyframes hbu-nav-favour {
       0%, 100% { transform: scaleY(1); }
       46% { transform: scaleY(.8) translateY(-1px); }
-    }
-    @keyframes hbu-nav-cy {
-      0%, 100% { transform: scaleY(1); }
-      42%, 52% { transform: scaleY(.12); }
     }
     @keyframes hbu-nav-article {
       0%, 100% { transform: rotate(0); }
@@ -1853,9 +1850,7 @@
 
   function readNavActiveId() {
     const path = location.pathname;
-    if (path === "/app/user/favour/content") {
-      return location.hash === CY_HASH ? "cy" : "favour";
-    }
+    if (path === "/app/user/favour/content") return "favour";
     if (path === "/") return "home";
     if (path.startsWith("/creator/")) return "article";
     if (path.startsWith("/app/bbs/")) return "community";
@@ -1934,19 +1929,7 @@
     // 组合键或中键交给浏览器，保留新标签页打开的能力。
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const id = link.dataset.nav;
-    if (id === "cy") {
-      event.preventDefault();
-      if (location.pathname === "/app/user/favour/content") {
-        history.pushState(null, "", "/app/user/favour/content" + CY_HASH);
-        scrollToCySection();
-        syncNavActive();
-      } else {
-        try { sessionStorage.setItem(CY_JUMP_KEY, "1"); } catch (error) { /* 隐私模式下仍可正常跳转，只是不做滚动定位。 */ }
-        navigateToPath("/app/user/favour/content");
-      }
-      return;
-    }
-    // 收藏页内再点收藏时清掉 CY 锚点，避免两个入口同时高亮。
+    // 收藏页内再点收藏时清掉旧锚点，回到列表顶部。
     if (id === "favour" && location.pathname === "/app/user/favour/content" && location.hash !== "") {
       event.preventDefault();
       history.pushState(null, "", "/app/user/favour/content");
@@ -3226,14 +3209,12 @@
     :host { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); display: block; z-index: 2147482990; font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--heybox-up-text, #14191e); }
     :host([hidden]) { display: none; }
     .bar { display: flex; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .12)); border-radius: 999px; background: var(--heybox-up-surface, #fff); box-shadow: var(--heybox-up-shadow-2, 0 10px 28px rgba(8, 12, 16, .18)); }
-    .count { padding: 0 9px; color: var(--heybox-up-muted, #6b7280); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .count[hidden] { display: none; }
     .btn { display: inline-flex; align-items: center; gap: 3px; height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--heybox-up-text-2, #3c4249); font: inherit; cursor: pointer; white-space: nowrap; }
     .btn:hover:not(:disabled) { background: var(--heybox-up-subtle, rgba(20, 25, 30, .06)); color: var(--heybox-up-text, #14191e); }
     .btn:disabled { opacity: .38; cursor: default; }
     .btn:focus-visible { outline: 2px solid var(--heybox-up-accent, #6f8db3); outline-offset: 1px; }
     .btn svg { width: 14px; height: 14px; flex: none; }
-    @media (max-width: 720px) { :host { bottom: 10px; } .count { display: none; } .btn { padding: 0 8px; } }
+    @media (max-width: 720px) { :host { bottom: 10px; } .btn { padding: 0 8px; } }
   `;
 
   const PAGER_ICONS = {
@@ -3351,13 +3332,11 @@
     prevButton.type = "button";
     prevButton.className = "btn";
     prevButton.innerHTML = PAGER_ICONS.prev + "<span>上一篇</span>";
-    const count = document.createElement("span");
-    count.className = "count";
     const nextButton = document.createElement("button");
     nextButton.type = "button";
     nextButton.className = "btn";
     nextButton.innerHTML = "<span>下一篇</span>" + PAGER_ICONS.next;
-    bar.append(prevButton, count, nextButton);
+    bar.append(prevButton, nextButton);
     shadow.append(style, bar);
     document.body.append(host);
 
@@ -3413,13 +3392,6 @@
       nextButton.disabled = nextId === "";
       prevButton.title = neighbors.prev ? "上一篇" + (neighbors.prev.title !== "" ? "：" + neighbors.prev.title : "") : "没有上一篇";
       nextButton.title = neighbors.next ? "下一篇" + (neighbors.next.title !== "" ? "：" + neighbors.next.title : "") : "没有下一篇";
-      if (neighbors.index === null) {
-        count.hidden = true;
-        count.textContent = "";
-      } else {
-        count.hidden = false;
-        count.textContent = neighbors.index + " / " + neighbors.total;
-      }
     };
 
     new MutationObserver(() => {
