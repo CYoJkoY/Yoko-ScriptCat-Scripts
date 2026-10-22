@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.2
+// @version      0.4.3
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、CY、文章五个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -2660,6 +2660,22 @@
     .name { font-size: 12px; font-weight: 600; color: var(--rail-text); }
     .time, .likes, .replies { font-size: 11px; color: var(--rail-muted); }
     .text { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--rail-text); }
+    .text .emoji, .quote .emoji {
+      display: inline-block;
+      width: 17px;
+      height: 17px;
+      margin: 0 1px;
+      vertical-align: -3px;
+      background-repeat: no-repeat;
+      background-size: 102px 306px;
+    }
+    .text .pic, .quote .pic {
+      max-width: 100%;
+      max-height: 160px;
+      border-radius: 6px;
+      object-fit: contain;
+      vertical-align: top;
+    }
     .foot { display: flex; gap: 10px; margin-top: 4px; }
     .sub { display: grid; gap: 4px; margin-top: 7px; padding-left: 9px; border-left: 2px solid var(--rail-subtle); }
     .quote {
@@ -2731,15 +2747,86 @@
       .slice(0, 400);
   }
 
+  // 站点表情是 CSS sprite（<span data-emoji>），不能当普通标签剥掉，
+  // 否则纯表情评论在预览里会变成空白。这里把评论正文拆成文本、表情、图片三类片段，
+  // 渲染时只创建节点，不注入原始 HTML。
+  const RAIL_BODY_MAX = 4000;
+  const RAIL_EMOJI_SPRITE = "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v33.png";
+  const RAIL_EMOJI_CELL = 17;
+  const RAIL_EMOJI_TOKEN = /\[cube_([1-6][1-6])\]/g;
+  const RAIL_EMOJI_ID = /^[1-6][1-6]$/;
+
+  function parseRailBody(value) {
+    const source = String(value === undefined || value === null ? "" : value).slice(0, RAIL_BODY_MAX);
+    if (source === "") return [];
+    const template = document.createElement("template");
+    template.innerHTML = source;
+    const segments = [];
+    const pushText = (value) => {
+      const parts = String(value).split(RAIL_EMOJI_TOKEN);
+      for (let index = 0; index < parts.length; index += 1) {
+        if (index % 2 === 1) {
+          segments.push({ type: "emoji", id: parts[index] });
+          continue;
+        }
+        const collapsed = parts[index].replace(/\s+/g, " ");
+        if (collapsed.trim() === "") continue;
+        segments.push({ type: "text", text: collapsed });
+      }
+    };
+    const walk = (node) => {
+      for (const child of node.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          pushText(child.nodeValue);
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+        const element = child;
+        const emoji = element.getAttribute("data-emoji");
+        if (emoji !== null && emoji !== "") {
+          const match = /(hb-emoji-cube_\S+)/.exec(element.className || "");
+          const candidates = [match === null ? "" : match[1], emoji];
+          const id = candidates.map((item) => (/([1-6][1-6])$/.exec(item) || [])[1] || "").find((item) => RAIL_EMOJI_ID.test(item)) || "";
+          if (id !== "") segments.push({ type: "emoji", id: id });
+          continue;
+        }
+        if (element.tagName === "IMG") {
+          const src = element.getAttribute("src");
+          if (src !== null && /^https?:\/\//i.test(src)) segments.push({ type: "image", src });
+          continue;
+        }
+        if (element.tagName === "BR") {
+          pushText(" ");
+          continue;
+        }
+        walk(element);
+      }
+    };
+    walk(template.content);
+    if (segments.length > 0) {
+      const first = segments[0];
+      if (first.type === "text") first.text = first.text.replace(/^\s+/, "");
+      const last = segments[segments.length - 1];
+      if (last.type === "text") last.text = last.text.replace(/\s+$/, "");
+    }
+    return segments.filter((segment) => segment.type !== "text" || segment.text !== "").slice(0, 80);
+  }
+
+  function railBodyText(segments) {
+    return segments.filter((segment) => segment.type === "text").map((segment) => segment.text).join(" ").trim();
+  }
+
   function normalizeRailComment(comment) {
     const raw = comment && typeof comment === "object" ? comment : {};
     const user = raw.user && typeof raw.user === "object" ? raw.user : {};
     const avatar = user.avatar || user.avartar || "";
+    const body = parseRailBody(raw.text);
     return {
       id: String(raw.comment_id || raw.commentid || raw.id || ""),
       name: String(user.username || user.nickname || "匿名用户").trim(),
       avatar: typeof avatar === "string" ? avatar : "",
-      text: normalizeRailText(raw.text),
+      text: railBodyText(body),
+      body: body,
       createAt: Number(raw.create_at) || 0,
       likes: Number(raw.support_num || raw.support_count) || 0,
       replies: Number(raw.reply_count || raw.sub_comment_num) || 0,
@@ -2752,8 +2839,8 @@
     const root = list[0];
     if (!root) return null;
     const item = normalizeRailComment(root);
-    if (item.id === "" && item.text === "" && item.name === "匿名用户") return null;
-    item.quotes = list.slice(1, 3).map(normalizeRailComment).filter((quote) => quote.text !== "");
+    if (item.id === "" && item.body.length === 0 && item.name === "匿名用户") return null;
+    item.quotes = list.slice(1, 3).map(normalizeRailComment).filter((quote) => quote.body.length > 0);
     return item;
   }
 
@@ -2899,13 +2986,48 @@
       if (document.body) document.body.classList.toggle("heybox-up-rail-open", state.mode === "open");
     };
 
+    const createEmoji = (id) => {
+      const node = document.createElement("span");
+      node.className = "emoji";
+      node.setAttribute("role", "img");
+      node.setAttribute("aria-label", "表情");
+      const column = 7 - (Number(id) % 10);
+      const row = 19 - Math.floor(Number(id) / 10);
+      node.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
+      node.style.backgroundPosition = column * RAIL_EMOJI_CELL + "px " + row * RAIL_EMOJI_CELL + "px";
+      return node;
+    };
+
+    const createImage = (src) => {
+      const node = document.createElement("img");
+      node.className = "pic";
+      node.alt = "";
+      node.loading = "lazy";
+      node.referrerPolicy = "no-referrer";
+      node.src = src;
+      return node;
+    };
+
+    const fillBody = (node, segments) => {
+      if (segments.length === 0) {
+        node.textContent = "（图片或表情评论）";
+        return;
+      }
+      for (const segment of segments) {
+        if (segment.type === "text") node.append(document.createTextNode(segment.text));
+        else if (segment.type === "emoji") node.append(createEmoji(segment.id));
+        else node.append(createImage(segment.src));
+      }
+    };
+
     const createQuote = (quote) => {
       const node = document.createElement("div");
       node.className = "quote";
       const name = document.createElement("span");
       name.className = "quote-name";
       name.textContent = quote.name + "：";
-      node.append(name, document.createTextNode(quote.text));
+      node.append(name);
+      fillBody(node, quote.body);
       return node;
     };
 
@@ -2935,7 +3057,7 @@
       }
       const text = document.createElement("p");
       text.className = "text";
-      text.textContent = comment.text === "" ? "（图片或表情评论）" : comment.text;
+      fillBody(text, comment.body);
       const foot = document.createElement("div");
       foot.className = "foot";
       if (comment.likes > 0) {
