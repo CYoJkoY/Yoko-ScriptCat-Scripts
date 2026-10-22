@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.2
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、CY、文章五个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.6
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在主题菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -105,6 +105,42 @@
     document.dispatchEvent(new CustomEvent(NAV_MOTION_EVENT, { detail: value }));
   }
 
+  // 社区工作台的中间栏宽度：按视口百分比记，默认 56%，两侧等宽留白。
+  const FEED_WIDTH_KEY = "heybox-up.feedWidth.v1";
+  const FEED_WIDTH_DEFAULT = 56;
+  const FEED_WIDTH_MIN = 40;
+  const FEED_WIDTH_MAX = 76;
+
+  function normalizeFeedWidth(value) {
+    const parsed = Math.round(Number(value));
+    if (!Number.isFinite(parsed)) return FEED_WIDTH_DEFAULT;
+    return Math.min(FEED_WIDTH_MAX, Math.max(FEED_WIDTH_MIN, parsed));
+  }
+
+  function readFeedWidth() {
+    try {
+      return normalizeFeedWidth(localStorage.getItem(FEED_WIDTH_KEY));
+    } catch (error) {
+      return FEED_WIDTH_DEFAULT;
+    }
+  }
+
+  function applyFeedWidth(value) {
+    const width = normalizeFeedWidth(value);
+    document.documentElement.style.setProperty("--heybox-up-feed-pct", String(width));
+    return width;
+  }
+
+  function setFeedWidthPreference(value) {
+    const width = applyFeedWidth(value);
+    try {
+      localStorage.setItem(FEED_WIDTH_KEY, String(width));
+    } catch (error) {
+      // 隐私模式下写不进去，本次页面仍按新宽度排版。
+    }
+    return width;
+  }
+
   // 站点会在评论上带 is_cy，值可能是数字 1、字符串 "1" 或布尔 true。
   function isCyComment(comment) {
     return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
@@ -144,6 +180,7 @@
   let themeEntry = null;
   let previewToggle = null;
   let navMotionToggle = null;
+  let feedWidthChips = [];
 
   function readThemeMode() {
     try {
@@ -303,6 +340,70 @@
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-bbs-community, #page-bbs-link, .page-bbs-community, .page-bbs-link) {
       background-color: var(--heybox-up-bg) !important;
       color: var(--heybox-up-text);
+    }
+    /* 我的文章（创作者中心）：站点整页写死 #fff，深色下逐块补齐，避免只剩外框变黑。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management, #page-creator-content-management-detail) {
+      background-color: var(--heybox-up-bg) !important;
+      color: var(--heybox-up-text);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management .creator-content-management__header, #page-creator-content-management .creator-content-management__tabs, #page-creator-content-management-detail .content-detail__content-wrapper, #page-creator-content-management-detail .content-detail__section, .com-chart, #creator-preview__frame, .creator-preview-normal, .creator-draft) {
+      background-color: var(--heybox-up-surface) !important;
+      border-color: var(--heybox-up-border) !important;
+      color: var(--heybox-up-text);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management .creator-content-management__tabs::after, #page-creator-content-management .content-management-home__content + .content-management-home__content::after) {
+      background-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management .content-management-home__content:hover, #page-creator-content-management .creator-content-management__tabs .sorter:hover, .creator-content-item__operation-item:hover) {
+      background-color: var(--heybox-up-subtle) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .creator__data-indicator {
+      background-color: var(--heybox-up-subtle) !important;
+      box-shadow: 0 0 0 .5px var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .creator__data-indicator.active {
+      background-color: var(--heybox-up-surface) !important;
+      box-shadow: inset 0 0 0 1px var(--heybox-up-accent) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-creator-content-management .creator-content-management__header, #page-creator-content-management-detail .content-detail__title, #page-creator-content-management-detail .content-detail__section-header, .data-indicator__data, .com-chart .nav, .com-chart .selection .text, .aside-miniprogram__header, .aside-miniprogram__item--name) {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.data-indicator__title, #page-creator-content-management .creator-content-management__tabs .sorter, #page-topic-link .topic-link__sorter) {
+      color: var(--heybox-up-text-2) !important;
+    }
+    /* 频道页：整页浅灰底 + 三块白卡，连同上下固定色条一起换底。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-topic-link {
+      background-color: var(--heybox-up-bg) !important;
+      color: var(--heybox-up-text);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-topic-link::before,
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-topic-link::after {
+      background-color: var(--heybox-up-bg) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-topic-link .topic-link__panel, #page-topic-link .topic-link__header, #page-topic-link .topic-link__filter-row, #page-topic-link .topic-link__game-detail, #page-topic-link .topic-link__main::after, .topic-aside__topic-indicator, .topic__aside-miniprogram) {
+      background-color: var(--heybox-up-surface) !important;
+      border-color: var(--heybox-up-border) !important;
+      color: var(--heybox-up-text);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(#page-topic-link .topic-link__splitline::after, .topic__aside-miniprogram .aside-miniprogram__item) {
+      background-color: var(--heybox-up-subtle) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .topic__aside-miniprogram .aside-miniprogram__item:hover {
+      background-color: var(--heybox-up-surface) !important;
+    }
+    /* 兜底扫描挂上的类：只改底色、描边与文字色，不动布局。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .heybox-up-dark-flat {
+      background-color: var(--heybox-up-surface) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .heybox-up-dark-flat-subtle {
+      background-color: var(--heybox-up-subtle) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .heybox-up-dark-edge {
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .heybox-up-dark-ink {
+      color: var(--heybox-up-text) !important;
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.hb-bbs-home, .bbs-home__content-list, .bbs-home__content-item, .bbs-home__topic-item, .bbs-community-hot-topic, .bbs-community__search-module, .right-side-default, .hb-cpt__scroll-list, #page-bbs-link .list, .link-tags__tag-item, .hb-cpt__popover-menu, .hb-cpt__report, .route-to-app__qrcode, .scroll-list__top-btn, .hb-cpt__loading.circle, .search-history, .search__pull-list) {
       background-color: var(--heybox-up-surface) !important;
@@ -683,7 +784,9 @@
     /* 版式：定宽阅读栏 + 卡片化信息流。站点通栏列表每行超过 90 字，长读易疲劳。 */
     :root {
       --heybox-up-page-w: 1360px;
-      --heybox-up-feed-w: min(960px, calc(100vw - 420px));
+      /* 中间栏占视口百分比，可在主题菜单里调；上限避免超宽屏上正文行过长。 */
+      --heybox-up-feed-pct: 56;
+      --heybox-up-feed-w: min(calc(var(--heybox-up-feed-pct) * 1vw), 1180px);
       --heybox-up-radius-card: 14px;
       --heybox-up-gap: 12px;
       --heybox-up-card-pad: 20px;
@@ -893,13 +996,24 @@
         border-radius: var(--heybox-up-radius-card) !important;
         background-color: var(--heybox-up-surface) !important;
         box-shadow: var(--heybox-up-shadow-1);
+        /* 正文与评论各自滚动：正文列吸顶并限高，滚到底不带走整页。 */
+        position: sticky;
+        top: 88px;
+        max-height: calc(100vh - 112px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-gutter: stable;
       }
       #page-bbs-link .link-comment {
         grid-column: 2;
         position: sticky;
         top: 88px;
+        height: calc(100vh - 112px);
         max-height: calc(100vh - 112px);
-        overflow: auto;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
         width: 100% !important;
         margin: 0 !important;
         border: 1px solid var(--heybox-up-border) !important;
@@ -1159,6 +1273,10 @@
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] .scroll-list__no-more-desc::before {
       background-color: var(--heybox-up-border) !important;
+    }
+    /* 文章管理页：列表末尾的“暂无更多内容”会打断卡片流，直接隐藏。 */
+    #page-creator-content-management .scroll-list__no-more-desc {
+      display: none !important;
     }
   `;
 
@@ -1475,6 +1593,22 @@
     .check { margin-left: auto; font-size: 12px; color: var(--heybox-up-accent, #6f8db3); opacity: 0; }
     .item[aria-checked="true"] .check { opacity: 1; }
     .sep { height: 1px; margin: 6px 4px; background: var(--hbu-menu-border, rgba(20, 25, 30, .12)); }
+    .field { padding: 2px 8px 6px; }
+    .field-label { padding: 0 2px 6px; font-size: 11px; letter-spacing: .08em; color: var(--hbu-menu-muted, #6b7280); }
+    .chips { display: flex; gap: 4px; }
+    .chip {
+      flex: 1 1 0; min-width: 0; padding: 5px 0; border: 1px solid var(--hbu-menu-border, rgba(20, 25, 30, .12));
+      border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 12px;
+      font-variant-numeric: tabular-nums; text-align: center; cursor: pointer;
+      transition: color .14s ease, border-color .14s ease, background .14s ease;
+    }
+    .chip:hover { background: var(--hbu-menu-hover, rgba(20, 25, 30, .06)); }
+    .chip:focus-visible { outline: 2px solid var(--heybox-up-accent, #6f8db3); outline-offset: 1px; }
+    .chip[aria-checked="true"] {
+      border-color: var(--heybox-up-accent, #6f8db3);
+      color: var(--heybox-up-accent, #6f8db3);
+      background: var(--hbu-menu-hover, rgba(20, 25, 30, .06));
+    }
     .item.toggle[aria-checked="true"] { background: transparent; }
     .switch {
       position: relative; flex: none; margin-left: auto; width: 30px; height: 16px; border-radius: 999px;
@@ -1529,6 +1663,7 @@
     }
     if (previewToggle) previewToggle.setAttribute("aria-checked", String(readCommentPreviewPreference()));
     if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
+    syncFeedWidthChips(readFeedWidth());
   }
 
   function applyTheme(mode, persist) {
@@ -1543,6 +1678,8 @@
     ensureThemeStyle();
     if (persist) writeThemeMode(currentThemeMode);
     updateThemeEntry();
+    if (preset.dark === true) scheduleDarkSweep();
+    else clearDarkSweep();
   }
 
   function createThemeEntry() {
@@ -1591,7 +1728,13 @@
       return { id: preset.id, node };
     });
     menu.append(...items.map((item) => item.node));
-    menu.append(createThemeMenuSeparator(), createCommentPreviewToggle(), createNavMotionToggle());
+    menu.append(
+      createThemeMenuSeparator(),
+      createCommentPreviewToggle(),
+      createNavMotionToggle(),
+      createThemeMenuSeparator(),
+      createFeedWidthControl()
+    );
 
     const closeMenu = () => {
       if (menu.hidden) return;
@@ -1690,6 +1833,46 @@
     return node;
   }
 
+  // 中栏宽度：按视口百分比分段，只改 CSS 变量，不重排 DOM。
+  const FEED_WIDTH_STEPS = [40, 48, 56, 64, 72];
+
+  function syncFeedWidthChips(value) {
+    for (const chip of feedWidthChips) {
+      chip.setAttribute("aria-checked", String(Number(chip.dataset.width) === value));
+    }
+  }
+
+  function createFeedWidthControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "中栏宽度");
+    const label = document.createElement("div");
+    label.className = "field-label";
+    label.textContent = "中栏宽度（占屏幕宽度）";
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    for (const step of FEED_WIDTH_STEPS) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.dataset.width = String(step);
+      chip.textContent = step + "%";
+      chip.title = "中栏占屏幕宽度 " + step + "%";
+      chip.setAttribute("role", "menuitemradio");
+      chip.setAttribute("aria-checked", "false");
+      chip.addEventListener("click", () => {
+        setFeedWidthPreference(step);
+        syncFeedWidthChips(step);
+      });
+      chips.append(chip);
+    }
+    wrap.append(label, chips);
+    feedWidthChips = Array.from(chips.children);
+    syncFeedWidthChips(readFeedWidth());
+    return wrap;
+  }
+
   function mountThemeEntry() {
     if (!document.body) return;
     const actions = document.querySelector(".nav-actions");
@@ -1714,12 +1897,123 @@
       requestAnimationFrame(() => {
         scheduled = false;
         sync();
+        scheduleDarkSweep();
       });
     }).observe(document.body, { childList: true, subtree: true });
     sync();
+    scheduleDarkSweep();
   }
 
-  // 顶部导航只保留五个高频入口，用「SVG + 文本」替换站点原有的七个文字按钮。
+  // 站点把不少底色直接写在组件里，选择器一变就漏出白块。深色主题下对这些页面做一次兜底扫描：
+  // 只给近白底色、近白描边与过暗文字挂类，不改 DOM 结构；类一旦挂上就保留，避免与 hover 反复拉锯。
+  const DARK_SWEEP_ROOT_SELECTOR =
+    "#page-creator-content-management, #page-creator-content-management-detail, #page-topic-link";
+  const DARK_FLAT_CLASS = "heybox-up-dark-flat";
+  const DARK_FLAT_SUBTLE_CLASS = "heybox-up-dark-flat-subtle";
+  const DARK_EDGE_CLASS = "heybox-up-dark-edge";
+  const DARK_INK_CLASS = "heybox-up-dark-ink";
+  const DARK_SWEEP_LIMIT = 3000;
+  const DARK_SWEEP_SKIP = new Set([
+    "IMG", "VIDEO", "CANVAS", "SVG", "PATH", "USE", "IFRAME",
+    "INPUT", "TEXTAREA", "SELECT", "OPTION", "SCRIPT", "STYLE", "LINK",
+  ]);
+  const RGB_COLOR = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/;
+  let darkSweepTimer = 0;
+
+  function parseRgbColor(value) {
+    const match = RGB_COLOR.exec(value || "");
+    if (match === null) return null;
+    return {
+      r: Number(match[1]),
+      g: Number(match[2]),
+      b: Number(match[3]),
+      a: match[4] === undefined ? 1 : Number(match[4]),
+    };
+  }
+
+  function isNearWhite(color, min) {
+    return color !== null && color.a >= 0.6 && (color.r + color.g + color.b) / 3 >= min;
+  }
+
+  function hasOwnText(node) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3 && child.nodeValue.trim() !== "") return true;
+    }
+    return false;
+  }
+
+  // 找到自己的第一层不透明背景祖先（含自身），用来判断文字是否落在被兜底改暗的底色上。
+  function flatBackgroundAncestor(node) {
+    for (let el = node; el; el = el.parentElement) {
+      if (el.classList.contains(DARK_FLAT_CLASS) || el.classList.contains(DARK_FLAT_SUBTLE_CLASS)) return true;
+      const color = parseRgbColor(getComputedStyle(el).backgroundColor);
+      if (color !== null && color.a >= 0.6) return false;
+    }
+    return false;
+  }
+
+  function clearDarkSweep() {
+    const selector = "." + DARK_FLAT_CLASS + ", ." + DARK_FLAT_SUBTLE_CLASS + ", ." + DARK_EDGE_CLASS + ", ." + DARK_INK_CLASS;
+    for (const node of document.querySelectorAll(selector)) {
+      node.classList.remove(DARK_FLAT_CLASS, DARK_FLAT_SUBTLE_CLASS, DARK_EDGE_CLASS, DARK_INK_CLASS);
+    }
+  }
+
+  function sweepDarkSurfaces() {
+    if (document.documentElement.getAttribute("data-heybox-up-dark") !== "true") {
+      clearDarkSweep();
+      return;
+    }
+    const roots = document.querySelectorAll(DARK_SWEEP_ROOT_SELECTOR);
+    if (roots.length === 0) return;
+    for (const root of roots) {
+      const nodes = root.querySelectorAll("*");
+      const total = Math.min(nodes.length, DARK_SWEEP_LIMIT);
+      for (let index = 0; index < total; index += 1) {
+        const node = nodes[index];
+        if (DARK_SWEEP_SKIP.has(node.tagName) || node.id.startsWith("heybox-up")) continue;
+        const style = getComputedStyle(node);
+        if (!node.classList.contains(DARK_FLAT_CLASS) && !node.classList.contains(DARK_FLAT_SUBTLE_CLASS)) {
+          if (style.backgroundImage === "none") {
+            const bg = parseRgbColor(style.backgroundColor);
+            if (isNearWhite(bg, 240)) {
+              node.classList.add(isNearWhite(bg, 250) ? DARK_FLAT_CLASS : DARK_FLAT_SUBTLE_CLASS);
+            }
+          }
+        }
+        if (!node.classList.contains(DARK_EDGE_CLASS) && styleHasBrightEdge(style)) {
+          node.classList.add(DARK_EDGE_CLASS);
+        }
+        if (!node.classList.contains(DARK_INK_CLASS) && hasOwnText(node)) {
+          const ink = parseRgbColor(style.color);
+          if (ink !== null && (ink.r + ink.g + ink.b) / 3 < 120 && flatBackgroundAncestor(node)) {
+            node.classList.add(DARK_INK_CLASS);
+          }
+        }
+      }
+    }
+  }
+
+  // 只处理真正画出来的描边：宽 0 或 style 为 none 时，border-color 只是 color 的副本，改它没有意义。
+  function styleHasBrightEdge(style) {
+    if (style.borderStyle === "none" || style.borderStyle === "") return false;
+    if (style.borderTopWidth === "0px" && style.borderRightWidth === "0px"
+      && style.borderBottomWidth === "0px" && style.borderLeftWidth === "0px") return false;
+    return isNearWhite(parseRgbColor(style.borderTopColor), 240)
+      || isNearWhite(parseRgbColor(style.borderRightColor), 240)
+      || isNearWhite(parseRgbColor(style.borderBottomColor), 240)
+      || isNearWhite(parseRgbColor(style.borderLeftColor), 240);
+  }
+
+  function scheduleDarkSweep() {
+    if (darkSweepTimer !== 0) return;
+    darkSweepTimer = window.setTimeout(() => {
+      darkSweepTimer = 0;
+      sweepDarkSurfaces();
+    }, 350);
+  }
+
+  // 顶部导航只保留四个高频入口，用「SVG + 文本」替换站点原有的七个文字按钮。
   const NAV_ID = "heybox-up-nav";
   const NAV_STYLE_ID = "heybox-up-nav-style";
   const NAV_STATIC_CLASS = "heybox-up-nav-static";
@@ -1730,7 +2024,6 @@
     { id: "home", label: "首页", href: "/" },
     { id: "community", label: "社区", href: "/app/bbs/home" },
     { id: "favour", label: "收藏", href: "/app/user/favour/content" },
-    { id: "cy", label: "CY", href: "/app/user/favour/content" + CY_HASH },
     { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" },
   ];
 
@@ -1738,7 +2031,6 @@
     home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-home"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></g></svg>',
     community: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-community"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></g></svg>',
     favour: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-favour"><path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"/></g></svg>',
-    cy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-cy"><path d="M2.8 12S6.4 5.8 12 5.8 21.2 12 21.2 12 17.6 18.2 12 18.2 2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.6"/></g></svg>',
     article: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-article"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 16.5h6"/></g></svg>',
   };
 
@@ -1793,7 +2085,6 @@
     .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home, .hbu-nav-link.is-active .hbu-ico-home { animation: hbu-nav-home .55s cubic-bezier(.3, .7, .3, 1); }
     .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community, .hbu-nav-link.is-active .hbu-ico-community { animation: hbu-nav-community .55s cubic-bezier(.3, .7, .3, 1); }
     .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour, .hbu-nav-link.is-active .hbu-ico-favour { animation: hbu-nav-favour .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-cy, .hbu-nav-link:focus-visible .hbu-ico-cy, .hbu-nav-link.is-active .hbu-ico-cy { animation: hbu-nav-cy .6s ease; }
     .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article, .hbu-nav-link.is-active .hbu-ico-article { animation: hbu-nav-article .55s cubic-bezier(.3, .7, .3, 1); }
     @keyframes hbu-nav-home {
       0%, 100% { transform: translateY(0); }
@@ -1808,10 +2099,6 @@
     @keyframes hbu-nav-favour {
       0%, 100% { transform: scaleY(1); }
       46% { transform: scaleY(.8) translateY(-1px); }
-    }
-    @keyframes hbu-nav-cy {
-      0%, 100% { transform: scaleY(1); }
-      42%, 52% { transform: scaleY(.12); }
     }
     @keyframes hbu-nav-article {
       0%, 100% { transform: rotate(0); }
@@ -1853,9 +2140,7 @@
 
   function readNavActiveId() {
     const path = location.pathname;
-    if (path === "/app/user/favour/content") {
-      return location.hash === CY_HASH ? "cy" : "favour";
-    }
+    if (path === "/app/user/favour/content") return "favour";
     if (path === "/") return "home";
     if (path.startsWith("/creator/")) return "article";
     if (path.startsWith("/app/bbs/")) return "community";
@@ -1934,19 +2219,7 @@
     // 组合键或中键交给浏览器，保留新标签页打开的能力。
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const id = link.dataset.nav;
-    if (id === "cy") {
-      event.preventDefault();
-      if (location.pathname === "/app/user/favour/content") {
-        history.pushState(null, "", "/app/user/favour/content" + CY_HASH);
-        scrollToCySection();
-        syncNavActive();
-      } else {
-        try { sessionStorage.setItem(CY_JUMP_KEY, "1"); } catch (error) { /* 隐私模式下仍可正常跳转，只是不做滚动定位。 */ }
-        navigateToPath("/app/user/favour/content");
-      }
-      return;
-    }
-    // 收藏页内再点收藏时清掉 CY 锚点，避免两个入口同时高亮。
+    // 收藏页内再点收藏时清掉旧锚点，回到列表顶部。
     if (id === "favour" && location.pathname === "/app/user/favour/content" && location.hash !== "") {
       event.preventDefault();
       history.pushState(null, "", "/app/user/favour/content");
@@ -2004,6 +2277,7 @@
     if (currentThemeMode === "system") applyTheme("system", false);
   });
   applyTheme(readThemeMode(), false);
+  applyFeedWidth(readFeedWidth());
   document.addEventListener(NAV_MOTION_EVENT, (event) => applyNavMotionPreference(event.detail === true));
   applyNavMotionPreference(readNavMotionPreference());
 
@@ -2677,6 +2951,22 @@
     .name { font-size: 12px; font-weight: 600; color: var(--rail-text); }
     .time, .likes, .replies { font-size: 11px; color: var(--rail-muted); }
     .text { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--rail-text); }
+    .text .emoji, .quote .emoji {
+      display: inline-block;
+      width: 17px;
+      height: 17px;
+      margin: 0 1px;
+      vertical-align: -3px;
+      background-repeat: no-repeat;
+      background-size: 102px 306px;
+    }
+    .text .pic, .quote .pic {
+      max-width: 100%;
+      max-height: 160px;
+      border-radius: 6px;
+      object-fit: contain;
+      vertical-align: top;
+    }
     .foot { display: flex; gap: 10px; margin-top: 4px; }
     .sub { display: grid; gap: 4px; margin-top: 7px; padding-left: 9px; border-left: 2px solid var(--rail-subtle); }
     .quote {
@@ -2748,15 +3038,86 @@
       .slice(0, 400);
   }
 
+  // 站点表情是 CSS sprite（<span data-emoji>），不能当普通标签剥掉，
+  // 否则纯表情评论在预览里会变成空白。这里把评论正文拆成文本、表情、图片三类片段，
+  // 渲染时只创建节点，不注入原始 HTML。
+  const RAIL_BODY_MAX = 4000;
+  const RAIL_EMOJI_SPRITE = "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v33.png";
+  const RAIL_EMOJI_CELL = 17;
+  const RAIL_EMOJI_TOKEN = /\[cube_([1-6][1-6])\]/g;
+  const RAIL_EMOJI_ID = /^[1-6][1-6]$/;
+
+  function parseRailBody(value) {
+    const source = String(value === undefined || value === null ? "" : value).slice(0, RAIL_BODY_MAX);
+    if (source === "") return [];
+    const template = document.createElement("template");
+    template.innerHTML = source;
+    const segments = [];
+    const pushText = (value) => {
+      const parts = String(value).split(RAIL_EMOJI_TOKEN);
+      for (let index = 0; index < parts.length; index += 1) {
+        if (index % 2 === 1) {
+          segments.push({ type: "emoji", id: parts[index] });
+          continue;
+        }
+        const collapsed = parts[index].replace(/\s+/g, " ");
+        if (collapsed.trim() === "") continue;
+        segments.push({ type: "text", text: collapsed });
+      }
+    };
+    const walk = (node) => {
+      for (const child of node.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          pushText(child.nodeValue);
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+        const element = child;
+        const emoji = element.getAttribute("data-emoji");
+        if (emoji !== null && emoji !== "") {
+          const match = /(hb-emoji-cube_\S+)/.exec(element.className || "");
+          const candidates = [match === null ? "" : match[1], emoji];
+          const id = candidates.map((item) => (/([1-6][1-6])$/.exec(item) || [])[1] || "").find((item) => RAIL_EMOJI_ID.test(item)) || "";
+          if (id !== "") segments.push({ type: "emoji", id: id });
+          continue;
+        }
+        if (element.tagName === "IMG") {
+          const src = element.getAttribute("src");
+          if (src !== null && /^https?:\/\//i.test(src)) segments.push({ type: "image", src });
+          continue;
+        }
+        if (element.tagName === "BR") {
+          pushText(" ");
+          continue;
+        }
+        walk(element);
+      }
+    };
+    walk(template.content);
+    if (segments.length > 0) {
+      const first = segments[0];
+      if (first.type === "text") first.text = first.text.replace(/^\s+/, "");
+      const last = segments[segments.length - 1];
+      if (last.type === "text") last.text = last.text.replace(/\s+$/, "");
+    }
+    return segments.filter((segment) => segment.type !== "text" || segment.text !== "").slice(0, 80);
+  }
+
+  function railBodyText(segments) {
+    return segments.filter((segment) => segment.type === "text").map((segment) => segment.text).join(" ").trim();
+  }
+
   function normalizeRailComment(comment) {
     const raw = comment && typeof comment === "object" ? comment : {};
     const user = raw.user && typeof raw.user === "object" ? raw.user : {};
     const avatar = user.avatar || user.avartar || "";
+    const body = parseRailBody(raw.text);
     return {
       id: String(raw.comment_id || raw.commentid || raw.id || ""),
       name: String(user.username || user.nickname || "匿名用户").trim(),
       avatar: typeof avatar === "string" ? avatar : "",
-      text: normalizeRailText(raw.text),
+      text: railBodyText(body),
+      body: body,
       createAt: Number(raw.create_at) || 0,
       likes: Number(raw.support_num || raw.support_count) || 0,
       replies: Number(raw.reply_count || raw.sub_comment_num) || 0,
@@ -2769,8 +3130,8 @@
     const root = list[0];
     if (!root) return null;
     const item = normalizeRailComment(root);
-    if (item.id === "" && item.text === "" && item.name === "匿名用户") return null;
-    item.quotes = list.slice(1, 3).map(normalizeRailComment).filter((quote) => quote.text !== "");
+    if (item.id === "" && item.body.length === 0 && item.name === "匿名用户") return null;
+    item.quotes = list.slice(1, 3).map(normalizeRailComment).filter((quote) => quote.body.length > 0);
     return item;
   }
 
@@ -2916,13 +3277,48 @@
       if (document.body) document.body.classList.toggle("heybox-up-rail-open", state.mode === "open");
     };
 
+    const createEmoji = (id) => {
+      const node = document.createElement("span");
+      node.className = "emoji";
+      node.setAttribute("role", "img");
+      node.setAttribute("aria-label", "表情");
+      const column = 7 - (Number(id) % 10);
+      const row = 19 - Math.floor(Number(id) / 10);
+      node.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
+      node.style.backgroundPosition = column * RAIL_EMOJI_CELL + "px " + row * RAIL_EMOJI_CELL + "px";
+      return node;
+    };
+
+    const createImage = (src) => {
+      const node = document.createElement("img");
+      node.className = "pic";
+      node.alt = "";
+      node.loading = "lazy";
+      node.referrerPolicy = "no-referrer";
+      node.src = src;
+      return node;
+    };
+
+    const fillBody = (node, segments) => {
+      if (segments.length === 0) {
+        node.textContent = "（图片或表情评论）";
+        return;
+      }
+      for (const segment of segments) {
+        if (segment.type === "text") node.append(document.createTextNode(segment.text));
+        else if (segment.type === "emoji") node.append(createEmoji(segment.id));
+        else node.append(createImage(segment.src));
+      }
+    };
+
     const createQuote = (quote) => {
       const node = document.createElement("div");
       node.className = "quote";
       const name = document.createElement("span");
       name.className = "quote-name";
       name.textContent = quote.name + "：";
-      node.append(name, document.createTextNode(quote.text));
+      node.append(name);
+      fillBody(node, quote.body);
       return node;
     };
 
@@ -2952,7 +3348,7 @@
       }
       const text = document.createElement("p");
       text.className = "text";
-      text.textContent = comment.text === "" ? "（图片或表情评论）" : comment.text;
+      fillBody(text, comment.body);
       const foot = document.createElement("div");
       foot.className = "foot";
       if (comment.likes > 0) {
@@ -3226,14 +3622,12 @@
     :host { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); display: block; z-index: 2147482990; font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--heybox-up-text, #14191e); }
     :host([hidden]) { display: none; }
     .bar { display: flex; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .12)); border-radius: 999px; background: var(--heybox-up-surface, #fff); box-shadow: var(--heybox-up-shadow-2, 0 10px 28px rgba(8, 12, 16, .18)); }
-    .count { padding: 0 9px; color: var(--heybox-up-muted, #6b7280); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .count[hidden] { display: none; }
     .btn { display: inline-flex; align-items: center; gap: 3px; height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--heybox-up-text-2, #3c4249); font: inherit; cursor: pointer; white-space: nowrap; }
     .btn:hover:not(:disabled) { background: var(--heybox-up-subtle, rgba(20, 25, 30, .06)); color: var(--heybox-up-text, #14191e); }
     .btn:disabled { opacity: .38; cursor: default; }
     .btn:focus-visible { outline: 2px solid var(--heybox-up-accent, #6f8db3); outline-offset: 1px; }
     .btn svg { width: 14px; height: 14px; flex: none; }
-    @media (max-width: 720px) { :host { bottom: 10px; } .count { display: none; } .btn { padding: 0 8px; } }
+    @media (max-width: 720px) { :host { bottom: 10px; } .btn { padding: 0 8px; } }
   `;
 
   const PAGER_ICONS = {
@@ -3351,13 +3745,11 @@
     prevButton.type = "button";
     prevButton.className = "btn";
     prevButton.innerHTML = PAGER_ICONS.prev + "<span>上一篇</span>";
-    const count = document.createElement("span");
-    count.className = "count";
     const nextButton = document.createElement("button");
     nextButton.type = "button";
     nextButton.className = "btn";
     nextButton.innerHTML = "<span>下一篇</span>" + PAGER_ICONS.next;
-    bar.append(prevButton, count, nextButton);
+    bar.append(prevButton, nextButton);
     shadow.append(style, bar);
     document.body.append(host);
 
@@ -3413,13 +3805,6 @@
       nextButton.disabled = nextId === "";
       prevButton.title = neighbors.prev ? "上一篇" + (neighbors.prev.title !== "" ? "：" + neighbors.prev.title : "") : "没有上一篇";
       nextButton.title = neighbors.next ? "下一篇" + (neighbors.next.title !== "" ? "：" + neighbors.next.title : "") : "没有下一篇";
-      if (neighbors.index === null) {
-        count.hidden = true;
-        count.textContent = "";
-      } else {
-        count.hidden = false;
-        count.textContent = neighbors.index + " / " + neighbors.total;
-      }
     };
 
     new MutationObserver(() => {
@@ -4199,8 +4584,9 @@
     #heybox-up-left-rail,
     #heybox-up-right-rail {
       position: sticky;
-      top: 84px;
-      max-height: calc(100vh - 104px);
+      /* 站点搜索条 sticky 在 80px 处、高 42px；侧栏从它下方 14px 开始，避免首屏被压住。 */
+      top: 136px;
+      max-height: calc(100vh - 156px);
       overflow: auto;
       font: 13px/1.55 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: var(--heybox-up-text-2, #3c4249);
@@ -4347,11 +4733,16 @@
     @media (min-width: 1200px) {
       #page-bbs-community.heybox-up-desktop .content {
         display: grid !important;
-        width: auto !important;
-        grid-template-columns: 208px minmax(0, 1fr);
-        gap: 24px;
+        width: 100% !important;
+        /* 左右两列等宽，中间栏永远落在视口正中；两侧栏贴近中间栏而不是贴屏幕边。 */
+        grid-template-columns:
+          minmax(0, 1fr)
+          /* 中栏再宽也要给两侧栏留出 208px + 288px + 间距，否则侧栏会压到正文上。 */
+          minmax(320px, min(var(--heybox-up-feed-w), calc(100vw - 560px)))
+          minmax(0, 1fr);
+        column-gap: 24px;
         align-items: start;
-        max-width: 1192px !important;
+        max-width: none !important;
         margin: 0 auto !important;
         justify-content: stretch !important;
       }
@@ -4359,6 +4750,9 @@
         display: block;
         grid-column: 1;
         grid-row: 1;
+        justify-self: end;
+        width: 208px;
+        align-self: start;
       }
       #page-bbs-community.heybox-up-desktop .content > main.list {
         grid-column: 2;
@@ -4369,30 +4763,29 @@
         margin: 0 !important;
         flex: none !important;
       }
+      /* 左栏已有频道列表，原生横向频道条不再重复出现。 */
+      #page-bbs-community.heybox-up-desktop .bbs-home__topic-list-wrapper {
+        display: none !important;
+      }
     }
     @media (min-width: 1500px) {
       body.heybox-up-desktop-on #app > main {
-        max-width: 1552px !important;
+        max-width: none !important;
       }
       body.heybox-up-desktop-on #page-bbs-community {
         max-width: none !important;
         width: auto !important;
       }
-      #page-bbs-community.heybox-up-desktop .content {
-        max-width: 1504px !important;
-        grid-template-columns: 208px minmax(0, 1fr) 288px;
-      }
       #page-bbs-community.heybox-up-desktop .content > #heybox-up-right-rail {
         display: block;
         grid-column: 3;
         grid-row: 1;
+        justify-self: start;
+        width: 288px;
+        align-self: start;
       }
     }
     @media (min-width: 1500px) {
-      body.heybox-up-rail-open #page-bbs-community.heybox-up-desktop .content {
-        max-width: 1192px !important;
-        grid-template-columns: 208px minmax(0, 1fr);
-      }
       body.heybox-up-rail-open #page-bbs-community.heybox-up-desktop #heybox-up-right-rail {
         display: none;
       }
