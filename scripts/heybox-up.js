@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.13
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在主题菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.14
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -222,6 +222,9 @@
       --hbu-menu-border: rgba(20, 25, 30, .12);
       --hbu-menu-hover: rgba(20, 25, 30, .06);
       color-scheme: light;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) {
+      background-color: var(--heybox-up-bg) !important;
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] {
       color-scheme: dark;
@@ -494,6 +497,7 @@
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.hb-cpt__button.primary, .hb-cpt__button--primary, .editor-publish__btn.main-btn) {
       background-color: var(--heybox-up-accent) !important;
+      background-image: none !important;
       border-color: var(--heybox-up-accent) !important;
       color: var(--heybox-up-on-accent) !important;
     }
@@ -581,6 +585,153 @@
       background-color: transparent !important;
       border-color: #e8eaed !important;
       color: #14191e !important;
+    }
+    /* 文章编辑器：站点把底色写在多层容器里，深色、纸页与雾青预设需要整块覆盖。 */
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor > .content > .list,
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.editor-tabs, .editor-article__main-content, .hb-cpt__editor-title, .editor__menu, .editor__more-info, .creator-editor__form-wrapper, .cpt-editor__publish, .cpt-qa),
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame {
+      background-color: var(--heybox-up-surface) !important;
+      border-color: var(--heybox-up-border) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .editor-article__main-content {
+      box-shadow: 0 0 0 1px var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .editor__menu {
+      box-shadow: inset 0 0 0 1px var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .editor-article__main-content :is(.hb-editor, .ProseMirror) {
+      background-color: var(--heybox-up-subtle) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.hb-editor, .ProseMirror) :where(p, span, b, strong, em, i, u, s, li, h1, h2, h3, h4, h5, h6, blockquote, td, th) {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.hb-editor, .ProseMirror) :is(a, .prose-link) {
+      color: var(--heybox-up-accent) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .editor-title__cnt-indicator {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .editor-publish__btn.main-btn {
+      background-color: var(--heybox-up-accent) !important;
+      background-image: none !important;
+      border-color: var(--heybox-up-accent) !important;
+      color: var(--heybox-up-on-accent) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) :is(.hb-cpt__button.primary, .hb-cpt__button--primary) {
+      background-color: var(--heybox-up-accent) !important;
+      background-image: none !important;
+      border-color: var(--heybox-up-accent) !important;
+      color: var(--heybox-up-on-accent) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.editor__topic-item, .editor__hashtag-item, .editor__add-btn, .selector__box, .editor-publish__btn.sub-btn, .cpt-qa__tab, .cpt-qa__key) {
+      background-color: var(--heybox-up-subtle) !important;
+      border-color: var(--heybox-up-border) !important;
+      color: var(--heybox-up-text-2) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.selector__pull-list, .editor-menu-more__list) {
+      background-color: var(--heybox-up-surface) !important;
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .selector__pull-list-item {
+      color: var(--heybox-up-text-2) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.selector__pull-list-item:hover, .selector__pull-list-item.active) {
+      background-color: var(--heybox-up-raised) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .selector__box {
+      box-shadow: 0 0 0 1px var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .switch__button {
+      background-color: var(--heybox-up-raised) !important;
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .switch__button.active {
+      background-color: var(--heybox-up-accent) !important;
+      border-color: var(--heybox-up-accent) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .switch__button-indicator {
+      background-color: var(--heybox-up-text-2) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .switch__button.active .switch__button-indicator {
+      background-color: var(--heybox-up-on-accent) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.editor-form__more-info-title, .creator-editor__form-header, .selector__active, .cpt-qa__head-title, .cpt-qa__row-name) {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.topic-item__text, .hashtag-item__text, .editor-form__more-info-desc, .editor__more-info-desc, .cpt-qa__head-sub) {
+      color: var(--heybox-up-text-2) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.switch__true-label, .switch__false-label) {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.switch__true-label.active, .switch__false-label.active) {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor .cpt-form-split-line {
+      background-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) [data-mask$="-bg"] {
+      background-color: var(--heybox-up-bg) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) [data-mask$="-edge"] {
+      background-color: var(--heybox-up-surface) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #page-creator-editor :is(.hb-cpt__image--default, .hb-cpt__image--placeholder) {
+      background-color: var(--heybox-up-subtle) !important;
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame :is(.creator-preview-normal, .bbs-link) {
+      background-color: var(--heybox-up-surface) !important;
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame :is(.bbs-link-section-author, .bbs-link-section-tags) {
+      background-color: transparent !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame .bbs-link-section-author-name {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame .bbs-link-section-author-time {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame .bbs-link-section-author-follow {
+      background-color: var(--heybox-up-accent) !important;
+      background-image: none !important;
+      border-color: var(--heybox-up-accent) !important;
+      color: var(--heybox-up-on-accent) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame .bbs-link-section-author-follow :is(i, span, svg, use) {
+      color: var(--heybox-up-on-accent) !important;
+      fill: var(--heybox-up-on-accent) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame :is(.bbs-link-article-content, .hb-article) {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame :is(.bbs-link-article-content, .hb-article) :where(p, span, b, strong, em, i, li, h1, h2, h3, h4, h5, h6, blockquote, .text, .main-title) {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame :is(.bbs-link-article-content, .hb-article) :is(a, .prose-link) {
+      color: var(--heybox-up-accent) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame .img-desc {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame .bbs-link-section-tags-item {
+      background-color: var(--heybox-up-subtle) !important;
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame .bbs-link-section-tags-item-text {
+      color: var(--heybox-up-text-2) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) #creator-preview__frame :is(.bbs-link-section-bottom-info, .bbs-link-section-bottom-info-source) {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) .cpt-right-side :is(.footer-info, .footer-row, .report-text, .copyright-text) {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme:not([data-heybox-up-theme="light"]) .cpt-right-side .footer-link {
+      color: var(--heybox-up-text-2) !important;
     }
     /* 纯黑预设：黑底、低圆角、无阴影，仍复用全部深色覆盖规则。 */
     :root.heybox-up-theme[data-heybox-up-theme="oled"] {
@@ -786,7 +937,7 @@
     /* 版式：定宽阅读栏 + 卡片化信息流。站点通栏列表每行超过 90 字，长读易疲劳。 */
     :root {
       --heybox-up-page-w: 1360px;
-      /* 中间栏占视口百分比，可在主题菜单里调；上限避免超宽屏上正文行过长。 */
+      /* 中间栏占视口百分比，可在齿轮设置菜单里调；上限避免超宽屏上正文行过长。 */
       --heybox-up-feed-pct: 56;
       --heybox-up-feed-w: min(calc(var(--heybox-up-feed-pct) * 1vw), 1180px);
       --heybox-up-radius-card: 14px;
@@ -1564,7 +1715,7 @@
   }
 
   const THEME_ENTRY_CSS = `
-    :host { display: inline-flex; flex: none; position: relative; }
+    :host { display: inline-flex; flex: none; position: relative; gap: 2px; }
     .button {
       display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
       border: 0; border-radius: 8px; background: transparent;
@@ -1585,6 +1736,7 @@
       background: var(--hbu-menu-bg, #fff); color: var(--hbu-menu-text, #14191e);
       box-shadow: 0 14px 34px rgba(0, 0, 0, .18);
     }
+    .theme-menu { right: 34px; }
     .menu[hidden] { display: none; }
     .menu-title {
       padding: 6px 10px 4px; font-size: 11px; letter-spacing: .08em;
@@ -1648,6 +1800,7 @@
     paper: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>',
     mist: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h16M4 13h12M4 17h8"/><path d="M17.5 12.5c1.2 1.4 1.8 2.4 1.8 3.2a1.8 1.8 0 0 1-3.6 0c0-.8.6-1.8 1.8-3.2Z"/></svg>',
   };
+  const SETTINGS_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 8.9 4.6h.08A1.7 1.7 0 0 0 10 3.04V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 8.9v.08A1.7 1.7 0 0 0 20.96 10H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>';
 
   function ensureThemeStyle() {
     let style = document.getElementById("heybox-up-theme-style");
@@ -1673,6 +1826,7 @@
     themeEntry.button.title = "主题：" + preset.label + "（点击选择）";
     themeEntry.button.setAttribute("aria-label", "主题：" + preset.label + "，点击选择");
     themeEntry.button.setAttribute("aria-expanded", String(!themeEntry.menu.hidden));
+    themeEntry.settingsButton.setAttribute("aria-expanded", String(!themeEntry.settingsMenu.hidden));
     for (const item of themeEntry.items) {
       item.node.setAttribute("aria-checked", String(item.id === currentThemeMode));
     }
@@ -1709,12 +1863,26 @@
     button.className = "button";
     button.setAttribute("aria-haspopup", "menu");
     button.setAttribute("aria-expanded", "false");
+    const settingsButton = document.createElement("button");
+    settingsButton.type = "button";
+    settingsButton.className = "button";
+    settingsButton.setAttribute("aria-haspopup", "menu");
+    settingsButton.setAttribute("aria-expanded", "false");
+    settingsButton.setAttribute("aria-label", "打开设置");
+    settingsButton.title = "设置";
+    settingsButton.innerHTML = SETTINGS_ICON;
     const menu = document.createElement("div");
-    menu.className = "menu";
+    menu.className = "menu theme-menu";
     menu.hidden = true;
     menu.setAttribute("role", "menu");
     menu.setAttribute("aria-label", "主题预设");
     menu.append(createThemeMenuTitle());
+    const settingsMenu = document.createElement("div");
+    settingsMenu.className = "menu settings-menu";
+    settingsMenu.hidden = true;
+    settingsMenu.setAttribute("role", "menu");
+    settingsMenu.setAttribute("aria-label", "设置");
+    settingsMenu.append(createSettingsMenuTitle());
     const items = THEME_PRESETS.map((preset) => {
       const node = document.createElement("button");
       node.type = "button";
@@ -1739,42 +1907,57 @@
       check.className = "check";
       check.textContent = "✓";
       node.append(swatch, copy, check);
-      node.addEventListener("click", () => { applyTheme(preset.id, true); closeMenu(); button.focus(); });
+      node.addEventListener("click", () => { applyTheme(preset.id, true); closeThemeMenu(); button.focus(); });
       return { id: preset.id, node };
     });
     menu.append(...items.map((item) => item.node));
-    menu.append(
-      createThemeMenuSeparator(),
+    settingsMenu.append(
       createCommentPreviewToggle(),
       createNavMotionToggle(),
       createThemeMenuSeparator(),
       createFeedWidthControl()
     );
 
-    const closeMenu = () => {
+    const closeThemeMenu = () => {
       if (menu.hidden) return;
       menu.hidden = true;
       button.setAttribute("aria-expanded", "false");
       updateThemeEntry();
     };
+    const closeSettingsMenu = () => {
+      if (settingsMenu.hidden) return;
+      settingsMenu.hidden = true;
+      settingsButton.setAttribute("aria-expanded", "false");
+      updateThemeEntry();
+    };
     button.addEventListener("click", () => {
+      closeSettingsMenu();
       menu.hidden = !menu.hidden;
       button.setAttribute("aria-expanded", String(!menu.hidden));
       updateThemeEntry();
     });
+    settingsButton.addEventListener("click", () => {
+      closeThemeMenu();
+      settingsMenu.hidden = !settingsMenu.hidden;
+      settingsButton.setAttribute("aria-expanded", String(!settingsMenu.hidden));
+      updateThemeEntry();
+    });
     document.addEventListener("click", (event) => {
-      if (menu.hidden || event.composedPath().includes(host)) return;
-      closeMenu();
+      if ((menu.hidden && settingsMenu.hidden) || event.composedPath().includes(host)) return;
+      closeThemeMenu();
+      closeSettingsMenu();
     }, true);
     document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || menu.hidden) return;
+      if (event.key !== "Escape" || (menu.hidden && settingsMenu.hidden)) return;
       event.preventDefault();
-      closeMenu();
-      button.focus();
+      const returnTarget = settingsMenu.hidden ? button : settingsButton;
+      closeThemeMenu();
+      closeSettingsMenu();
+      returnTarget.focus();
     });
 
-    shadow.append(style, button, menu);
-    themeEntry = { host, button, menu, items };
+    shadow.append(style, button, settingsButton, menu, settingsMenu);
+    themeEntry = { host, button, menu, items, settingsButton, settingsMenu };
     updateThemeEntry();
   }
 
@@ -1785,6 +1968,13 @@
     return title;
   }
 
+  function createSettingsMenuTitle() {
+    const title = document.createElement("div");
+    title.className = "menu-title";
+    title.textContent = "设置";
+    return title;
+  }
+
   function createThemeMenuSeparator() {
     const line = document.createElement("div");
     line.className = "sep";
@@ -1792,7 +1982,7 @@
     return line;
   }
 
-  // 首页评论预览开关：与主题菜单共用一个面板，偏好只写本机 localStorage。
+  // 首页评论预览开关：放在齿轮设置菜单里，偏好只写本机 localStorage。
   function createCommentPreviewToggle() {
     const node = document.createElement("button");
     node.type = "button";
@@ -2881,7 +3071,8 @@
       right: 20px;
       width: var(--heybox-up-rail-w, 340px);
       display: block;
-      z-index: 2147483000;
+      /* 低于站点导航（5000）与全屏 loading（2002），高于正文与编辑器控件。 */
+      z-index: 1500;
       font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: var(--rail-text);
     }
