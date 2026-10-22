@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.2.0
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，窄屏自动改为上下布局。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.2.1
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -26,6 +26,47 @@
   const CACHE_TTL_MS = 10 * 60 * 1000;
   const CACHE_KEY_PREFIX = "heybox-up.cy.v1:";
   const LINK_HREF_PREFIX = "/app/bbs/link/";
+
+  const HIDE_CY_KEY = "heybox-up.hideCy.v1";
+  const HIDE_CY_EVENT = "heybox-up:hide-cy";
+  const HIDE_CY_STYLE_ID = "heybox-up-cy-style";
+  const HIDE_CY_CLASS = "heybox-up-hide-cy";
+
+  function readHideCyPreference() {
+    try {
+      return localStorage.getItem(HIDE_CY_KEY) === "1";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function ensureHideCyStyle() {
+    if (document.getElementById(HIDE_CY_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = HIDE_CY_STYLE_ID;
+    style.textContent = "body." + HIDE_CY_CLASS + " [data-heybox-up-cy=\"1\"] { display: none !important; }";
+    (document.head || document.documentElement).append(style);
+  }
+
+  function applyHideCyPreference(value) {
+    ensureHideCyStyle();
+    if (document.body) document.body.classList.toggle(HIDE_CY_CLASS, value);
+    document.dispatchEvent(new CustomEvent(HIDE_CY_EVENT, { detail: value }));
+  }
+
+  function setHideCyPreference(value) {
+    try {
+      localStorage.setItem(HIDE_CY_KEY, value ? "1" : "0");
+    } catch (error) {
+      // 隐私模式下 localStorage 可能不可写，本次页面仍按新状态生效。
+    }
+    applyHideCyPreference(value);
+  }
+
+  // 站点会在评论上带 is_cy，值可能是数字 1、字符串 "1" 或布尔 true。
+  function isCyComment(comment) {
+    return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
+  }
 
   const THEME_CLASS = "heybox-up-theme";
   const THEME_ATTR = "data-heybox-up-theme";
@@ -748,6 +789,7 @@
     :host { display: block; margin: 0 0 8px; }
     .bar { display: flex; align-items: center; gap: 4px; font: 12px/1.4 system-ui, sans-serif; }
     .label { margin-right: 4px; color: var(--heybox-up-muted, #6b7280); }
+    .spacer { flex: 1 1 auto; }
     button {
       padding: 2px 8px; border: 1px solid transparent; border-radius: 999px;
       background: transparent; color: var(--heybox-up-muted, #6b7280);
@@ -797,7 +839,7 @@
     keyed.forEach((entry, index) => { entry.item.style.order = String(index); });
   }
 
-  function createCommentSort(tree, mode = "default") {
+  function createCommentSort(tree, mode = "default", isHideCy = () => false, onToggleCy = () => {}) {
     const host = document.createElement("div");
     host.id = COMMENT_SORT_HOST_ID;
     const shadow = host.attachShadow({ mode: "open" });
@@ -824,6 +866,16 @@
       bar.append(button);
       return button;
     });
+    const spacer = document.createElement("span");
+    spacer.className = "spacer";
+    const cyButton = document.createElement("button");
+    cyButton.type = "button";
+    cyButton.className = "cy";
+    cyButton.textContent = "屏蔽 CY";
+    cyButton.setAttribute("aria-pressed", String(isHideCy()));
+    cyButton.title = isHideCy() ? "显示 CY 评论" : "屏蔽 CY 评论";
+    cyButton.addEventListener("click", () => onToggleCy());
+    bar.append(spacer, cyButton);
     shadow.append(style, bar);
     tree.prepend(host);
     return host;
@@ -834,6 +886,94 @@
     let host = null;
     let mode = "default";
     let scheduled = false;
+    let cyLinkId = "";
+    let cyPage = 0;
+    let cyDone = false;
+    let cyLoading = false;
+    let cyIds = new Set();
+    let cyScanned = new Set();
+
+    const getLinkId = () => {
+      const match = /link\/(\d+)/.exec(location.pathname);
+      return match ? match[1] : "";
+    };
+
+    const toggleCy = () => {
+      setHideCyPreference(!readHideCyPreference());
+    };
+
+    const updateCyButton = () => {
+      const button = host?.shadowRoot?.querySelector("button.cy");
+      if (!button) return;
+      const hideCy = readHideCyPreference();
+      button.setAttribute("aria-pressed", String(hideCy));
+      button.title = hideCy ? "显示 CY 评论" : "屏蔽 CY 评论";
+    };
+
+    const markCy = () => {
+      const tree = document.querySelector("#page-bbs-link .link-comment");
+      if (!tree) return;
+      let count = 0;
+      const counted = new Set();
+      for (const node of tree.querySelectorAll("[data-comment-id]")) {
+        const id = node.getAttribute("data-comment-id") || "";
+        if (cyIds.has(id)) {
+          if (node.getAttribute("data-heybox-up-cy") !== "1") node.setAttribute("data-heybox-up-cy", "1");
+          if (!counted.has(id)) {
+            counted.add(id);
+            count += 1;
+          }
+        } else if (node.hasAttribute("data-heybox-up-cy")) {
+          node.removeAttribute("data-heybox-up-cy");
+        }
+      }
+      const button = host?.shadowRoot?.querySelector("button.cy");
+      if (!button) return;
+      const hidden = readHideCyPreference() ? count : 0;
+      button.textContent = hidden > 0 ? "屏蔽 CY (" + hidden + ")" : "屏蔽 CY";
+    };
+
+    const pullCyIds = async () => {
+      if (cyLoading || cyDone) return;
+      const linkId = getLinkId();
+      const tree = document.querySelector("#page-bbs-link .link-comment");
+      if (linkId === "" || !tree) return;
+      const hasUnknown = () => Array.from(tree.querySelectorAll("[data-comment-id]"))
+        .some((node) => {
+          const id = node.getAttribute("data-comment-id") || "";
+          return id !== "" && !cyScanned.has(id);
+        });
+      if (!hasUnknown()) return;
+      cyLoading = true;
+      try {
+        // 只补未识别的楼层，最多 10 页，避免长楼反复翻页触发接口风控。
+        while (!cyDone && cyPage < 10 && getLinkId() === linkId) {
+          const data = await fetchRailPage(linkId, cyPage + 1);
+          cyPage += 1;
+          let added = 0;
+          for (const group of data.groups) {
+            const list = Array.isArray(group.comment) ? group.comment : [];
+            for (const raw of list) {
+              const id = String((raw && (raw.commentid || raw.comment_id)) || "");
+              if (id !== "" && !cyScanned.has(id)) {
+                cyScanned.add(id);
+                added += 1;
+              }
+              if (id !== "" && isCyComment(raw)) cyIds.add(id);
+            }
+          }
+          if (added === 0) cyDone = true;
+          if (!hasUnknown()) break;
+        }
+        if (cyPage >= 10) cyDone = true;
+      } catch (error) {
+        // 接口失败时保持原生评论可见，不误伤正常楼层。
+        cyDone = true;
+      } finally {
+        cyLoading = false;
+        markCy();
+      }
+    };
 
     const sync = () => {
       if (!location.pathname.startsWith(LINK_HREF_PREFIX)) {
@@ -843,12 +983,23 @@
       }
       const tree = document.querySelector("#page-bbs-link .link-comment");
       if (!tree) return;
-      const active = host?.shadowRoot?.querySelector('button[aria-pressed="true"]');
+      const linkId = getLinkId();
+      if (linkId !== cyLinkId) {
+        cyLinkId = linkId;
+        cyPage = 0;
+        cyDone = false;
+        cyIds = new Set();
+        cyScanned = new Set();
+      }
+      const active = host?.shadowRoot?.querySelector('button[data-sort][aria-pressed="true"]');
       if (active) mode = active.dataset.sort || "default";
       if (!host || !host.isConnected || host.parentElement !== tree) {
-        host = createCommentSort(tree, mode);
+        host = createCommentSort(tree, mode, readHideCyPreference, toggleCy);
       }
       applyCommentSort(tree, mode);
+      updateCyButton();
+      markCy();
+      void pullCyIds();
     };
 
     const schedule = () => {
@@ -861,6 +1012,10 @@
     };
 
     new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+    document.addEventListener(HIDE_CY_EVENT, () => {
+      updateCyButton();
+      markCy();
+    });
     sync();
   }
 
@@ -1715,6 +1870,15 @@
     .icon:hover { background: var(--rail-subtle); color: var(--rail-text); }
     .icon:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: 1px; }
     .icon svg { width: 16px; height: 16px; }
+    .icon.cy {
+      width: auto;
+      min-width: 26px;
+      padding: 0 5px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .04em;
+    }
+    .icon.cy[aria-pressed="true"] { background: var(--rail-subtle); color: var(--rail-accent); }
     .meta { padding: 9px 16px 0; font-size: 11px; color: var(--rail-muted); }
     .list { margin: 0; padding: 8px 0 0; list-style: none; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
     .item { display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--rail-subtle); }
@@ -1808,6 +1972,7 @@
       createAt: Number(raw.create_at) || 0,
       likes: Number(raw.support_num || raw.support_count) || 0,
       replies: Number(raw.reply_count || raw.sub_comment_num) || 0,
+      isCy: isCyComment(raw),
     };
   }
 
@@ -1836,6 +2001,7 @@
       items: groups.map(normalizeRailGroup).filter((item) => item !== null),
       total: Number(link.comment_num || result.total_floor_num) || 0,
       title: typeof link.title === "string" ? link.title.trim() : "",
+      groups,
     };
   }
 
@@ -1882,6 +2048,10 @@
     headText.append(kicker, titleNode);
     const tools = document.createElement("div");
     tools.className = "tools";
+    const cyButton = document.createElement("button");
+    cyButton.type = "button";
+    cyButton.className = "icon cy";
+    cyButton.textContent = "CY";
     const openLinkNode = document.createElement("a");
     openLinkNode.className = "icon";
     openLinkNode.target = "_blank";
@@ -1895,7 +2065,7 @@
     collapseButton.title = "收起";
     collapseButton.setAttribute("aria-label", "收起评论预览");
     collapseButton.innerHTML = RAIL_ICONS.collapse;
-    tools.append(openLinkNode, collapseButton);
+    tools.append(cyButton, openLinkNode, collapseButton);
     head.append(headText, tools);
 
     const meta = document.createElement("div");
@@ -1928,6 +2098,29 @@
       hasMore: false,
       seq: 0,
     };
+
+    let hideCy = readHideCyPreference();
+
+    const updateCyButton = () => {
+      cyButton.setAttribute("aria-pressed", String(hideCy));
+      cyButton.title = hideCy ? "显示 CY 评论" : "屏蔽 CY 评论";
+      cyButton.setAttribute("aria-label", cyButton.title);
+    };
+
+    cyButton.addEventListener("click", () => {
+      hideCy = !hideCy;
+      setHideCyPreference(hideCy);
+      updateCyButton();
+      render();
+    });
+
+    document.addEventListener(HIDE_CY_EVENT, () => {
+      const next = readHideCyPreference();
+      if (next === hideCy) return;
+      hideCy = next;
+      updateCyButton();
+      render();
+    });
 
     const applyMode = () => {
       host.dataset.state = state.mode;
@@ -1988,10 +2181,11 @@
       }
       body.append(who, text);
       if (foot.childElementCount > 0) body.append(foot);
-      if (comment.quotes.length > 0) {
+      const quotes = hideCy ? comment.quotes.filter((quote) => quote.isCy !== true) : comment.quotes;
+      if (quotes.length > 0) {
         const sub = document.createElement("div");
         sub.className = "sub";
-        sub.append(...comment.quotes.map(createQuote));
+        sub.append(...quotes.map(createQuote));
         body.append(sub);
       }
       item.append(avatar, body);
@@ -1999,18 +2193,22 @@
     };
 
     const render = () => {
+      const visible = hideCy ? state.items.filter((item) => item.isCy !== true) : state.items;
+      const hiddenCy = state.items.length - visible.length;
       titleNode.textContent = state.title !== "" ? state.title : "评论";
       openLinkNode.href = state.linkId !== "" ? LINK_HREF_PREFIX + state.linkId : "#";
       openLinkNode.hidden = state.linkId === "";
+      const loadedText = visible.length > 0 ? " · 已加载 " + visible.length + " 条" : "";
+      const cyText = hiddenCy > 0 ? " · 已屏蔽 " + hiddenCy + " 条 CY" : "";
       if (state.error !== "") {
         meta.textContent = "";
       } else if (state.total > 0) {
-        meta.textContent = "共 " + state.total + " 条评论" + (state.items.length > 0 ? " · 已加载 " + state.items.length + " 条" : "");
+        meta.textContent = "共 " + state.total + " 条评论" + loadedText + cyText;
       } else {
-        meta.textContent = state.items.length > 0 ? "已加载 " + state.items.length + " 条" : "";
+        meta.textContent = (visible.length > 0 ? "已加载 " + visible.length + " 条" : "") + cyText;
       }
-      list.replaceChildren(...state.items.map(createItem));
-      list.hidden = state.items.length === 0;
+      list.replaceChildren(...visible.map(createItem));
+      list.hidden = visible.length === 0;
       if (state.error !== "") {
         status.textContent = state.error;
         status.hidden = false;
@@ -2020,8 +2218,8 @@
       } else if (state.linkId === "") {
         status.textContent = "点信息流里帖子的评论数字，就能在这里预览评论。";
         status.hidden = false;
-      } else if (state.items.length === 0) {
-        status.textContent = "这条帖子还没有评论";
+      } else if (visible.length === 0) {
+        status.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
         status.hidden = false;
       } else {
         status.hidden = true;
@@ -2102,6 +2300,7 @@
       void load(state.page + 1);
     });
 
+    updateCyButton();
     applyMode();
     render();
 
@@ -2160,6 +2359,7 @@
   }
 
   function boot() {
+    applyHideCyPreference(readHideCyPreference());
     watchTheme();
     watchCommentSort();
     watchFavourPage();

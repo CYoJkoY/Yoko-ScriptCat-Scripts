@@ -2,9 +2,9 @@
 
 ![HeyBox Up 图标](./assets/heybox-up.svg)
 
-面向小黑盒 Web 端的用户脚本（UserScript）：网页收藏列表不显示“插眼”（CY）条目，但主页收藏总数会把它们算进去。本脚本单独拉取插眼收藏，在收藏页把插眼条目补到收藏列表下方，按帖子去重。社区首页（`/app/bbs/home`）移除右栏热门社区等冗余模块，并支持在右侧预览帖子评论；帖子详情页（`/app/bbs/link/*`）把站点原生评论区停靠到右栏，保留原生回复与点赞，并在评论区补充默认/时间/点赞/作者排序。
+面向小黑盒 Web 端的用户脚本（UserScript）：网页收藏列表不显示“插眼”（CY）条目，但主页收藏总数会把它们算进去。本脚本单独拉取插眼收藏，在收藏页把插眼条目补到收藏列表下方，按帖子去重。社区首页（`/app/bbs/home`）移除右栏热门社区等冗余模块，并支持在右侧预览帖子评论；帖子详情页（`/app/bbs/link/*`）把站点原生评论区停靠到右栏，保留原生回复与点赞，并在评论区补充默认/时间/点赞/作者排序。帖子页与评论预览都提供“屏蔽 CY”开关，按接口 `is_cy` 字段过滤插眼评论。
 
-- 版本：0.2.0
+- 版本：0.2.1
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://www.xiaoheihe.cn/*`、`https://xiaoheihe.cn/*`
@@ -17,6 +17,7 @@
 - 一个帖子只出现一次：接口按评论维度返回，同一帖子的多条插眼按 `link.id` 去重。
 - 复用站点原生评论：帖子详情页不重写评论组件，只把站点自己的 `.link-comment` 节点停靠到右栏，排序、回复、点赞、展开楼中楼都由站点处理。
 - 信息流评论预览：在社区首页不打开帖子也能读评论，默认收起为右缘竖向标签，点信息流里的评论数字才展开；预览只读，回复与点赞通过“打开帖子”回到原生评论区。
+- 统一 CY 过滤：帖子页原生评论区与信息流评论预览共用一个偏好，按接口返回的 `is_cy` 标记隐藏插眼评论；默认不隐藏，用户点“屏蔽 CY”后才生效。
 
 ## 二、数据来源
 
@@ -44,7 +45,7 @@
 
 请求使用页面内 `fetch`，`credentials: include` 携带登录态。接口对 `https://www.xiaoheihe.cn` 返回 `Access-Control-Allow-Origin` 与 `Access-Control-Allow-Credentials`（实测），因此无需 `GM_xmlhttpRequest`，脚本保持 `@grant none`。
 
-信息流评论预览走帖子评论树接口 `/bbs/app/link/tree`，除同一套基础参数外传 `heybox_id`（Cookie）、`link_id`、`is_first`（首页为 `1`）、`page`（从 1 起）、`index=1`、`limit=20`、`owner_only=0`。站点网页端还会带一个空的 `h_src` 参数，脚本在 `link_id` 前补齐，缺省时更容易触发风控。响应 `status === "ok"` 时读 `result.comments`（按楼层分组的数组，每组 `comment[0]` 为楼，后续为楼中楼）、`result.link.title` 与 `result.link.comment_num`。单条评论取 `user.username`、`user.avatar`（兼容拼写 `avartar`）、`text`（去标签后截断 400 字）、`create_at`、`support_num`（兼容 `support_count`）、`reply_count`（兼容 `sub_comment_num`）。
+信息流评论预览走帖子评论树接口 `/bbs/app/link/tree`，除同一套基础参数外传 `heybox_id`（Cookie）、`link_id`、`is_first`（首页为 `1`）、`page`（从 1 起）、`index=1`、`limit=20`、`owner_only=0`。站点网页端还会带一个空的 `h_src` 参数，脚本在 `link_id` 前补齐，缺省时更容易触发风控。响应 `status === "ok"` 时读 `result.comments`（按楼层分组的数组，每组 `comment[0]` 为楼，后续为楼中楼）、`result.link.title` 与 `result.link.comment_num`。单条评论取 `user.username`、`user.avatar`（兼容拼写 `avartar`）、`text`（去标签后截断 400 字）、`create_at`、`support_num`（兼容 `support_count`）、`reply_count`（兼容 `sub_comment_num`）、`is_cy`（`1`、`"1"` 或 `true` 视为插眼）。
 
 ## 三、接口签名
 
@@ -79,9 +80,11 @@ MD5 覆盖 UTF-8 字节，`md5Hex` 与 Node `crypto` 结果一致。签名只覆
 - 评论区留在站点原有 DOM 位置：脚本用 CSS Grid 把帖子内容与 `.link-comment` 排成左右两列，不搬动节点，站点祖先选择器与原生样式继续生效。
 - 回复、点赞、展开楼中楼、加载更多仍由站点原生逻辑处理；脚本不克隆、不改写评论数据。
 - 评论区顶部新增“排序”工具栏：默认、时间、点赞、作者。排序只写 `style.order`，不改 DOM 顺序；站点重渲染后自动重建工具栏并恢复上次模式。
+- 排序工具栏右侧新增“屏蔽 CY”按钮：开启后按 `[data-comment-id]` 匹配接口返回的 `is_cy` 评论，给对应楼层加 `data-heybox-up-cy="1"` 并由 `body.heybox-up-hide-cy` 统一隐藏；按钮显示已屏蔽条数，关闭后立即恢复。
 - 视口宽度 ≥1200px 时启用左右双栏；窄屏改为上下布局，评论区排在正文下方，不隐藏评论。
 - 信息流评论预览：社区首页右侧常驻一个 Shadow DOM 浮层，默认 `collapsed`，只在页面右缘露出竖向“评论”标签；点信息流卡片里的评论数字（`.bbs-new-style-bottom__comment`、`.content-list__comment`）才切到 `open`，展开 288px（视口 ≥1400px 为 320px）的悬浮面板。面板离窗口右缘 24px、离顶部 88px、底部留 80px，圆角 16px 与较大投影让它自成一块；信息流右内边距为“侧栏宽度 + 80px”，与面板之间保留 96px 空白。
 - 面板顶部显示帖子标题、评论总数与“已加载 N 条”，正文按楼层列出头像、昵称、相对时间、评论内容、点赞数、回复数与最多两条楼中楼；底部“加载更多”按 20 条翻页，切换帖子会重置分页。
+- 面板顶部工具区新增“CY”开关，与帖子页共用同一偏好；开启后过滤已加载的 CY 楼层和楼中楼引用，说明行显示“已屏蔽 N 条 CY”，切换时直接重渲染，不重复请求。
 - 收起方式为面板右上角按钮或 Esc，收起后保留标签与已加载内容，重新展开不重复请求；离开首页或进入 `/app/bbs/link/*` 时浮层隐藏，视口窄于 1200px 时同样不显示。
 - 预览只读：不提供回复、点赞与展开楼中楼，需要这些操作时点“打开帖子”进入原生评论区；接口失败时面板显示原因与“打开帖子”入口，不伪造评论。
 
@@ -93,7 +96,8 @@ MD5 覆盖 UTF-8 字节，`md5Hex` 与 Node `crypto` 结果一致。签名只覆
 - 单次最多 200 条（10 页），达到上限即停止，避免长列表拖慢页面。
 - 缓存按用户隔离，切换账号不会读到他人数据；`localStorage` 不可用时仅本次会话生效。
 - 主题偏好键 `heybox-up.theme.v1`，取值为 `system`、`dark`、`oled`、`light`、`paper`、`mist`，仅存本机；旧值 `dark`、`light` 继续有效。
-- 评论区由站点组件自行请求与缓存；脚本不保存评论内容、排序或屏蔽偏好。
+- 屏蔽 CY 偏好键 `heybox-up.hideCy.v1`，取值 `1` 或 `0`，默认 `0`（不隐藏）；仅存本机，帖子页与评论预览共用。
+- 评论区由站点组件自行请求与缓存；脚本不保存评论内容与排序。
 
 ## 六、回归验证
 
@@ -120,6 +124,8 @@ node helper/heybox-up/theme-check.cjs
 
 评论预览用无头 Edge（CDP，1440×1200 与 1600×1200）验证：注入脚本后首页出现 `#heybox-up-comment-rail` 且 `data-state="collapsed"`，标签宽 35px；点击首条卡片的评论数字后变为 `open`，`body` 加上 `heybox-up-rail-open`，1440 下信息流 `.content` 右内边距 368px、面板宽 288px、卡片宽 915px、面板与卡片之间 96px 空白，1600 下面板 320px、卡片 1043px；接口返回 20 条楼层与帖子标题；点收起按钮回到 `collapsed`、右内边距归零、卡片恢复 1283px，点标签重新展开，Esc 同样收起；打开 `/app/bbs/link/<id>` 后浮层 `data-state="hidden"`、`display: none`。夜航主题下面板底色为 `rgb(23, 29, 36)`、文字 `rgb(220, 229, 239)`，无浅色残留。
 
+CY 屏蔽用合成 DOM 与假接口在无头 Edge 中验证。帖子页：三条评论中 `1001` 与 `1003` 的 `is_cy` 分别为 `1` 和 `"1"`，注入脚本后两节点均带 `data-heybox-up-cy="1"`；点“屏蔽 CY”后 `body.heybox-up-hide-cy` 生效，两条 CY 楼层 `display: none`，普通楼层仍为 `block`，按钮显示“屏蔽 CY (2)”，偏好写入 `heybox-up.hideCy.v1=1`；再点一次恢复显示并写回 `0`。评论预览：两条楼层组中一条根评论为 CY、另一组含一条 CY 楼中楼，开启后列表只剩普通楼层，楼中楼引用中的 CY 也被过滤，说明行显示“已屏蔽 1 条 CY”。
+
 ## 七、已知限制
 
 - 不改站点收藏总数；该数字由服务端 `bbs_info.favour_num` 计算，脚本只能解释差异，不能修正。
@@ -138,11 +144,19 @@ node helper/heybox-up/theme-check.cjs
 - 双栏布局依赖 `.hb-bbs-link__content` 的直接子节点结构；站点改版后需要同步选择器，否则评论区会回到默认位置。
 - 排序工具栏挂在 `.link-comment` 内，站点清空该节点时会被移除；MutationObserver 在下一帧重建并恢复选中模式。
 - 排序读取已渲染的点赞数、相对时间与用户名；“作者”模式按用户名与帖子作者比对，同名用户会一并排到前面。
+- CY 屏蔽依赖 `link/tree` 返回的 `is_cy` 字段与楼层的 `data-comment-id`；站点改版去掉字段或属性后，开关仍可点，但不会命中评论。
+- 帖子页只为已渲染但未识别的楼层补拉接口，最多 10 页（200 条）；超过上限的楼层保持原样，不误隐藏。
+- 帖子页首次识别会额外请求评论接口；未登录或触发风控时请求失败，评论保持可见，需打开帖子或稍后重试。
 - 回复编辑器仍位于帖子正文下方，由站点原生逻辑管理；评论区内的回复按钮会按站点默认行为聚焦该编辑器。
 - 社区首页隐藏整个右栏；若后续需要保留右栏中的其他模块，需要改为按模块隐藏。
 - 纸页与雾青预设依赖站点现有类名着色，站点改版后可能出现未着色的新容器；深色预设同样按类名覆盖，登录表单始终保留浅色。
 
 ## 八、版本历史
+
+### v0.2.1
+
+- 帖子页评论区新增“屏蔽 CY”开关，按 `link/tree` 返回的 `is_cy` 标记楼层并隐藏；按钮显示已屏蔽条数，站点重渲染后由 MutationObserver 重新标记。
+- 信息流评论预览新增 CY 开关，过滤 CY 楼层与楼中楼引用，说明行显示屏蔽数量；与帖子页共用 `heybox-up.hideCy.v1` 偏好。
 
 ### v0.2.0
 
