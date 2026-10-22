@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.0
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关。顶部导航改为首页、社区、收藏、CY、文章五个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，窄屏自动退回双栏或单栏。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.1
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关。顶部导航改为首页、社区、收藏、CY、文章五个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -1032,6 +1032,133 @@
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] .link-reply .link-reply__main-box .link-reply__input-wrapper::after {
       border-color: var(--heybox-up-border) !important;
+    }
+    /* 正文内嵌的 com-* 卡片族（游戏/专辑/百科/比赛/模组/角标/等）底色写死为浅色，
+       深色下会整块发白。统一按容器、描边、主次文字、药丸底、占位块五组覆盖。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.com-game-card, .com-album-card, .com-award-table-card, .com-chatroom-card, .com-league-card, .com-match-card, .com-mod-card, .com-sku-card, .com-wiki-card) {
+      background-color: var(--heybox-up-subtle) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.com-game-card, .com-album-card, .com-award-table-card, .com-chatroom-card, .com-league-card, .com-match-card, .com-mod-card, .com-sku-card, .com-wiki-card).is-editor-mode,
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .com-card-placeholder {
+      background-color: var(--heybox-up-surface) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .com-card-placeholder svg path {
+      fill: var(--heybox-up-muted) !important;
+    }
+    /* 卡片描边用 1px 边框乘 0.5 缩放绘制，颜色写死，深色下成亮边。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.com-game-card, .com-album-card, .com-award-table-card, .com-chatroom-card, .com-league-card, .com-match-card, .com-mod-card, .com-sku-card, .com-wiki-card)::after {
+      border-color: var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.com-award-table-card .award-table-row, .com-award-table-card .award-table-row.title, .com-award-table-card .award-table-row:last-of-type) {
+      border-color: var(--heybox-up-border) !important;
+    }
+    /* 主文字：写死 #14191e。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(
+      .com-game-card .game-info .line-1,
+      .com-game-card .game-info .line-2 .price-box .price-content-box,
+      .com-game-card .game-info .line-2 .price-box .price-content-box .coupon-tip,
+      .com-game-card .game-info .line-2 .follow-box .follow-num,
+      .com-album-card .album-info .line-1 .album-name,
+      .com-award-table-card .award-table-row,
+      .com-chatroom-card .info-section .chatroom-title,
+      .com-league-card .league-info-box .line-1 .league-title,
+      .com-match-card .team-1 .team-name,
+      .com-match-card .team-2 .team-name,
+      .com-match-card .match-info-wrapper .line-2 .aftermatch .team-score.weight,
+      .com-match-card .match-info-wrapper .line-2 .watched,
+      .com-match-card .match-info-wrapper .line-2 .commingsoon,
+      .com-mod-card .mod-card-info .mod-card-title,
+      .com-sku-card .sku-info-box .line-1,
+      .com-sku-card .sku-info-box .line-2 .price-box .price-content-box,
+      .com-wiki-card .info-section .info-line .words-num
+    ) {
+      color: var(--heybox-up-text) !important;
+    }
+    /* 次要文字：写死 #8c9196 与 #64696e。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(
+      .com-game-card .game-info .line-2 .price-box .price-content-box .release-desc,
+      .com-game-card .game-info .line-2 .price-box .price-content-box .release-time,
+      .com-game-card .game-info .line-2 .price-box .price-content-box .original-price,
+      .com-game-card .game-info .line-2 .follow-box .had-tag,
+      .com-game-card .game-info .line-2 .follow-box i,
+      .com-album-card .delete-desc,
+      .com-album-card .album-info .line-2 .game-num,
+      .com-award-table-card .award-table-row.unfold,
+      .com-chatroom-card .info-section .line-2 .default-desc,
+      .com-chatroom-card .info-section .line-2 .online-count,
+      .com-chatroom-card .info-section .line-2 .room-count,
+      .com-league-card .league-info-box .line-2 .league-date,
+      .com-match-card .match-info-wrapper .line-1,
+      .com-match-card .match-info-wrapper .line-2,
+      .com-match-card .match-info-wrapper .line-3,
+      .com-match-card .match-info-wrapper .line-2 .aftermatch .colon,
+      .com-mod-card .mod-card-info .mod-card-summary,
+      .com-sku-card .sku-info-box .line-2 .price-box .price-content-box .original-price,
+      .com-wiki-card .info-section .info-line .words-num-desc,
+      .com-wiki-card .info-section .info-line .enter-wiki,
+      .com-wiki-card .info-section .info-line i
+    ) {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .com-game-card .game-info .line-2 .price-box .price-content-box .original-price::after {
+      background-color: var(--heybox-up-muted) !important;
+    }
+    /* 药丸/标签底：写死 #f3f4f5，配深色文字，深色下变成亮块加暗字。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(
+      .com-game-card .game-info .line-2 .price-box,
+      .com-game-card .game-info .line-2 .follow-box,
+      .com-album-card .delete-album,
+      .com-album-card .album-info .line-2 .favour-btn.favoured,
+      .com-award-table-card .award-table-row.title,
+      .com-award-table-card .award-table-row.unfold,
+      .com-league-card .league-info-box .line-2 .league-date,
+      .com-league-card .league-info-box .line-2 .price-pool,
+      .com-match-card .match-info-wrapper .line-2 .aftermatch .team-score,
+      .com-match-card .match-info-wrapper .line-2 .watched,
+      .com-match-card .match-info-wrapper .line-2 .commingsoon,
+      .com-match-card .match-info-wrapper .line-2 .aftermatch .colon,
+      .com-sku-card .sku-info-box .line-2 .price-box
+    ) {
+      background-color: var(--heybox-up-raised) !important;
+    }
+    /* 深色实心按钮：写死 #14191e 或同色渐变，深色下与卡片底几乎融为一体。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(
+      .com-game-card .game-info .line-2 .follow-btn,
+      .com-game-card .game-info .line-2 .wishlist-box,
+      .com-game-card .game-info .line-2 .follow-box i,
+      .com-game-card .game-info .line-2 .follow-box .follow-unit,
+      .com-game-card .game-info .line-2 .wishlist-box i,
+      .com-game-card .game-info .line-2 .wishlist-box .add-wishlist-text,
+      .com-album-card .album-info .line-1 .album-label,
+      .com-album-card .album-info .line-2 .favour-btn,
+      .com-match-card .match-info-wrapper .line-2 .unwatched,
+      .com-mod-card .mod-card-download,
+      .com-mod-card .mod-card-download .mod-card-download-text,
+      .com-sku-card .sku-info-box .line-2 .follow-btn
+    ) {
+      background-color: var(--heybox-up-raised) !important;
+      background-image: none !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .com-album-card .album-info .line-2 .favour-btn.favoured {
+      color: var(--heybox-up-text-2) !important;
+    }
+    /* 图片占位底与未加载图片的灰块。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.com-album-card .game-img-album, .com-mod-card .mod-card-image-box) {
+      background-color: var(--heybox-up-raised) !important;
+    }
+    /* 评论区与列表底部的写死浅色小件。 */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .comment-item__writer-like span {
+      background-color: var(--heybox-up-raised) !important;
+      color: var(--heybox-up-text-2) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .children-item__comment-creator {
+      color: var(--heybox-up-accent) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] .scroll-list__no-more-desc::before {
+      background-color: var(--heybox-up-border) !important;
     }
   `;
 
