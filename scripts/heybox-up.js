@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.3.1
+// @version      0.3.2
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -967,11 +967,12 @@
     :root.heybox-up-theme[data-heybox-up-dark="true"] .hb-cpt__moment-list-content::after {
       background-color: var(--heybox-up-subtle) !important;
     }
-    /* 站点用浅色伪元素画卡片底部色带、楼层分隔线与输入框描边，深色下会露出白条。 */
-    :root.heybox-up-theme[data-heybox-up-dark="true"] .hb-bbs-image-text::after,
-    :root.heybox-up-theme[data-heybox-up-dark="true"] .hb-bbs-post::after,
-    :root.heybox-up-theme[data-heybox-up-dark="true"] .hb-bbs__video::after {
+    /* 站点用伪元素画卡片底部 4px 色带，取色固定为近白，任何主题下都会形成白条。 */
+    :root.heybox-up-theme .hb-bbs-image-text::after,
+    :root.heybox-up-theme .hb-bbs-post::after,
+    :root.heybox-up-theme .hb-bbs__video::after {
       background-color: transparent !important;
+      background-image: none !important;
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] .link-reply::before,
     :root.heybox-up-theme[data-heybox-up-dark="true"] .link-comment__comment-item::before,
@@ -1318,6 +1319,9 @@
     if (!style) {
       style = document.createElement("style");
       style.id = "heybox-up-theme-style";
+      style.textContent = THEME_CSS;
+    } else if (style.textContent !== THEME_CSS) {
+      /* 脚本热更新后复用旧节点会导致旧样式残留，按当前版本重写。 */
       style.textContent = THEME_CSS;
     }
     const parent = document.head || document.documentElement;
