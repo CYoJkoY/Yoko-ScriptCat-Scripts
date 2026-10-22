@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.3.3
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.3.4
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关。顶部导航改为首页、社区、收藏、CY、文章五个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -84,6 +84,27 @@
     document.dispatchEvent(new CustomEvent(COMMENT_PREVIEW_EVENT, { detail: value }));
   }
 
+  // 导航图标默认播放轻量动效，静态版本供不喜欢动画的用户关闭。
+  const NAV_MOTION_KEY = "heybox-up.navMotion.v1";
+  const NAV_MOTION_EVENT = "heybox-up:nav-motion";
+
+  function readNavMotionPreference() {
+    try {
+      return localStorage.getItem(NAV_MOTION_KEY) !== "0";
+    } catch (error) {
+      return true;
+    }
+  }
+
+  function setNavMotionPreference(value) {
+    try {
+      localStorage.setItem(NAV_MOTION_KEY, value ? "1" : "0");
+    } catch (error) {
+      console.warn("[HeyBox Up] 保存导航图标设置失败", error);
+    }
+    document.dispatchEvent(new CustomEvent(NAV_MOTION_EVENT, { detail: value }));
+  }
+
   // 站点会在评论上带 is_cy，值可能是数字 1、字符串 "1" 或布尔 true。
   function isCyComment(comment) {
     return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
@@ -122,6 +143,7 @@
   let currentThemeMode = "system";
   let themeEntry = null;
   let previewToggle = null;
+  let navMotionToggle = null;
 
   function readThemeMode() {
     try {
@@ -1379,6 +1401,7 @@
       item.node.setAttribute("aria-checked", String(item.id === currentThemeMode));
     }
     if (previewToggle) previewToggle.setAttribute("aria-checked", String(readCommentPreviewPreference()));
+    if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
   }
 
   function applyTheme(mode, persist) {
@@ -1441,7 +1464,7 @@
       return { id: preset.id, node };
     });
     menu.append(...items.map((item) => item.node));
-    menu.append(createThemeMenuSeparator(), createCommentPreviewToggle());
+    menu.append(createThemeMenuSeparator(), createCommentPreviewToggle(), createNavMotionToggle());
 
     const closeMenu = () => {
       if (menu.hidden) return;
@@ -1512,6 +1535,34 @@
     return node;
   }
 
+  // 动态导航图标开关：关闭后图标保持静态，悬停与激活都不再播放动画。
+  function createNavMotionToggle() {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "item toggle";
+    node.setAttribute("role", "menuitemcheckbox");
+    node.setAttribute("aria-checked", String(readNavMotionPreference()));
+    const copy = document.createElement("span");
+    copy.className = "copy";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = "动态导航图标";
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "悬停时播放轻量动画";
+    copy.append(name, hint);
+    const toggle = document.createElement("span");
+    toggle.className = "switch";
+    node.append(copy, toggle);
+    node.addEventListener("click", () => {
+      const next = !(node.getAttribute("aria-checked") === "true");
+      node.setAttribute("aria-checked", String(next));
+      setNavMotionPreference(next);
+    });
+    navMotionToggle = node;
+    return node;
+  }
+
   function mountThemeEntry() {
     if (!document.body) return;
     const actions = document.querySelector(".nav-actions");
@@ -1541,10 +1592,293 @@
     sync();
   }
 
+  // 顶部导航只保留五个高频入口，用「SVG + 文本」替换站点原有的七个文字按钮。
+  const NAV_ID = "heybox-up-nav";
+  const NAV_STYLE_ID = "heybox-up-nav-style";
+  const NAV_STATIC_CLASS = "heybox-up-nav-static";
+  const CY_JUMP_KEY = "heybox-up.cyJump.v1";
+  const CY_HASH = "#heybox-up-cy";
+
+  const NAV_ITEMS = [
+    { id: "home", label: "首页", href: "/" },
+    { id: "community", label: "社区", href: "/app/bbs/home" },
+    { id: "favour", label: "收藏", href: "/app/user/favour/content" },
+    { id: "cy", label: "CY", href: "/app/user/favour/content" + CY_HASH },
+    { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" },
+  ];
+
+  const NAV_ICONS = {
+    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-home"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></g></svg>',
+    community: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-community"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></g></svg>',
+    favour: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-favour"><path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"/></g></svg>',
+    cy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-cy"><path d="M2.8 12S6.4 5.8 12 5.8 21.2 12 21.2 12 17.6 18.2 12 18.2 2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.6"/></g></svg>',
+    article: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-article"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 16.5h6"/></g></svg>',
+  };
+
+  const NAV_CSS = `
+    .nav-links > .nav-link { display: none !important; }
+    #${NAV_ID} {
+      display: flex;
+      align-items: stretch;
+      height: 64px;
+      gap: 2px;
+      margin-left: 2px;
+      font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    .hbu-nav-link {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      height: 100%;
+      padding: 0 12px;
+      border-radius: 8px;
+      color: var(--nav-link-color, var(--heybox-up-muted, #8c9198));
+      text-decoration: none;
+      white-space: nowrap;
+      transition: color .18s ease;
+    }
+    .hbu-nav-link::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 11px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--heybox-up-accent, #6f8db3);
+      transform: scaleX(0);
+      transform-origin: 50% 50%;
+      transition: transform .2s ease;
+    }
+    .hbu-nav-link:hover { color: var(--nav-link-active-color, var(--heybox-up-text, #14191e)); }
+    .hbu-nav-link:hover::after, .hbu-nav-link.is-active::after { transform: scaleX(1); }
+    .hbu-nav-link.is-active {
+      color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
+      font-weight: 600;
+    }
+    .hbu-nav-link:focus-visible {
+      outline: 2px solid var(--heybox-up-accent, #6f8db3);
+      outline-offset: -2px;
+    }
+    .hbu-nav-link svg { width: 18px; height: 18px; flex: none; }
+    .hbu-nav-link .hbu-ico-anim { transform-box: fill-box; transform-origin: 50% 60%; }
+    .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home, .hbu-nav-link.is-active .hbu-ico-home { animation: hbu-nav-home .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community, .hbu-nav-link.is-active .hbu-ico-community { animation: hbu-nav-community .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour, .hbu-nav-link.is-active .hbu-ico-favour { animation: hbu-nav-favour .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-cy, .hbu-nav-link:focus-visible .hbu-ico-cy, .hbu-nav-link.is-active .hbu-ico-cy { animation: hbu-nav-cy .6s ease; }
+    .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article, .hbu-nav-link.is-active .hbu-ico-article { animation: hbu-nav-article .55s cubic-bezier(.3, .7, .3, 1); }
+    @keyframes hbu-nav-home {
+      0%, 100% { transform: translateY(0); }
+      38% { transform: translateY(-1.8px); }
+      72% { transform: translateY(.8px); }
+    }
+    @keyframes hbu-nav-community {
+      0%, 100% { transform: translateY(0); }
+      40% { transform: translateY(-2px); }
+      76% { transform: translateY(.6px); }
+    }
+    @keyframes hbu-nav-favour {
+      0%, 100% { transform: scaleY(1); }
+      46% { transform: scaleY(.8) translateY(-1px); }
+    }
+    @keyframes hbu-nav-cy {
+      0%, 100% { transform: scaleY(1); }
+      42%, 52% { transform: scaleY(.12); }
+    }
+    @keyframes hbu-nav-article {
+      0%, 100% { transform: rotate(0); }
+      38% { transform: rotate(-4deg); }
+      72% { transform: rotate(1.5deg); }
+    }
+    :root.${NAV_STATIC_CLASS} .hbu-nav-link svg * { animation: none !important; }
+    @media (prefers-reduced-motion: reduce) {
+      .hbu-nav-link svg * { animation: none !important; }
+      .hbu-nav-link::after { transition: none; }
+    }
+    @media (max-width: 1180px) {
+      .hbu-nav-link { padding: 0 9px; gap: 5px; font-size: 13px; }
+      .hbu-nav-link::after { left: 9px; right: 9px; }
+    }
+    @media (max-width: 940px) {
+      .hbu-nav-link span { display: none; }
+      .hbu-nav-link { padding: 0 10px; }
+    }
+  `;
+
+  function applyNavMotionPreference(value) {
+    document.documentElement.classList.toggle(NAV_STATIC_CLASS, value === false);
+  }
+
+  function ensureNavStyle() {
+    let style = document.getElementById(NAV_STYLE_ID);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = NAV_STYLE_ID;
+      style.textContent = NAV_CSS;
+    } else if (style.textContent !== NAV_CSS) {
+      style.textContent = NAV_CSS;
+    }
+    const parent = document.head || document.documentElement;
+    if (!parent) return;
+    if (style.parentNode !== parent) parent.append(style);
+  }
+
+  function readNavActiveId() {
+    const path = location.pathname;
+    if (path === "/app/user/favour/content") {
+      return location.hash === CY_HASH ? "cy" : "favour";
+    }
+    if (path === "/") return "home";
+    if (path.startsWith("/creator/")) return "article";
+    if (path.startsWith("/app/bbs/")) return "community";
+    return "";
+  }
+
+  function syncNavActive() {
+    const host = document.getElementById(NAV_ID);
+    if (!host) return;
+    const activeId = readNavActiveId();
+    for (const node of host.querySelectorAll(".hbu-nav-link")) {
+      const active = node.dataset.nav === activeId;
+      node.classList.toggle("is-active", active);
+      if (active) node.setAttribute("aria-current", "page");
+      else node.removeAttribute("aria-current");
+    }
+  }
+
+  function scrollToCySection() {
+    const host = document.getElementById("heybox-up-favour");
+    if (!host) return false;
+    host.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  }
+
+  function readCyJumpFlag() {
+    try {
+      return sessionStorage.getItem(CY_JUMP_KEY) === "1";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function clearCyJumpFlag() {
+    try {
+      sessionStorage.removeItem(CY_JUMP_KEY);
+    } catch (error) {
+      // 无法清理时最多多滚动一次，不影响导航。
+    }
+  }
+
+  function readSiteRouter() {
+    const root = document.querySelector("#app");
+    const app = root ? root.__vue_app__ : null;
+    const properties = app ? app.config.globalProperties : null;
+    const router = properties ? properties.$router : null;
+    return router && typeof router.push === "function" ? router : null;
+  }
+
+  // 站点是 Vue 单页应用：脚本合成点击的 <a> 带 isTrusted=false，路由会忽略它并整页刷新。
+  // 这里优先调用站点的 router.push，取不到时退回 <a> 点击，最坏情况只是整页加载。
+  function navigateToPath(path) {
+    const router = readSiteRouter();
+    if (router) {
+      try {
+        const pending = router.push(path);
+        if (pending && typeof pending.catch === "function") pending.catch(() => {});
+        return;
+      } catch (error) {
+        // 路由内部状态异常时退回原生跳转。
+      }
+    }
+    const anchor = document.createElement("a");
+    anchor.href = path;
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  function handleNavClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest("a.hbu-nav-link");
+    if (!link) return;
+    // 组合键或中键交给浏览器，保留新标签页打开的能力。
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const id = link.dataset.nav;
+    if (id === "cy") {
+      event.preventDefault();
+      if (location.pathname === "/app/user/favour/content") {
+        history.pushState(null, "", "/app/user/favour/content" + CY_HASH);
+        scrollToCySection();
+        syncNavActive();
+      } else {
+        try { sessionStorage.setItem(CY_JUMP_KEY, "1"); } catch (error) { /* 隐私模式下仍可正常跳转，只是不做滚动定位。 */ }
+        navigateToPath("/app/user/favour/content");
+      }
+      return;
+    }
+    // 收藏页内再点收藏时清掉 CY 锚点，避免两个入口同时高亮。
+    if (id === "favour" && location.pathname === "/app/user/favour/content" && location.hash !== "") {
+      event.preventDefault();
+      history.pushState(null, "", "/app/user/favour/content");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      syncNavActive();
+      return;
+    }
+    // 导航栏挂在站点根节点之外，原生 <a> 点击会整页刷新；统一交给 navigateToPath 走站内路由。
+    event.preventDefault();
+    const href = link.getAttribute("href");
+    if (href !== null && href !== "") navigateToPath(href);
+  }
+
+  function mountTopNav() {
+    if (!document.body) return;
+    const links = document.querySelector(".nav .nav-links") || document.querySelector(".nav-links");
+    if (!links) return;
+    ensureNavStyle();
+    let host = document.getElementById(NAV_ID);
+    if (!host) {
+      host = document.createElement("div");
+      host.id = NAV_ID;
+      host.setAttribute("role", "navigation");
+      host.setAttribute("aria-label", "站内导航");
+      host.innerHTML = NAV_ITEMS.map((item) =>
+        '<a class="hbu-nav-link" data-nav="' + item.id + '" href="' + item.href + '" aria-label="' + item.label + '" title="' + item.label + '">' + NAV_ICONS[item.id] + "<span>" + item.label + "</span></a>"
+      ).join("");
+      host.addEventListener("click", handleNavClick);
+    }
+    if (host.parentNode !== links || links.firstElementChild !== host) links.prepend(host);
+    syncNavActive();
+  }
+
+  function watchTopNav() {
+    if (!document.body) return;
+    let scheduled = false;
+    const sync = () => {
+      mountTopNav();
+      syncNavActive();
+    };
+    window.addEventListener("hashchange", syncNavActive);
+    window.addEventListener("popstate", syncNavActive);
+    new MutationObserver(() => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        sync();
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+    sync();
+  }
+
   THEME_MEDIA.addEventListener("change", () => {
     if (currentThemeMode === "system") applyTheme("system", false);
   });
   applyTheme(readThemeMode(), false);
+  document.addEventListener(NAV_MOTION_EVENT, (event) => applyNavMotionPreference(event.detail === true));
+  applyNavMotionPreference(readNavMotionPreference());
 
   // ==sign-core:start==
   const SIG_ALPHABET = "AB45STUVWZEFGJ6CH01D237IXYPQRKLMN89";
@@ -1884,7 +2218,7 @@
   const FAVOUR_LIST_SELECTOR = ".user-favour__list";
 
   const FAVOUR_CSS = `
-    :host { display: block; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    :host { display: block; scroll-margin-top: 80px; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
     .section { padding: 14px 8px 4px; }
     .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
     .heading { font-size: 14px; font-weight: 700; }
@@ -2068,9 +2402,11 @@
     if (!document.body) return;
     let section = null;
     let scheduled = false;
+    let cyJumpDone = false;
 
     const sync = () => {
       if (location.pathname !== FAVOUR_PATH || getHeyboxId() === "") {
+        cyJumpDone = false;
         if (section) {
           section.host.remove();
           section = null;
@@ -2079,6 +2415,13 @@
       }
       if (!section) section = createFavourSection();
       section.place();
+      if (!cyJumpDone && (location.hash === CY_HASH || readCyJumpFlag())) {
+        requestAnimationFrame(() => {
+          if (!scrollToCySection()) return;
+          cyJumpDone = true;
+          clearCyJumpFlag();
+        });
+      }
     };
 
     const schedule = () => {
@@ -2706,12 +3049,231 @@
     sync();
   }
 
+  // 帖子连读：在帖子页底部提供上一篇/下一篇，切换走站内路由，不整页刷新。
+  const PAGER_ID = "heybox-up-post-pager";
+  const FEED_ORDER_KEY = "heybox-up.feedOrder.v1";
+  const POST_TRAIL_KEY = "heybox-up.postTrail.v1";
+  const POST_TRAIL_MAX = 40;
+
+  const PAGER_CSS = `
+    :host { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); display: block; z-index: 2147482990; font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--heybox-up-text, #14191e); }
+    :host([hidden]) { display: none; }
+    .bar { display: flex; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .12)); border-radius: 999px; background: var(--heybox-up-surface, #fff); box-shadow: var(--heybox-up-shadow-2, 0 10px 28px rgba(8, 12, 16, .18)); }
+    .count { padding: 0 9px; color: var(--heybox-up-muted, #6b7280); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .count[hidden] { display: none; }
+    .btn { display: inline-flex; align-items: center; gap: 3px; height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--heybox-up-text-2, #3c4249); font: inherit; cursor: pointer; white-space: nowrap; }
+    .btn:hover:not(:disabled) { background: var(--heybox-up-subtle, rgba(20, 25, 30, .06)); color: var(--heybox-up-text, #14191e); }
+    .btn:disabled { opacity: .38; cursor: default; }
+    .btn:focus-visible { outline: 2px solid var(--heybox-up-accent, #6f8db3); outline-offset: 1px; }
+    .btn svg { width: 14px; height: 14px; flex: none; }
+    @media (max-width: 720px) { :host { bottom: 10px; } .count { display: none; } .btn { padding: 0 8px; } }
+  `;
+
+  const PAGER_ICONS = {
+    prev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
+    next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>',
+  };
+
+  function readPostLinkId() {
+    const match = /^\/app\/bbs\/link\/(\d+)/.exec(location.pathname);
+    return match ? match[1] : "";
+  }
+
+  function readSessionArray(key) {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(key) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function writeSessionValue(key, value) {
+    try {
+      sessionStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      // 隐私模式下连读仍可按推荐列表工作，只是记不住顺序。
+    }
+  }
+
+  function readFeedOrder() {
+    return readSessionArray(FEED_ORDER_KEY).filter((item) => item && typeof item.id === "string" && /^\d+$/.test(item.id));
+  }
+
+  function recordFeedOrder() {
+    if (readPostLinkId() !== "") return;
+    if (!document.querySelector("#page-bbs-community .bbs-home__content-list")) return;
+    const seen = new Set();
+    const list = [];
+    for (const anchor of document.querySelectorAll("#page-bbs-community .bbs-home__content-list a[href*='/app/bbs/link/']")) {
+      const match = /link\/(\d+)/.exec(anchor.getAttribute("href") || "");
+      if (!match || seen.has(match[1])) continue;
+      seen.add(match[1]);
+      const titleNode = anchor.querySelector(".bbs-home__content-title, .link-item__title, .bbs-home__topic-name");
+      const title = (titleNode ? titleNode.textContent : anchor.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80);
+      list.push({ id: match[1], title: title });
+    }
+    if (list.length > 0) writeSessionValue(FEED_ORDER_KEY, list);
+  }
+
+  function readRelatedPostLinks() {
+    const seen = new Set();
+    const list = [];
+    const nodes = document.querySelectorAll(".bbs-link__related-recommend a[href*='/app/bbs/link/'], .related-recommend__container a[href*='/app/bbs/link/']");
+    for (const anchor of nodes) {
+      const match = /link\/(\d+)/.exec(anchor.getAttribute("href") || "");
+      if (!match || seen.has(match[1])) continue;
+      seen.add(match[1]);
+      const title = (anchor.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80);
+      list.push({ id: match[1], title: title });
+    }
+    return list;
+  }
+
+  function readPostTrail() {
+    return readSessionArray(POST_TRAIL_KEY).filter((id) => typeof id === "string" && /^\d+$/.test(id));
+  }
+
+  function pushPostTrail(id) {
+    const trail = readPostTrail();
+    if (trail[trail.length - 1] === id) return;
+    const seenAt = trail.lastIndexOf(id);
+    if (seenAt !== -1) trail.splice(seenAt, 1);
+    trail.push(id);
+    while (trail.length > POST_TRAIL_MAX) trail.shift();
+    writeSessionValue(POST_TRAIL_KEY, trail);
+  }
+
+  function resolvePostNeighbors(id) {
+    const order = readFeedOrder();
+    const index = order.findIndex((item) => item.id === id);
+    let prev = index > 0 ? order[index - 1] : null;
+    let next = index !== -1 && index < order.length - 1 ? order[index + 1] : null;
+    if (!next) {
+      const related = readRelatedPostLinks().filter((item) => item.id !== id);
+      if (related.length > 0) next = related[0];
+    }
+    if (!prev) {
+      const trail = readPostTrail();
+      const at = trail.lastIndexOf(id);
+      const prevId = at > 0 ? trail[at - 1] : at === -1 && trail.length > 0 ? trail[trail.length - 1] : "";
+      if (prevId !== "" && prevId !== id) prev = { id: prevId, title: "" };
+    }
+    return { prev: prev, next: next, index: index === -1 ? null : index + 1, total: order.length };
+  }
+
+  function isTypingTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (target.isContentEditable) return true;
+    return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+  }
+
+  function watchPostPager() {
+    if (!document.body) return;
+    const host = document.createElement("div");
+    host.id = PAGER_ID;
+    host.hidden = true;
+    const shadow = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = PAGER_CSS;
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.setAttribute("role", "navigation");
+    bar.setAttribute("aria-label", "文章连读");
+    const prevButton = document.createElement("button");
+    prevButton.type = "button";
+    prevButton.className = "btn";
+    prevButton.innerHTML = PAGER_ICONS.prev + "<span>上一篇</span>";
+    const count = document.createElement("span");
+    count.className = "count";
+    const nextButton = document.createElement("button");
+    nextButton.type = "button";
+    nextButton.className = "btn";
+    nextButton.innerHTML = "<span>下一篇</span>" + PAGER_ICONS.next;
+    bar.append(prevButton, count, nextButton);
+    shadow.append(style, bar);
+    document.body.append(host);
+
+    let currentId = "";
+    let prevId = "";
+    let nextId = "";
+    let navigating = false;
+
+    const go = (id) => {
+      if (id === "" || navigating) return;
+      navigating = true;
+      navigateToPath(LINK_HREF_PREFIX + id);
+      const toTop = () => window.scrollTo({ top: 0, behavior: "auto" });
+      requestAnimationFrame(toTop);
+      window.setTimeout(toTop, 120);
+      window.setTimeout(() => { navigating = false; }, 900);
+    };
+
+    prevButton.addEventListener("click", () => go(prevId));
+    nextButton.addEventListener("click", () => go(nextId));
+
+    document.addEventListener("keydown", (event) => {
+      if (host.hidden || event.defaultPrevented) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isTypingTarget(event.target)) return;
+      if (event.key === "[" && prevId !== "") {
+        event.preventDefault();
+        go(prevId);
+      } else if (event.key === "]" && nextId !== "") {
+        event.preventDefault();
+        go(nextId);
+      }
+    });
+
+    let scheduled = false;
+    const sync = () => {
+      recordFeedOrder();
+      const id = readPostLinkId();
+      if (id === "") {
+        host.hidden = true;
+        currentId = "";
+        return;
+      }
+      if (id !== currentId) {
+        currentId = id;
+        pushPostTrail(id);
+        host.hidden = false;
+      }
+      const neighbors = resolvePostNeighbors(id);
+      prevId = neighbors.prev ? neighbors.prev.id : "";
+      nextId = neighbors.next ? neighbors.next.id : "";
+      prevButton.disabled = prevId === "";
+      nextButton.disabled = nextId === "";
+      prevButton.title = neighbors.prev ? "上一篇" + (neighbors.prev.title !== "" ? "：" + neighbors.prev.title : "") : "没有上一篇";
+      nextButton.title = neighbors.next ? "下一篇" + (neighbors.next.title !== "" ? "：" + neighbors.next.title : "") : "没有下一篇";
+      if (neighbors.index === null) {
+        count.hidden = true;
+        count.textContent = "";
+      } else {
+        count.hidden = false;
+        count.textContent = neighbors.index + " / " + neighbors.total;
+      }
+    };
+
+    new MutationObserver(() => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        sync();
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+    sync();
+  }
+
   function boot() {
     applyHideCyPreference(readHideCyPreference());
     watchTheme();
+    watchTopNav();
     watchCommentSort();
     watchFavourPage();
     watchCommentRail();
+    watchPostPager();
   }
 
   if (document.readyState === "loading") {
