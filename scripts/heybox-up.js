@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.6
+// @version      0.4.7
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在主题菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -3044,8 +3044,17 @@
   const RAIL_BODY_MAX = 4000;
   const RAIL_EMOJI_SPRITE = "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v33.png";
   const RAIL_EMOJI_CELL = 17;
-  const RAIL_EMOJI_TOKEN = /\[cube_([1-6][1-6])\]/g;
-  const RAIL_EMOJI_ID = /^[1-6][1-6]$/;
+  const RAIL_EMOJI_TOKEN = /\[cube_(\d{1,3})\]/g;
+
+  // 站点精灵图是 6 列 × 18 行，合法编号的个位是 1–6、十位段是 1–18；
+  // 编号最大到 186，只认 11–66 会漏掉 7x–18x 这一大批表情。
+  function isRailEmojiId(value) {
+    const id = Number(value);
+    if (!Number.isInteger(id) || id < 11 || id > 186) return false;
+    const unit = id % 10;
+    const row = Math.floor(id / 10);
+    return unit >= 1 && unit <= 6 && row >= 1 && row <= 18;
+  }
 
   function parseRailBody(value) {
     const source = String(value === undefined || value === null ? "" : value).slice(0, RAIL_BODY_MAX);
@@ -3057,7 +3066,8 @@
       const parts = String(value).split(RAIL_EMOJI_TOKEN);
       for (let index = 0; index < parts.length; index += 1) {
         if (index % 2 === 1) {
-          segments.push({ type: "emoji", id: parts[index] });
+          if (isRailEmojiId(parts[index])) segments.push({ type: "emoji", id: parts[index] });
+          else segments.push({ type: "text", text: "[cube_" + parts[index] + "]" });
           continue;
         }
         const collapsed = parts[index].replace(/\s+/g, " ");
@@ -3077,8 +3087,9 @@
         if (emoji !== null && emoji !== "") {
           const match = /(hb-emoji-cube_\S+)/.exec(element.className || "");
           const candidates = [match === null ? "" : match[1], emoji];
-          const id = candidates.map((item) => (/([1-6][1-6])$/.exec(item) || [])[1] || "").find((item) => RAIL_EMOJI_ID.test(item)) || "";
+          const id = candidates.map((item) => (/(\d+)$/.exec(item) || [])[1] || "").find((item) => isRailEmojiId(item)) || "";
           if (id !== "") segments.push({ type: "emoji", id: id });
+          else segments.push({ type: "text", text: "[" + emoji + "]" });
           continue;
         }
         if (element.tagName === "IMG") {
@@ -3282,8 +3293,9 @@
       node.className = "emoji";
       node.setAttribute("role", "img");
       node.setAttribute("aria-label", "表情");
-      const column = 7 - (Number(id) % 10);
-      const row = 19 - Math.floor(Number(id) / 10);
+      // 坐标与站点 CSS 一致；精灵图只有 6×18 格，超出部分按取模回卷。
+      const column = (7 - (Number(id) % 10) + 6) % 6;
+      const row = (19 - Math.floor(Number(id) / 10)) % 18;
       node.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
       node.style.backgroundPosition = column * RAIL_EMOJI_CELL + "px " + row * RAIL_EMOJI_CELL + "px";
       return node;
