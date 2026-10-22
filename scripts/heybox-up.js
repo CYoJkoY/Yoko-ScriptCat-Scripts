@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.2.1
+// @version      0.3.0
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -120,6 +120,15 @@
 
   const THEME_CSS = `
     :root.heybox-up-theme {
+      --heybox-up-bg: #fff;
+      --heybox-up-surface: #fff;
+      --heybox-up-subtle: rgba(20, 25, 30, .06);
+      --heybox-up-raised: #d7dce3;
+      --heybox-up-border: rgba(20, 25, 30, .1);
+      --heybox-up-text: #14191e;
+      --heybox-up-text-2: #3c4249;
+      --heybox-up-muted: #6b7280;
+      --heybox-up-on-accent: #fff;
       --heybox-up-icon: #62676e;
       --heybox-up-icon-hover: #14191e;
       --heybox-up-icon-hover-bg: rgba(20, 25, 30, .06);
@@ -618,7 +627,7 @@
       border-radius: 16px !important;
       box-shadow: 0 6px 20px rgba(47, 74, 84, .08) !important;
     }
-    :root.heybox-up-theme[data-heybox-up-theme="paper"] :is(.post__title, .image-text__title, .bbs-content__title, .bbs-link-section-title-text, .user-favour__title, .related-recommend__container--header) {
+    :root.heybox-up-theme[data-heybox-up-theme="paper"] :is(.post__title, .image-text__title, .bbs-content__title, .bbs-link-section-title-text, .section-title__content, .user-favour__title, .related-recommend__container--header) {
       font-family: Georgia, "Songti SC", "Noto Serif CJK SC", serif;
       letter-spacing: .01em;
     }
@@ -627,10 +636,34 @@
       text-decoration: underline;
       text-underline-offset: 2px;
     }
-    /* 宽屏布局：放宽站点 1300/1032px 两级容器，社区信息流解除 660px 限制。 */
+    /* 版式：定宽阅读栏 + 卡片化信息流。站点通栏列表每行超过 90 字，长读易疲劳。 */
+    :root {
+      --heybox-up-page-w: 1360px;
+      --heybox-up-feed-w: min(960px, calc(100vw - 420px));
+      --heybox-up-radius-card: 14px;
+      --heybox-up-gap: 12px;
+      --heybox-up-card-pad: 20px;
+      --heybox-up-shadow-1: 0 1px 2px rgba(16, 24, 40, .05);
+      --heybox-up-shadow-2: 0 14px 34px rgba(16, 24, 40, .14);
+    }
+    :root.heybox-up-theme[data-heybox-up-theme="paper"] {
+      --heybox-up-radius-card: 4px;
+      --heybox-up-shadow-1: none;
+      --heybox-up-shadow-2: 0 10px 24px rgba(47, 42, 34, .12);
+    }
+    :root.heybox-up-theme[data-heybox-up-theme="mist"] {
+      --heybox-up-radius-card: 18px;
+      --heybox-up-shadow-1: 0 4px 14px rgba(47, 74, 84, .07);
+      --heybox-up-shadow-2: 0 16px 36px rgba(47, 74, 84, .14);
+    }
+    :root.heybox-up-theme[data-heybox-up-theme="oled"] {
+      --heybox-up-radius-card: 8px;
+      --heybox-up-shadow-1: none;
+      --heybox-up-shadow-2: 0 14px 34px rgba(0, 0, 0, .72);
+    }
     @media (min-width: 1200px) {
       #app > main {
-        max-width: 1600px !important;
+        max-width: var(--heybox-up-page-w) !important;
         padding-left: 24px !important;
         padding-right: 24px !important;
       }
@@ -638,26 +671,126 @@
       #app > main > .layout-normal {
         max-width: 100% !important;
       }
-      #page-bbs-community main.list {
-        max-width: none !important;
-      }
     }
-    /* 社区首页：右栏热门社区与二维码等冗余模块整体移除，信息流占满宽度。 */
+    /* 社区首页：移除热门社区/二维码右栏，信息流量成一条阅读栏，宽度够放两张图也不拉长正文行。 */
     #page-bbs-community .cpt-right-side.right {
       display: none !important;
     }
     #page-bbs-community .content {
       width: auto !important;
-      max-width: min(1500px, calc(100vw - 48px)) !important;
+      max-width: var(--heybox-up-page-w) !important;
       margin: 0 auto !important;
+      justify-content: center !important;
     }
-    #page-bbs-community main.list,
+    #page-bbs-community main.list {
+      width: auto !important;
+      max-width: var(--heybox-up-feed-w) !important;
+      flex: 0 1 var(--heybox-up-feed-w) !important;
+      min-width: 0;
+    }
+    /* 搜索栏跟随阅读栏宽度居中，避免页头比信息流每侧多出 176px。 */
+    #page-bbs-community .bbs-community__search-module {
+      width: min(var(--heybox-up-feed-w), 100%) !important;
+      max-width: 100% !important;
+      margin-left: auto !important;
+      margin-right: auto !important;
+    }
+    @media (min-width: 1200px) {
+      body.heybox-up-rail-open #page-bbs-community .bbs-community__search-module {
+        width: min(var(--heybox-up-feed-w), 100%) !important;
+        margin-left: 0 !important;
+        margin-right: auto !important;
+      }
+      body.heybox-up-rail-open #page-bbs-community .content {
+        justify-content: flex-start !important;
+      }
+      body.heybox-up-rail-open #page-bbs-community main.list {
+        margin-left: 0 !important;
+        margin-right: auto !important;
+      }
+    }
     #page-bbs-community .hb-bbs-home,
     #page-bbs-community .bbs-home__content-list {
       width: auto !important;
       max-width: none !important;
       flex: 1 1 auto !important;
       min-width: 0;
+    }
+    /* 卡片化：帖子之间留间隙与细边，滚动时条目边界一眼可辨。 */
+    #page-bbs-community .bbs-home__content-list {
+      display: flex !important;
+      flex-direction: column;
+      gap: var(--heybox-up-gap);
+      padding: 4px 0 28px !important;
+    }
+    #page-bbs-community .bbs-home__content-item {
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 1px solid var(--heybox-up-border) !important;
+      border-radius: var(--heybox-up-radius-card) !important;
+      background-color: var(--heybox-up-surface) !important;
+      box-shadow: var(--heybox-up-shadow-1);
+      overflow: hidden;
+      transition: border-color .16s ease, box-shadow .16s ease;
+    }
+    #page-bbs-community .bbs-home__content-item:hover {
+      border-color: var(--heybox-up-raised) !important;
+      box-shadow: var(--heybox-up-shadow-2);
+    }
+    #page-bbs-community .bbs-home__content-item > a.hb-cpt__bbs-list-content {
+      display: block;
+      padding: var(--heybox-up-card-pad) !important;
+      background: transparent !important;
+    }
+    #page-bbs-community :is(.hb-bbs-home__feed-splitline, .hb-bbs-home__splitline)::before,
+    #page-bbs-community :is(.hb-bbs-home__feed-splitline, .hb-bbs-home__splitline)::after {
+      background: transparent !important;
+    }
+    #page-bbs-community .bbs-home__topic-list-wrapper {
+      margin: 0 0 var(--heybox-up-gap) !important;
+      padding: 10px 14px !important;
+      border: 1px solid var(--heybox-up-border) !important;
+      border-radius: var(--heybox-up-radius-card) !important;
+      background-color: var(--heybox-up-surface) !important;
+      overflow: hidden;
+    }
+    /* 卡片内排版：标题 17/1.5，正文 15/1.72，元信息压到 13px，层级靠字号与颜色拉开。 */
+    #page-bbs-community .bbs-content__title {
+      margin: 10px 0 6px !important;
+      font-size: 17px !important;
+      line-height: 1.5 !important;
+      font-weight: 600;
+      letter-spacing: .005em;
+    }
+    #page-bbs-community .bbs-content__content {
+      font-size: 15px !important;
+      line-height: 1.72 !important;
+      color: var(--heybox-up-text-2) !important;
+    }
+    #page-bbs-community .bbs-list-content__header {
+      gap: 8px;
+    }
+    #page-bbs-community .list-content__username {
+      font-size: 13px !important;
+      font-weight: 500;
+    }
+    #page-bbs-community .bbs-content__imgs-wrapper {
+      margin-top: 10px !important;
+    }
+    #page-bbs-community .bbs-content__image {
+      border-radius: 10px !important;
+    }
+    #page-bbs-community .bbs-new-style-bottom {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--heybox-up-border);
+    }
+    /* 窄屏：卡片化会吃掉内边距，收回固定宽度与内边距，信息流改用整幅。 */
+    @media (max-width: 1100px) {
+      :root {
+        --heybox-up-feed-w: min(960px, 100%);
+        --heybox-up-card-pad: 16px;
+      }
     }
     /* 评论预览侧栏：展开时信息流让出侧栏宽度，侧栏本身在 Shadow DOM 内自绘。 */
     :root { --heybox-up-rail-w: 320px; }
@@ -666,7 +799,7 @@
     }
     @media (min-width: 1200px) {
       body.heybox-up-rail-open #page-bbs-community .content {
-        padding-right: calc(var(--heybox-up-rail-w) + 80px) !important;
+        padding-right: calc(var(--heybox-up-rail-w) + 48px) !important;
         transition: padding-right .18s ease;
       }
     }
@@ -678,14 +811,15 @@
       display: flex !important;
       flex-direction: column;
     }
-    /* 帖子详情：正文左栏，原生评论区在内容容器内改为右栏，避免搬动节点丢失站点样式。 */
+    /* 帖子详情：正文纸张 + 原生评论侧栏，两块各自成卡片，中间留 24px 空隙。 */
     @media (min-width: 1200px) {
       #page-bbs-link .content {
         width: auto !important;
-        max-width: min(1600px, calc(100vw - 48px)) !important;
+        max-width: var(--heybox-up-page-w) !important;
         margin: 0 auto !important;
         gap: 24px;
         align-items: flex-start;
+        justify-content: center;
       }
       #page-bbs-link .list {
         max-width: none !important;
@@ -701,7 +835,7 @@
       }
       #page-bbs-link .hb-bbs-link__content {
         display: grid !important;
-        grid-template-columns: minmax(0, 1fr) 400px;
+        grid-template-columns: minmax(0, 1fr) 424px;
         gap: 24px;
         align-items: start;
         width: auto !important;
@@ -710,19 +844,78 @@
       #page-bbs-link .hb-bbs-image-text {
         grid-column: 1;
         min-width: 0;
+        padding: 28px 32px !important;
+        border: 1px solid var(--heybox-up-border) !important;
+        border-radius: var(--heybox-up-radius-card) !important;
+        background-color: var(--heybox-up-surface) !important;
+        box-shadow: var(--heybox-up-shadow-1);
       }
       #page-bbs-link .link-comment {
         grid-column: 2;
         position: sticky;
         top: 88px;
-        max-height: calc(100vh - 104px);
+        max-height: calc(100vh - 112px);
         overflow: auto;
         width: 100% !important;
         margin: 0 !important;
+        border: 1px solid var(--heybox-up-border) !important;
+        border-radius: var(--heybox-up-radius-card) !important;
+        background-color: var(--heybox-up-surface) !important;
+        box-shadow: var(--heybox-up-shadow-1);
       }
       #page-bbs-link .link-comment .comment__comment-header {
         top: 0 !important;
+        background-color: var(--heybox-up-surface) !important;
       }
+    }
+    /* 正文：16px/1.85 行高，段落限 46em，连续阅读不串行。 */
+    #page-bbs-link :is(.post__title, .image-text__title, .section-title__content) {
+      font-size: 25px !important;
+      line-height: 1.42 !important;
+      font-weight: 700;
+      letter-spacing: -.01em;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) {
+      font-size: 16px !important;
+      line-height: 1.85 !important;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) :is(p, blockquote, h1, h2, h3, h4) {
+      max-width: 46em;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) p {
+      margin: 0 0 .9em !important;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) h2 {
+      margin: 1.4em 0 .6em !important;
+      font-size: 20px !important;
+      line-height: 1.5 !important;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) h3 {
+      margin: 1.2em 0 .5em !important;
+      font-size: 17px !important;
+      line-height: 1.55 !important;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) blockquote {
+      margin: 1em 0 !important;
+      padding: 2px 0 2px 14px !important;
+      border-left: 3px solid var(--heybox-up-accent) !important;
+      color: var(--heybox-up-muted) !important;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) :is(img, .hb-cpt__image) {
+      border-radius: 10px !important;
+    }
+    /* 评论区：14px 正文，楼层用细线分隔，嵌套回复保留站点结构只改圆角与间距。 */
+    #page-bbs-link .link-comment__comment-item {
+      padding: 14px 16px !important;
+      border-top: 1px solid var(--heybox-up-border) !important;
+    }
+    #page-bbs-link :is(.comment-item__content, .children-item__comment-content) {
+      font-size: 14px !important;
+      line-height: 1.7 !important;
+    }
+    #page-bbs-link .link-comment__comment-children {
+      margin-top: 8px !important;
+      border-radius: 10px !important;
     }
     @media (max-width: 1199px) {
       #page-bbs-link .content {
@@ -786,19 +979,43 @@
   const COMMENT_SORT_HOST_ID = "heybox-up-comment-sort";
 
   const COMMENT_SORT_CSS = `
-    :host { display: block; margin: 0 0 8px; }
-    .bar { display: flex; align-items: center; gap: 4px; font: 12px/1.4 system-ui, sans-serif; }
-    .label { margin-right: 4px; color: var(--heybox-up-muted, #6b7280); }
+    :host {
+      display: block;
+      margin: 0 !important;
+      padding: 9px 12px !important;
+      border-bottom: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .1)) !important;
+      background: var(--heybox-up-surface, #fff) !important;
+      font: 12px/1.4 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
+    }
+    .bar { display: flex; align-items: center; gap: 8px; }
+    .group {
+      display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px;
+      background: var(--heybox-up-subtle, rgba(20, 25, 30, .06));
+    }
     .spacer { flex: 1 1 auto; }
     button {
-      padding: 2px 8px; border: 1px solid transparent; border-radius: 999px;
+      padding: 4px 10px; border: 0; border-radius: 999px;
       background: transparent; color: var(--heybox-up-muted, #6b7280);
       font: inherit; cursor: pointer;
+      transition: color .12s ease, background-color .12s ease;
     }
-    button:hover { background: var(--heybox-up-subtle, rgba(20, 25, 30, .06)); color: var(--heybox-up-text, #14191e); }
-    button[aria-pressed="true"] {
-      border-color: var(--heybox-up-accent, #6f8db3);
+    button:hover { color: var(--heybox-up-text, #14191e); }
+    button:focus-visible { outline: 2px solid var(--heybox-up-accent, #6f8db3); outline-offset: 1px; }
+    .group button[aria-pressed="true"] {
+      background: var(--heybox-up-surface, #fff);
+      color: var(--heybox-up-text, #14191e);
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, .14);
+    }
+    .cy {
+      padding: 4px 9px;
+      border: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .1));
+    }
+    .cy[aria-pressed="true"] {
+      border-color: transparent;
+      background: var(--heybox-up-subtle, rgba(20, 25, 30, .06));
       color: var(--heybox-up-accent, #6f8db3);
+      font-weight: 600;
     }
   `;
 
@@ -847,10 +1064,11 @@
     style.textContent = COMMENT_SORT_CSS;
     const bar = document.createElement("div");
     bar.className = "bar";
-    const label = document.createElement("span");
-    label.className = "label";
-    label.textContent = "排序";
-    bar.append(label);
+    const group = document.createElement("div");
+    group.className = "group";
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", "评论排序");
+    bar.append(group);
     let current = mode;
     const buttons = COMMENT_SORTS.map((sort) => {
       const button = document.createElement("button");
@@ -863,7 +1081,7 @@
         for (const node of buttons) node.setAttribute("aria-pressed", String(node.dataset.sort === current));
         applyCommentSort(tree, current);
       });
-      bar.append(button);
+      group.append(button);
       return button;
     });
     const spacer = document.createElement("span");
@@ -1799,10 +2017,11 @@
       --rail-subtle: var(--heybox-up-subtle, rgba(20, 25, 30, .06));
       --rail-line: var(--heybox-up-border, rgba(20, 25, 30, .1));
       --rail-accent: var(--heybox-up-accent, #6f8db3);
+      --rail-radius: var(--heybox-up-radius-card, 14px);
       position: fixed;
-      top: 88px;
-      right: 24px;
-      width: var(--heybox-up-rail-w, 320px);
+      top: 80px;
+      right: 20px;
+      width: var(--heybox-up-rail-w, 340px);
       display: block;
       z-index: 2147483000;
       font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -1816,12 +2035,12 @@
       max-height: calc(100vh - 168px);
       background: var(--rail-bg);
       border: 1px solid var(--rail-line);
-      border-radius: 16px;
-      box-shadow: 0 18px 44px rgba(8, 12, 16, .24);
+      border-radius: var(--rail-radius);
+      box-shadow: var(--heybox-up-shadow-2, 0 18px 44px rgba(8, 12, 16, .24));
       overflow: hidden;
     }
     :host([data-state="collapsed"]) { top: 50%; right: 0; width: auto; transform: translateY(-50%); }
-    :host([data-state="collapsed"]) .panel { border-radius: 12px 0 0 12px; }
+    :host([data-state="collapsed"]) .panel { border-radius: var(--rail-radius) 0 0 var(--rail-radius); }
     :host([data-state="collapsed"]) .dock { display: none; }
     :host([data-state="open"]) .tab { display: none; }
     .tab {
@@ -1841,7 +2060,7 @@
     .tab:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: -2px; }
     .tab svg { width: 15px; height: 15px; }
     .dock { display: flex; flex-direction: column; min-height: 0; }
-    .head { display: flex; gap: 8px; padding: 14px 16px 12px; border-bottom: 1px solid var(--rail-line); }
+    .head { display: flex; gap: 8px; padding: 12px 14px 10px; border-bottom: 1px solid var(--rail-line); }
     .head-text { flex: 1 1 auto; min-width: 0; }
     .kicker { font-size: 10px; letter-spacing: .12em; color: var(--rail-muted); }
     .title {
@@ -1879,9 +2098,9 @@
       letter-spacing: .04em;
     }
     .icon.cy[aria-pressed="true"] { background: var(--rail-subtle); color: var(--rail-accent); }
-    .meta { padding: 9px 16px 0; font-size: 11px; color: var(--rail-muted); }
+    .meta { padding: 8px 14px 0; font-size: 11px; color: var(--rail-muted); }
     .list { margin: 0; padding: 8px 0 0; list-style: none; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
-    .item { display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--rail-subtle); }
+    .item { display: flex; gap: 10px; padding: 11px 14px; border-top: 1px solid var(--rail-subtle); }
     .item:first-child { border-top: 0; }
     .avatar { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; flex: none; background: var(--rail-subtle); }
     .body { flex: 1 1 auto; min-width: 0; }
