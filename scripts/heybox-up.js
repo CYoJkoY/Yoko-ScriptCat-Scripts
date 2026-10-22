@@ -112,6 +112,8 @@
   const FEED_WIDTH_MAX = 76;
 
   function normalizeFeedWidth(value) {
+    // localStorage 未设置时 getItem 返回 null；Number(null) 是 0，会被误夹到下限 40。
+    if (value === null || value === undefined || value === "") return FEED_WIDTH_DEFAULT;
     const parsed = Math.round(Number(value));
     if (!Number.isFinite(parsed)) return FEED_WIDTH_DEFAULT;
     return Math.min(FEED_WIDTH_MAX, Math.max(FEED_WIDTH_MIN, parsed));
@@ -844,9 +846,13 @@
     }
     @media (min-width: 1200px) {
       body.heybox-up-rail-open #page-bbs-community .bbs-community__search-module {
-        width: min(var(--heybox-up-feed-w), 100%) !important;
-        margin-left: 0 !important;
-        margin-right: auto !important;
+        /* 搜索条与栅格中栏同宽同起点，避免预览展开后横跨左栏上方。 */
+        width: min(
+          var(--heybox-up-feed-w),
+          calc(100% - var(--heybox-up-rail-w) - var(--heybox-up-rail-w) - 48px)
+        ) !important;
+        margin-left: calc(var(--heybox-up-rail-w) + 24px) !important;
+        margin-right: 0 !important;
       }
       body.heybox-up-rail-open #page-bbs-community .content {
         justify-content: flex-start !important;
