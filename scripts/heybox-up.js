@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.10
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页底部提供上一篇/下一篇（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在主题菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.11
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在主题菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在主题菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -3659,22 +3659,48 @@
     sync();
   }
 
-  // 帖子连读：在帖子页底部提供上一篇/下一篇，切换走站内路由，不整页刷新。
+  // 帖子连读：在帖子页纵轴中心左右两侧提供上一篇/下一篇箭头，切换走站内路由，不整页刷新。
   const PAGER_ID = "heybox-up-post-pager";
   const FEED_ORDER_KEY = "heybox-up.feedOrder.v1";
   const POST_TRAIL_KEY = "heybox-up.postTrail.v1";
   const POST_TRAIL_MAX = 40;
 
   const PAGER_CSS = `
-    :host { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); display: block; z-index: 2147482990; font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--heybox-up-text, #14191e); }
+    :host { position: fixed; inset: 0; display: block; pointer-events: none; z-index: 2147482990; font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--heybox-up-text, #14191e); }
     :host([hidden]) { display: none; }
-    .bar { display: flex; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .12)); border-radius: 999px; background: var(--heybox-up-surface, #fff); box-shadow: var(--heybox-up-shadow-2, 0 10px 28px rgba(8, 12, 16, .18)); }
-    .btn { display: inline-flex; align-items: center; gap: 3px; height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--heybox-up-text-2, #3c4249); font: inherit; cursor: pointer; white-space: nowrap; }
-    .btn:hover:not(:disabled) { background: var(--heybox-up-subtle, rgba(20, 25, 30, .06)); color: var(--heybox-up-text, #14191e); }
-    .btn:disabled { opacity: .38; cursor: default; }
-    .btn:focus-visible { outline: 2px solid var(--heybox-up-accent, #6f8db3); outline-offset: 1px; }
-    .btn svg { width: 14px; height: 14px; flex: none; }
-    @media (max-width: 720px) { :host { bottom: 10px; } .btn { padding: 0 8px; } }
+    .pager { position: absolute; inset: 0; pointer-events: none; }
+    .btn {
+      position: absolute;
+      top: 50%;
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 64px;
+      padding: 0;
+      border: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .12));
+      border-radius: 999px;
+      background: var(--heybox-up-surface, #fff);
+      box-shadow: var(--heybox-up-shadow-2, 0 10px 28px rgba(8, 12, 16, .18));
+      color: var(--heybox-up-muted, #6b7280);
+      font: inherit;
+      cursor: pointer;
+      opacity: .78;
+      transform: translateY(-50%);
+      pointer-events: auto;
+      transition: opacity .16s ease, color .16s ease, background-color .16s ease, border-color .16s ease;
+    }
+    .btn--prev { left: max(10px, calc((100vw - var(--heybox-up-page-w, 1360px)) / 2 - 54px)); }
+    .btn--next { right: max(10px, calc((100vw - var(--heybox-up-page-w, 1360px)) / 2 - 54px)); }
+    .btn:hover:not(:disabled) { opacity: 1; border-color: var(--heybox-up-accent, #6f8db3); background: var(--heybox-up-subtle, rgba(20, 25, 30, .06)); color: var(--heybox-up-text, #14191e); }
+    .btn:active:not(:disabled) { background: var(--heybox-up-raised, #d7dce3); }
+    .btn:disabled { opacity: .3; cursor: default; }
+    .btn:focus-visible { outline: 2px solid var(--heybox-up-accent, #6f8db3); outline-offset: 2px; }
+    .btn svg { width: 20px; height: 20px; flex: none; transition: transform .16s ease; }
+    .btn--prev:hover:not(:disabled) svg { transform: translateX(-1px); }
+    .btn--next:hover:not(:disabled) svg { transform: translateX(1px); }
+    @media (max-width: 1199px) { .btn { width: 38px; height: 56px; opacity: .64; } .btn--prev { left: 8px; } .btn--next { right: 8px; } }
+    @media (max-width: 1080px) { :host { display: none; } }
+    @media (prefers-reduced-motion: reduce) { .btn, .btn svg { transition: none; } }
   `;
 
   const PAGER_ICONS = {
@@ -3784,20 +3810,23 @@
     const shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = PAGER_CSS;
-    const bar = document.createElement("div");
-    bar.className = "bar";
-    bar.setAttribute("role", "navigation");
-    bar.setAttribute("aria-label", "文章连读");
+    const pager = document.createElement("nav");
+    pager.className = "pager";
+    pager.setAttribute("aria-label", "文章连读");
     const prevButton = document.createElement("button");
     prevButton.type = "button";
-    prevButton.className = "btn";
-    prevButton.innerHTML = PAGER_ICONS.prev + "<span>上一篇</span>";
+    prevButton.className = "btn btn--prev";
+    prevButton.setAttribute("aria-label", "上一篇");
+    prevButton.title = "上一篇";
+    prevButton.innerHTML = PAGER_ICONS.prev;
     const nextButton = document.createElement("button");
     nextButton.type = "button";
-    nextButton.className = "btn";
-    nextButton.innerHTML = "<span>下一篇</span>" + PAGER_ICONS.next;
-    bar.append(prevButton, nextButton);
-    shadow.append(style, bar);
+    nextButton.className = "btn btn--next";
+    nextButton.setAttribute("aria-label", "下一篇");
+    nextButton.title = "下一篇";
+    nextButton.innerHTML = PAGER_ICONS.next;
+    pager.append(prevButton, nextButton);
+    shadow.append(style, pager);
     document.body.append(host);
 
     let currentId = "";
@@ -3852,6 +3881,8 @@
       nextButton.disabled = nextId === "";
       prevButton.title = neighbors.prev ? "上一篇" + (neighbors.prev.title !== "" ? "：" + neighbors.prev.title : "") : "没有上一篇";
       nextButton.title = neighbors.next ? "下一篇" + (neighbors.next.title !== "" ? "：" + neighbors.next.title : "") : "没有下一篇";
+      prevButton.setAttribute("aria-label", prevButton.title);
+      nextButton.setAttribute("aria-label", nextButton.title);
     };
 
     new MutationObserver(() => {
