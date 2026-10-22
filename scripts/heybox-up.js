@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.1.12
+// @version      0.2.0
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，窄屏自动改为上下布局。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -617,6 +617,16 @@
       max-width: none !important;
       flex: 1 1 auto !important;
       min-width: 0;
+    }
+    /* 评论预览侧栏：展开时信息流让出侧栏宽度，侧栏本身在 Shadow DOM 内自绘。 */
+    @media (min-width: 1200px) {
+      body.heybox-up-rail-open #page-bbs-community .content {
+        padding-right: 396px !important;
+        transition: padding-right .18s ease;
+      }
+    }
+    #page-bbs-community :is(.bbs-new-style-bottom__comment, .content-list__comment) {
+      cursor: pointer;
     }
     /* 评论排序只改 order，不动 DOM，避免打断站点自身的列表更新。 */
     #page-bbs-link .link-comment__list {
@@ -1608,10 +1618,548 @@
     sync();
   }
 
+  const RAIL_ID = "heybox-up-comment-rail";
+  const COMMENT_TREE_API_PATH = "/bbs/app/link/tree";
+  const RAIL_PAGE_SIZE = 20;
+  // 预览只读：回复、点赞与楼中楼展开仍走帖子页的原生评论区。
+  const RAIL_TRIGGER_SELECTOR = ".bbs-new-style-bottom__comment, .content-list__comment";
+
+  const RAIL_ICONS = {
+    comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-3-.4L4 21l1.4-4.4A8.3 8.3 0 0 1 3.6 11.5 8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z"/></svg>',
+    external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+    collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+  };
+
+  const RAIL_CSS = `
+    [hidden] { display: none !important; }
+    :host {
+      --rail-bg: var(--heybox-up-surface, #fff);
+      --rail-text: var(--heybox-up-text, #14191e);
+      --rail-text-2: var(--heybox-up-text-2, #3c4249);
+      --rail-muted: var(--heybox-up-muted, #6b7280);
+      --rail-subtle: var(--heybox-up-subtle, rgba(20, 25, 30, .06));
+      --rail-line: var(--heybox-up-border, rgba(20, 25, 30, .1));
+      --rail-accent: var(--heybox-up-accent, #6f8db3);
+      position: fixed;
+      top: 96px;
+      right: 16px;
+      width: 368px;
+      display: block;
+      z-index: 2147483000;
+      font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--rail-text);
+    }
+    :host([data-state="hidden"]) { display: none; }
+    @media (max-width: 1199px) { :host { display: none; } }
+    .panel {
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100vh - 120px);
+      background: var(--rail-bg);
+      border: 1px solid var(--rail-line);
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(8, 12, 16, .18);
+      overflow: hidden;
+    }
+    :host([data-state="collapsed"]) { top: 50%; right: 0; width: auto; transform: translateY(-50%); }
+    :host([data-state="collapsed"]) .panel { border-radius: 12px 0 0 12px; }
+    :host([data-state="collapsed"]) .dock { display: none; }
+    :host([data-state="open"]) .tab { display: none; }
+    .tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      padding: 12px 7px;
+      border: 0;
+      background: transparent;
+      color: var(--rail-muted);
+      font: inherit;
+      writing-mode: vertical-rl;
+      cursor: pointer;
+    }
+    .tab:hover { background: var(--rail-subtle); color: var(--rail-text); }
+    .tab:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: -2px; }
+    .tab svg { width: 15px; height: 15px; }
+    .dock { display: flex; flex-direction: column; min-height: 0; }
+    .head { display: flex; gap: 8px; padding: 12px 12px 10px; border-bottom: 1px solid var(--rail-line); }
+    .head-text { flex: 1 1 auto; min-width: 0; }
+    .kicker { font-size: 10px; letter-spacing: .12em; color: var(--rail-muted); }
+    .title {
+      margin-top: 3px;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.45;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+    }
+    .tools { display: flex; flex: none; gap: 2px; }
+    .icon {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--rail-muted);
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .icon:hover { background: var(--rail-subtle); color: var(--rail-text); }
+    .icon:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: 1px; }
+    .icon svg { width: 16px; height: 16px; }
+    .meta { padding: 7px 12px 0; font-size: 11px; color: var(--rail-muted); }
+    .list { margin: 0; padding: 6px 0 0; list-style: none; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+    .item { display: flex; gap: 9px; padding: 10px 12px; border-top: 1px solid var(--rail-subtle); }
+    .item:first-child { border-top: 0; }
+    .avatar { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; flex: none; background: var(--rail-subtle); }
+    .body { flex: 1 1 auto; min-width: 0; }
+    .who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+    .name { font-size: 12px; font-weight: 600; color: var(--rail-text); }
+    .time, .likes, .replies { font-size: 11px; color: var(--rail-muted); }
+    .text { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--rail-text); }
+    .foot { display: flex; gap: 10px; margin-top: 4px; }
+    .sub { display: grid; gap: 4px; margin-top: 7px; padding-left: 9px; border-left: 2px solid var(--rail-subtle); }
+    .quote {
+      font-size: 12px;
+      color: var(--rail-text-2);
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+    }
+    .quote .quote-name { color: var(--rail-muted); }
+    .status { padding: 22px 14px; text-align: center; color: var(--rail-muted); }
+    .foot-bar { display: flex; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--rail-line); }
+    .action {
+      flex: 1 1 auto;
+      height: 30px;
+      border: 1px solid var(--rail-line);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--rail-text);
+      font: inherit;
+      cursor: pointer;
+    }
+    .action:hover { background: var(--rail-subtle); }
+    .action:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: 1px; }
+    .action.primary { border-color: transparent; background: var(--rail-accent); color: var(--heybox-up-on-accent, #fff); }
+  `;
+
+
+  function createApiParams(path) {
+    const time = Math.floor(Date.now() / 1000);
+    const nonce = md5Hex(String(time) + String(Math.random())).toUpperCase();
+    return {
+      os_type: "web",
+      app: "heybox",
+      client_type: "web",
+      version: "999.0.4",
+      web_version: "2.5",
+      x_client_type: "web",
+      x_app: "heybox_website",
+      x_os_type: "Windows",
+      device_info: "Chrome",
+      hkey: createSignature(path, time, nonce),
+      _time: String(time),
+      nonce: nonce,
+    };
+  }
+
+  function buildLinkCommentUrl(linkId, page) {
+    const query = new URLSearchParams({
+      ...createApiParams(COMMENT_TREE_API_PATH),
+      heybox_id: getHeyboxId(),
+      link_id: String(linkId),
+      is_first: page === 1 ? "1" : "0",
+      page: String(page),
+      index: "1",
+      limit: String(RAIL_PAGE_SIZE),
+      owner_only: "0",
+    });
+    // h_src 是站点网页端自带的空参数，缺省时接口更容易触发风控。
+    return "https://api.xiaoheihe.cn" + COMMENT_TREE_API_PATH + "?" + query.toString().replace("&link_id=", "&h_src&link_id=");
+  }
+
+  function normalizeRailText(value) {
+    return String(value === undefined || value === null ? "" : value)
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 400);
+  }
+
+  function normalizeRailComment(comment) {
+    const raw = comment && typeof comment === "object" ? comment : {};
+    const user = raw.user && typeof raw.user === "object" ? raw.user : {};
+    const avatar = user.avatar || user.avartar || "";
+    return {
+      id: String(raw.comment_id || raw.commentid || raw.id || ""),
+      name: String(user.username || user.nickname || "匿名用户").trim(),
+      avatar: typeof avatar === "string" ? avatar : "",
+      text: normalizeRailText(raw.text),
+      createAt: Number(raw.create_at) || 0,
+      likes: Number(raw.support_num || raw.support_count) || 0,
+      replies: Number(raw.reply_count || raw.sub_comment_num) || 0,
+    };
+  }
+
+  function normalizeRailGroup(group) {
+    const list = group && Array.isArray(group.comment) ? group.comment : [];
+    const root = list[0];
+    if (!root) return null;
+    const item = normalizeRailComment(root);
+    if (item.id === "" && item.text === "" && item.name === "匿名用户") return null;
+    item.quotes = list.slice(1, 3).map(normalizeRailComment).filter((quote) => quote.text !== "");
+    return item;
+  }
+
+  async function fetchRailPage(linkId, page) {
+    const response = await fetch(buildLinkCommentUrl(linkId, page), {
+      credentials: "include",
+      headers: { accept: "application/json" },
+    });
+    if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
+    const data = await response.json();
+    if (data.status !== "ok") throw new Error(data.msg || "接口返回 " + data.status);
+    const result = data.result && typeof data.result === "object" ? data.result : {};
+    const groups = Array.isArray(result.comments) ? result.comments : [];
+    const link = result.link && typeof result.link === "object" ? result.link : {};
+    return {
+      items: groups.map(normalizeRailGroup).filter((item) => item !== null),
+      total: Number(link.comment_num || result.total_floor_num) || 0,
+      title: typeof link.title === "string" ? link.title.trim() : "",
+    };
+  }
+
+  function formatRailAge(value) {
+    const seconds = Math.floor(Date.now() / 1000) - Number(value || 0);
+    if (!Number.isFinite(seconds) || seconds < 60) return "刚刚";
+    if (seconds < 3600) return Math.floor(seconds / 60) + " 分钟前";
+    if (seconds < 86400) return Math.floor(seconds / 3600) + " 小时前";
+    if (seconds < 86400 * 30) return Math.floor(seconds / 86400) + " 天前";
+    return formatTime(value).slice(0, 10);
+  }
+
+  function createCommentRail() {
+    const host = document.createElement("div");
+    host.id = RAIL_ID;
+    host.dataset.state = "hidden";
+    const shadow = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = RAIL_CSS;
+
+    const panel = document.createElement("div");
+    panel.className = "panel";
+
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "tab";
+    tab.setAttribute("aria-label", "展开评论预览");
+    tab.setAttribute("aria-expanded", "false");
+    tab.innerHTML = RAIL_ICONS.comment + "<span>评论</span>";
+
+    const dock = document.createElement("div");
+    dock.className = "dock";
+
+    const head = document.createElement("div");
+    head.className = "head";
+    const headText = document.createElement("div");
+    headText.className = "head-text";
+    const kicker = document.createElement("div");
+    kicker.className = "kicker";
+    kicker.textContent = "评论预览";
+    const titleNode = document.createElement("div");
+    titleNode.className = "title";
+    titleNode.textContent = "评论";
+    headText.append(kicker, titleNode);
+    const tools = document.createElement("div");
+    tools.className = "tools";
+    const openLinkNode = document.createElement("a");
+    openLinkNode.className = "icon";
+    openLinkNode.target = "_blank";
+    openLinkNode.rel = "noopener noreferrer";
+    openLinkNode.title = "打开帖子";
+    openLinkNode.setAttribute("aria-label", "打开帖子");
+    openLinkNode.innerHTML = RAIL_ICONS.external;
+    const collapseButton = document.createElement("button");
+    collapseButton.type = "button";
+    collapseButton.className = "icon";
+    collapseButton.title = "收起";
+    collapseButton.setAttribute("aria-label", "收起评论预览");
+    collapseButton.innerHTML = RAIL_ICONS.collapse;
+    tools.append(openLinkNode, collapseButton);
+    head.append(headText, tools);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const list = document.createElement("ol");
+    list.className = "list";
+    const status = document.createElement("div");
+    status.className = "status";
+    const footBar = document.createElement("div");
+    footBar.className = "foot-bar";
+    const moreButton = document.createElement("button");
+    moreButton.type = "button";
+    moreButton.className = "action";
+    moreButton.textContent = "加载更多";
+    footBar.append(moreButton);
+
+    dock.append(head, meta, list, status, footBar);
+    panel.append(tab, dock);
+    shadow.append(style, panel);
+
+    const state = {
+      mode: "hidden",
+      linkId: "",
+      title: "",
+      total: 0,
+      page: 0,
+      items: [],
+      loading: false,
+      error: "",
+      hasMore: false,
+      seq: 0,
+    };
+
+    const applyMode = () => {
+      host.dataset.state = state.mode;
+      tab.setAttribute("aria-expanded", String(state.mode === "open"));
+      if (document.body) document.body.classList.toggle("heybox-up-rail-open", state.mode === "open");
+    };
+
+    const createQuote = (quote) => {
+      const node = document.createElement("div");
+      node.className = "quote";
+      const name = document.createElement("span");
+      name.className = "quote-name";
+      name.textContent = quote.name + "：";
+      node.append(name, document.createTextNode(quote.text));
+      return node;
+    };
+
+    const createItem = (comment) => {
+      const item = document.createElement("li");
+      item.className = "item";
+      item.setAttribute("role", "listitem");
+      const avatar = document.createElement("img");
+      avatar.className = "avatar";
+      avatar.alt = "";
+      avatar.loading = "lazy";
+      avatar.referrerPolicy = "no-referrer";
+      if (comment.avatar !== "") avatar.src = comment.avatar;
+      const body = document.createElement("div");
+      body.className = "body";
+      const who = document.createElement("div");
+      who.className = "who";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = comment.name;
+      who.append(name);
+      if (comment.createAt > 0) {
+        const time = document.createElement("span");
+        time.className = "time";
+        time.textContent = formatRailAge(comment.createAt);
+        who.append(time);
+      }
+      const text = document.createElement("p");
+      text.className = "text";
+      text.textContent = comment.text === "" ? "（图片或表情评论）" : comment.text;
+      const foot = document.createElement("div");
+      foot.className = "foot";
+      if (comment.likes > 0) {
+        const likes = document.createElement("span");
+        likes.className = "likes";
+        likes.textContent = "赞 " + comment.likes;
+        foot.append(likes);
+      }
+      if (comment.replies > 0) {
+        const replies = document.createElement("span");
+        replies.className = "replies";
+        replies.textContent = comment.replies + " 条回复";
+        foot.append(replies);
+      }
+      body.append(who, text);
+      if (foot.childElementCount > 0) body.append(foot);
+      if (comment.quotes.length > 0) {
+        const sub = document.createElement("div");
+        sub.className = "sub";
+        sub.append(...comment.quotes.map(createQuote));
+        body.append(sub);
+      }
+      item.append(avatar, body);
+      return item;
+    };
+
+    const render = () => {
+      titleNode.textContent = state.title !== "" ? state.title : "评论";
+      openLinkNode.href = state.linkId !== "" ? LINK_HREF_PREFIX + state.linkId : "#";
+      openLinkNode.hidden = state.linkId === "";
+      if (state.error !== "") {
+        meta.textContent = "";
+      } else if (state.total > 0) {
+        meta.textContent = "共 " + state.total + " 条评论" + (state.items.length > 0 ? " · 已加载 " + state.items.length + " 条" : "");
+      } else {
+        meta.textContent = state.items.length > 0 ? "已加载 " + state.items.length + " 条" : "";
+      }
+      list.replaceChildren(...state.items.map(createItem));
+      list.hidden = state.items.length === 0;
+      if (state.error !== "") {
+        status.textContent = state.error;
+        status.hidden = false;
+      } else if (state.loading && state.items.length === 0) {
+        status.textContent = "正在加载评论…";
+        status.hidden = false;
+      } else if (state.linkId === "") {
+        status.textContent = "点信息流里帖子的评论数字，就能在这里预览评论。";
+        status.hidden = false;
+      } else if (state.items.length === 0) {
+        status.textContent = "这条帖子还没有评论";
+        status.hidden = false;
+      } else {
+        status.hidden = true;
+      }
+      moreButton.hidden = state.linkId === "" || !state.hasMore;
+      moreButton.textContent = state.loading ? "加载中…" : "加载更多";
+      footBar.hidden = moreButton.hidden;
+    };
+
+    const load = async (page) => {
+      const seq = ++state.seq;
+      state.loading = true;
+      state.error = "";
+      render();
+      try {
+        const data = await fetchRailPage(state.linkId, page);
+        if (seq !== state.seq) return;
+        state.items = page === 1 ? data.items : state.items.concat(data.items);
+        state.page = page;
+        state.hasMore = data.items.length > 0;
+        if (data.total > 0) state.total = data.total;
+        if (data.title !== "" && state.title === "") state.title = data.title;
+      } catch (error) {
+        if (seq !== state.seq) return;
+        state.error = "评论加载失败：" + (error && error.message ? error.message : "未知错误") + "，可打开帖子查看。";
+        state.hasMore = false;
+      } finally {
+        if (seq === state.seq) {
+          state.loading = false;
+          render();
+        }
+      }
+    };
+
+    const open = (linkId) => {
+      const next = String(linkId === undefined || linkId === null ? "" : linkId);
+      if (next === "") return;
+      state.mode = "open";
+      applyMode();
+      if (next === state.linkId) return;
+      state.linkId = next;
+      state.title = "";
+      state.total = 0;
+      state.page = 0;
+      state.items = [];
+      state.hasMore = false;
+      state.error = "";
+      render();
+      void load(1);
+    };
+
+    const collapse = () => {
+      state.mode = state.linkId === "" ? "hidden" : "collapsed";
+      applyMode();
+    };
+
+    const setActive = (active) => {
+      if (!active) {
+        state.seq += 1;
+        state.loading = false;
+        state.mode = "hidden";
+        applyMode();
+        return;
+      }
+      if (state.mode !== "hidden") return;
+      state.mode = "collapsed";
+      applyMode();
+    };
+
+    tab.addEventListener("click", () => {
+      state.mode = "open";
+      applyMode();
+      render();
+    });
+    collapseButton.addEventListener("click", collapse);
+    moreButton.addEventListener("click", () => {
+      if (state.loading || state.linkId === "") return;
+      void load(state.page + 1);
+    });
+
+    applyMode();
+    render();
+
+    return {
+      host,
+      open,
+      collapse,
+      setActive,
+      isOpen: () => state.mode === "open",
+    };
+  }
+
+  function watchCommentRail() {
+    if (!document.body) return;
+    const rail = createCommentRail();
+    document.body.append(rail.host);
+
+    const isFeedPage = () => !location.pathname.startsWith(LINK_HREF_PREFIX)
+      && document.querySelector("#page-bbs-community .bbs-home__content-list") !== null;
+
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const trigger = target.closest(RAIL_TRIGGER_SELECTOR);
+      if (!trigger) return;
+      const anchor = trigger.closest('a[href*="/app/bbs/link/"]');
+      if (!anchor) return;
+      const match = /link\/(\d+)/.exec(anchor.getAttribute("href") || "");
+      if (!match) return;
+      if (!isFeedPage()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      rail.open(match[1]);
+    }, true);
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !rail.isOpen()) return;
+      event.preventDefault();
+      rail.collapse();
+    });
+
+    let scheduled = false;
+    const sync = () => {
+      if (rail.host.parentNode !== document.body) document.body.append(rail.host);
+      rail.setActive(isFeedPage());
+    };
+    new MutationObserver(() => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        sync();
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+    sync();
+  }
+
   function boot() {
     watchTheme();
     watchCommentSort();
     watchFavourPage();
+    watchCommentRail();
   }
 
   if (document.readyState === "loading") {
