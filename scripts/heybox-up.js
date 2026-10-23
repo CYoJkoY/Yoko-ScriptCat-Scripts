@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.31
+// @version      0.4.32
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -167,6 +167,73 @@
   // 站点会在评论上带 is_cy，值可能是数字 1、字符串 "1" 或布尔 true。
   function isCyComment(comment) {
     return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
+  }
+
+  // Page edits arrive in bursts. One bounded observer replaces the independent body observers
+  // so unrelated mutations cannot fan out into every route-specific sync on the same frame.
+  const PAGE_SYNC_INTERVAL_MS = 120;
+  const pageSyncTasks = new Map();
+  let pageSyncTimer = 0;
+  let pageSyncLastRun = 0;
+
+  function registerPageSync(task, intervalMs = 0) {
+    pageSyncTasks.set(task, { intervalMs, lastRun: 0 });
+  }
+
+  function runPageSyncTasks() {
+    pageSyncTimer = 0;
+    const now = performance.now();
+    pageSyncLastRun = now;
+    for (const [task, state] of pageSyncTasks) {
+      if (now - state.lastRun < state.intervalMs) continue;
+      state.lastRun = now;
+      try {
+        task();
+      } catch (error) {
+        console.error("[HeyBox Up] DOM sync failed", error);
+      }
+    }
+  }
+
+  function schedulePageSync() {
+    if (pageSyncTimer !== 0) return;
+    const elapsed = performance.now() - pageSyncLastRun;
+    pageSyncTimer = window.setTimeout(runPageSyncTasks, Math.max(0, PAGE_SYNC_INTERVAL_MS - elapsed));
+  }
+
+  function isRelevantPageMutation(record) {
+    const target = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
+    if (target === null || target === undefined) return true;
+    // The script's own panels and editable content cannot affect route-level mounts.
+    if (target.closest('[id^="heybox-up-"]') !== null) return false;
+    return target.closest("input, textarea, select, [contenteditable='true']") === null;
+  }
+
+  function startPageSyncObserver() {
+    if (!document.body || !document.body.isConnected) return;
+    new MutationObserver((records) => {
+      if (records.some(isRelevantPageMutation)) schedulePageSync();
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+
+  const ensuredStyleIds = new Set();
+
+  function ensureStyleElement(id, css, appendToEnd = false) {
+    let style = document.getElementById(id);
+    if (style === null) {
+      style = document.createElement("style");
+      style.id = id;
+      style.textContent = css;
+    } else if (!ensuredStyleIds.has(id) && style.textContent !== css) {
+      /* Reuse a hot-updated node once, then avoid comparing the full stylesheet on every sync. */
+      style.textContent = css;
+    }
+    const parent = document.head || document.documentElement;
+    if (parent === null) return;
+    if (style.parentNode !== parent || (appendToEnd && parent === document.head && parent.lastElementChild !== style)) {
+      parent.append(style);
+    }
+    ensuredStyleIds.add(id);
   }
 
   const THEME_CLASS = "heybox-up-theme";
@@ -1725,7 +1792,6 @@
     if (!document.body) return;
     let host = null;
     let mode = "default";
-    let scheduled = false;
     let cyLinkId = "";
     let cyPage = 0;
     let cyDone = false;
@@ -1842,16 +1908,7 @@
       void pullCyIds();
     };
 
-    const schedule = () => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-      });
-    };
-
-    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+    registerPageSync(sync, 250);
     document.addEventListener(HIDE_CY_EVENT, () => {
       updateCyButton();
       markCy();
@@ -1948,20 +2005,7 @@
   const SETTINGS_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 8.9 4.6h.08A1.7 1.7 0 0 0 10 3.04V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 8.9v.08A1.7 1.7 0 0 0 20.96 10H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>';
 
   function ensureThemeStyle() {
-    let style = document.getElementById("heybox-up-theme-style");
-    if (!style) {
-      style = document.createElement("style");
-      style.id = "heybox-up-theme-style";
-      style.textContent = THEME_CSS;
-    } else if (style.textContent !== THEME_CSS) {
-      /* 脚本热更新后复用旧节点会导致旧样式残留，按当前版本重写。 */
-      style.textContent = THEME_CSS;
-    }
-    const parent = document.head || document.documentElement;
-    if (!parent) return;
-    if (style.parentNode !== parent || parent === document.head && document.head.lastElementChild !== style) {
-      parent.append(style);
-    }
+    ensureStyleElement("heybox-up-theme-style", THEME_CSS, true);
   }
 
   function updateThemeEntry() {
@@ -1993,7 +2037,7 @@
     ensureThemeStyle();
     if (persist) writeThemeMode(currentThemeMode);
     updateThemeEntry();
-    if (preset.dark === true) scheduleDarkSweep();
+    if (preset.dark === true) scheduleDarkSweep(true);
     else clearDarkSweep();
   }
 
@@ -2255,6 +2299,7 @@
 
   function mountThemeEntry() {
     if (!document.body) return;
+    if (themeEntry?.host.isConnected && themeEntry.host.parentElement?.classList.contains("nav-actions")) return;
     const actions = document.querySelector(".nav-actions");
     if (!actions) return;
     if (!themeEntry) createThemeEntry();
@@ -2266,22 +2311,13 @@
 
   function watchTheme() {
     if (!document.body) return;
-    let scheduled = false;
     const sync = () => {
       ensureThemeStyle();
       mountThemeEntry();
+      scheduleDarkSweep();
     };
-    new MutationObserver(() => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-        scheduleDarkSweep();
-      });
-    }).observe(document.body, { childList: true, subtree: true });
+    registerPageSync(sync, 200);
     sync();
-    scheduleDarkSweep();
   }
 
   // 站点把不少底色直接写在组件里，选择器一变就漏出白块。深色主题下对这些页面做一次兜底扫描：
@@ -2299,6 +2335,7 @@
   ]);
   const RGB_COLOR = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/;
   let darkSweepTimer = 0;
+  let darkSweepLastRun = 0;
 
   function parseRgbColor(value) {
     const match = RGB_COLOR.exec(value || "");
@@ -2385,12 +2422,21 @@
       || isNearWhite(parseRgbColor(style.borderLeftColor), 240);
   }
 
-  function scheduleDarkSweep() {
-    if (darkSweepTimer !== 0) return;
+  function scheduleDarkSweep(force = false) {
+    if (document.documentElement.getAttribute("data-heybox-up-dark") !== "true") return;
+    if (document.querySelector(DARK_SWEEP_ROOT_SELECTOR) === null) return;
+    if (darkSweepTimer !== 0) {
+      if (!force) return;
+      window.clearTimeout(darkSweepTimer);
+      darkSweepTimer = 0;
+    }
+    const elapsed = performance.now() - darkSweepLastRun;
+    const delay = force ? 350 : Math.max(350, 1200 - elapsed);
     darkSweepTimer = window.setTimeout(() => {
       darkSweepTimer = 0;
+      darkSweepLastRun = performance.now();
       sweepDarkSurfaces();
-    }, 350);
+    }, delay);
   }
 
   // 顶部导航只保留四个高频入口，用「SVG + 文本」替换站点原有的七个文字按钮。
@@ -2504,17 +2550,7 @@
   }
 
   function ensureNavStyle() {
-    let style = document.getElementById(NAV_STYLE_ID);
-    if (!style) {
-      style = document.createElement("style");
-      style.id = NAV_STYLE_ID;
-      style.textContent = NAV_CSS;
-    } else if (style.textContent !== NAV_CSS) {
-      style.textContent = NAV_CSS;
-    }
-    const parent = document.head || document.documentElement;
-    if (!parent) return;
-    if (style.parentNode !== parent) parent.append(style);
+    ensureStyleElement(NAV_STYLE_ID, NAV_CSS);
   }
 
   function readNavActiveId() {
@@ -2526,16 +2562,26 @@
     return "";
   }
 
+  let navActiveHost = null;
+  let navActiveId = "";
+
   function syncNavActive() {
     const host = document.getElementById(NAV_ID);
-    if (!host) return;
+    if (!host) {
+      navActiveHost = null;
+      navActiveId = "";
+      return;
+    }
     const activeId = readNavActiveId();
+    if (host === navActiveHost && activeId === navActiveId) return;
     for (const node of host.querySelectorAll(".hbu-nav-link")) {
       const active = node.dataset.nav === activeId;
       node.classList.toggle("is-active", active);
       if (active) node.setAttribute("aria-current", "page");
       else node.removeAttribute("aria-current");
     }
+    navActiveHost = host;
+    navActiveId = activeId;
   }
 
   function scrollToCySection() {
@@ -2598,10 +2644,15 @@
 
   function mountTopNav() {
     if (!document.body) return;
+    const current = document.getElementById(NAV_ID);
+    if (current?.parentElement?.classList.contains("nav-links") && current.parentElement.firstElementChild === current) {
+      syncNavActive();
+      return;
+    }
     const links = document.querySelector(".nav .nav-links") || document.querySelector(".nav-links");
     if (!links) return;
     ensureNavStyle();
-    let host = document.getElementById(NAV_ID);
+    let host = current;
     if (!host) {
       host = document.createElement("div");
       host.id = NAV_ID;
@@ -2618,21 +2669,13 @@
 
   function watchTopNav() {
     if (!document.body) return;
-    let scheduled = false;
     const sync = () => {
       mountTopNav();
       syncNavActive();
     };
     window.addEventListener("hashchange", syncNavActive);
     window.addEventListener("popstate", syncNavActive);
-    new MutationObserver(() => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-      });
-    }).observe(document.body, { childList: true, subtree: true });
+    registerPageSync(sync, 200);
     sync();
   }
 
@@ -3165,7 +3208,6 @@
   function watchFavourPage() {
     if (!document.body) return;
     let section = null;
-    let scheduled = false;
     let cyJumpDone = false;
 
     const sync = () => {
@@ -3187,16 +3229,7 @@
       }
     };
 
-    const schedule = () => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-      });
-    };
-
-    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+    registerPageSync(sync, 300);
     sync();
   }
 
@@ -4057,7 +4090,6 @@
       rail.collapse();
     });
 
-    let scheduled = false;
     let autoOpened = false;
     const sync = () => {
       if (rail.host.parentNode !== document.body) document.body.append(rail.host);
@@ -4082,14 +4114,7 @@
       }
     };
     document.addEventListener(COMMENT_PREVIEW_EVENT, sync);
-    new MutationObserver(() => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-      });
-    }).observe(document.body, { childList: true, subtree: true });
+    registerPageSync(sync, 200);
     sync();
   }
 
@@ -4845,9 +4870,13 @@
       }
     });
 
-    let scheduled = false;
+    let lastFeedOrderAt = 0;
     const sync = () => {
-      recordFeedOrder();
+      const now = performance.now();
+      if (now - lastFeedOrderAt >= 1000) {
+        lastFeedOrderAt = now;
+        recordFeedOrder();
+      }
       const id = readPostLinkId();
       if (id === "") {
         host.hidden = true;
@@ -4870,14 +4899,7 @@
       nextButton.setAttribute("aria-label", nextButton.title);
     };
 
-    new MutationObserver(() => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-      });
-    }).observe(document.body, { childList: true, subtree: true });
+    registerPageSync(sync, 200);
     sync();
   }
 
@@ -4922,15 +4944,7 @@
   }
 
   function ensureReaderStyle() {
-    let style = document.getElementById(READER_STYLE_ID);
-    if (style === null) {
-      style = document.createElement("style");
-      style.id = READER_STYLE_ID;
-      style.textContent = READER_CSS;
-      (document.head || document.documentElement).append(style);
-    } else if (style.textContent !== READER_CSS) {
-      style.textContent = READER_CSS;
-    }
+    ensureStyleElement(READER_STYLE_ID, READER_CSS);
   }
 
   // 沉浸阅读：只克隆正文排版，评论与按钮仍指向站点原生节点。
@@ -4951,9 +4965,9 @@
     let coverIndex = 0;
     let coverTotal = 0;
     let observer = null;
-    let scheduled = false;
     let scrollRaf = 0;
     let restoring = false;
+    let lastActionSyncAt = 0;
     let linkState = null;
     let linkStatePromise = null;
     let actionBusy = false;
@@ -6426,12 +6440,27 @@
       return page;
     };
 
-    const readData = () => {
+    const readSource = () => {
       const pageRoot = document.querySelector("#page-bbs-link");
       const article = pageRoot?.querySelector(".hb-bbs-image-text, .hb-bbs-post");
       const body = article?.querySelector(".image-text__content, .post__content");
       const titleNode = article?.querySelector(".section-title__content, .post__title, .image-text__title");
       if (!pageRoot || !article || !body) return null;
+      const covers = pageRoot.querySelectorAll(".image-text__header-image img, .post__header-image img");
+      const tags = pageRoot.querySelectorAll(".link-tags__tag-item");
+      const related = pageRoot.querySelectorAll(".bbs-link__related-recommend a[href*='/app/bbs/link/'], .related-recommend__container a[href*='/app/bbs/link/']");
+      return {
+        pageRoot,
+        article,
+        body,
+        titleNode,
+        signature: [articleId, titleNode?.textContent?.length || 0, body.childNodes.length, (body.textContent || "").length, covers.length, tags.length, related.length].join(":"),
+      };
+    };
+
+    const readData = (source) => {
+      if (source === null) return null;
+      const { pageRoot, article, body, titleNode } = source;
       const authorNode = pageRoot.querySelector(".link-user__username, .page-header__username");
       const authorLink = pageRoot.querySelector(".link-user__user-wrapper, .page-header__user-wrapper");
       const avatarNode = authorLink?.querySelector("img") || pageRoot.querySelector(".page-header__user-wrapper img");
@@ -6465,7 +6494,7 @@
         level: level,
         related: related,
         counts: readCounts(),
-        signature: [articleId, titleNode?.textContent?.length || 0, body.childNodes.length, (body.textContent || "").length, covers.length, tags.length, related.length].join(":"),
+        signature: source.signature,
       };
     };
 
@@ -6529,6 +6558,7 @@
         });
       }, { passive: true });
       syncActionStates();
+      lastActionSyncAt = performance.now();
       void loadLinkState();
       const ratio = readReaderRatio(articleId);
       const restore = ratio < 0 ? Math.min(pageCount - 1, readReaderScroll(articleId)) : 0;
@@ -6646,25 +6676,24 @@
       }
       articleId = match[1];
       if (document.body.classList.contains(READER_COMMENT_CLASS) && document.querySelector("#page-bbs-link .link-comment") === null) closeComments();
-      const data = readData();
-      if (data === null) {
+      const source = readSource();
+      if (source === null) {
         showPending();
         return;
       }
       ensureShell();
-      syncActionStates();
-      if (signature === data.signature) return;
-      signature = data.signature;
+      if (signature === source.signature) {
+        const now = performance.now();
+        if (now - lastActionSyncAt >= 1000) {
+          lastActionSyncAt = now;
+          syncActionStates();
+        }
+        return;
+      }
+      signature = source.signature;
+      const data = readData(source);
+      if (data === null) return;
       render(data);
-    };
-
-    const schedule = () => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-      });
     };
 
     document.addEventListener(READER_EVENT, (event) => {
@@ -6675,7 +6704,7 @@
         return;
       }
       signature = "";
-      schedule();
+      sync();
     });
 
     document.addEventListener("keydown", (event) => {
@@ -6733,8 +6762,8 @@
       }
     });
 
-    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
-    window.addEventListener("popstate", () => { signature = ""; schedule(); });
+    registerPageSync(sync, 200);
+    window.addEventListener("popstate", () => { signature = ""; sync(); });
     sync();
   }
 
@@ -7017,16 +7046,7 @@
   `;
 
   function ensureCommunitySearchStyle() {
-    let style = document.getElementById(COMMUNITY_SEARCH_STYLE_ID);
-    if (!style) {
-      style = document.createElement("style");
-      style.id = COMMUNITY_SEARCH_STYLE_ID;
-      style.textContent = COMMUNITY_SEARCH_CSS;
-    } else if (style.textContent !== COMMUNITY_SEARCH_CSS) {
-      style.textContent = COMMUNITY_SEARCH_CSS;
-    }
-    const parent = document.head || document.documentElement;
-    if (parent && style.parentNode !== parent) parent.append(style);
+    ensureStyleElement(COMMUNITY_SEARCH_STYLE_ID, COMMUNITY_SEARCH_CSS);
   }
 
   // 社区页地址形如 /app/topic/link/<topic_id>，社区名优先读右栏社区卡，其次页头与标题。
@@ -7507,15 +7527,7 @@
       setActive(state !== null);
     };
 
-    let scheduled = false;
-    new MutationObserver(() => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-      });
-    }).observe(document.body, { childList: true, subtree: true });
+    registerPageSync(sync, 250);
     window.addEventListener("popstate", () => {
       if (state !== null) close(false);
     });
@@ -7772,16 +7784,7 @@
   `;
 
   function ensureDesktopStyle() {
-    let style = document.getElementById(DESKTOP_STYLE_ID);
-    if (!style) {
-      style = document.createElement("style");
-      style.id = DESKTOP_STYLE_ID;
-      style.textContent = DESKTOP_CSS;
-    } else if (style.textContent !== DESKTOP_CSS) {
-      style.textContent = DESKTOP_CSS;
-    }
-    const parent = document.head || document.documentElement;
-    if (parent && style.parentNode !== parent) parent.append(style);
+    ensureStyleElement(DESKTOP_STYLE_ID, DESKTOP_CSS);
   }
 
   function parseCompactCount(value) {
@@ -7983,7 +7986,8 @@
     const left = createDesktopLeftRail();
     const right = createDesktopRightRail();
     const cache = { channels: "", hot: "" };
-    let scheduled = false;
+    let lastDesktopSyncAt = 0;
+    let lastDesktopPath = location.pathname;
 
     const teardown = () => {
       document.body.classList.remove("heybox-up-desktop-on");
@@ -7993,7 +7997,14 @@
       if (right.root.parentNode !== null) right.root.remove();
     };
 
-    const sync = () => {
+    const sync = (force = false) => {
+      const now = performance.now();
+      if (location.pathname !== lastDesktopPath) {
+        lastDesktopPath = location.pathname;
+        force = true;
+      }
+      if (!force && now - lastDesktopSyncAt < 500) return;
+      lastDesktopSyncAt = now;
       const page = document.querySelector("#page-bbs-community");
       const content = page === null ? null : page.querySelector(".content");
       if (page === null || content === null || page.querySelector("main.list") === null) {
@@ -8009,16 +8020,9 @@
       syncDesktopHot(right, cache);
     };
 
-    new MutationObserver(() => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        sync();
-      });
-    }).observe(document.body, { childList: true, subtree: true });
-    window.addEventListener("popstate", () => requestAnimationFrame(sync));
-    sync();
+    registerPageSync(sync, 400);
+    window.addEventListener("popstate", () => requestAnimationFrame(() => sync(true)));
+    sync(true);
   }
 
   function boot() {
@@ -8032,6 +8036,7 @@
     watchReader();
     watchCommunitySearch();
     watchDesktopShell();
+    startPageSyncObserver();
   }
 
   if (document.readyState === "loading") {
