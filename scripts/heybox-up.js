@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.15
+// @version      0.4.16
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -1000,15 +1000,6 @@
       display: none !important;
     }
     @media (min-width: 1200px) {
-      body.heybox-up-rail-open #page-bbs-community .bbs-community__search-module {
-        /* 搜索条与栅格中栏同宽同起点，避免预览展开后横跨左栏上方。 */
-        width: min(
-          var(--heybox-up-feed-w),
-          calc(100% - var(--heybox-up-rail-w) - var(--heybox-up-rail-w) - 48px)
-        ) !important;
-        margin-left: calc(var(--heybox-up-rail-w) + 24px) !important;
-        margin-right: 0 !important;
-      }
       body.heybox-up-rail-open #page-bbs-community .content {
         justify-content: flex-start !important;
       }
@@ -4850,9 +4841,9 @@
     #heybox-up-left-rail,
     #heybox-up-right-rail {
       position: sticky;
-      /* 站点搜索条 sticky 在 80px 处、高 42px；侧栏从它下方 14px 开始，避免首屏被压住。 */
-      top: 136px;
-      max-height: calc(100vh - 156px);
+      /* 桌面隐藏站点顶部搜索条后，侧栏直接停在导航下方。 */
+      top: 80px;
+      max-height: calc(100vh - 100px);
       overflow: auto;
       font: 13px/1.55 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: var(--heybox-up-text-2, #3c4249);
@@ -4997,6 +4988,23 @@
       box-shadow: 0 0 0 3px rgba(111, 141, 179, .18) !important;
     }
     @media (min-width: 1200px) {
+      /* 顶部搜索条会横跨信息流、压住左栏上沿；桌面把搜索入口收进左栏“浏览”。
+         站点还用固定 ::before 给搜索条铺 146px 高的遮罩；搜索条隐藏后把遮罩压到
+         导航高度，既保留导航下方 16px 的顶部留白，也避免滚动时正文从留白处露出。 */
+      #page-bbs-community.heybox-up-desktop .bbs-community__search-module {
+        display: none !important;
+      }
+      #page-bbs-community.heybox-up-desktop::before {
+        bottom: auto !important;
+        height: 80px !important;
+      }
+      /* 站点还让 main.list 的 8px sticky 伪元素停在原搜索条下沿；搜索条隐藏后
+         它会在 138px 处横切信息流并截获点击。保留其占位，取消吸顶与绘制。 */
+      #page-bbs-community.heybox-up-desktop main.list::before {
+        position: static !important;
+        background: transparent !important;
+        pointer-events: none !important;
+      }
       #page-bbs-community.heybox-up-desktop .content {
         display: grid !important;
         width: 100% !important;
@@ -5122,6 +5130,7 @@
       { id: "community", label: "社区首页", href: "/app/bbs/home", icon: NAV_ICONS.community },
       { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: NAV_ICONS.favour },
       { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: NAV_ICONS.article },
+      { id: "search", label: "全站搜索", href: "/app/search/list", icon: COMMUNITY_SEARCH_ICONS.search },
     ];
     for (const item of links) browse.append(createDesktopRailLink(item, item.id === "community"));
 
@@ -5158,7 +5167,6 @@
     toolsTitle.textContent = "快捷入口";
     toolsBlock.append(toolsTitle);
     const tools = [
-      { id: "search", label: "全站搜索", href: "/app/search/list", icon: COMMUNITY_SEARCH_ICONS.search },
       { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: NAV_ICONS.favour },
       { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: NAV_ICONS.article },
     ];
