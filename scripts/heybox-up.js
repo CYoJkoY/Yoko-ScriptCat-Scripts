@@ -4574,6 +4574,7 @@
       .hbu-reader-page { padding: 22px 64px 48px 24px; }
       .hbu-reader-page[data-kind="hero"] { padding: 0; }
       .hbu-reader-page[data-kind="text"] { padding: 18px 64px 32px 24px; }
+      .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
       .hbu-reader-page[data-kind="media"] { padding: 20px 16px; }
       .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
