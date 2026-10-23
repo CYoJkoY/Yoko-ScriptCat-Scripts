@@ -172,21 +172,54 @@
   // Page edits arrive in bursts. One bounded observer replaces the independent body observers
   // so unrelated mutations cannot fan out into every route-specific sync on the same frame.
   const PAGE_SYNC_INTERVAL_MS = 120;
+  const PAGE_ROUTE = Object.freeze({
+    ARTICLE: "article",
+    FAVOUR: "favour",
+    FEED: "feed",
+    TOPIC: "topic",
+    CREATOR: "creator",
+    OTHER: "other",
+  });
+  const PAGE_ROUTE_RULES = [
+    { id: PAGE_ROUTE.ARTICLE, pattern: /^\/app\/bbs\/link\/\d+(?:\/|$)/ },
+    { id: PAGE_ROUTE.FAVOUR, pattern: /^\/app\/user\/favour\/content(?:\/|$)/ },
+    { id: PAGE_ROUTE.FEED, pattern: /^\/(?:$|app\/bbs\/home(?:\/|$))/ },
+    { id: PAGE_ROUTE.TOPIC, pattern: /^\/app\/topic\/link\/\d+(?:\/|$)/ },
+    { id: PAGE_ROUTE.CREATOR, pattern: /^\/creator(?:\/|$)/ },
+  ];
   const pageSyncTasks = new Map();
   let pageSyncTimer = 0;
   let pageSyncLastRun = 0;
+  let pageSyncRoute = readPageRoute();
 
-  function registerPageSync(task, intervalMs = 0) {
-    pageSyncTasks.set(task, { intervalMs, lastRun: 0 });
+  function readPageRoute(pathname = location.pathname) {
+    for (const rule of PAGE_ROUTE_RULES) {
+      if (rule.pattern.test(pathname)) return rule.id;
+    }
+    return PAGE_ROUTE.OTHER;
+  }
+
+  function registerPageSync(task, intervalMs = 0, routes = null) {
+    pageSyncTasks.set(task, {
+      intervalMs: Math.max(0, Number(intervalMs) || 0),
+      lastRun: 0,
+      routes: Array.isArray(routes) ? new Set(routes) : null,
+    });
   }
 
   function runPageSyncTasks() {
     pageSyncTimer = 0;
     const now = performance.now();
+    const route = readPageRoute();
+    const routeChanged = route !== pageSyncRoute;
     pageSyncLastRun = now;
-    for (const [task, state] of pageSyncTasks) {
-      if (now - state.lastRun < state.intervalMs) continue;
-      state.lastRun = now;
+    pageSyncRoute = route;
+    for (const [task, entry] of pageSyncTasks) {
+      const routeMatches = entry.routes === null || entry.routes.has(route);
+      // Route changes run every task once so the previous route can tear down its UI.
+      if (!routeMatches && !routeChanged) continue;
+      if (!routeChanged && now - entry.lastRun < entry.intervalMs) continue;
+      entry.lastRun = now;
       try {
         task();
       } catch (error) {
@@ -214,9 +247,11 @@
     new MutationObserver((records) => {
       if (records.some(isRelevantPageMutation)) schedulePageSync();
     }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    window.addEventListener("popstate", schedulePageSync);
+    window.addEventListener("hashchange", schedulePageSync);
   }
 
-  const ensuredStyleIds = new Set();
+  const trackedStyleContent = new WeakMap();
 
   function ensureStyleElement(id, css, appendToEnd = false) {
     let style = document.getElementById(id);
@@ -224,16 +259,17 @@
       style = document.createElement("style");
       style.id = id;
       style.textContent = css;
-    } else if (!ensuredStyleIds.has(id) && style.textContent !== css) {
-      /* Reuse a hot-updated node once, then avoid comparing the full stylesheet on every sync. */
+      trackedStyleContent.set(style, css);
+    } else if (trackedStyleContent.get(style) !== css) {
+      /* A replaced or hot-updated style node must be repaired even after the first mount. */
       style.textContent = css;
+      trackedStyleContent.set(style, css);
     }
     const parent = document.head || document.documentElement;
     if (parent === null) return;
     if (style.parentNode !== parent || (appendToEnd && parent === document.head && parent.lastElementChild !== style)) {
       parent.append(style);
     }
-    ensuredStyleIds.add(id);
   }
 
   const THEME_CLASS = "heybox-up-theme";
@@ -1908,7 +1944,7 @@
       void pullCyIds();
     };
 
-    registerPageSync(sync, 250);
+    registerPageSync(sync, 250, [PAGE_ROUTE.ARTICLE]);
     document.addEventListener(HIDE_CY_EVENT, () => {
       updateCyButton();
       markCy();
@@ -2314,10 +2350,11 @@
     const sync = () => {
       ensureThemeStyle();
       mountThemeEntry();
-      scheduleDarkSweep();
     };
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 400);
+    registerPageSync(() => scheduleDarkSweep(), 600, [PAGE_ROUTE.CREATOR, PAGE_ROUTE.TOPIC]);
     sync();
+    scheduleDarkSweep();
   }
 
   // 站点把不少底色直接写在组件里，选择器一变就漏出白块。深色主题下对这些页面做一次兜底扫描：
@@ -2675,7 +2712,7 @@
     };
     window.addEventListener("hashchange", syncNavActive);
     window.addEventListener("popstate", syncNavActive);
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 300);
     sync();
   }
 
@@ -3229,7 +3266,7 @@
       }
     };
 
-    registerPageSync(sync, 300);
+    registerPageSync(sync, 300, [PAGE_ROUTE.FAVOUR]);
     sync();
   }
 
@@ -4114,7 +4151,7 @@
       }
     };
     document.addEventListener(COMMENT_PREVIEW_EVENT, sync);
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 200, [PAGE_ROUTE.FEED]);
     sync();
   }
 
@@ -4899,7 +4936,7 @@
       nextButton.setAttribute("aria-label", nextButton.title);
     };
 
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 200, [PAGE_ROUTE.ARTICLE]);
     sync();
   }
 
@@ -6762,7 +6799,7 @@
       }
     });
 
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 200, [PAGE_ROUTE.ARTICLE]);
     window.addEventListener("popstate", () => { signature = ""; sync(); });
     sync();
   }
@@ -7527,7 +7564,7 @@
       setActive(state !== null);
     };
 
-    registerPageSync(sync, 250);
+    registerPageSync(sync, 250, [PAGE_ROUTE.TOPIC]);
     window.addEventListener("popstate", () => {
       if (state !== null) close(false);
     });
@@ -8020,7 +8057,7 @@
       syncDesktopHot(right, cache);
     };
 
-    registerPageSync(sync, 400);
+    registerPageSync(sync, 400, [PAGE_ROUTE.FEED]);
     window.addEventListener("popstate", () => requestAnimationFrame(() => sync(true)));
     sync(true);
   }
