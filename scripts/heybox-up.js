@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.24
+// @version      0.4.25
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏分页沉浸阅读：封面、正文、图片与结尾逐页吸附，右侧竖排原生点赞/收藏/评论/CY/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -4242,7 +4242,10 @@
     .hbu-reader-page[data-kind="rich"] {
       align-items: stretch;
       justify-content: flex-start;
+      height: 100%;
       padding-top: 96px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     .hbu-reader-rich {
       width: 100%;
@@ -4275,14 +4278,15 @@
       color: var(--hbu-reader-ink) !important;
     }
     .hbu-reader-rich :is(a, .prose-link) { color: var(--heybox-up-accent, #4f7ea8); }
-    .hbu-reader-page[data-kind="media"] { padding: 72px 20px 96px; background: #05070a; }
+    .hbu-reader-page[data-kind="media"] { justify-content: flex-start; height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 72px 20px 96px; background: #05070a; }
     .hbu-reader-media {
       display: block;
       max-width: 100%;
-      max-height: calc(100vh - 190px);
+      max-height: none;
       width: auto;
       height: auto;
       object-fit: contain;
+      margin: auto;
       border-radius: 12px;
       cursor: zoom-in;
       box-shadow: 0 18px 50px rgba(0, 0, 0, .35);
@@ -4479,6 +4483,7 @@
     .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border-radius: 99px; background: rgba(5, 8, 11, .86); color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
     .hbu-reader-toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
     .hbu-reader-toast--fixed { position: fixed; bottom: 58px; z-index: 4060; }
+    .hbu-reader-pending { display: grid; height: 100%; place-items: center; color: var(--hbu-reader-muted); font-size: 13px; letter-spacing: .04em; }
     @media (max-width: 900px) {
       #${READER_ID} { width: 100%; }
       .hbu-reader-scroll { width: 100%; }
@@ -4951,6 +4956,24 @@
       host?.querySelector('[data-action="comment"]')?.focus({ preventScroll: true });
     };
 
+    const trapSheetTab = (event) => {
+      if (event.key !== "Tab") return;
+      const sheet = document.querySelector("#page-bbs-link .link-comment");
+      if (sheet === null) return;
+      const items = Array.from(sheet.querySelectorAll("button, a[href], input, textarea, [tabindex]:not([tabindex='-1'])"))
+        .filter((node) => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== "hidden");
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !sheet.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
     const openLightbox = (source) => {
       if (source === "") return;
       if (lightbox === null) {
@@ -4980,6 +5003,10 @@
       closeSheetButton.setAttribute("aria-label", "关闭评论");
       closeSheetButton.innerHTML = READER_ICONS.close;
       closeSheetButton.onclick = closeComments;
+      if (sheet.dataset.hbuTabTrap !== "1") {
+        sheet.dataset.hbuTabTrap = "1";
+        sheet.addEventListener("keydown", trapSheetTab);
+      }
       if (!sheet.contains(closeSheetButton)) sheet.prepend(closeSheetButton);
       return sheet;
     };
@@ -4991,6 +5018,31 @@
       const next = Math.min(pages.length - 1, Math.max(0, index));
       const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
       pages[next].scrollIntoView({ block: "start", behavior: behavior });
+    };
+
+    const bindSwipe = (scroll) => {
+      let startX = 0;
+      let startY = 0;
+      scroll.addEventListener("touchstart", (event) => {
+        if (event.touches.length !== 1) return;
+        startX = event.touches[0].clientX;
+        startY = event.touches[0].clientY;
+      }, { passive: true });
+      scroll.addEventListener("touchend", (event) => {
+        if (event.changedTouches.length !== 1) return;
+        const deltaX = event.changedTouches[0].clientX - startX;
+        const deltaY = event.changedTouches[0].clientY - startY;
+        if (Math.abs(deltaX) < 52 || Math.abs(deltaX) < Math.abs(deltaY) * 1.3) return;
+        if (activeIndex === 0 && coverTotal > 1) {
+          if (deltaX < 0 && coverIndex === coverTotal - 1) scrollToPage(1);
+          else if (deltaX > 0 && coverIndex === 0) scrollToPage(0);
+          else setCover(coverIndex + (deltaX < 0 ? 1 : -1));
+          return;
+        }
+        const page = host?.querySelectorAll(".hbu-reader-page")[activeIndex];
+        if (page !== undefined && page.scrollWidth > page.clientWidth + 8) return;
+        scrollToPage(activeIndex + (deltaX < 0 ? 1 : -1));
+      }, { passive: true });
     };
 
     const setCover = (value) => {
@@ -5322,12 +5374,6 @@
         img.dataset.active = String(index === 0);
         if (index > 1) img.loading = "lazy";
         img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
-        img.addEventListener("touchstart", (event) => { cover.dataset.touchX = String(event.touches[0].clientX); }, { passive: true });
-        img.addEventListener("touchend", (event) => {
-          const start = Number(cover.dataset.touchX || "0");
-          const delta = event.changedTouches[0].clientX - start;
-          if (Math.abs(delta) > 42) setCover(coverIndex + (delta < 0 ? 1 : -1));
-        }, { passive: true });
         cover.append(img);
       });
       if (data.covers.length > 1) {
@@ -5541,6 +5587,7 @@
       scroll.className = "hbu-reader-scroll";
       scroll.tabIndex = 0;
       scroll.setAttribute("aria-label", "文章分页");
+      bindSwipe(scroll);
       scroll.append(createHero(data));
       buildPages(scroll, data.body);
       scroll.append(createEndPage(data));
@@ -5578,6 +5625,15 @@
           setActive(restore);
         });
       }
+    };
+
+    const showPending = () => {
+      ensureShell();
+      if (host === null || host.childElementCount > 0) return;
+      const pending = document.createElement("div");
+      pending.className = "hbu-reader-pending";
+      pending.textContent = "正在加载文章…";
+      host.append(pending);
     };
 
     const teardown = () => {
@@ -5627,7 +5683,7 @@
       articleId = match[1];
       const data = readData();
       if (data === null) {
-        if (host !== null) teardown();
+        showPending();
         return;
       }
       ensureShell();
@@ -5659,7 +5715,6 @@
 
     document.addEventListener("keydown", (event) => {
       if (host === null || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (isTypingTarget(event.target)) return;
       if (event.key === "Escape") {
         if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
@@ -5677,6 +5732,7 @@
         }
         return;
       }
+      if (isTypingTarget(event.target)) return;
       if (event.key === "ArrowRight" && activeIndex === 0 && coverTotal > 1) {
         event.preventDefault();
         setCover(coverIndex + 1);
