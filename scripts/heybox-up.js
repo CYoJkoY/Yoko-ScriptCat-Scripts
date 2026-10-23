@@ -639,6 +639,13 @@
     :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__space {
       background-color: transparent !important;
     }
+    /* The User tab paints a fixed light notice bar above the result list. */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__middle.user {
+      background-color: var(--heybox-up-surface) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__middle.user::after {
+      color: var(--heybox-up-muted) !important;
+    }
     /* Horizontal result scroller fades to hard-coded white on the right edge. */
     :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .hb-cpt__pagination--right {
       background-image: linear-gradient(to left, var(--heybox-up-surface), var(--heybox-up-surface), transparent) !important;
@@ -2509,11 +2516,11 @@
     const sync = () => {
       ensureThemeStyle();
       mountThemeEntry();
+      scheduleDarkSweep();
     };
     registerPageSync(sync, 400, null, "chrome");
     registerPageSync(() => scheduleDarkSweep(), 600, [PAGE_ROUTE.CREATOR, PAGE_ROUTE.TOPIC]);
     sync();
-    scheduleDarkSweep();
   }
 
   // 站点把不少底色直接写在组件里，选择器一变就漏出白块。深色主题下对这些页面做一次兜底扫描：
