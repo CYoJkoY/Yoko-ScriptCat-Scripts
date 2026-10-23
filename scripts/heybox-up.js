@@ -4828,12 +4828,14 @@
   }
 
   function readReaderRatio(id) {
-    if (id === "") return 0;
+    if (id === "") return -1;
     try {
-      const value = Number(sessionStorage.getItem(READER_RATIO_KEY + id));
-      return Number.isFinite(value) && value > 0 && value <= 1 ? value : 0;
+      const stored = sessionStorage.getItem(READER_RATIO_KEY + id);
+      if (stored === null) return -1;
+      const value = Number(stored);
+      return Number.isFinite(value) && value >= 0 && value <= 1 ? value : -1;
     } catch (error) {
-      return 0;
+      return -1;
     }
   }
 
@@ -5819,12 +5821,12 @@
       }, { passive: true });
       syncActionStates();
       const ratio = readReaderRatio(articleId);
-      const restore = ratio === 0 ? Math.min(pageCount - 1, readReaderScroll(articleId)) : 0;
-      restoring = ratio > 0;
+      const restore = ratio < 0 ? Math.min(pageCount - 1, readReaderScroll(articleId)) : 0;
+      restoring = ratio >= 0;
       updateProgress();
-      if (ratio > 0) writeReaderRatio(articleId, ratio);
+      if (ratio >= 0) writeReaderRatio(articleId, ratio);
       if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) requestAnimationFrame(openComments);
-      if (ratio > 0) {
+      if (ratio >= 0) {
         requestAnimationFrame(() => {
           const node = host?.querySelector(".hbu-reader-scroll");
           if (node === null || node === undefined) return;
