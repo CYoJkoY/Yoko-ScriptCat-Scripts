@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.27
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排原生点赞/收藏/评论/CY/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.28
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -3567,6 +3567,13 @@
       items: groups.map(normalizeRailGroup).filter((item) => item !== null),
       total: Number(link.comment_num || result.total_floor_num) || 0,
       title: typeof link.title === "string" ? link.title.trim() : "",
+      link: {
+        isAward: Number(link.is_award_link) === 1,
+        isFavour: Number(link.is_favour) === 1,
+        awardCount: Number(link.link_award_num) || 0,
+        favourCount: Number(link.favour_count) || 0,
+        commentCount: Number(link.comment_num || result.total_floor_num) || 0,
+      },
       groups,
     };
   }
@@ -4356,12 +4363,13 @@
     }
     .hbu-reader-page[data-kind="hero"] {
       padding: 0;
-      justify-content: flex-end;
+      justify-content: flex-start;
       align-items: stretch;
-      background: #05070a;
-      color: #fff;
+      min-height: 100dvh;
+      background: var(--hbu-reader-page);
+      color: var(--hbu-reader-ink);
     }
-    .hbu-reader-cover { position: absolute; inset: 0; overflow: hidden; background: #05070a; }
+    .hbu-reader-cover { position: relative; inset: auto; flex: 1 1 auto; min-height: 240px; overflow: hidden; background: #05070a; }
     .hbu-reader-cover-glow { position: absolute; inset: -48px; background-position: center; background-size: cover; filter: blur(42px) brightness(.5); transform: scale(1.1); }
     .hbu-reader-cover img {
       position: absolute;
@@ -4378,7 +4386,7 @@
       content: "";
       position: absolute;
       inset: 0;
-      background: linear-gradient(180deg, rgba(0, 0, 0, .28), transparent 22%, transparent 36%, rgba(0, 0, 0, .58) 58%, rgba(0, 0, 0, .93));
+      background: linear-gradient(180deg, rgba(0, 0, 0, .52), transparent 24%);
     }
     .hbu-reader-cover--empty { background: radial-gradient(80% 60% at 25% 15%, rgba(143, 176, 207, .35), transparent 70%), linear-gradient(150deg, #18222c, #070a0e); }
     .hbu-reader-cover-nav {
@@ -4407,20 +4415,20 @@
     .hbu-reader-caption {
       position: relative;
       z-index: 2;
-      width: min(680px, calc(100% - 48px));
-      margin: 0 auto 88px;
-      padding: 22px 26px 24px;
-      border: 1px solid rgba(255, 255, 255, .14);
-      border-radius: 24px;
-      background: rgba(7, 10, 14, .72);
-      box-shadow: 0 28px 70px rgba(0, 0, 0, .45);
-      backdrop-filter: blur(18px) saturate(1.05);
+      flex: none;
+      width: 100%;
+      margin: 0;
+      padding: 22px 60px 64px;
+      border: 0;
+      border-radius: 0;
+      background: var(--hbu-reader-page);
+      color: var(--hbu-reader-ink);
     }
-    .hbu-reader-kicker { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-bottom: 13px; color: rgba(255, 255, 255, .8); font-size: 12px; line-height: 1.4; }
-    .hbu-reader-kicker span { padding: 3px 9px; border: 1px solid rgba(255, 255, 255, .22); border-radius: 99px; background: rgba(0, 0, 0, .22); }
-    .hbu-reader-title { display: -webkit-box; margin: 0 0 12px; overflow: hidden; font-size: 31px; line-height: 1.28; font-weight: 750; letter-spacing: -.02em; text-wrap: balance; text-shadow: 0 2px 18px rgba(0, 0, 0, .42); -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
-    .hbu-reader-byline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: rgba(255, 255, 255, .82); font-size: 13px; }
-    .hbu-reader-byline b { color: #fff; font-weight: 600; }
+    .hbu-reader-kicker { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-bottom: 13px; color: var(--hbu-reader-muted); font-size: 12px; line-height: 1.4; }
+    .hbu-reader-kicker span { padding: 3px 9px; border: 1px solid var(--hbu-reader-border); border-radius: 99px; background: var(--hbu-reader-subtle); }
+    .hbu-reader-title { display: -webkit-box; margin: 0 0 12px; overflow: hidden; color: var(--hbu-reader-ink); font-size: 31px; line-height: 1.28; font-weight: 750; letter-spacing: -.02em; text-wrap: balance; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+    .hbu-reader-byline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--hbu-reader-muted); font-size: 13px; }
+    .hbu-reader-byline b { color: var(--hbu-reader-ink); font-weight: 600; }
     .hbu-reader-page[data-kind="end"] { justify-content: center; gap: 22px; background: var(--hbu-reader-page); }
     .hbu-reader-end-card { width: min(440px, 100%); padding: 24px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-subtle); }
     .hbu-reader-end-head { display: flex; gap: 12px; align-items: center; }
@@ -4510,6 +4518,19 @@
     .hbu-reader-favour-menu button svg, .hbu-reader-favour-menu button i { flex: none; width: 15px; height: 15px; }
     .hbu-reader-favour-menu button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .hbu-reader-favour-empty { padding: 10px; color: rgba(242, 246, 250, .7); font-size: 12px; line-height: 1.5; }
+    .hbu-reader-cy-dialog { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(2, 4, 7, .62); backdrop-filter: blur(4px); }
+    .hbu-reader-cy-dialog[hidden] { display: none; }
+    .hbu-reader-cy-card { width: min(520px, 100%); padding: 20px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); box-shadow: 0 24px 70px rgba(0, 0, 0, .45); }
+    .hbu-reader-cy-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; font-size: 15px; font-weight: 700; }
+    .hbu-reader-cy-close { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+    .hbu-reader-cy-close svg { width: 16px; height: 16px; }
+    .hbu-reader-cy-text { width: 100%; min-height: 132px; padding: 12px; resize: vertical; border: 1px solid var(--hbu-reader-border); border-radius: 12px; outline: none; background: var(--hbu-reader-subtle); color: inherit; font: inherit; line-height: 1.6; }
+    .hbu-reader-cy-text:focus { border-color: var(--heybox-up-accent, #8fb0cf); }
+    .hbu-reader-cy-status { min-height: 18px; margin-top: 8px; color: var(--hbu-reader-muted); font-size: 12px; }
+    .hbu-reader-cy-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+    .hbu-reader-cy-actions button { min-height: 36px; padding: 0 16px; border: 1px solid var(--hbu-reader-border); border-radius: 10px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+    .hbu-reader-cy-actions button[data-primary] { border-color: transparent; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font-weight: 650; }
+    .hbu-reader-cy-actions button:disabled { opacity: .55; cursor: default; }
     .hbu-reader-action-count { display: block; margin-top: 2px; font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1.2; }
     .hbu-reader-progress { position: absolute; right: 0; bottom: 0; left: 0; z-index: 10; display: flex; gap: 10px; align-items: center; height: 46px; padding: 0 18px; background: linear-gradient(0deg, rgba(3, 5, 8, .62), transparent); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
     .hbu-reader-progress-bar { flex: 1 1 auto; height: 2px; overflow: hidden; border-radius: 99px; background: rgba(255, 255, 255, .26); }
@@ -4546,13 +4567,18 @@
     body.${READER_CLASS} #page-bbs-link .link-comment__comment-item { border-color: var(--hbu-reader-border) !important; }
     body.${READER_CLASS} .link-reply { border-color: var(--hbu-reader-border) !important; }
     body.${READER_CLASS} #page-bbs-link .link-comment .link-reply { flex: none; border-top: 1px solid var(--hbu-reader-border) !important; background: var(--hbu-reader-page) !important; }
-    .hbu-reader-sheet-close { position: absolute; top: 12px; right: 12px; z-index: 3; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
+    .hbu-reader-sheet-close { position: absolute; top: 54px; right: 12px; z-index: 101; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
     .hbu-reader-sheet-close svg { width: 17px; height: 17px; }
     .hbu-reader-sheet-status { margin: auto; padding: 28px 18px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
     .hbu-reader-sheet-status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
     .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4009; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
     body.${READER_COMMENT_CLASS} .${READER_BACKDROP_CLASS} { opacity: 1; pointer-events: auto; }
-    body.${READER_COMMENT_CLASS} .layout-normal { z-index: 4010 !important; background: transparent !important; pointer-events: none; }
+    :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link,
+    :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link .layout-normal,
+    :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link .content,
+    :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link .list { z-index: 4010 !important; background: transparent !important; background-color: transparent !important; pointer-events: none; }
+    body.${READER_COMMENT_CLASS} .layout-normal { z-index: auto !important; background: transparent !important; pointer-events: none; }
+    body.${READER_COMMENT_CLASS} .hb-bbs-link__reply-target .link-reply__operation-box { display: none !important; }
     body.${READER_COMMENT_CLASS} .hb-bbs-link { visibility: hidden; }
     body.${READER_COMMENT_CLASS} .hb-bbs-link .link-comment { visibility: visible; pointer-events: auto; }
     .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: grid; place-items: center; padding: 24px; border: 0; background: rgba(2, 4, 7, .94); cursor: zoom-out; }
@@ -4566,7 +4592,7 @@
       .hbu-reader-scroll { width: 100%; }
       .hbu-reader-rail { right: 14px; bottom: 96px; }
       .hbu-reader-page { padding-right: 86px; }
-      .hbu-reader-caption { width: min(680px, calc(100% - 64px)); }
+      .hbu-reader-caption { padding-right: 86px; }
     }
     @media (max-width: 760px) {
       :root { --hbu-reader-stage: 100%; }
@@ -4580,8 +4606,9 @@
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
       .hbu-reader-rich { font-size: 17px; }
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy { font-size: 24px; }
-      .hbu-reader-caption { width: calc(100% - 32px); margin-bottom: 84px; padding: 18px 20px 20px; }
+      .hbu-reader-caption { padding: 18px 64px 56px 24px; }
       .hbu-reader-title { font-size: 26px; }
+      .hbu-reader-cy-text { font-size: 16px; }
       .hbu-reader-rail { gap: 9px; bottom: 88px; right: 10px; }
       .hbu-reader-action { width: 42px; min-height: 42px; }
       .hbu-reader-action svg { width: 19px; height: 19px; }
@@ -4596,7 +4623,7 @@
       .hbu-reader-follow { min-width: 48px; padding: 0 10px; }
       .hbu-reader-page { padding-right: 64px; }
       .hbu-reader-page[data-kind="media"] { padding-right: 16px; padding-left: 16px; }
-      .hbu-reader-caption { width: calc(100% - 28px); }
+      .hbu-reader-caption { padding-right: 64px; }
       .hbu-reader-hint { display: none; }
       .hbu-reader-related { display: none; }
     }
@@ -4604,7 +4631,7 @@
       .hbu-reader-page { padding-top: 72px; padding-bottom: 76px; }
       .hbu-reader-page[data-kind="hero"] { padding: 0; }
       .hbu-reader-page[data-kind="text"] { padding-top: 16px; padding-bottom: 28px; }
-      .hbu-reader-caption { margin-bottom: 70px; padding: 14px 18px 16px; }
+      .hbu-reader-caption { padding: 14px 64px 22px 24px; }
       .hbu-reader-rail { bottom: 70px; gap: 7px; }
       .hbu-reader-action { width: 38px; min-height: 38px; }
       .hbu-reader-action-count { display: none; }
@@ -4881,6 +4908,14 @@
     let scheduled = false;
     let scrollRaf = 0;
     let restoring = false;
+    let linkState = null;
+    let linkStatePromise = null;
+    let actionBusy = false;
+    let cyDialog = null;
+    let cyTextarea = null;
+    let cySubmit = null;
+    let cyStatus = null;
+    let cyBusy = false;
 
     const showToast = (message) => {
       let toast = host?.querySelector(".hbu-reader-toast") || null;
@@ -4912,22 +4947,163 @@
       return { like: values[0] || "0", favour: values[1] || "0", comment: values[2] || "0" };
     };
 
+    const formatActionCount = (value) => {
+      const count = Math.max(0, Number(value) || 0);
+      if (count >= 100000000) return (count / 100000000).toFixed(1).replace(/\.0$/, "") + "亿";
+      if (count >= 10000) return (count / 10000).toFixed(1).replace(/\.0$/, "") + "万";
+      return String(count);
+    };
+
+    const postReaderApi = async (path, body) => {
+      const query = new URLSearchParams({ ...createApiParams(path), heybox_id: getHeyboxId(), target: "heybox_app" });
+      const response = await fetch("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
+      const data = await response.json();
+      if (data.status === "login") throw new Error("请先登录小黑盒");
+      if (data.status !== "ok") throw new Error(data.msg || "操作失败");
+      return data.result;
+    };
+
+    const fetchFavourFolders = async () => {
+      if (getHeyboxId() === "") throw new Error("请先登录小黑盒");
+      const path = "/bbs/app/profile/fav/folders";
+      const query = new URLSearchParams({ ...createApiParams(path), heybox_id: getHeyboxId(), target: "heybox_app" });
+      const response = await fetch("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
+        credentials: "include",
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
+      const data = await response.json();
+      if (data.status === "login") throw new Error("请先登录小黑盒");
+      if (data.status !== "ok") throw new Error(data.msg || "获取收藏夹失败");
+      const folders = data.result && Array.isArray(data.result.folders) ? data.result.folders : [];
+      return folders;
+    };
+
+    const loadLinkState = async () => {
+      if (articleId === "") return null;
+      if (linkStatePromise !== null) return linkStatePromise;
+      linkStatePromise = (async () => {
+        try {
+          const page = await fetchRailPage(articleId, 1);
+          linkState = page.link;
+          syncActionStates();
+          return linkState;
+        } catch (error) {
+          return null;
+        } finally {
+          linkStatePromise = null;
+        }
+      })();
+      return linkStatePromise;
+    };
+
+    const toggleLike = async () => {
+      if (actionBusy || articleId === "") return;
+      if (getHeyboxId() === "") {
+        showToast("请先登录小黑盒");
+        return;
+      }
+      actionBusy = true;
+      try {
+        const counts = readCounts();
+        const current = linkState === null ? await loadLinkState() : linkState;
+        const on = current !== null && current.isAward;
+        const base = current === null ? parseCompactCount(counts.like) : current.awardCount;
+        await postReaderApi("/bbs/app/profile/award/link", {
+          link_id: articleId,
+          award_type: on ? 0 : 1,
+        });
+        linkState = {
+          ...(current || {
+            isAward: false,
+            isFavour: false,
+            awardCount: base,
+            favourCount: parseCompactCount(counts.favour),
+            commentCount: parseCompactCount(counts.comment),
+          }),
+          isAward: !on,
+          awardCount: Math.max(0, base + (on ? -1 : 1)),
+        };
+        syncActionStates();
+        showToast(on ? "已取消点赞" : "已点赞");
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "点赞失败");
+      } finally {
+        actionBusy = false;
+      }
+    };
+
+    const toggleFavour = async (folderId) => {
+      if (actionBusy || articleId === "") return;
+      actionBusy = true;
+      try {
+        const counts = readCounts();
+        const current = linkState === null ? await loadLinkState() : linkState;
+        const on = current !== null && current.isFavour;
+        const base = current === null ? parseCompactCount(counts.favour) : current.favourCount;
+        const userId = getHeyboxId();
+        if (userId === "") throw new Error("请先登录小黑盒");
+        await postReaderApi("/bbs/app/link/favour", {
+          favour_type: on ? 2 : 1,
+          link_id: articleId,
+          userid: userId,
+          folder_id: on ? "" : String(folderId || ""),
+        });
+        linkState = {
+          ...(current || {
+            isAward: false,
+            isFavour: false,
+            awardCount: parseCompactCount(counts.like),
+            favourCount: base,
+            commentCount: parseCompactCount(counts.comment),
+          }),
+          isFavour: !on,
+          favourCount: Math.max(0, base + (on ? -1 : 1)),
+        };
+        closeFavourMenu();
+        syncActionStates();
+        showToast(on ? "已取消收藏" : "已收藏");
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "收藏失败");
+      } finally {
+        actionBusy = false;
+      }
+    };
+
     const syncActionStates = () => {
       if (host === null) return;
       const like = nativeLike();
       const favour = nativeFavour();
-      const counts = readCounts();
+      const counts = linkState === null
+        ? readCounts()
+        : {
+          like: formatActionCount(linkState.awardCount),
+          favour: formatActionCount(linkState.favourCount),
+          comment: formatActionCount(linkState.commentCount),
+        };
       const likeNode = host.querySelector('[data-action="like"]');
       const favourNode = host.querySelector('[data-action="favour"]');
       const commentNode = host.querySelector('[data-action="comment"]');
       if (likeNode !== null) {
-        const on = like !== null && (like.getAttribute("aria-pressed") === "true" || like.classList.contains("active"));
+        const on = linkState === null
+          ? like !== null && (like.getAttribute("aria-pressed") === "true" || like.classList.contains("active"))
+          : linkState.isAward;
         likeNode.setAttribute("aria-pressed", String(on));
         const markup = (on ? READER_ICONS.likeOn : READER_ICONS.like) + '<span class="hbu-reader-action-count">' + counts.like + "</span>";
         if (likeNode.innerHTML !== markup) likeNode.innerHTML = markup;
       }
       if (favourNode !== null) {
-        const on = favour !== null && (favour.getAttribute("aria-pressed") === "true" || favour.classList.contains("active"));
+        const on = linkState === null
+          ? favour !== null && (favour.getAttribute("aria-pressed") === "true" || favour.classList.contains("active"))
+          : linkState.isFavour;
         favourNode.setAttribute("aria-pressed", String(on));
         const markup = (on ? READER_ICONS.starOn : READER_ICONS.star) + '<span class="hbu-reader-action-count">' + counts.favour + "</span>";
         if (favourNode.innerHTML !== markup) favourNode.innerHTML = markup;
@@ -4938,10 +5114,7 @@
       }
       const cyNode = host.querySelector('[data-action="cy"]');
       if (cyNode !== null) {
-        const hidden = document.querySelectorAll('#page-bbs-link [data-heybox-up-cy="1"]').length;
-        const on = readHideCyPreference();
-        cyNode.setAttribute("aria-pressed", String(on));
-        const markup = '<span class="hbu-reader-cy-label">CY</span>' + (on && hidden > 0 ? '<span class="hbu-reader-action-count">' + hidden + "</span>" : "");
+        const markup = '<span class="hbu-reader-cy-label">CY</span>';
         if (cyNode.innerHTML !== markup) cyNode.innerHTML = markup;
       }
       for (const stat of host.querySelectorAll("[data-stat]")) {
@@ -4976,9 +5149,13 @@
         closeFavourMenu();
         return;
       }
-      const native = nativeFavour();
-      if (!(native instanceof HTMLElement)) {
-        showToast("当前页面没有收藏按钮");
+      if (linkState === null) await loadLinkState();
+      if (linkState !== null && linkState.isFavour) {
+        void toggleFavour();
+        return;
+      }
+      if (getHeyboxId() === "") {
+        showToast("请先登录小黑盒");
         return;
       }
       if (favourPanel === null) {
@@ -4996,58 +5173,165 @@
       favourButton = button;
       favourPanel.hidden = false;
       button.setAttribute("aria-expanded", "true");
-      native.click();
-      const findList = () => native.querySelector(".link-favour__list") || document.querySelector("#page-bbs-link .link-favour__list");
-      let list = findList();
-      for (let attempt = 0; attempt < 8 && !(list instanceof HTMLElement); attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 160));
-        list = findList();
-      }
-      if (!(list instanceof HTMLElement) || favourPanel === null) {
-        if (favourPanel !== null && favourPanel.childElementCount === 0) {
-          const empty = document.createElement("div");
-          empty.className = "hbu-reader-favour-empty";
-          empty.textContent = "登录后可选择收藏夹";
-          favourPanel.append(empty);
-        }
-        return;
-      }
-      const sourceList = list;
-      const renderList = (source) => {
+      const status = document.createElement("div");
+      status.className = "hbu-reader-favour-empty";
+      status.textContent = "正在读取收藏夹…";
+      favourPanel.replaceChildren(status);
+      try {
+        const folders = await fetchFavourFolders();
         if (favourPanel === null) return;
-        if (source.children.length === 0) {
+        if (folders.length === 0) {
           const empty = document.createElement("div");
           empty.className = "hbu-reader-favour-empty";
-          empty.textContent = "暂无收藏夹";
+          empty.textContent = "暂无收藏夹，请先在站点创建";
           favourPanel.replaceChildren(empty);
           return;
         }
-        favourPanel.replaceChildren(...Array.from(source.children).map((item, index) => {
+        favourPanel.replaceChildren(...folders.map((folder) => {
           const proxy = document.createElement("button");
           proxy.type = "button";
           proxy.setAttribute("role", "menuitem");
-          proxy.textContent = (item.textContent || "").trim() || "收藏夹";
+          proxy.textContent = String(folder.name || folder.folder_name || "收藏夹");
           proxy.title = proxy.textContent;
           proxy.addEventListener("click", () => {
-            const target = source.children[index];
-            if (!(target instanceof HTMLElement)) return;
-            target.click();
-            if (target.classList.contains("link-favour__add-btn")) {
-              window.setTimeout(() => renderList(sourceList), 320);
-              return;
-            }
-            closeFavourMenu();
-            window.setTimeout(syncActionStates, 600);
+            void toggleFavour(folder.id);
           });
           return proxy;
         }));
-      };
-      renderList(sourceList);
+      } catch (error) {
+        if (favourPanel === null) return;
+        const empty = document.createElement("div");
+        empty.className = "hbu-reader-favour-empty";
+        empty.textContent = error instanceof Error ? error.message : "获取收藏夹失败";
+        favourPanel.replaceChildren(empty);
+      }
+    };
+
+    const closeCyDialog = () => {
+      if (cyDialog === null) return;
+      cyDialog.remove();
+      cyDialog = null;
+      cyTextarea = null;
+      cySubmit = null;
+      cyStatus = null;
+      if (host !== null && !document.body.classList.contains(READER_COMMENT_CLASS)) {
+        host.querySelector('[data-action="cy"]')?.focus({ preventScroll: true });
+      }
+    };
+
+    const submitCy = async () => {
+      if (cyBusy || cyTextarea === null || cySubmit === null || cyStatus === null) return;
+      const text = cyTextarea.value.trim();
+      if (text === "") {
+        cyStatus.textContent = "请输入 CY 内容";
+        cyTextarea.focus();
+        return;
+      }
+      cyBusy = true;
+      cySubmit.disabled = true;
+      cySubmit.textContent = "发布中…";
+      cyStatus.textContent = "";
+      try {
+        await postReaderApi("/bbs/app/comment/create", {
+          is_cy: 1,
+          link_id: articleId,
+          reply_id: "-1",
+          root_id: "-1",
+          text: text,
+        });
+        if (linkState !== null) linkState.commentCount += 1;
+        showToast("CY 已发布");
+        closeCyDialog();
+        syncActionStates();
+      } catch (error) {
+        if (cyStatus !== null) cyStatus.textContent = error instanceof Error ? error.message : "CY 发布失败";
+      } finally {
+        cyBusy = false;
+        if (cySubmit !== null) {
+          cySubmit.disabled = false;
+          cySubmit.textContent = "发布";
+        }
+      }
+    };
+
+    const openCyDialog = () => {
+      if (host === null) return;
+      closeFavourMenu();
+      if (cyDialog !== null) {
+        cyDialog.hidden = false;
+        cyTextarea?.focus({ preventScroll: true });
+        return;
+      }
+      const dialog = document.createElement("div");
+      dialog.className = "hbu-reader-cy-dialog";
+      dialog.setAttribute("role", "dialog");
+      dialog.setAttribute("aria-modal", "true");
+      dialog.setAttribute("aria-label", "发布 CY");
+      const card = document.createElement("div");
+      card.className = "hbu-reader-cy-card";
+      const head = document.createElement("div");
+      head.className = "hbu-reader-cy-head";
+      const title = document.createElement("span");
+      title.textContent = "发布 CY";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "hbu-reader-cy-close";
+      close.setAttribute("aria-label", "关闭 CY 输入框");
+      close.innerHTML = READER_ICONS.close;
+      close.addEventListener("click", closeCyDialog);
+      head.append(title, close);
+      const textarea = document.createElement("textarea");
+      textarea.className = "hbu-reader-cy-text";
+      textarea.maxLength = 1000;
+      textarea.placeholder = "写下这次插眼的内容…";
+      textarea.setAttribute("aria-label", "CY 内容");
+      const status = document.createElement("div");
+      status.className = "hbu-reader-cy-status";
+      status.setAttribute("role", "status");
+      const actions = document.createElement("div");
+      actions.className = "hbu-reader-cy-actions";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.textContent = "取消";
+      cancel.addEventListener("click", closeCyDialog);
+      const submit = document.createElement("button");
+      submit.type = "button";
+      submit.dataset.primary = "true";
+      submit.textContent = "发布";
+      submit.addEventListener("click", () => void submitCy());
+      actions.append(cancel, submit);
+      card.append(head, textarea, status, actions);
+      dialog.append(card);
+      dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) closeCyDialog();
+      });
+      dialog.addEventListener("keydown", (event) => {
+        if (event.key !== "Tab") return;
+        const items = Array.from(dialog.querySelectorAll("button, textarea"))
+          .filter((node) => node.getBoundingClientRect().width > 0);
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus({ preventScroll: true });
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus({ preventScroll: true });
+        }
+      });
+      cyDialog = dialog;
+      cyTextarea = textarea;
+      cySubmit = submit;
+      cyStatus = status;
+      host.append(dialog);
+      textarea.focus({ preventScroll: true });
     };
 
     const openComments = () => {
       if (host === null) return;
       closeFavourMenu();
+      closeCyDialog();
       if (!getCommentsSheet()) {
         showToast("评论尚未加载，请稍候");
         return;
@@ -5504,10 +5788,7 @@
       like.dataset.action = "like";
       like.setAttribute("aria-label", "点赞");
       like.title = "点赞";
-      like.addEventListener("click", () => {
-        const node = nativeLike();
-        if (node instanceof HTMLElement) node.click();
-      });
+      like.addEventListener("click", () => void toggleLike());
       const favour = document.createElement("button");
       favour.type = "button";
       favour.className = "hbu-reader-action";
@@ -5521,16 +5802,10 @@
       cy.type = "button";
       cy.className = "hbu-reader-action hbu-reader-action--cy";
       cy.dataset.action = "cy";
-      cy.setAttribute("aria-label", "屏蔽 CY 评论");
-      cy.title = "屏蔽 CY 评论";
+      cy.setAttribute("aria-label", "发布 CY");
+      cy.title = "发布 CY";
       cy.innerHTML = '<span class="hbu-reader-cy-label">CY</span>';
-      cy.addEventListener("click", () => {
-        const next = !readHideCyPreference();
-        setHideCyPreference(next);
-        cy.title = next ? "显示 CY 评论" : "屏蔽 CY 评论";
-        cy.setAttribute("aria-label", cy.title);
-        syncActionStates();
-      });
+      cy.addEventListener("click", openCyDialog);
       const comment = document.createElement("button");
       comment.type = "button";
       comment.className = "hbu-reader-action";
@@ -5775,6 +6050,14 @@
       window.cancelAnimationFrame(scrollRaf);
       scrollRaf = 0;
       host.textContent = "";
+      linkState = null;
+      linkStatePromise = null;
+      actionBusy = false;
+      cyBusy = false;
+      cyDialog = null;
+      cyTextarea = null;
+      cySubmit = null;
+      cyStatus = null;
       favourPanel = null;
       favourButton = null;
       coverIndex = 0;
@@ -5820,6 +6103,7 @@
         });
       }, { passive: true });
       syncActionStates();
+      void loadLinkState();
       const ratio = readReaderRatio(articleId);
       const restore = ratio < 0 ? Math.min(pageCount - 1, readReaderScroll(articleId)) : 0;
       restoring = ratio >= 0;
@@ -5874,6 +6158,14 @@
       observer?.disconnect();
       observer = null;
       restoring = false;
+      linkState = null;
+      linkStatePromise = null;
+      actionBusy = false;
+      cyBusy = false;
+      cyDialog = null;
+      cyTextarea = null;
+      cySubmit = null;
+      cyStatus = null;
       clearSheetStatus();
       document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
       closeSheetButton?.remove();
@@ -5952,7 +6244,10 @@
     document.addEventListener("keydown", (event) => {
       if (host === null || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === "Escape") {
-        if (favourPanel !== null && !favourPanel.hidden) {
+        if (cyDialog !== null) {
+          event.preventDefault();
+          closeCyDialog();
+        } else if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
           closeFavourMenu();
         } else if (document.body.classList.contains(READER_COMMENT_CLASS)) {
