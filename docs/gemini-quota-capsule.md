@@ -180,7 +180,7 @@ __gqc.setDebug(true)   // 打开调试日志
 
 - `probeUsage()` 返回 Promise：`JSON.stringify(__gqc.probeUsage())` 只会得到 `{}`（旧版排查时踩过这个坑）。现在它会自动 `console.log` 结果并留档到 `__gqc.lastProbe`，直接调用即可。
 - `report()` 是「官方把数字放在哪」的取证入口：先打开 Gemini 自己的限额/用量弹窗、再发一条消息，然后执行它。返回内容只含**关键字附近片段**（每帧 ≤2 条、每页 ≤8 行，单条 ≤200 字符），不落整段会话；同时记录 `/usage` 体检结果、`batchexecute` 的 `rpcId` 列表与端点环。
-- 脚本未更新（或分支未合并）时，可用独立探针 `scripts/network-capture-probe.js`：整段粘贴进 Console → `__gqp.watchAll()` → 打开限额弹窗并发一条消息 → `__gqp.dump()`。它不依赖脚本版本，采集口径与 `report()` 一致。
+- 脚本未更新（或分支未合并）时，可直接用 Console 查看 `__gqc.dump().frames` 采集到的配额响应帧，核对服务端字段；仓库内不再保留独立探针脚本。
 - `__gqc.dump().frames` 只保留命中配额关键字的响应帧（每帧截断 24KB），用于确认服务端字段命名是否再次变化。
 - `__gqc.dump().config.icon` 只输出 `kind` 与 `imageChars` / `svgChars`，不导出图片或 SVG 正文；排查装饰资源是否真的写入时看这两个字符数。
 - `__gqc.dump().endpoints` 是端点发现环：最近 24 条 URL 命中 `batchexecute` / `usage` / `quota` / `limit` 等的请求（只记 URL、状态码与长度），用来确认配额到底由哪个接口返回。
