@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.22
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏；帖子详情页（/app/bbs/link/*）把站点原生评论区停靠到右栏，保留原生回复与点赞，并补充默认/时间/点赞/作者排序，可按接口 is_cy 标记屏蔽插眼评论，正文与评论各自独立滚动，窄屏自动改为上下布局。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.23
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏分页沉浸阅读：封面、正文、图片与结尾逐页吸附，右侧竖排原生点赞/收藏/评论/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -105,6 +105,27 @@
     document.dispatchEvent(new CustomEvent(NAV_MOTION_EVENT, { detail: value }));
   }
 
+  // 沉浸阅读默认开启；关闭后帖子页回到原有的双栏阅读布局。
+  const READER_KEY = "heybox-up.reader.v1";
+  const READER_EVENT = "heybox-up:reader";
+
+  function readReaderPreference() {
+    try {
+      return localStorage.getItem(READER_KEY) !== "0";
+    } catch (error) {
+      return true;
+    }
+  }
+
+  function setReaderPreference(value) {
+    try {
+      localStorage.setItem(READER_KEY, value ? "1" : "0");
+    } catch (error) {
+      console.warn("[HeyBox Up] 保存阅读模式设置失败", error);
+    }
+    document.dispatchEvent(new CustomEvent(READER_EVENT, { detail: value }));
+  }
+
   // 社区工作台的中间栏宽度：按视口百分比记，默认 56%，两侧等宽留白。
   const FEED_WIDTH_KEY = "heybox-up.feedWidth.v1";
   const FEED_WIDTH_DEFAULT = 56;
@@ -182,6 +203,7 @@
   let themeEntry = null;
   let previewToggle = null;
   let navMotionToggle = null;
+  let readerToggle = null;
   let feedWidthChips = [];
 
   function readThemeMode() {
@@ -1159,6 +1181,24 @@
     #page-bbs-community .bbs-content__image {
       border-radius: 10px !important;
     }
+    /* 作者行、更多按钮与图片计数是卡片里最小的可点区域，统一抬到 24px 与 11px。 */
+    :root.heybox-up-theme :is(#page-bbs-community .header__user, #page-topic-link .header__user) {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+    }
+    :root.heybox-up-theme .list-cotent__operation-btn {
+      display: inline-grid;
+      place-items: center;
+      width: 24px !important;
+      height: 24px !important;
+    }
+    :root.heybox-up-theme #page-topic-link .topic-link__sorter {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+    }
+    :root.heybox-up-theme .bbs-content__image-cnt { font-size: 11px !important; }
     #page-bbs-community .bbs-new-style-bottom {
       margin-top: 12px;
       padding-top: 10px;
@@ -1924,6 +1964,7 @@
     }
     if (previewToggle) previewToggle.setAttribute("aria-checked", String(readCommentPreviewPreference()));
     if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
+    if (readerToggle) readerToggle.setAttribute("aria-checked", String(readReaderPreference()));
     syncFeedWidthChips(readFeedWidth());
   }
 
@@ -2006,6 +2047,7 @@
     settingsMenu.append(
       createCommentPreviewToggle(),
       createNavMotionToggle(),
+      createReaderToggle(),
       createThemeMenuSeparator(),
       createFeedWidthControl()
     );
@@ -2127,6 +2169,34 @@
       setNavMotionPreference(next);
     });
     navMotionToggle = node;
+    return node;
+  }
+
+  // 沉浸阅读开关：帖子页默认进入全屏分页阅读，关闭后保留原有双栏布局。
+  function createReaderToggle() {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "item toggle";
+    node.setAttribute("role", "menuitemcheckbox");
+    node.setAttribute("aria-checked", String(readReaderPreference()));
+    const copy = document.createElement("span");
+    copy.className = "copy";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = "沉浸阅读";
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "帖子页全屏分页，评论收进侧栏";
+    copy.append(name, hint);
+    const toggle = document.createElement("span");
+    toggle.className = "switch";
+    node.append(copy, toggle);
+    node.addEventListener("click", () => {
+      const next = !(node.getAttribute("aria-checked") === "true");
+      node.setAttribute("aria-checked", String(next));
+      setReaderPreference(next);
+    });
+    readerToggle = node;
     return node;
   }
 
@@ -3983,6 +4053,432 @@
     @media (prefers-reduced-motion: reduce) { .btn, .btn svg { transition: none; } }
   `;
 
+  // 沉浸阅读：帖子页改为全屏分页，顶部只留返回与作者，右侧放原生互动，评论收进抽屉。
+  const READER_ID = "heybox-up-reader";
+  const READER_STYLE_ID = "heybox-up-reader-style";
+  const READER_CLASS = "heybox-up-reader";
+  const READER_COMMENT_CLASS = "heybox-up-reader-comments";
+  const READER_BACKDROP_CLASS = "heybox-up-reader-backdrop";
+  const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
+
+  const READER_ICONS = {
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>',
+    like: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10.5v9H4.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"/><path d="M7 11 10.6 4a2 2 0 0 1 3.8.9V9h4.1a2 2 0 0 1 2 2.4l-1.1 6.2a2.3 2.3 0 0 1-2.3 1.9H7"/></svg>',
+    likeOn: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10.5v9H4.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"/><path d="M7 11 10.6 4a2 2 0 0 1 3.8.9V9h4.1a2 2 0 0 1 2 2.4l-1.1 6.2a2.3 2.3 0 0 1-2.3 1.9H7"/></svg>',
+    star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/></svg>',
+    starOn: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/></svg>',
+    comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.3a7.4 7.4 0 0 1-7.5 7.3 8.4 8.4 0 0 1-2.8-.5L5 20l1.2-3.6A7 7 0 0 1 4.8 11a7.5 7.5 0 0 1 7.7-7.2A7.4 7.4 0 0 1 20 11.3Z"/></svg>',
+    share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="2.2"/><circle cx="17.5" cy="6" r="2.2"/><circle cx="17.5" cy="18" r="2.2"/><path d="m8.1 11 7.4-3.9M8.1 13l7.4 3.9"/></svg>',
+    previous: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
+    next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>',
+  };
+
+  const READER_CSS = `
+    :root {
+      --hbu-reader-stage: 760px;
+      --hbu-reader-bg: #e9eef3;
+      --hbu-reader-page: #fff;
+      --hbu-reader-subtle: #f1f4f7;
+      --hbu-reader-ink: #14191e;
+      --hbu-reader-ink-2: #3c444c;
+      --hbu-reader-muted: #5f6b77;
+      --hbu-reader-border: rgba(20, 25, 30, .12);
+      --hbu-reader-glass: rgba(255, 255, 255, .78);
+      --hbu-reader-glass-ink: #14191e;
+      --hbu-reader-shadow: 0 20px 60px rgba(16, 24, 40, .18);
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] {
+      --hbu-reader-bg: #080b0f;
+      --hbu-reader-page: #12181f;
+      --hbu-reader-subtle: #1b232c;
+      --hbu-reader-ink: #e6edf5;
+      --hbu-reader-ink-2: #b7c2ce;
+      --hbu-reader-muted: #8b99a8;
+      --hbu-reader-border: #2b3642;
+      --hbu-reader-glass: rgba(21, 28, 36, .8);
+      --hbu-reader-glass-ink: #e6edf5;
+      --hbu-reader-shadow: 0 24px 70px rgba(0, 0, 0, .5);
+    }
+    :root.heybox-up-theme[data-heybox-up-theme="oled"] {
+      --hbu-reader-bg: #000;
+      --hbu-reader-page: #090909;
+      --hbu-reader-subtle: #141414;
+    }
+    :root.heybox-up-theme[data-heybox-up-theme="paper"] {
+      --hbu-reader-bg: #e7dfd0;
+      --hbu-reader-page: #faf5ea;
+      --hbu-reader-subtle: #f2eadb;
+      --hbu-reader-ink: #332b21;
+      --hbu-reader-ink-2: #5b5042;
+      --hbu-reader-muted: #7d6f5d;
+      --hbu-reader-border: #ddd0bc;
+    }
+    :root.heybox-up-theme[data-heybox-up-theme="mist"] {
+      --hbu-reader-bg: #dde8ea;
+      --hbu-reader-page: #f7fbfb;
+      --hbu-reader-subtle: #eaf2f3;
+      --hbu-reader-ink: #1d3338;
+      --hbu-reader-ink-2: #405a60;
+      --hbu-reader-muted: #607a80;
+      --hbu-reader-border: #cbdcdf;
+    }
+    body.heybox-up-reader {
+      overflow: hidden !important;
+      background: var(--hbu-reader-bg) !important;
+    }
+    body.heybox-up-reader .nav,
+    body.heybox-up-reader .hb-bbs-link__header {
+      display: none !important;
+    }
+    body.heybox-up-reader .hb-bbs-link__reply-target {
+      display: block !important;
+      position: fixed !important;
+      left: auto !important;
+      right: 0;
+      bottom: 0;
+      z-index: 4031;
+      width: min(440px, 100vw) !important;
+      padding: 0 !important;
+      background: var(--hbu-reader-page);
+      border-top: 1px solid var(--hbu-reader-border);
+      transform: translateY(102%);
+      transition: transform .28s cubic-bezier(.3, .8, .3, 1);
+      visibility: hidden;
+    }
+    body.${READER_COMMENT_CLASS} .hb-bbs-link__reply-target { transform: translateY(0); visibility: visible; }
+    body.heybox-up-reader #page-bbs-link {
+      position: fixed !important;
+      inset: 0 !important;
+      z-index: 4000;
+      display: flex !important;
+      justify-content: center;
+      width: 100% !important;
+      height: 100% !important;
+      background: radial-gradient(70% 60% at 50% 0%, rgba(143, 176, 207, .2), transparent 70%), var(--hbu-reader-bg) !important;
+    }
+    body.heybox-up-reader #page-bbs-link .content,
+    body.heybox-up-reader #page-bbs-link .list,
+    body.heybox-up-reader #page-bbs-link .hb-bbs-link,
+    body.heybox-up-reader #page-bbs-link .hb-bbs-link__container,
+    body.heybox-up-reader #page-bbs-link .hb-bbs-link__content {
+      display: block !important;
+      width: 100% !important;
+      max-width: none !important;
+      height: 100% !important;
+      min-width: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+      background: transparent !important;
+      box-shadow: none !important;
+    }
+    body.heybox-up-reader .hb-bbs-image-text,
+    body.heybox-up-reader .hb-bbs-post { display: none !important; }
+    body.heybox-up-reader .cpt-right-side.right { display: none !important; }
+    #${READER_ID} {
+      position: fixed;
+      top: 0;
+      left: 50%;
+      z-index: 4001;
+      width: min(var(--hbu-reader-stage), 100%);
+      height: 100%;
+      height: 100dvh;
+      transform: translateX(-50%);
+      background: var(--hbu-reader-page);
+      color: var(--hbu-reader-ink);
+      box-shadow: var(--hbu-reader-shadow);
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      isolation: isolate;
+    }
+    #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { box-sizing: border-box; }
+    #${READER_ID} :is(button, a, [role="button"]) { -webkit-tap-highlight-color: transparent; }
+    #${READER_ID} :is(button, a, [role="button"]):focus-visible {
+      outline: 2px solid var(--heybox-up-accent, #8fb0cf);
+      outline-offset: 2px;
+    }
+    .hbu-reader-scroll {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scroll-snap-type: y mandatory;
+      scrollbar-width: none;
+      scroll-behavior: smooth;
+    }
+    .hbu-reader-scroll::-webkit-scrollbar { display: none; }
+    .hbu-reader-page {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100%;
+      padding: 88px 58px 104px;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+      background: var(--hbu-reader-page);
+    }
+    .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
+    .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
+      width: min(32em, 100%);
+      font-size: 18px;
+      line-height: 1.86;
+      color: var(--hbu-reader-ink);
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .hbu-reader-page[data-kind="heading"] { justify-content: center; }
+    .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
+      font-size: 27px;
+      line-height: 1.42;
+      font-weight: 700;
+      letter-spacing: -.015em;
+    }
+    .hbu-reader-page[data-kind="rich"] {
+      align-items: stretch;
+      justify-content: flex-start;
+      padding-top: 96px;
+    }
+    .hbu-reader-rich {
+      width: 100%;
+      font-size: 18px;
+      line-height: 1.8;
+      color: var(--hbu-reader-ink);
+      overflow-wrap: anywhere;
+    }
+    .hbu-reader-rich :is(h1, h2, h3, h4, h5, h6) { margin: 0 0 .7em; font-size: 22px; line-height: 1.45; }
+    .hbu-reader-rich :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 1em; }
+    .hbu-reader-rich :is(ul, ol) { padding-left: 1.35em; }
+    .hbu-reader-rich li + li { margin-top: .45em; }
+    .hbu-reader-rich blockquote {
+      padding: 2px 0 2px 15px;
+      border-left: 3px solid var(--heybox-up-accent, #8fb0cf);
+      color: var(--hbu-reader-ink-2);
+    }
+    .hbu-reader-rich pre {
+      padding: 14px 16px;
+      border: 1px solid var(--hbu-reader-border);
+      border-radius: 12px;
+      background: var(--hbu-reader-subtle);
+      overflow-x: auto;
+      font: 13px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .hbu-reader-rich :is(img, video, .hb-cpt__image, .com-game-card, .com-album-card, .com-award-table-card, .com-chatroom-card, .com-league-card, .com-match-card, .com-mod-card, .com-sku-card, .com-wiki-card) { max-width: 100%; border-radius: 14px; }
+    .hbu-reader-rich :is(.com-game-card, .com-album-card, .com-award-table-card, .com-chatroom-card, .com-league-card, .com-match-card, .com-mod-card, .com-sku-card, .com-wiki-card) {
+      background: var(--hbu-reader-subtle) !important;
+      border-color: var(--hbu-reader-border) !important;
+      color: var(--hbu-reader-ink) !important;
+    }
+    .hbu-reader-rich :is(a, .prose-link) { color: var(--heybox-up-accent, #4f7ea8); }
+    .hbu-reader-page[data-kind="media"] { padding: 72px 20px 96px; background: #05070a; }
+    .hbu-reader-media {
+      display: block;
+      max-width: 100%;
+      max-height: calc(100vh - 190px);
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      border-radius: 12px;
+      cursor: zoom-in;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .35);
+    }
+    .hbu-reader-page[data-kind="hero"] {
+      padding: 0;
+      justify-content: flex-end;
+      align-items: stretch;
+      background: #05070a;
+      color: #fff;
+    }
+    .hbu-reader-cover { position: absolute; inset: 0; overflow: hidden; background: #05070a; }
+    .hbu-reader-cover img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      transition: opacity .32s ease;
+      pointer-events: none;
+    }
+    .hbu-reader-cover img[data-active="true"] { opacity: 1; pointer-events: auto; }
+    .hbu-reader-cover::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(0, 0, 0, .34), transparent 26%, transparent 46%, rgba(0, 0, 0, .86));
+    }
+    .hbu-reader-cover--empty { background: radial-gradient(80% 60% at 25% 15%, rgba(143, 176, 207, .35), transparent 70%), linear-gradient(150deg, #18222c, #070a0e); }
+    .hbu-reader-cover-nav {
+      position: absolute;
+      top: 50%;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      margin-top: -20px;
+      border: 1px solid rgba(255, 255, 255, .22);
+      border-radius: 50%;
+      background: rgba(8, 11, 15, .46);
+      color: #fff;
+      cursor: pointer;
+    }
+    .hbu-reader-cover-nav svg { width: 19px; height: 19px; }
+    .hbu-reader-cover-nav[data-side="prev"] { left: 16px; }
+    .hbu-reader-cover-nav[data-side="next"] { right: 16px; }
+    .hbu-reader-cover-nav[hidden] { display: none; }
+    .hbu-reader-cover-dots { position: absolute; top: 80px; left: 50%; z-index: 2; display: flex; gap: 0; transform: translateX(-50%); }
+    .hbu-reader-cover-dots button { position: relative; width: 36px; height: 36px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+    .hbu-reader-cover-dots button::after { content: ""; position: absolute; top: 16px; right: 8px; left: 8px; height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .38); }
+    .hbu-reader-cover-dots button[aria-current="true"]::after { background: #fff; }
+    .hbu-reader-caption { position: relative; z-index: 2; padding: 0 58px 104px; }
+    .hbu-reader-kicker { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-bottom: 13px; color: rgba(255, 255, 255, .8); font-size: 12px; line-height: 1.4; }
+    .hbu-reader-kicker span { padding: 3px 9px; border: 1px solid rgba(255, 255, 255, .22); border-radius: 99px; background: rgba(0, 0, 0, .22); }
+    .hbu-reader-title { display: -webkit-box; margin: 0 0 12px; overflow: hidden; font-size: 31px; line-height: 1.28; font-weight: 750; letter-spacing: -.02em; text-wrap: balance; text-shadow: 0 2px 18px rgba(0, 0, 0, .42); -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+    .hbu-reader-byline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: rgba(255, 255, 255, .82); font-size: 13px; }
+    .hbu-reader-byline b { color: #fff; font-weight: 600; }
+    .hbu-reader-page[data-kind="end"] { justify-content: center; gap: 22px; background: var(--hbu-reader-page); }
+    .hbu-reader-end-card { width: min(440px, 100%); padding: 24px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-subtle); }
+    .hbu-reader-end-head { display: flex; gap: 12px; align-items: center; }
+    .hbu-reader-end-head img { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: var(--hbu-reader-page); }
+    .hbu-reader-end-name { min-width: 0; flex: 1 1 auto; }
+    .hbu-reader-end-name b { display: block; font-size: 15px; }
+    .hbu-reader-end-name span { color: var(--hbu-reader-muted); font-size: 12px; }
+    .hbu-reader-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 20px 0 18px; }
+    .hbu-reader-stats div { padding: 10px 6px; border-radius: 12px; background: var(--hbu-reader-page); text-align: center; }
+    .hbu-reader-stats b { display: block; font-size: 17px; }
+    .hbu-reader-stats span { color: var(--hbu-reader-muted); font-size: 11px; }
+    .hbu-reader-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .hbu-reader-tag { min-height: 36px; padding: 7px 12px; border: 1px solid var(--hbu-reader-border); border-radius: 99px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
+    .hbu-reader-related { width: min(440px, 100%); }
+    .hbu-reader-related h2 { margin: 0 0 8px; color: var(--hbu-reader-muted); font-size: 11px; font-weight: 600; letter-spacing: .08em; }
+    .hbu-reader-related a { display: flex; gap: 10px; min-height: 44px; padding: 11px 13px; border: 1px solid var(--hbu-reader-border); border-radius: 12px; color: var(--hbu-reader-ink); font-size: 13px; line-height: 1.5; text-decoration: none; }
+    .hbu-reader-related a + a { margin-top: 6px; }
+    .hbu-reader-related a:hover { background: var(--hbu-reader-subtle); }
+    .hbu-reader-end-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .hbu-reader-end-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 8px 14px; border: 1px solid var(--hbu-reader-border); border-radius: 99px; background: transparent; color: var(--hbu-reader-ink); font: inherit; font-size: 13px; cursor: pointer; }
+    .hbu-reader-end-actions button:disabled { opacity: .42; cursor: default; }
+    .hbu-reader-end-actions button svg { width: 15px; height: 15px; }
+    @media (max-height: 820px) {
+      .hbu-reader-page[data-kind="end"] { gap: 12px; padding-top: 64px; padding-bottom: 64px; }
+      .hbu-reader-page[data-kind="end"] .hbu-reader-related { display: none; }
+      .hbu-reader-end-card { padding: 18px; }
+      .hbu-reader-stats { margin: 14px 0 12px; }
+    }
+    @media (max-height: 520px) {
+      .hbu-reader-page[data-kind="end"] { padding-top: 48px; padding-bottom: 40px; }
+      .hbu-reader-page[data-kind="end"] .hbu-reader-stats { display: none; }
+      .hbu-reader-end-head img { width: 40px; height: 40px; }
+    }
+    .hbu-reader-head { position: absolute; top: 0; right: 0; left: 0; z-index: 12; display: flex; gap: 9px; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); background: linear-gradient(180deg, rgba(3, 5, 8, .62), transparent); color: var(--hbu-reader-glass-ink); pointer-events: none; }
+    .hbu-reader-head > * { pointer-events: auto; }
+    .hbu-reader-round { display: grid; place-items: center; width: 40px; height: 40px; flex: none; padding: 0; border: 1px solid rgba(255, 255, 255, .2); border-radius: 50%; background: rgba(8, 11, 15, .46); color: #fff; cursor: pointer; backdrop-filter: blur(8px); }
+    .hbu-reader-round svg { width: 19px; height: 19px; }
+    .hbu-reader-head-author { display: flex; gap: 7px; align-items: center; min-width: 0; max-width: 42%; padding: 4px 10px 4px 4px; border: 1px solid rgba(255, 255, 255, .18); border-radius: 99px; background: rgba(8, 11, 15, .46); color: #fff; text-decoration: none; backdrop-filter: blur(8px); }
+    .hbu-reader-head-author img { width: 30px; height: 30px; flex: none; border-radius: 50%; object-fit: cover; background: #1e2630; }
+    .hbu-reader-head-author span { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .hbu-reader-follow { min-width: 56px; height: 36px; padding: 0 13px; border: 0; border-radius: 99px; background: #f0f4f8; color: #16202a; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+    .hbu-reader-follow[aria-pressed="true"] { background: rgba(255, 255, 255, .16); color: #fff; }
+    .hbu-reader-head-spacer { flex: 1 1 auto; }
+    .hbu-reader-rail { position: absolute; right: -66px; bottom: 118px; z-index: 11; display: flex; flex-direction: column; gap: 13px; align-items: center; }
+    .hbu-reader-action { display: grid; place-items: center; width: 48px; min-height: 48px; padding: 4px 0; border: 1px solid rgba(255, 255, 255, .18); border-radius: 50%; background: rgba(12, 17, 23, .78); color: #f2f6fa; cursor: pointer; backdrop-filter: blur(10px); }
+    .hbu-reader-action:hover { background: rgba(38, 48, 59, .9); }
+    .hbu-reader-action svg { width: 21px; height: 21px; }
+    .hbu-reader-action[aria-pressed="true"] { color: #ff8e9a; }
+    .hbu-reader-action[data-action="favour"][aria-pressed="true"] { color: #f0c56a; }
+    .hbu-reader-action-count { display: block; margin-top: 2px; font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+    .hbu-reader-progress { position: absolute; right: 0; bottom: 0; left: 0; z-index: 10; display: flex; gap: 10px; align-items: center; height: 46px; padding: 0 18px; background: linear-gradient(0deg, rgba(3, 5, 8, .62), transparent); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+    .hbu-reader-progress-bar { flex: 1 1 auto; height: 2px; overflow: hidden; border-radius: 99px; background: rgba(255, 255, 255, .26); }
+    .hbu-reader-progress-bar i { display: block; width: 0; height: 100%; background: #fff; transition: width .2s linear; }
+    .hbu-reader-hint { color: rgba(255, 255, 255, .72); white-space: nowrap; }
+    body.${READER_CLASS} #page-bbs-link .link-comment {
+      position: fixed !important;
+      top: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      z-index: 4030;
+      display: flex !important;
+      flex-direction: column;
+      width: min(440px, 100vw) !important;
+      height: 100% !important;
+      height: 100dvh !important;
+      max-height: none !important;
+      margin: 0 !important;
+      border: 0 !important;
+      border-left: 1px solid var(--hbu-reader-border) !important;
+      border-radius: 0 !important;
+      background: var(--hbu-reader-page) !important;
+      color: var(--hbu-reader-ink) !important;
+      box-shadow: -24px 0 60px rgba(0, 0, 0, .34);
+      transform: translateX(102%);
+      transition: transform .28s cubic-bezier(.3, .8, .3, 1);
+      overscroll-behavior: contain;
+      visibility: hidden;
+    }
+    body.${READER_COMMENT_CLASS} #page-bbs-link .link-comment { transform: translateX(0); visibility: visible; }
+    body.${READER_CLASS} #page-bbs-link .link-comment .comment__comment-header { flex: none; padding-right: 52px; padding-top: 12px; background: var(--hbu-reader-page) !important; }
+    body.${READER_CLASS} #page-bbs-link .link-comment__list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+    body.${READER_COMMENT_CLASS} #page-bbs-link .link-comment__list { padding-bottom: 74px; }
+    body.${READER_CLASS} #page-bbs-link .link-comment__comment-item { border-color: var(--hbu-reader-border) !important; }
+    body.${READER_CLASS} .link-reply { border-color: var(--hbu-reader-border) !important; }
+    body.${READER_CLASS} #page-bbs-link .link-comment .link-reply { flex: none; border-top: 1px solid var(--hbu-reader-border) !important; background: var(--hbu-reader-page) !important; }
+    .hbu-reader-sheet-close { position: absolute; top: 12px; right: 12px; z-index: 3; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
+    .hbu-reader-sheet-close svg { width: 17px; height: 17px; }
+    .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4025; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
+    body.${READER_COMMENT_CLASS} .${READER_BACKDROP_CLASS} { opacity: 1; pointer-events: auto; }
+    .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: grid; place-items: center; padding: 24px; border: 0; background: rgba(2, 4, 7, .94); cursor: zoom-out; }
+    .hbu-reader-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border-radius: 99px; background: rgba(5, 8, 11, .86); color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
+    .hbu-reader-toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
+    .hbu-reader-toast--fixed { position: fixed; bottom: 58px; z-index: 4060; }
+    @media (max-width: 1180px) {
+      .hbu-reader-rail { right: 14px; bottom: 96px; }
+      .hbu-reader-page { padding-right: 86px; }
+      .hbu-reader-caption { padding-right: 86px; }
+    }
+    @media (max-width: 760px) {
+      :root { --hbu-reader-stage: 100%; }
+      .hbu-reader-page { padding: 78px 72px 98px; }
+      .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
+      .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
+      .hbu-reader-rich { font-size: 17px; }
+      .hbu-reader-page[data-kind="heading"] .hbu-reader-copy { font-size: 24px; }
+      .hbu-reader-caption { padding: 0 72px 100px; }
+      .hbu-reader-title { font-size: 26px; }
+      .hbu-reader-rail { gap: 9px; bottom: 88px; right: 10px; }
+      .hbu-reader-action { width: 42px; min-height: 42px; }
+      .hbu-reader-action svg { width: 19px; height: 19px; }
+      .hbu-reader-head { padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); }
+      .hbu-reader-head-author { max-width: 38%; }
+      .hbu-reader-progress { padding: 0 12px; }
+      .hbu-reader-round { width: 38px; height: 38px; }
+    }
+    @media (max-width: 520px) {
+      .hbu-reader-head-author span { display: none; }
+      .hbu-reader-head-author { padding-right: 4px; }
+      .hbu-reader-follow { min-width: 48px; padding: 0 10px; }
+      .hbu-reader-page { padding-right: 72px; }
+      .hbu-reader-caption { padding-right: 72px; }
+      .hbu-reader-hint { display: none; }
+      .hbu-reader-related { display: none; }
+    }
+    @media (max-height: 620px) {
+      .hbu-reader-page { padding-top: 72px; padding-bottom: 76px; }
+      .hbu-reader-caption { padding-bottom: 82px; }
+      .hbu-reader-rail { bottom: 70px; gap: 7px; }
+      .hbu-reader-action { width: 38px; min-height: 38px; }
+      .hbu-reader-action-count { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .hbu-reader-scroll { scroll-behavior: auto; }
+      #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
+    }
+  `;
+
   const PAGER_ICONS = {
     prev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
     next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>',
@@ -4173,6 +4669,876 @@
         sync();
       });
     }).observe(document.body, { childList: true, subtree: true });
+    sync();
+  }
+
+  function readReaderScroll(id) {
+    if (id === "") return 0;
+    try {
+      const value = Number(sessionStorage.getItem(READER_SCROLL_KEY + id));
+      return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  function writeReaderScroll(id, index) {
+    if (id === "") return;
+    try {
+      sessionStorage.setItem(READER_SCROLL_KEY + id, String(index));
+    } catch (error) {
+      // 隐私模式下不记录阅读位置，本次仍可正常翻页。
+    }
+  }
+
+  function ensureReaderStyle() {
+    let style = document.getElementById(READER_STYLE_ID);
+    if (style === null) {
+      style = document.createElement("style");
+      style.id = READER_STYLE_ID;
+      style.textContent = READER_CSS;
+      (document.head || document.documentElement).append(style);
+    } else if (style.textContent !== READER_CSS) {
+      style.textContent = READER_CSS;
+    }
+  }
+
+  // 沉浸阅读：只克隆正文排版，评论与按钮仍指向站点原生节点。
+  function watchReader() {
+    if (!document.body) return;
+    let host = null;
+    let backdrop = null;
+    let lightbox = null;
+    let closeSheetButton = null;
+    let articleId = "";
+    let signature = "";
+    let activeIndex = 0;
+    let pageCount = 0;
+    let toastTimer = 0;
+    let coverIndex = 0;
+    let coverTotal = 0;
+    let observer = null;
+    let scheduled = false;
+
+    const showToast = (message) => {
+      let toast = host?.querySelector(".hbu-reader-toast") || null;
+      if (toast === null) {
+        toast = document.createElement("div");
+        toast.className = "hbu-reader-toast hbu-reader-toast--fixed";
+        toast.setAttribute("aria-live", "polite");
+        document.body.append(toast);
+      }
+      toast.textContent = message;
+      toast.dataset.show = "true";
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => {
+        toast.dataset.show = "false";
+        if (toast.parentElement === document.body) window.setTimeout(() => toast.remove(), 220);
+      }, 1400);
+    };
+
+    const readCounts = () => {
+      const values = Array.from(document.querySelectorAll("#page-bbs-link .link-reply__operation-desc"))
+        .map((node) => (node.textContent || "").trim());
+      return { like: values[0] || "0", favour: values[1] || "0", comment: values[2] || "0" };
+    };
+
+    const syncActionStates = () => {
+      if (host === null) return;
+      const like = document.querySelector("#page-bbs-link .link-reply__operation-box > button:first-child");
+      const favour = document.querySelector("#page-bbs-link .hb-cpt__favour-btn");
+      const counts = readCounts();
+      const likeNode = host.querySelector('[data-action="like"]');
+      const favourNode = host.querySelector('[data-action="favour"]');
+      const commentNode = host.querySelector('[data-action="comment"]');
+      if (likeNode !== null) {
+        const on = like !== null && (like.getAttribute("aria-pressed") === "true" || like.classList.contains("active"));
+        likeNode.setAttribute("aria-pressed", String(on));
+        const markup = (on ? READER_ICONS.likeOn : READER_ICONS.like) + '<span class="hbu-reader-action-count">' + counts.like + "</span>";
+        if (likeNode.innerHTML !== markup) likeNode.innerHTML = markup;
+      }
+      if (favourNode !== null) {
+        const on = favour !== null && (favour.getAttribute("aria-pressed") === "true" || favour.classList.contains("active"));
+        favourNode.setAttribute("aria-pressed", String(on));
+        const markup = (on ? READER_ICONS.starOn : READER_ICONS.star) + '<span class="hbu-reader-action-count">' + counts.favour + "</span>";
+        if (favourNode.innerHTML !== markup) favourNode.innerHTML = markup;
+      }
+      if (commentNode !== null) {
+        const markup = READER_ICONS.comment + '<span class="hbu-reader-action-count">' + counts.comment + "</span>";
+        if (commentNode.innerHTML !== markup) commentNode.innerHTML = markup;
+      }
+      for (const stat of host.querySelectorAll("[data-stat]")) {
+        const valueNode = stat.querySelector("b");
+        const key = stat.dataset.stat;
+        if (valueNode !== null && key !== undefined && counts[key] !== undefined && valueNode.textContent !== counts[key]) {
+          valueNode.textContent = counts[key];
+        }
+      }
+      const follow = document.querySelector("#page-bbs-link .link-user__follow-btn");
+      const followNodes = host.querySelectorAll(".hbu-reader-follow");
+      for (const followNode of followNodes) {
+        const on = follow !== null && /已关注|互相关注/.test((follow.textContent || ""));
+        followNode.setAttribute("aria-pressed", String(on));
+        if (followNode.textContent !== (on ? "已关注" : "关注")) followNode.textContent = on ? "已关注" : "关注";
+      }
+    };
+
+    const clickNative = (selector) => {
+      const node = document.querySelector("#page-bbs-link " + selector);
+      if (node instanceof HTMLElement) node.click();
+    };
+
+    const openComments = () => {
+      if (host === null) return;
+      getCommentsSheet();
+      document.body.classList.add(READER_COMMENT_CLASS);
+      host.inert = true;
+      closeSheetButton?.focus({ preventScroll: true });
+    };
+
+    const closeComments = () => {
+      if (!document.body.classList.contains(READER_COMMENT_CLASS)) return;
+      document.body.classList.remove(READER_COMMENT_CLASS);
+      if (host !== null) host.inert = false;
+      host?.querySelector('[data-action="comment"]')?.focus({ preventScroll: true });
+    };
+
+    const openLightbox = (source) => {
+      if (source === "") return;
+      if (lightbox === null) {
+        lightbox = document.createElement("button");
+        lightbox.type = "button";
+        lightbox.className = "hbu-reader-lightbox";
+        lightbox.setAttribute("aria-label", "关闭大图");
+        const img = document.createElement("img");
+        lightbox.append(img);
+        lightbox.addEventListener("click", () => {
+          lightbox?.remove();
+          lightbox = null;
+        });
+        document.body.append(lightbox);
+      }
+      const img = lightbox.querySelector("img");
+      if (img !== null) img.src = source;
+      lightbox.focus({ preventScroll: true });
+    };
+
+    const getCommentsSheet = () => {
+      const sheet = document.querySelector("#page-bbs-link .link-comment");
+      if (sheet === null) return;
+      if (closeSheetButton === null) closeSheetButton = document.createElement("button");
+      closeSheetButton.type = "button";
+      closeSheetButton.className = "hbu-reader-sheet-close";
+      closeSheetButton.setAttribute("aria-label", "关闭评论");
+      closeSheetButton.innerHTML = READER_ICONS.close;
+      closeSheetButton.onclick = closeComments;
+      if (!sheet.contains(closeSheetButton)) sheet.prepend(closeSheetButton);
+    };
+
+    const scrollToPage = (index) => {
+      if (host === null) return;
+      const pages = Array.from(host.querySelectorAll(".hbu-reader-page"));
+      if (pages.length === 0) return;
+      const next = Math.min(pages.length - 1, Math.max(0, index));
+      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      pages[next].scrollIntoView({ block: "start", behavior: behavior });
+    };
+
+    const setCover = (value) => {
+      if (host === null || coverTotal === 0) return;
+      coverIndex = (value + coverTotal) % coverTotal;
+      for (const [index, node] of Array.from(host.querySelectorAll(".hbu-reader-cover img")).entries()) {
+        node.dataset.active = String(index === coverIndex);
+      }
+      for (const [index, node] of Array.from(host.querySelectorAll(".hbu-reader-cover-dots button")).entries()) {
+        node.setAttribute("aria-current", String(index === coverIndex));
+      }
+    };
+
+    const bindTag = (node, text) => {
+      node.addEventListener("click", (event) => {
+        event.preventDefault();
+        const native = Array.from(document.querySelectorAll("#page-bbs-link .link-tags__tag-item"))
+          .find((candidate) => (candidate.textContent || "").trim() === text);
+        if (native instanceof HTMLElement) native.click();
+      });
+    };
+
+    const bindRichProxy = (clone, native) => {
+      const tags = Array.from(clone.querySelectorAll("button"));
+      for (const button of tags) {
+        const text = (button.textContent || "").trim();
+        const className = typeof button.className === "string" ? button.className : "";
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          const candidates = Array.from(native.querySelectorAll("button"))
+            .filter((node) => (typeof node.className === "string" ? node.className : "") === className && (node.textContent || "").trim() === text);
+          if (candidates[0] instanceof HTMLElement) candidates[0].click();
+        });
+      }
+      for (const link of clone.querySelectorAll("a[href]")) {
+        if ((link.getAttribute("href") || "").startsWith("#")) link.addEventListener("click", (event) => event.preventDefault());
+      }
+      for (const image of clone.querySelectorAll("img")) {
+        image.loading = "lazy";
+        image.decoding = "async";
+        image.addEventListener("click", () => openLightbox(image.currentSrc || image.src));
+      }
+    };
+
+    const addTextPages = (scroll, lines) => {
+      let buffer = "";
+      let bufferLines = 0;
+      const flush = () => {
+        const text = buffer.trim();
+        buffer = "";
+        bufferLines = 0;
+        if (text === "") return;
+        const page = document.createElement("section");
+        page.className = "hbu-reader-page";
+        page.dataset.kind = "text";
+        const copy = document.createElement("div");
+        copy.className = "hbu-reader-copy";
+        copy.textContent = text;
+        page.append(copy);
+        scroll.append(page);
+      };
+      for (const raw of lines) {
+        const line = raw.replace(/\s+/g, " ").trim();
+        if (line === "") continue;
+        if (buffer !== "") buffer += "\n\n";
+        buffer += line;
+        bufferLines += 1;
+        if (bufferLines >= 2 || buffer.length >= 220) flush();
+      }
+      flush();
+    };
+
+    const addMediaPage = (scroll, source, caption) => {
+      if (source === "") return;
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "media";
+      const img = document.createElement("img");
+      img.className = "hbu-reader-media";
+      img.src = source;
+      img.alt = caption || "正文图片";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
+      page.append(img);
+      scroll.append(page);
+    };
+
+    const addHeadingPage = (scroll, text) => {
+      const value = text.replace(/\s+/g, " ").trim();
+      if (value === "") return;
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "heading";
+      const copy = document.createElement("div");
+      copy.className = "hbu-reader-copy";
+      copy.textContent = value;
+      page.append(copy);
+      scroll.append(page);
+    };
+
+    const addRichPage = (scroll, native) => {
+      const clone = native.cloneNode(true);
+      bindRichProxy(clone, native);
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "rich";
+      const rich = document.createElement("div");
+      rich.className = "hbu-reader-rich";
+      rich.append(clone);
+      page.append(rich);
+      scroll.append(page);
+    };
+
+    const buildPages = (scroll, body) => {
+      const lines = [];
+      const flush = () => {
+        if (lines.length === 0) return;
+        addTextPages(scroll, lines.splice(0, lines.length));
+      };
+      const visit = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          for (const line of (node.textContent || "").split(/\n+/)) lines.push(line);
+          return;
+        }
+        if (!(node instanceof Element)) return;
+        const tag = node.tagName.toLowerCase();
+        if (tag === "br") { flush(); return; }
+        if (tag === "script" || tag === "style") return;
+        if (tag === "img") {
+          flush();
+          addMediaPage(scroll, (node.getAttribute("data-src") || node.getAttribute("src") || ""), node.getAttribute("alt") || "");
+          return;
+        }
+        if (/^h[1-4]$/.test(tag)) {
+          flush();
+          addHeadingPage(scroll, node.textContent || "");
+          return;
+        }
+        const images = Array.from(node.querySelectorAll("img"));
+        const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+        const mediaOnly = images.length === 1 && text === "";
+        if (mediaOnly) {
+          flush();
+          const image = images[0];
+          addMediaPage(scroll, image.getAttribute("data-src") || image.getAttribute("src") || image.currentSrc || "", image.getAttribute("alt") || "");
+          return;
+        }
+        const className = typeof node.className === "string" ? node.className : "";
+        const isCard = /(^|\s)(com-|hb-cpt__image|card)/.test(className);
+        if (["div", "section", "article"].includes(tag) && !isCard && node.children.length > 0) {
+          for (const child of Array.from(node.childNodes)) visit(child);
+          return;
+        }
+        const isSimple = tag === "p" || tag === "div" && node.children.length === 0;
+        if (isSimple && text !== "" && images.length === 0) {
+          lines.push(text);
+          return;
+        }
+        flush();
+        if (text !== "" || images.length > 0) addRichPage(scroll, node);
+      };
+      for (const child of Array.from(body.childNodes)) visit(child);
+      flush();
+    };
+
+    const readPager = (side) => {
+      const shadow = document.getElementById("heybox-up-post-pager")?.shadowRoot;
+      const button = shadow?.querySelector(".btn--" + side);
+      return button instanceof HTMLButtonElement && !button.disabled ? button : null;
+    };
+
+    const updateProgress = () => {
+      if (host === null) return;
+      const current = host.querySelector(".hbu-reader-progress [data-current]");
+      const total = host.querySelector(".hbu-reader-progress [data-total]");
+      const fill = host.querySelector(".hbu-reader-progress-bar i");
+      if (current !== null) current.textContent = String(activeIndex + 1);
+      if (total !== null) total.textContent = String(pageCount);
+      if (fill !== null) fill.style.width = pageCount <= 1 ? "100%" : String(((activeIndex + 1) / pageCount) * 100) + "%";
+    };
+
+    const setActive = (index) => {
+      activeIndex = Math.min(pageCount - 1, Math.max(0, index));
+      updateProgress();
+      writeReaderScroll(articleId, activeIndex);
+    };
+
+    const observePages = (scroll) => {
+      observer?.disconnect();
+      const pages = Array.from(host.querySelectorAll(".hbu-reader-page"));
+      observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const index = pages.indexOf(entry.target);
+          if (index !== -1) setActive(index);
+        }
+      }, { root: scroll, threshold: .55 });
+      for (const page of pages) observer.observe(page);
+    };
+
+    const createHead = (data) => {
+      const head = document.createElement("div");
+      head.className = "hbu-reader-head";
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "hbu-reader-round";
+      back.setAttribute("aria-label", "返回");
+      back.title = "返回";
+      back.innerHTML = READER_ICONS.back;
+      back.addEventListener("click", () => history.back());
+      const author = document.createElement("a");
+      author.className = "hbu-reader-head-author";
+      author.href = data.authorHref;
+      author.title = data.author;
+      if (data.avatar !== "") {
+        const avatar = document.createElement("img");
+        avatar.src = data.avatar;
+        avatar.alt = "";
+        author.append(avatar);
+      }
+      const name = document.createElement("span");
+      name.textContent = data.author;
+      author.append(name);
+      const follow = document.createElement("button");
+      follow.type = "button";
+      follow.className = "hbu-reader-follow";
+      follow.textContent = "关注";
+      follow.addEventListener("click", () => clickNative(".link-user__follow-btn"));
+      const spacer = document.createElement("span");
+      spacer.className = "hbu-reader-head-spacer";
+      const share = document.createElement("button");
+      share.type = "button";
+      share.className = "hbu-reader-round";
+      share.setAttribute("aria-label", "分享");
+      share.title = "分享";
+      share.innerHTML = READER_ICONS.share;
+      share.addEventListener("click", () => clickNative(".page-header__share-btn"));
+      const exit = document.createElement("button");
+      exit.type = "button";
+      exit.className = "hbu-reader-round";
+      exit.setAttribute("aria-label", "退出沉浸阅读");
+      exit.title = "退出沉浸阅读（R）";
+      exit.innerHTML = READER_ICONS.close;
+      exit.addEventListener("click", () => setReaderPreference(false));
+      head.append(back, author, follow, spacer, share, exit);
+      return head;
+    };
+
+    const createRail = (data) => {
+      const rail = document.createElement("aside");
+      rail.className = "hbu-reader-rail";
+      rail.setAttribute("aria-label", "文章互动");
+      const avatar = document.createElement("a");
+      avatar.className = "hbu-reader-action";
+      avatar.href = data.authorHref;
+      avatar.title = "查看作者 " + data.author;
+      avatar.setAttribute("aria-label", "查看作者 " + data.author);
+      if (data.avatar !== "") {
+        const img = document.createElement("img");
+        img.src = data.avatar;
+        img.alt = "";
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.borderRadius = "50%";
+        img.style.objectFit = "cover";
+        avatar.append(img);
+      }
+      const like = document.createElement("button");
+      like.type = "button";
+      like.className = "hbu-reader-action";
+      like.dataset.action = "like";
+      like.setAttribute("aria-label", "点赞");
+      like.title = "点赞";
+      like.addEventListener("click", () => clickNative(".link-reply__operation-box > button:first-child"));
+      const favour = document.createElement("button");
+      favour.type = "button";
+      favour.className = "hbu-reader-action";
+      favour.dataset.action = "favour";
+      favour.setAttribute("aria-label", "收藏");
+      favour.title = "收藏";
+      favour.addEventListener("click", () => clickNative(".hb-cpt__favour-btn"));
+      const comment = document.createElement("button");
+      comment.type = "button";
+      comment.className = "hbu-reader-action";
+      comment.dataset.action = "comment";
+      comment.setAttribute("aria-label", "查看评论");
+      comment.title = "查看评论（C）";
+      comment.addEventListener("click", openComments);
+      const share = document.createElement("button");
+      share.type = "button";
+      share.className = "hbu-reader-action";
+      share.setAttribute("aria-label", "分享");
+      share.title = "分享";
+      share.innerHTML = READER_ICONS.share;
+      share.addEventListener("click", () => clickNative(".page-header__share-btn"));
+      rail.append(avatar, like, favour, comment, share);
+      return rail;
+    };
+
+    const createHero = (data) => {
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "hero";
+      const cover = document.createElement("div");
+      cover.className = "hbu-reader-cover" + (data.covers.length === 0 ? " hbu-reader-cover--empty" : "");
+      coverTotal = data.covers.length;
+      coverIndex = 0;
+      data.covers.forEach((source, index) => {
+        const img = document.createElement("img");
+        img.src = source;
+        img.alt = index === 0 ? data.title : "封面 " + (index + 1);
+        img.dataset.active = String(index === 0);
+        if (index > 1) img.loading = "lazy";
+        img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
+        img.addEventListener("touchstart", (event) => { cover.dataset.touchX = String(event.touches[0].clientX); }, { passive: true });
+        img.addEventListener("touchend", (event) => {
+          const start = Number(cover.dataset.touchX || "0");
+          const delta = event.changedTouches[0].clientX - start;
+          if (Math.abs(delta) > 42) setCover(coverIndex + (delta < 0 ? 1 : -1));
+        }, { passive: true });
+        cover.append(img);
+      });
+      if (data.covers.length > 1) {
+        const prev = document.createElement("button");
+        prev.type = "button";
+        prev.className = "hbu-reader-cover-nav";
+        prev.dataset.side = "prev";
+        prev.setAttribute("aria-label", "上一张封面");
+        prev.innerHTML = READER_ICONS.previous;
+        prev.addEventListener("click", () => setCover(coverIndex - 1));
+        const next = document.createElement("button");
+        next.type = "button";
+        next.className = "hbu-reader-cover-nav";
+        next.dataset.side = "next";
+        next.setAttribute("aria-label", "下一张封面");
+        next.innerHTML = READER_ICONS.next;
+        next.addEventListener("click", () => setCover(coverIndex + 1));
+        const dots = document.createElement("div");
+        dots.className = "hbu-reader-cover-dots";
+        data.covers.forEach((source, index) => {
+          const dot = document.createElement("button");
+          dot.type = "button";
+          dot.setAttribute("aria-label", "封面 " + (index + 1));
+          dot.setAttribute("aria-current", String(index === 0));
+          dot.addEventListener("click", () => setCover(index));
+          dots.append(dot);
+        });
+        cover.append(prev, next, dots);
+      }
+      const caption = document.createElement("div");
+      caption.className = "hbu-reader-caption";
+      if (data.tags.length > 0 || data.time !== "") {
+        const kicker = document.createElement("div");
+        kicker.className = "hbu-reader-kicker";
+        for (const tag of data.tags.slice(0, 3)) {
+          const chip = document.createElement("span");
+          chip.textContent = tag;
+          kicker.append(chip);
+        }
+        if (data.time !== "") {
+          const chip = document.createElement("span");
+          chip.textContent = data.time + (data.ip !== "" ? " · " + data.ip : "");
+          kicker.append(chip);
+        }
+        caption.append(kicker);
+      }
+      const title = document.createElement("h1");
+      title.className = "hbu-reader-title";
+      title.textContent = data.title || "无标题";
+      const byline = document.createElement("div");
+      byline.className = "hbu-reader-byline";
+      const author = document.createElement("b");
+      author.textContent = data.author;
+      const hint = document.createElement("span");
+      hint.textContent = "向下滑动阅读";
+      byline.append(author, hint);
+      caption.append(title, byline);
+      page.append(cover, caption);
+      return page;
+    };
+
+    const createEndPage = (data) => {
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "end";
+      const card = document.createElement("div");
+      card.className = "hbu-reader-end-card";
+      const head = document.createElement("div");
+      head.className = "hbu-reader-end-head";
+      if (data.avatar !== "") {
+        const avatar = document.createElement("img");
+        avatar.src = data.avatar;
+        avatar.alt = "";
+        head.append(avatar);
+      }
+      const name = document.createElement("div");
+      name.className = "hbu-reader-end-name";
+      const label = document.createElement("b");
+      label.textContent = data.author;
+      const meta = document.createElement("span");
+      meta.textContent = (data.level !== "" ? "Lv." + data.level : "") + (data.time !== "" ? (data.level !== "" ? " · " : "") + data.time : "");
+      name.append(label, meta);
+      const follow = document.createElement("button");
+      follow.type = "button";
+      follow.className = "hbu-reader-follow";
+      follow.textContent = "关注";
+      follow.addEventListener("click", () => clickNative(".link-user__follow-btn"));
+      head.append(name, follow);
+      const stats = document.createElement("div");
+      stats.className = "hbu-reader-stats";
+      for (const item of [
+        { value: data.counts.like, label: "点赞" },
+        { value: data.counts.favour, label: "收藏" },
+        { value: data.counts.comment, label: "评论" },
+      ]) {
+        const box = document.createElement("div");
+        box.dataset.stat = item.label === "点赞" ? "like" : item.label === "收藏" ? "favour" : "comment";
+        const value = document.createElement("b");
+        value.textContent = item.value;
+        const text = document.createElement("span");
+        text.textContent = item.label;
+        box.append(value, text);
+        stats.append(box);
+      }
+      card.append(head, stats);
+      if (data.tags.length > 0) {
+        const tags = document.createElement("div");
+        tags.className = "hbu-reader-tags";
+        for (const tag of data.tags) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "hbu-reader-tag";
+          button.textContent = tag;
+          bindTag(button, tag);
+          tags.append(button);
+        }
+        card.append(tags);
+      }
+      page.append(card);
+      if (data.related.length > 0) {
+        const related = document.createElement("div");
+        related.className = "hbu-reader-related";
+        const heading = document.createElement("h2");
+        heading.textContent = "继续阅读";
+        related.append(heading);
+        for (const item of data.related.slice(0, 4)) {
+          const link = document.createElement("a");
+          link.href = LINK_HREF_PREFIX + item.id;
+          link.textContent = item.title || "帖子 " + item.id;
+          related.append(link);
+        }
+        page.append(related);
+      }
+      const actions = document.createElement("div");
+      actions.className = "hbu-reader-end-actions";
+      const prev = readPager("prev");
+      const next = readPager("next");
+      const prevButton = document.createElement("button");
+      prevButton.type = "button";
+      prevButton.disabled = prev === null;
+      prevButton.innerHTML = READER_ICONS.previous + " 上一篇";
+      prevButton.addEventListener("click", () => prev?.click());
+      const nextButton = document.createElement("button");
+      nextButton.type = "button";
+      nextButton.disabled = next === null;
+      nextButton.innerHTML = "下一篇 " + READER_ICONS.next;
+      nextButton.addEventListener("click", () => next?.click());
+      const topButton = document.createElement("button");
+      topButton.type = "button";
+      topButton.textContent = "回到封面";
+      topButton.addEventListener("click", () => scrollToPage(0));
+      actions.append(prevButton, topButton, nextButton);
+      page.append(actions);
+      return page;
+    };
+
+    const readData = () => {
+      const pageRoot = document.querySelector("#page-bbs-link");
+      const article = pageRoot?.querySelector(".hb-bbs-image-text, .hb-bbs-post");
+      const body = article?.querySelector(".image-text__content, .post__content");
+      const titleNode = article?.querySelector(".section-title__content, .post__title, .image-text__title");
+      if (!pageRoot || !article || !body) return null;
+      const authorNode = pageRoot.querySelector(".link-user__username, .page-header__username");
+      const authorLink = pageRoot.querySelector(".link-user__user-wrapper, .page-header__user-wrapper");
+      const avatarNode = authorLink?.querySelector("img") || pageRoot.querySelector(".page-header__user-wrapper img");
+      const covers = Array.from(pageRoot.querySelectorAll(".image-text__header-image img, .post__header-image img"))
+        .map((node) => node.currentSrc || node.src)
+        .filter((source, index, list) => source !== "" && list.indexOf(source) === index);
+      const tags = Array.from(pageRoot.querySelectorAll(".link-tags__tag-item"))
+        .map((node) => (node.textContent || "").trim())
+        .filter((value) => value !== "");
+      const time = (pageRoot.querySelector(".link-data__time")?.textContent || "").trim();
+      const ip = (pageRoot.querySelector(".link-data__ip")?.textContent || "").trim().replace(/^·/, "");
+      const level = (pageRoot.querySelector(".link-user__level-tag")?.className.match(/hb-level-(\d+)/) || [])[1] || "";
+      const related = Array.from(pageRoot.querySelectorAll(".bbs-link__related-recommend a[href*='/app/bbs/link/'], .related-recommend__container a[href*='/app/bbs/link/']"))
+        .map((anchor) => {
+          const match = /link\/(\d+)/.exec(anchor.getAttribute("href") || "");
+          return match ? { id: match[1], title: (anchor.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80) } : null;
+        })
+        .filter(Boolean)
+        .filter((item, index, list) => list.findIndex((other) => other.id === item.id) === index);
+      return {
+        article: article,
+        body: body,
+        title: (titleNode?.textContent || "").trim(),
+        author: (authorNode?.textContent || "").trim() || "作者",
+        authorHref: authorLink?.getAttribute("href") || "/app/user/profile/",
+        avatar: avatarNode?.getAttribute("src") || "",
+        covers: covers,
+        tags: tags,
+        time: time,
+        ip: ip,
+        level: level,
+        related: related,
+        counts: readCounts(),
+        signature: [articleId, titleNode?.textContent?.length || 0, body.childNodes.length, (body.textContent || "").length, covers.length, tags.length, related.length].join(":"),
+      };
+    };
+
+    const render = (data) => {
+      if (host === null) return;
+      observer?.disconnect();
+      host.textContent = "";
+      coverIndex = 0;
+      coverTotal = 0;
+      activeIndex = 0;
+      host.append(createHead(data));
+      const scroll = document.createElement("div");
+      scroll.className = "hbu-reader-scroll";
+      scroll.tabIndex = 0;
+      scroll.setAttribute("aria-label", "文章分页");
+      scroll.append(createHero(data));
+      buildPages(scroll, data.body);
+      scroll.append(createEndPage(data));
+      const rail = createRail(data);
+      host.append(scroll, rail);
+      const progress = document.createElement("div");
+      progress.className = "hbu-reader-progress";
+      const current = document.createElement("span");
+      current.dataset.current = "";
+      current.textContent = "1";
+      const bar = document.createElement("span");
+      bar.className = "hbu-reader-progress-bar";
+      bar.append(document.createElement("i"));
+      const total = document.createElement("span");
+      total.dataset.total = "";
+      total.textContent = "1";
+      const hint = document.createElement("span");
+      hint.className = "hbu-reader-hint";
+      hint.textContent = "滚轮 / ↑↓ 翻页";
+      progress.append(current, bar, total, hint);
+      const toast = document.createElement("div");
+      toast.className = "hbu-reader-toast";
+      toast.setAttribute("aria-live", "polite");
+      host.append(progress, toast);
+      pageCount = host.querySelectorAll(".hbu-reader-page").length;
+      observePages(scroll);
+      syncActionStates();
+      updateProgress();
+      if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) requestAnimationFrame(openComments);
+      const restore = Math.min(pageCount - 1, readReaderScroll(articleId));
+      if (restore > 0) {
+        requestAnimationFrame(() => {
+          const pages = host?.querySelectorAll(".hbu-reader-page");
+          pages?.[restore]?.scrollIntoView({ block: "start", behavior: "auto" });
+          setActive(restore);
+        });
+      }
+    };
+
+    const teardown = () => {
+      observer?.disconnect();
+      observer = null;
+      document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
+      closeSheetButton?.remove();
+      closeSheetButton = null;
+      host?.remove();
+      host = null;
+      backdrop?.remove();
+      backdrop = null;
+      lightbox?.remove();
+      lightbox = null;
+      signature = "";
+      pageCount = 0;
+      activeIndex = 0;
+    };
+
+    const ensureShell = () => {
+      ensureReaderStyle();
+      if (!document.body.classList.contains(READER_CLASS)) document.body.classList.add(READER_CLASS);
+      if (host === null) {
+        host = document.createElement("div");
+        host.id = READER_ID;
+        host.setAttribute("role", "region");
+        host.setAttribute("aria-label", "沉浸阅读");
+        document.body.append(host);
+      }
+      if (backdrop === null) {
+        backdrop = document.createElement("div");
+        backdrop.className = READER_BACKDROP_CLASS;
+        backdrop.addEventListener("click", closeComments);
+        document.body.append(backdrop);
+      }
+    };
+
+    const sync = () => {
+      const match = /^\/app\/bbs\/link\/(\d+)/.exec(location.pathname);
+      if (match === null || !readReaderPreference()) {
+        if (host !== null || document.body.classList.contains(READER_CLASS)) teardown();
+        signature = "";
+        return;
+      }
+      articleId = match[1];
+      const data = readData();
+      if (data === null) {
+        if (host !== null) teardown();
+        return;
+      }
+      ensureShell();
+      syncActionStates();
+      if (signature === data.signature) return;
+      signature = data.signature;
+      render(data);
+    };
+
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        sync();
+      });
+    };
+
+    document.addEventListener(READER_EVENT, (event) => {
+      if (readerToggle !== null) readerToggle.setAttribute("aria-checked", String(event.detail === true));
+      if (event.detail !== true) {
+        teardown();
+        showToast("已退出沉浸阅读，可在设置中重新开启");
+        return;
+      }
+      signature = "";
+      schedule();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (host === null || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isTypingTarget(event.target)) return;
+      if (event.key === "Escape") {
+        if (document.body.classList.contains(READER_COMMENT_CLASS)) {
+          event.preventDefault();
+          closeComments();
+        } else if (lightbox !== null) {
+          event.preventDefault();
+          lightbox.remove();
+          lightbox = null;
+        } else {
+          event.preventDefault();
+          setReaderPreference(false);
+        }
+        return;
+      }
+      if (event.key === "ArrowRight" && activeIndex === 0 && coverTotal > 1) {
+        event.preventDefault();
+        setCover(coverIndex + 1);
+        return;
+      }
+      if (event.key === "ArrowLeft" && activeIndex === 0 && coverTotal > 1) {
+        event.preventDefault();
+        setCover(coverIndex - 1);
+        return;
+      }
+      if (["ArrowDown", "PageDown", "j", "J", " "].includes(event.key)) {
+        event.preventDefault();
+        scrollToPage(activeIndex + 1);
+      } else if (["ArrowUp", "PageUp", "k", "K"].includes(event.key)) {
+        event.preventDefault();
+        scrollToPage(activeIndex - 1);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        scrollToPage(0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        scrollToPage(pageCount - 1);
+      } else if (event.key === "c" || event.key === "C") {
+        event.preventDefault();
+        if (document.body.classList.contains(READER_COMMENT_CLASS)) closeComments();
+        else openComments();
+      } else if (event.key === "r" || event.key === "R") {
+        event.preventDefault();
+        setReaderPreference(false);
+      }
+    });
+
+    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
+    window.addEventListener("popstate", () => { signature = ""; schedule(); });
     sync();
   }
 
@@ -5467,6 +6833,7 @@
     watchFavourPage();
     watchCommentRail();
     watchPostPager();
+    watchReader();
     watchCommunitySearch();
     watchDesktopShell();
   }
