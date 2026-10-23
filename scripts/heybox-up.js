@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.25
+// @version      0.4.26
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏分页沉浸阅读：封面、正文、图片与结尾逐页吸附，右侧竖排原生点赞/收藏/评论/CY/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -3329,6 +3329,8 @@
     }
     .quote .quote-name { color: var(--rail-muted); }
     .status { padding: 26px 18px; text-align: center; color: var(--rail-muted); }
+    .status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+    .status a { color: var(--rail-accent); text-decoration: underline; text-underline-offset: 3px; }
     .foot-bar { display: flex; gap: 8px; padding: 11px 12px; border-top: 1px solid var(--rail-line); }
     .action {
       flex: 1 1 auto;
@@ -3365,9 +3367,10 @@
     };
   }
 
-  function buildLinkCommentUrl(linkId, page) {
+  function buildLinkCommentUrl(linkId, page, signed) {
+    const base = signed === false ? { heybox_id: getHeyboxId(), os_type: "web", app: "heybox", client_type: "web", version: "999.0.4", web_version: "2.5", x_client_type: "web", x_app: "heybox_website", x_os_type: "Windows", device_info: "Chrome" } : createApiParams(COMMENT_TREE_API_PATH);
     const query = new URLSearchParams({
-      ...createApiParams(COMMENT_TREE_API_PATH),
+      ...base,
       heybox_id: getHeyboxId(),
       link_id: String(linkId),
       is_first: page === 1 ? "1" : "0",
@@ -3530,16 +3533,35 @@
     return item;
   }
 
+  let lastRailRequestAt = 0;
+
   async function fetchRailPage(linkId, page) {
-    const response = await fetch(buildLinkCommentUrl(linkId, page), {
-      credentials: "include",
-      headers: { accept: "application/json" },
-    });
-    if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
-    const data = await response.json();
-    if (data.status !== "ok") throw new Error(data.msg || "接口返回 " + data.status);
+    const wait = Math.max(0, 700 - (Date.now() - lastRailRequestAt));
+    if (wait > 0) await new Promise((resolve) => window.setTimeout(resolve, wait));
+    lastRailRequestAt = Date.now();
+    const request = async (signed) => {
+      const response = await fetch(buildLinkCommentUrl(linkId, page, signed), {
+        credentials: "include",
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
+      const payload = await response.json();
+      if (payload.status !== "ok") throw new Error(payload.msg || "接口返回 " + payload.status);
+      return payload;
+    };
+    let data;
+    try {
+      data = await request(true);
+    } catch (primaryError) {
+      try {
+        data = await request(false);
+      } catch (fallbackError) {
+        throw new Error((primaryError && primaryError.message ? primaryError.message : "签名请求失败") + " / 匿名请求：" + (fallbackError && fallbackError.message ? fallbackError.message : "失败"));
+      }
+    }
     const result = data.result && typeof data.result === "object" ? data.result : {};
-    const groups = Array.isArray(result.comments) ? result.comments : [];
+    const groups = Array.isArray(result.comments) ? result.comments : Array.isArray(result.comment) ? result.comment : [];
     const link = result.link && typeof result.link === "object" ? result.link : {};
     return {
       items: groups.map(normalizeRailGroup).filter((item) => item !== null),
@@ -3568,6 +3590,7 @@
 
     const panel = document.createElement("div");
     panel.className = "panel";
+    const cache = new Map();
 
     const tab = document.createElement("button");
     tab.type = "button";
@@ -3791,18 +3814,30 @@
       list.replaceChildren(...visible.map(createItem));
       list.hidden = visible.length === 0;
       if (state.error !== "") {
-        status.textContent = state.error;
+        status.textContent = "";
+        const label = document.createElement("span");
+        label.textContent = state.error + " ";
+        const link = document.createElement("a");
+        link.href = LINK_HREF_PREFIX + state.linkId;
+        link.textContent = "打开帖子";
+        link.addEventListener("click", (event) => event.stopPropagation());
+        status.append(label, link);
+        status.classList.add("retry");
         status.hidden = false;
       } else if (state.loading && state.items.length === 0) {
+        status.classList.remove("retry");
         status.textContent = "正在加载评论…";
         status.hidden = false;
       } else if (state.linkId === "") {
+        status.classList.remove("retry");
         status.textContent = "这里会直接显示信息流首条帖子的评论；点其他帖子的评论数字可切换。";
         status.hidden = false;
       } else if (visible.length === 0) {
+        status.classList.remove("retry");
         status.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
         status.hidden = false;
       } else {
+        status.classList.remove("retry");
         status.hidden = true;
       }
       moreButton.hidden = state.linkId === "" || !state.hasMore;
@@ -3815,6 +3850,17 @@
       state.loading = true;
       state.error = "";
       render();
+      const cached = page === 1 ? cache.get(state.linkId) : undefined;
+      if (cached !== undefined && Date.now() - cached.at < 5 * 60 * 1000) {
+        state.items = cached.items;
+        state.page = 1;
+        state.hasMore = cached.hasMore;
+        state.total = cached.total;
+        state.title = cached.title;
+        state.loading = false;
+        render();
+        return;
+      }
       try {
         const data = await fetchRailPage(state.linkId, page);
         if (seq !== state.seq) return;
@@ -3823,9 +3869,15 @@
         state.hasMore = data.items.length > 0;
         if (data.total > 0) state.total = data.total;
         if (data.title !== "" && state.title === "") state.title = data.title;
+        if (page === 1) {
+          cache.set(state.linkId, { at: Date.now(), items: data.items, total: state.total, title: state.title, hasMore: state.hasMore });
+        }
       } catch (error) {
         if (seq !== state.seq) return;
-        state.error = "评论加载失败：" + (error && error.message ? error.message : "未知错误") + "，可打开帖子查看。";
+        const message = error && error.message ? error.message : "未知错误";
+        state.error = /show_captcha|captcha/i.test(message)
+          ? "评论需要验证，请稍后重试，或打开帖子查看。"
+          : "评论加载失败：" + message + "，可打开帖子查看。";
         state.hasMore = false;
       } finally {
         if (seq === state.seq) {
@@ -3873,9 +3925,21 @@
     tab.addEventListener("click", () => {
       state.mode = "open";
       applyMode();
+      if (state.linkId === "") {
+        const anchor = document.querySelector("#page-bbs-community .bbs-home__content-list a[href*='/app/bbs/link/']");
+        const match = anchor ? /link\/(\d+)/.exec(anchor.getAttribute("href") || "") : null;
+        if (match) {
+          open(match[1]);
+          return;
+        }
+      }
       render();
     });
     collapseButton.addEventListener("click", collapse);
+    status.addEventListener("click", () => {
+      if (state.error === "" || state.loading) return;
+      void load(1);
+    });
     moreButton.addEventListener("click", () => {
       if (state.loading || state.linkId === "") return;
       void load(state.page + 1);
@@ -3962,7 +4026,7 @@
         hoverTimer = 0;
         if (!rail.isOpen() || rail.getLinkId() === linkId) return;
         rail.open(linkId);
-      }, 600);
+      }, 900);
     }, true);
     document.addEventListener("pointerdown", cancelHover, true);
     document.addEventListener("scroll", cancelHover, true);
@@ -4473,6 +4537,8 @@
     body.${READER_CLASS} #page-bbs-link .link-comment .link-reply { flex: none; border-top: 1px solid var(--hbu-reader-border) !important; background: var(--hbu-reader-page) !important; }
     .hbu-reader-sheet-close { position: absolute; top: 12px; right: 12px; z-index: 3; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
     .hbu-reader-sheet-close svg { width: 17px; height: 17px; }
+    .hbu-reader-sheet-status { margin: auto; padding: 28px 18px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
+    .hbu-reader-sheet-status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
     .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4009; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
     body.${READER_COMMENT_CLASS} .${READER_BACKDROP_CLASS} { opacity: 1; pointer-events: auto; }
     body.${READER_COMMENT_CLASS} .layout-normal { z-index: 4010 !important; background: transparent !important; pointer-events: none; }
@@ -4762,6 +4828,7 @@
     let backdrop = null;
     let lightbox = null;
     let closeSheetButton = null;
+    let sheetStatusTimer = 0;
     let favourPanel = null;
     let favourButton = null;
     let articleId = "";
@@ -4947,10 +5014,69 @@
       document.body.classList.add(READER_COMMENT_CLASS);
       host.inert = true;
       closeSheetButton?.focus({ preventScroll: true });
+      watchSheetComments();
+    };
+
+    const clearSheetStatus = () => {
+      window.clearTimeout(sheetStatusTimer);
+      document.querySelectorAll(".hbu-reader-sheet-status").forEach((node) => node.remove());
+    };
+
+    const watchSheetComments = () => {
+      clearSheetStatus();
+      const sheet = document.querySelector("#page-bbs-link .link-comment");
+      if (sheet === null) return;
+      if (sheet.querySelector("[data-comment-id]") !== null) return;
+      const list = sheet.querySelector(".link-comment__list");
+      let attempts = 0;
+      const status = document.createElement("div");
+      status.className = "hbu-reader-sheet-status";
+      status.textContent = "正在加载评论…";
+      sheet.append(status);
+      const retry = () => {
+        status.classList.remove("retry");
+        status.textContent = "正在加载评论…";
+        attempts = 0;
+        if (list instanceof HTMLElement) {
+          list.scrollTop += 1;
+          list.dispatchEvent(new Event("scroll"));
+        }
+        window.dispatchEvent(new Event("resize"));
+        scheduleSheetCheck();
+      };
+      const scheduleSheetCheck = () => {
+        window.clearTimeout(sheetStatusTimer);
+        sheetStatusTimer = window.setTimeout(() => {
+          if (!document.body.classList.contains(READER_COMMENT_CLASS)) {
+            status.remove();
+            return;
+          }
+          if (sheet.querySelector("[data-comment-id]") !== null) {
+            status.remove();
+            return;
+          }
+          attempts += 1;
+          if (attempts < 8) {
+            scheduleSheetCheck();
+            return;
+          }
+          if (sheet.querySelector(".hb-cpt__empty, [class*='empty']") !== null) {
+            status.remove();
+            return;
+          }
+          status.textContent = "评论加载较慢，点击重试";
+          status.classList.add("retry");
+        }, 400);
+      };
+      status.addEventListener("click", () => {
+        if (status.classList.contains("retry")) retry();
+      });
+      scheduleSheetCheck();
     };
 
     const closeComments = () => {
       if (!document.body.classList.contains(READER_COMMENT_CLASS)) return;
+      clearSheetStatus();
       document.body.classList.remove(READER_COMMENT_CLASS);
       if (host !== null) host.inert = false;
       host?.querySelector('[data-action="comment"]')?.focus({ preventScroll: true });
@@ -5639,6 +5765,7 @@
     const teardown = () => {
       observer?.disconnect();
       observer = null;
+      clearSheetStatus();
       document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
       closeSheetButton?.remove();
       closeSheetButton = null;
