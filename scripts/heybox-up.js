@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.23
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏分页沉浸阅读：封面、正文、图片与结尾逐页吸附，右侧竖排原生点赞/收藏/评论/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.25
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏分页沉浸阅读：封面、正文、图片与结尾逐页吸附，右侧竖排原生点赞/收藏/评论/CY/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -4076,7 +4076,7 @@
 
   const READER_CSS = `
     :root {
-      --hbu-reader-stage: 760px;
+      --hbu-reader-stage: 732px;
       --hbu-reader-bg: #e9eef3;
       --hbu-reader-page: #fff;
       --hbu-reader-subtle: #f1f4f7;
@@ -4181,7 +4181,7 @@
       top: 0;
       left: 50%;
       z-index: 4001;
-      width: min(var(--hbu-reader-stage), 100%);
+      width: min(calc(var(--hbu-reader-stage) + 80px), 100%);
       height: 100%;
       height: 100dvh;
       transform: translateX(-50%);
@@ -4200,10 +4200,11 @@
     }
     .hbu-reader-scroll {
       position: relative;
-      width: 100%;
+      width: calc(100% - 80px);
       height: 100%;
       overflow-x: hidden;
       overflow-y: auto;
+      margin-inline: auto;
       overscroll-behavior: contain;
       scroll-snap-type: y mandatory;
       scrollbar-width: none;
@@ -4217,14 +4218,14 @@
       align-items: center;
       justify-content: center;
       min-height: 100%;
-      padding: 88px 58px 104px;
+      padding: 88px 60px 104px;
       scroll-snap-align: start;
       scroll-snap-stop: always;
       background: var(--hbu-reader-page);
     }
     .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
-      width: min(32em, 100%);
+      width: min(34em, 100%);
       font-size: 18px;
       line-height: 1.86;
       color: var(--hbu-reader-ink);
@@ -4241,7 +4242,10 @@
     .hbu-reader-page[data-kind="rich"] {
       align-items: stretch;
       justify-content: flex-start;
+      height: 100%;
       padding-top: 96px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     .hbu-reader-rich {
       width: 100%;
@@ -4274,14 +4278,15 @@
       color: var(--hbu-reader-ink) !important;
     }
     .hbu-reader-rich :is(a, .prose-link) { color: var(--heybox-up-accent, #4f7ea8); }
-    .hbu-reader-page[data-kind="media"] { padding: 72px 20px 96px; background: #05070a; }
+    .hbu-reader-page[data-kind="media"] { justify-content: flex-start; height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 72px 20px 96px; background: #05070a; }
     .hbu-reader-media {
       display: block;
       max-width: 100%;
-      max-height: calc(100vh - 190px);
+      max-height: none;
       width: auto;
       height: auto;
       object-fit: contain;
+      margin: auto;
       border-radius: 12px;
       cursor: zoom-in;
       box-shadow: 0 18px 50px rgba(0, 0, 0, .35);
@@ -4335,7 +4340,7 @@
     .hbu-reader-cover-dots button { position: relative; width: 36px; height: 36px; padding: 0; border: 0; background: transparent; cursor: pointer; }
     .hbu-reader-cover-dots button::after { content: ""; position: absolute; top: 16px; right: 8px; left: 8px; height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .38); }
     .hbu-reader-cover-dots button[aria-current="true"]::after { background: #fff; }
-    .hbu-reader-caption { position: relative; z-index: 2; padding: 0 58px 104px; }
+    .hbu-reader-caption { position: relative; z-index: 2; padding: 0 60px 104px; }
     .hbu-reader-kicker { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-bottom: 13px; color: rgba(255, 255, 255, .8); font-size: 12px; line-height: 1.4; }
     .hbu-reader-kicker span { padding: 3px 9px; border: 1px solid rgba(255, 255, 255, .22); border-radius: 99px; background: rgba(0, 0, 0, .22); }
     .hbu-reader-title { display: -webkit-box; margin: 0 0 12px; overflow: hidden; font-size: 31px; line-height: 1.28; font-weight: 750; letter-spacing: -.02em; text-wrap: balance; text-shadow: 0 2px 18px rgba(0, 0, 0, .42); -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
@@ -4384,12 +4389,52 @@
     .hbu-reader-follow { min-width: 56px; height: 36px; padding: 0 13px; border: 0; border-radius: 99px; background: #f0f4f8; color: #16202a; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
     .hbu-reader-follow[aria-pressed="true"] { background: rgba(255, 255, 255, .16); color: #fff; }
     .hbu-reader-head-spacer { flex: 1 1 auto; }
-    .hbu-reader-rail { position: absolute; right: -66px; bottom: 118px; z-index: 11; display: flex; flex-direction: column; gap: 13px; align-items: center; }
+    .hbu-reader-rail { position: absolute; right: 16px; bottom: 118px; z-index: 11; display: flex; flex-direction: column; gap: 13px; align-items: center; }
     .hbu-reader-action { display: grid; place-items: center; width: 48px; min-height: 48px; padding: 4px 0; border: 1px solid rgba(255, 255, 255, .18); border-radius: 50%; background: rgba(12, 17, 23, .78); color: #f2f6fa; cursor: pointer; backdrop-filter: blur(10px); }
     .hbu-reader-action:hover { background: rgba(38, 48, 59, .9); }
     .hbu-reader-action svg { width: 21px; height: 21px; }
     .hbu-reader-action[aria-pressed="true"] { color: #ff8e9a; }
     .hbu-reader-action[data-action="favour"][aria-pressed="true"] { color: #f0c56a; }
+    .hbu-reader-action[data-action="cy"][aria-pressed="true"] { color: #8fd0a8; }
+    .hbu-reader-action--cy { display: flex; flex-direction: column; gap: 1px; align-items: center; justify-content: center; }
+    .hbu-reader-cy-label { font-size: 11px; font-weight: 700; line-height: 1; letter-spacing: .02em; }
+    .hbu-reader-rail-avatar { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+    .hbu-reader-favour-menu {
+      position: absolute;
+      right: calc(100% + 10px);
+      bottom: 92px;
+      width: 172px;
+      max-height: min(300px, 56dvh);
+      padding: 6px;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, .16);
+      border-radius: 14px;
+      background: rgba(12, 17, 23, .96);
+      color: #f2f6fa;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, .4);
+      backdrop-filter: blur(12px);
+    }
+    .hbu-reader-favour-menu[hidden] { display: none; }
+    .hbu-reader-favour-menu button {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 36px;
+      padding: 7px 9px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .hbu-reader-favour-menu button:hover { background: rgba(255, 255, 255, .1); }
+    .hbu-reader-favour-menu button svg, .hbu-reader-favour-menu button i { flex: none; width: 15px; height: 15px; }
+    .hbu-reader-favour-menu button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hbu-reader-favour-empty { padding: 10px; color: rgba(242, 246, 250, .7); font-size: 12px; line-height: 1.5; }
     .hbu-reader-action-count { display: block; margin-top: 2px; font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1.2; }
     .hbu-reader-progress { position: absolute; right: 0; bottom: 0; left: 0; z-index: 10; display: flex; gap: 10px; align-items: center; height: 46px; padding: 0 18px; background: linear-gradient(0deg, rgba(3, 5, 8, .62), transparent); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
     .hbu-reader-progress-bar { flex: 1 1 auto; height: 2px; overflow: hidden; border-radius: 99px; background: rgba(255, 255, 255, .26); }
@@ -4428,20 +4473,27 @@
     body.${READER_CLASS} #page-bbs-link .link-comment .link-reply { flex: none; border-top: 1px solid var(--hbu-reader-border) !important; background: var(--hbu-reader-page) !important; }
     .hbu-reader-sheet-close { position: absolute; top: 12px; right: 12px; z-index: 3; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
     .hbu-reader-sheet-close svg { width: 17px; height: 17px; }
-    .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4025; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
+    .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4009; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
     body.${READER_COMMENT_CLASS} .${READER_BACKDROP_CLASS} { opacity: 1; pointer-events: auto; }
+    body.${READER_COMMENT_CLASS} .layout-normal { z-index: 4010 !important; background: transparent !important; pointer-events: none; }
+    body.${READER_COMMENT_CLASS} .hb-bbs-link { visibility: hidden; }
+    body.${READER_COMMENT_CLASS} .hb-bbs-link .link-comment { visibility: visible; pointer-events: auto; }
     .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: grid; place-items: center; padding: 24px; border: 0; background: rgba(2, 4, 7, .94); cursor: zoom-out; }
     .hbu-reader-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border-radius: 99px; background: rgba(5, 8, 11, .86); color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
     .hbu-reader-toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
     .hbu-reader-toast--fixed { position: fixed; bottom: 58px; z-index: 4060; }
-    @media (max-width: 1180px) {
+    .hbu-reader-pending { display: grid; height: 100%; place-items: center; color: var(--hbu-reader-muted); font-size: 13px; letter-spacing: .04em; }
+    @media (max-width: 900px) {
+      #${READER_ID} { width: 100%; }
+      .hbu-reader-scroll { width: 100%; }
       .hbu-reader-rail { right: 14px; bottom: 96px; }
       .hbu-reader-page { padding-right: 86px; }
       .hbu-reader-caption { padding-right: 86px; }
     }
     @media (max-width: 760px) {
       :root { --hbu-reader-stage: 100%; }
+      .hbu-reader-rail-avatar-link { display: none; }
       .hbu-reader-page { padding: 78px 72px 98px; }
       .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
@@ -4710,6 +4762,8 @@
     let backdrop = null;
     let lightbox = null;
     let closeSheetButton = null;
+    let favourPanel = null;
+    let favourButton = null;
     let articleId = "";
     let signature = "";
     let activeIndex = 0;
@@ -4737,16 +4791,23 @@
       }, 1400);
     };
 
+    const articleActionBox = () => Array.from(document.querySelectorAll("#page-bbs-link .link-reply__operation-box"))
+      .find((box) => box.closest("[data-comment-id]") === null) || null;
+
+    const nativeLike = () => articleActionBox()?.querySelector("button:first-child") || null;
+
+    const nativeFavour = () => document.querySelector("#page-bbs-link .hb-cpt__favour-btn");
+
     const readCounts = () => {
-      const values = Array.from(document.querySelectorAll("#page-bbs-link .link-reply__operation-desc"))
+      const values = Array.from(articleActionBox()?.querySelectorAll(".link-reply__operation-desc") || [])
         .map((node) => (node.textContent || "").trim());
       return { like: values[0] || "0", favour: values[1] || "0", comment: values[2] || "0" };
     };
 
     const syncActionStates = () => {
       if (host === null) return;
-      const like = document.querySelector("#page-bbs-link .link-reply__operation-box > button:first-child");
-      const favour = document.querySelector("#page-bbs-link .hb-cpt__favour-btn");
+      const like = nativeLike();
+      const favour = nativeFavour();
       const counts = readCounts();
       const likeNode = host.querySelector('[data-action="like"]');
       const favourNode = host.querySelector('[data-action="favour"]');
@@ -4766,6 +4827,14 @@
       if (commentNode !== null) {
         const markup = READER_ICONS.comment + '<span class="hbu-reader-action-count">' + counts.comment + "</span>";
         if (commentNode.innerHTML !== markup) commentNode.innerHTML = markup;
+      }
+      const cyNode = host.querySelector('[data-action="cy"]');
+      if (cyNode !== null) {
+        const hidden = document.querySelectorAll('#page-bbs-link [data-heybox-up-cy="1"]').length;
+        const on = readHideCyPreference();
+        cyNode.setAttribute("aria-pressed", String(on));
+        const markup = '<span class="hbu-reader-cy-label">CY</span>' + (on && hidden > 0 ? '<span class="hbu-reader-action-count">' + hidden + "</span>" : "");
+        if (cyNode.innerHTML !== markup) cyNode.innerHTML = markup;
       }
       for (const stat of host.querySelectorAll("[data-stat]")) {
         const valueNode = stat.querySelector("b");
@@ -4788,9 +4857,93 @@
       if (node instanceof HTMLElement) node.click();
     };
 
+    const closeFavourMenu = () => {
+      if (favourPanel === null) return;
+      favourPanel.hidden = true;
+      favourButton?.setAttribute("aria-expanded", "false");
+    };
+
+    const openFavourMenu = async (rail, button) => {
+      if (favourPanel !== null && !favourPanel.hidden) {
+        closeFavourMenu();
+        return;
+      }
+      const native = nativeFavour();
+      if (!(native instanceof HTMLElement)) {
+        showToast("当前页面没有收藏按钮");
+        return;
+      }
+      if (favourPanel === null) {
+        favourPanel = document.createElement("div");
+        favourPanel.className = "hbu-reader-favour-menu";
+        favourPanel.setAttribute("role", "menu");
+        favourPanel.setAttribute("aria-label", "选择收藏夹");
+        rail.append(favourPanel);
+        document.addEventListener("pointerdown", (event) => {
+          if (favourPanel === null || favourPanel.hidden) return;
+          if (favourPanel.contains(event.target) || favourButton?.contains(event.target)) return;
+          closeFavourMenu();
+        }, true);
+      }
+      favourButton = button;
+      favourPanel.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      native.click();
+      const findList = () => native.querySelector(".link-favour__list") || document.querySelector("#page-bbs-link .link-favour__list");
+      let list = findList();
+      for (let attempt = 0; attempt < 8 && !(list instanceof HTMLElement); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 160));
+        list = findList();
+      }
+      if (!(list instanceof HTMLElement) || favourPanel === null) {
+        if (favourPanel !== null && favourPanel.childElementCount === 0) {
+          const empty = document.createElement("div");
+          empty.className = "hbu-reader-favour-empty";
+          empty.textContent = "登录后可选择收藏夹";
+          favourPanel.append(empty);
+        }
+        return;
+      }
+      const sourceList = list;
+      const renderList = (source) => {
+        if (favourPanel === null) return;
+        if (source.children.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "hbu-reader-favour-empty";
+          empty.textContent = "暂无收藏夹";
+          favourPanel.replaceChildren(empty);
+          return;
+        }
+        favourPanel.replaceChildren(...Array.from(source.children).map((item, index) => {
+          const proxy = document.createElement("button");
+          proxy.type = "button";
+          proxy.setAttribute("role", "menuitem");
+          proxy.textContent = (item.textContent || "").trim() || "收藏夹";
+          proxy.title = proxy.textContent;
+          proxy.addEventListener("click", () => {
+            const target = source.children[index];
+            if (!(target instanceof HTMLElement)) return;
+            target.click();
+            if (target.classList.contains("link-favour__add-btn")) {
+              window.setTimeout(() => renderList(sourceList), 320);
+              return;
+            }
+            closeFavourMenu();
+            window.setTimeout(syncActionStates, 600);
+          });
+          return proxy;
+        }));
+      };
+      renderList(sourceList);
+    };
+
     const openComments = () => {
       if (host === null) return;
-      getCommentsSheet();
+      closeFavourMenu();
+      if (!getCommentsSheet()) {
+        showToast("评论尚未加载，请稍候");
+        return;
+      }
       document.body.classList.add(READER_COMMENT_CLASS);
       host.inert = true;
       closeSheetButton?.focus({ preventScroll: true });
@@ -4801,6 +4954,24 @@
       document.body.classList.remove(READER_COMMENT_CLASS);
       if (host !== null) host.inert = false;
       host?.querySelector('[data-action="comment"]')?.focus({ preventScroll: true });
+    };
+
+    const trapSheetTab = (event) => {
+      if (event.key !== "Tab") return;
+      const sheet = document.querySelector("#page-bbs-link .link-comment");
+      if (sheet === null) return;
+      const items = Array.from(sheet.querySelectorAll("button, a[href], input, textarea, [tabindex]:not([tabindex='-1'])"))
+        .filter((node) => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== "hidden");
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !sheet.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
 
     const openLightbox = (source) => {
@@ -4832,7 +5003,12 @@
       closeSheetButton.setAttribute("aria-label", "关闭评论");
       closeSheetButton.innerHTML = READER_ICONS.close;
       closeSheetButton.onclick = closeComments;
+      if (sheet.dataset.hbuTabTrap !== "1") {
+        sheet.dataset.hbuTabTrap = "1";
+        sheet.addEventListener("keydown", trapSheetTab);
+      }
       if (!sheet.contains(closeSheetButton)) sheet.prepend(closeSheetButton);
+      return sheet;
     };
 
     const scrollToPage = (index) => {
@@ -4842,6 +5018,31 @@
       const next = Math.min(pages.length - 1, Math.max(0, index));
       const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
       pages[next].scrollIntoView({ block: "start", behavior: behavior });
+    };
+
+    const bindSwipe = (scroll) => {
+      let startX = 0;
+      let startY = 0;
+      scroll.addEventListener("touchstart", (event) => {
+        if (event.touches.length !== 1) return;
+        startX = event.touches[0].clientX;
+        startY = event.touches[0].clientY;
+      }, { passive: true });
+      scroll.addEventListener("touchend", (event) => {
+        if (event.changedTouches.length !== 1) return;
+        const deltaX = event.changedTouches[0].clientX - startX;
+        const deltaY = event.changedTouches[0].clientY - startY;
+        if (Math.abs(deltaX) < 52 || Math.abs(deltaX) < Math.abs(deltaY) * 1.3) return;
+        if (activeIndex === 0 && coverTotal > 1) {
+          if (deltaX < 0 && coverIndex === coverTotal - 1) scrollToPage(1);
+          else if (deltaX > 0 && coverIndex === 0) scrollToPage(0);
+          else setCover(coverIndex + (deltaX < 0 ? 1 : -1));
+          return;
+        }
+        const page = host?.querySelectorAll(".hbu-reader-page")[activeIndex];
+        if (page !== undefined && page.scrollWidth > page.clientWidth + 8) return;
+        scrollToPage(activeIndex + (deltaX < 0 ? 1 : -1));
+      }, { passive: true });
     };
 
     const setCover = (value) => {
@@ -5096,7 +5297,7 @@
       rail.className = "hbu-reader-rail";
       rail.setAttribute("aria-label", "文章互动");
       const avatar = document.createElement("a");
-      avatar.className = "hbu-reader-action";
+      avatar.className = "hbu-reader-action hbu-reader-rail-avatar-link";
       avatar.href = data.authorHref;
       avatar.title = "查看作者 " + data.author;
       avatar.setAttribute("aria-label", "查看作者 " + data.author);
@@ -5104,10 +5305,7 @@
         const img = document.createElement("img");
         img.src = data.avatar;
         img.alt = "";
-        img.style.width = "100%";
-        img.style.height = "100%";
-        img.style.borderRadius = "50%";
-        img.style.objectFit = "cover";
+        img.className = "hbu-reader-rail-avatar";
         avatar.append(img);
       }
       const like = document.createElement("button");
@@ -5116,14 +5314,33 @@
       like.dataset.action = "like";
       like.setAttribute("aria-label", "点赞");
       like.title = "点赞";
-      like.addEventListener("click", () => clickNative(".link-reply__operation-box > button:first-child"));
+      like.addEventListener("click", () => {
+        const node = nativeLike();
+        if (node instanceof HTMLElement) node.click();
+      });
       const favour = document.createElement("button");
       favour.type = "button";
       favour.className = "hbu-reader-action";
       favour.dataset.action = "favour";
       favour.setAttribute("aria-label", "收藏");
-      favour.title = "收藏";
-      favour.addEventListener("click", () => clickNative(".hb-cpt__favour-btn"));
+      favour.setAttribute("aria-haspopup", "menu");
+      favour.setAttribute("aria-expanded", "false");
+      favour.title = "收藏到收藏夹";
+      favour.addEventListener("click", () => openFavourMenu(rail, favour));
+      const cy = document.createElement("button");
+      cy.type = "button";
+      cy.className = "hbu-reader-action hbu-reader-action--cy";
+      cy.dataset.action = "cy";
+      cy.setAttribute("aria-label", "屏蔽 CY 评论");
+      cy.title = "屏蔽 CY 评论";
+      cy.innerHTML = '<span class="hbu-reader-cy-label">CY</span>';
+      cy.addEventListener("click", () => {
+        const next = !readHideCyPreference();
+        setHideCyPreference(next);
+        cy.title = next ? "显示 CY 评论" : "屏蔽 CY 评论";
+        cy.setAttribute("aria-label", cy.title);
+        syncActionStates();
+      });
       const comment = document.createElement("button");
       comment.type = "button";
       comment.className = "hbu-reader-action";
@@ -5138,7 +5355,7 @@
       share.title = "分享";
       share.innerHTML = READER_ICONS.share;
       share.addEventListener("click", () => clickNative(".page-header__share-btn"));
-      rail.append(avatar, like, favour, comment, share);
+      rail.append(avatar, like, favour, cy, comment, share);
       return rail;
     };
 
@@ -5157,12 +5374,6 @@
         img.dataset.active = String(index === 0);
         if (index > 1) img.loading = "lazy";
         img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
-        img.addEventListener("touchstart", (event) => { cover.dataset.touchX = String(event.touches[0].clientX); }, { passive: true });
-        img.addEventListener("touchend", (event) => {
-          const start = Number(cover.dataset.touchX || "0");
-          const delta = event.changedTouches[0].clientX - start;
-          if (Math.abs(delta) > 42) setCover(coverIndex + (delta < 0 ? 1 : -1));
-        }, { passive: true });
         cover.append(img);
       });
       if (data.covers.length > 1) {
@@ -5366,6 +5577,8 @@
       if (host === null) return;
       observer?.disconnect();
       host.textContent = "";
+      favourPanel = null;
+      favourButton = null;
       coverIndex = 0;
       coverTotal = 0;
       activeIndex = 0;
@@ -5374,6 +5587,7 @@
       scroll.className = "hbu-reader-scroll";
       scroll.tabIndex = 0;
       scroll.setAttribute("aria-label", "文章分页");
+      bindSwipe(scroll);
       scroll.append(createHero(data));
       buildPages(scroll, data.body);
       scroll.append(createEndPage(data));
@@ -5413,12 +5627,23 @@
       }
     };
 
+    const showPending = () => {
+      ensureShell();
+      if (host === null || host.childElementCount > 0) return;
+      const pending = document.createElement("div");
+      pending.className = "hbu-reader-pending";
+      pending.textContent = "正在加载文章…";
+      host.append(pending);
+    };
+
     const teardown = () => {
       observer?.disconnect();
       observer = null;
       document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
       closeSheetButton?.remove();
       closeSheetButton = null;
+      favourPanel = null;
+      favourButton = null;
       host?.remove();
       host = null;
       backdrop?.remove();
@@ -5458,7 +5683,7 @@
       articleId = match[1];
       const data = readData();
       if (data === null) {
-        if (host !== null) teardown();
+        showPending();
         return;
       }
       ensureShell();
@@ -5490,9 +5715,11 @@
 
     document.addEventListener("keydown", (event) => {
       if (host === null || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (isTypingTarget(event.target)) return;
       if (event.key === "Escape") {
-        if (document.body.classList.contains(READER_COMMENT_CLASS)) {
+        if (favourPanel !== null && !favourPanel.hidden) {
+          event.preventDefault();
+          closeFavourMenu();
+        } else if (document.body.classList.contains(READER_COMMENT_CLASS)) {
           event.preventDefault();
           closeComments();
         } else if (lightbox !== null) {
@@ -5505,6 +5732,7 @@
         }
         return;
       }
+      if (isTypingTarget(event.target)) return;
       if (event.key === "ArrowRight" && activeIndex === 0 && coverTotal > 1) {
         event.preventDefault();
         setCover(coverIndex + 1);
