@@ -1525,13 +1525,16 @@
       min-width: 0 !important;
       max-width: none !important;
     }
-    /* Native back-to-top sits under the custom right rail and peeks out at its edge. */
-    @media (min-width: 1200px) {
-      body.heybox-up-desktop-on .scroll-list__button-group,
-      #page-topic-link .scroll-list__button-group,
-      #page-bbs-link .scroll-list__button-group {
-        display: none !important;
-      }
+    /* The native control anchors to the content box, so it drifts under rails and off the viewport. */
+    .scroll-list__button-group {
+      right: 20px !important;
+      bottom: 24px !important;
+      left: auto !important;
+    }
+    #page-bbs-community .scroll-list__button-group,
+    #page-topic-link .scroll-list__button-group,
+    #page-bbs-link .scroll-list__button-group {
+      display: none !important;
     }
   `;
 
