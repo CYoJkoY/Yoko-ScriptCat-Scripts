@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.28
+// @version      0.4.30
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -4571,6 +4571,39 @@
     .hbu-reader-sheet-close svg { width: 17px; height: 17px; }
     .hbu-reader-sheet-status { margin: auto; padding: 28px 18px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
     .hbu-reader-sheet-status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+    .hbu-reader-comments-panel { position: fixed; inset: 0; z-index: 4065; display: flex; justify-content: flex-end; }
+    .hbu-reader-comments-panel[hidden] { display: none; }
+    .hbu-reader-comments-scrim { position: absolute; inset: 0; background: rgba(2, 4, 7, .56); }
+    .hbu-reader-comments-sheet { position: relative; z-index: 1; display: flex; flex-direction: column; width: min(440px, 100vw); height: 100%; height: 100dvh; border-left: 1px solid var(--hbu-reader-border); background: var(--hbu-reader-page); color: var(--hbu-reader-ink); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; box-shadow: -24px 0 60px rgba(0, 0, 0, .34); }
+    .hbu-reader-comments-panel :is(button, a):focus-visible { outline: 2px solid var(--heybox-up-accent, #8fb0cf); outline-offset: 2px; }
+    .hbu-reader-comments-head { display: flex; gap: 12px; align-items: center; padding: 18px 16px 13px; border-bottom: 1px solid var(--hbu-reader-border); }
+    .hbu-reader-comments-heading { min-width: 0; flex: 1 1 auto; }
+    .hbu-reader-comments-heading b { display: block; font-size: 15px; }
+    .hbu-reader-comments-heading span { color: var(--hbu-reader-muted); font-size: 11px; }
+    .hbu-reader-comments-close { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+    .hbu-reader-comments-close svg { width: 16px; height: 16px; }
+    .hbu-reader-comments-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px 18px; }
+    .hbu-reader-comments-list { margin: 0; padding: 0; list-style: none; }
+    .hbu-reader-comments-item { display: flex; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--hbu-reader-border); }
+    .hbu-reader-comments-item:last-child { border-bottom: 0; }
+    .hbu-reader-comments-avatar { width: 34px; height: 34px; flex: none; border-radius: 50%; object-fit: cover; background: var(--hbu-reader-subtle); }
+    .hbu-reader-comments-main { min-width: 0; flex: 1 1 auto; }
+    .hbu-reader-comments-who { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; }
+    .hbu-reader-comments-name { font-size: 13px; font-weight: 650; }
+    .hbu-reader-comments-time { color: var(--hbu-reader-muted); font-size: 11px; }
+    .hbu-reader-comments-text { margin: 4px 0 0; font-size: 14px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
+    .hbu-reader-comments-quote { margin-top: 8px; padding: 7px 9px; border-radius: 9px; background: var(--hbu-reader-subtle); color: var(--hbu-reader-ink-2); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+    .hbu-reader-comments-quote b { color: var(--hbu-reader-muted); font-weight: 600; }
+    .hbu-reader-comments-text .hbu-reader-comments-emoji, .hbu-reader-comments-quote .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
+    .hbu-reader-comments-text img, .hbu-reader-comments-quote img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
+    .hbu-reader-comments-status { padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
+    .hbu-reader-comments-status[data-retry="true"] { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+    .hbu-reader-comments-foot { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--hbu-reader-border); }
+    .hbu-reader-comments-foot button, .hbu-reader-comments-foot a { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 14px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-decoration: none; cursor: pointer; }
+    .hbu-reader-comments-foot a { margin-left: auto; border-color: transparent; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font-weight: 650; }
+    .hbu-reader-comments-foot button:disabled { opacity: .55; cursor: default; }
+    .hbu-reader-comments-list[hidden], .hbu-reader-comments-status[hidden], .hbu-reader-comments-foot button[hidden] { display: none; }
     .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4009; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
     body.${READER_COMMENT_CLASS} .${READER_BACKDROP_CLASS} { opacity: 1; pointer-events: auto; }
     :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link,
@@ -4916,6 +4949,18 @@
     let cySubmit = null;
     let cyStatus = null;
     let cyBusy = false;
+    let commentPanel = null;
+    let commentPanelList = null;
+    let commentPanelStatus = null;
+    let commentPanelMeta = null;
+    let commentPanelMore = null;
+    let commentPanelClose = null;
+    let commentOpenToken = 0;
+    let commentState = createCommentState();
+
+    function createCommentState() {
+      return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loaded: false, seq: 0 };
+    }
 
     const showToast = (message) => {
       let toast = host?.querySelector(".hbu-reader-toast") || null;
@@ -4932,6 +4977,61 @@
         toast.dataset.show = "false";
         if (toast.parentElement === document.body) window.setTimeout(() => toast.remove(), 220);
       }, 1400);
+    };
+
+    const copyText = async (text) => {
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      try {
+        if (navigator.clipboard !== undefined && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (error) {
+        // Fall through to the selection-based path when clipboard permission is unavailable.
+      }
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.top = "0";
+      area.style.left = "0";
+      area.style.width = "1px";
+      area.style.height = "1px";
+      area.style.padding = "0";
+      area.style.border = "0";
+      area.style.opacity = "0";
+      area.style.pointerEvents = "none";
+      document.body.append(area);
+      area.select();
+      area.setSelectionRange(0, area.value.length);
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch (error) {
+        copied = false;
+      }
+      area.remove();
+      active?.focus({ preventScroll: true });
+      return copied;
+    };
+
+    const shareArticle = async (data) => {
+      const url = "https://www.xiaoheihe.cn/app/bbs/link/" + articleId;
+      const title = data.title || document.title || "小黑盒帖子";
+      if (typeof navigator.share === "function") {
+        const payload = { title: title, text: title, url: url };
+        const shareable = typeof navigator.canShare !== "function" || navigator.canShare(payload);
+        if (shareable) {
+          try {
+            await navigator.share(payload);
+            return;
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") return;
+          }
+        }
+      }
+      const copied = await copyText(url);
+      showToast(copied ? "链接已复制" : "复制失败，请手动复制链接");
     };
 
     const articleActionBox = () => Array.from(document.querySelectorAll("#page-bbs-link .link-reply__operation-box"))
@@ -4960,8 +5060,8 @@
         method: "POST",
         credentials: "include",
         cache: "no-store",
-        headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify(body),
+        headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: new URLSearchParams(body).toString(),
       });
       if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
       const data = await response.json();
@@ -5328,19 +5428,328 @@
       textarea.focus({ preventScroll: true });
     };
 
-    const openComments = () => {
-      if (host === null) return;
-      closeFavourMenu();
-      closeCyDialog();
-      if (!getCommentsSheet()) {
-        showToast("评论尚未加载，请稍候");
+    const fillReaderCommentBody = (node, segments) => {
+      if (segments.length === 0) {
+        node.textContent = "（图片或表情评论）";
         return;
       }
+      for (const segment of segments) {
+        if (segment.type === "text") {
+          node.append(document.createTextNode(segment.text));
+          continue;
+        }
+        if (segment.type === "emoji") {
+          const emoji = document.createElement("span");
+          emoji.className = "hbu-reader-comments-emoji";
+          emoji.setAttribute("role", "img");
+          emoji.setAttribute("aria-label", "表情");
+          const column = (Number(segment.id) % 10) - 1;
+          const row = Math.floor(Number(segment.id) / 10) - 1;
+          emoji.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
+          emoji.style.backgroundPosition = "-" + column * RAIL_EMOJI_CELL + "px -" + row * RAIL_EMOJI_CELL + "px";
+          node.append(emoji);
+          continue;
+        }
+        const image = document.createElement("img");
+        image.alt = "";
+        image.loading = "lazy";
+        image.referrerPolicy = "no-referrer";
+        image.src = segment.src;
+        node.append(image);
+      }
+    };
+
+    const createReaderCommentItem = (comment) => {
+      const item = document.createElement("li");
+      item.className = "hbu-reader-comments-item";
+      item.setAttribute("role", "listitem");
+      const avatar = document.createElement("img");
+      avatar.className = "hbu-reader-comments-avatar";
+      avatar.alt = "";
+      avatar.loading = "lazy";
+      avatar.referrerPolicy = "no-referrer";
+      if (comment.avatar !== "") avatar.src = comment.avatar;
+      const main = document.createElement("div");
+      main.className = "hbu-reader-comments-main";
+      const who = document.createElement("div");
+      who.className = "hbu-reader-comments-who";
+      const name = document.createElement("span");
+      name.className = "hbu-reader-comments-name";
+      name.textContent = comment.name;
+      who.append(name);
+      if (comment.createAt > 0) {
+        const time = document.createElement("span");
+        time.className = "hbu-reader-comments-time";
+        time.textContent = formatRailAge(comment.createAt);
+        who.append(time);
+      }
+      const text = document.createElement("p");
+      text.className = "hbu-reader-comments-text";
+      fillReaderCommentBody(text, comment.body);
+      main.append(who, text);
+      if (comment.likes > 0 || comment.replies > 0) {
+        const meta = document.createElement("div");
+        meta.className = "hbu-reader-comments-meta";
+        if (comment.likes > 0) {
+          const likes = document.createElement("span");
+          likes.textContent = "赞 " + comment.likes;
+          meta.append(likes);
+        }
+        if (comment.replies > 0) {
+          const replies = document.createElement("span");
+          replies.textContent = comment.replies + " 条回复";
+          meta.append(replies);
+        }
+        main.append(meta);
+      }
+      const quotes = Array.isArray(comment.quotes) ? comment.quotes : [];
+      for (const quote of quotes) {
+        const node = document.createElement("div");
+        node.className = "hbu-reader-comments-quote";
+        const author = document.createElement("b");
+        author.textContent = quote.name + "：";
+        node.append(author);
+        fillReaderCommentBody(node, quote.body);
+        main.append(node);
+      }
+      item.append(avatar, main);
+      return item;
+    };
+
+    const renderReaderComments = () => {
+      if (commentPanel === null) return;
+      const hideCy = readHideCyPreference();
+      const visible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
+      const hiddenCy = commentState.items.length - visible.length;
+      const meta = [];
+      if (commentState.total > 0) meta.push("共 " + commentState.total + " 条");
+      if (visible.length > 0) meta.push("已加载 " + visible.length + " 条");
+      if (hiddenCy > 0) meta.push("已屏蔽 " + hiddenCy + " 条 CY");
+      if (commentPanelMeta !== null) commentPanelMeta.textContent = meta.join(" · ");
+      if (commentPanelList !== null) {
+        commentPanelList.replaceChildren(...visible.map(createReaderCommentItem));
+        commentPanelList.hidden = visible.length === 0;
+      }
+      if (commentPanelStatus !== null) {
+        if (commentState.error !== "") {
+          commentPanelStatus.hidden = false;
+          commentPanelStatus.dataset.retry = "true";
+          commentPanelStatus.textContent = commentState.error + "，点击重试";
+        } else if (commentState.loading && commentState.items.length === 0) {
+          commentPanelStatus.hidden = false;
+          commentPanelStatus.dataset.retry = "false";
+          commentPanelStatus.textContent = "正在加载评论…";
+        } else if (!commentState.loaded) {
+          commentPanelStatus.hidden = false;
+          commentPanelStatus.dataset.retry = "false";
+          commentPanelStatus.textContent = "正在准备评论…";
+        } else if (visible.length === 0) {
+          commentPanelStatus.hidden = false;
+          commentPanelStatus.dataset.retry = "false";
+          commentPanelStatus.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+        } else {
+          commentPanelStatus.hidden = true;
+          commentPanelStatus.dataset.retry = "false";
+        }
+      }
+      if (commentPanelMore !== null) {
+        commentPanelMore.hidden = !commentState.hasMore;
+        commentPanelMore.disabled = commentState.loading;
+        commentPanelMore.textContent = commentState.loading ? "加载中…" : "加载更多";
+      }
+    };
+
+    const loadReaderComments = async (page) => {
+      if (commentState.loading) return;
+      const seq = ++commentState.seq;
+      commentState.loading = true;
+      commentState.error = "";
+      if (page === 1) {
+        commentState.items = [];
+        commentState.page = 0;
+        commentState.total = 0;
+        commentState.hasMore = false;
+        commentState.loaded = false;
+      }
+      renderReaderComments();
+      try {
+        const data = await fetchRailPage(articleId, page);
+        if (seq !== commentState.seq) return;
+        const seen = new Set(commentState.items.map((item) => item.id));
+        const fresh = data.items.filter((item) => item.id === "" || !seen.has(item.id));
+        commentState.items = page === 1 ? fresh : commentState.items.concat(fresh);
+        commentState.page = page;
+        commentState.total = data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
+        commentState.hasMore = data.items.length >= RAIL_PAGE_SIZE;
+        commentState.loaded = true;
+        if (linkState !== null && data.total > 0) linkState.commentCount = data.total;
+        syncActionStates();
+      } catch (error) {
+        if (seq !== commentState.seq) return;
+        const message = error instanceof Error ? error.message : "评论加载失败";
+        commentState.error = /captcha|show_captcha/i.test(message) ? "评论需要验证，请稍后重试" : "评论加载失败：" + message;
+        commentState.hasMore = false;
+      } finally {
+        if (seq === commentState.seq) {
+          commentState.loading = false;
+          renderReaderComments();
+        }
+      }
+    };
+
+    const trapCommentPanelTab = (event) => {
+      if (event.key !== "Tab" || commentPanel === null) return;
+      const items = Array.from(commentPanel.querySelectorAll("button, a[href]"))
+        .filter((node) => node.getBoundingClientRect().width > 0 && !node.hasAttribute("disabled"));
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !commentPanel.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    const ensureCommentPanel = () => {
+      if (commentPanel !== null) {
+        if (commentPanel.isConnected) return commentPanel;
+        commentPanel = null;
+        commentPanelList = null;
+        commentPanelStatus = null;
+        commentPanelMeta = null;
+        commentPanelMore = null;
+        commentPanelClose = null;
+      }
+      const panel = document.createElement("section");
+      panel.className = "hbu-reader-comments-panel";
+      panel.hidden = true;
+      const scrim = document.createElement("div");
+      scrim.className = "hbu-reader-comments-scrim";
+      const sheet = document.createElement("div");
+      sheet.className = "hbu-reader-comments-sheet";
+      sheet.setAttribute("role", "dialog");
+      sheet.setAttribute("aria-modal", "true");
+      sheet.setAttribute("aria-label", "评论");
+      const head = document.createElement("div");
+      head.className = "hbu-reader-comments-head";
+      const heading = document.createElement("div");
+      heading.className = "hbu-reader-comments-heading";
+      const title = document.createElement("b");
+      title.textContent = "评论";
+      const meta = document.createElement("span");
+      meta.textContent = "";
+      heading.append(title, meta);
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "hbu-reader-comments-close";
+      close.setAttribute("aria-label", "关闭评论");
+      close.innerHTML = READER_ICONS.close;
+      head.append(heading, close);
+      const body = document.createElement("div");
+      body.className = "hbu-reader-comments-body";
+      const list = document.createElement("ol");
+      list.className = "hbu-reader-comments-list";
+      const status = document.createElement("div");
+      status.className = "hbu-reader-comments-status";
+      status.setAttribute("role", "status");
+      body.append(list, status);
+      const foot = document.createElement("div");
+      foot.className = "hbu-reader-comments-foot";
+      const more = document.createElement("button");
+      more.type = "button";
+      more.textContent = "加载更多";
+      const openLink = document.createElement("a");
+      openLink.textContent = "打开帖子";
+      openLink.href = LINK_HREF_PREFIX + articleId;
+      openLink.target = "_blank";
+      openLink.rel = "noopener noreferrer";
+      foot.append(more, openLink);
+      sheet.append(head, body, foot);
+      panel.append(scrim, sheet);
+      commentPanel = panel;
+      commentPanelList = list;
+      commentPanelStatus = status;
+      commentPanelMeta = meta;
+      commentPanelMore = more;
+      commentPanelClose = close;
+      close.addEventListener("click", closeComments);
+      scrim.addEventListener("click", closeComments);
+      more.addEventListener("click", () => {
+        if (!commentState.loading) void loadReaderComments(commentState.page + 1);
+      });
+      status.addEventListener("click", () => {
+        if (status.dataset.retry !== "true" || commentState.loading) return;
+        void loadReaderComments(commentState.page > 0 ? commentState.page + 1 : 1);
+      });
+      sheet.addEventListener("keydown", trapCommentPanelTab);
+      document.body.append(panel);
+      return panel;
+    };
+
+    const openFallbackComments = () => {
+      if (host === null) return;
+      const panel = ensureCommentPanel();
+      panel.hidden = false;
+      host.inert = true;
+      renderReaderComments();
+      commentPanelClose?.focus({ preventScroll: true });
+      if (!commentState.loaded && !commentState.loading) void loadReaderComments(1);
+    };
+
+    const openNativeComments = (sheet) => {
+      if (commentPanel !== null) commentPanel.hidden = true;
       document.body.classList.add(READER_COMMENT_CLASS);
       host.inert = true;
       closeSheetButton?.focus({ preventScroll: true });
       watchSheetComments();
     };
+
+    const openComments = async () => {
+      if (host === null) return;
+      closeFavourMenu();
+      closeCyDialog();
+      if (document.body.classList.contains(READER_COMMENT_CLASS) || (commentPanel !== null && !commentPanel.hidden)) {
+        closeComments();
+        return;
+      }
+      const token = ++commentOpenToken;
+      const sheet = getCommentsSheet();
+      if (sheet !== null) {
+        openNativeComments(sheet);
+        return;
+      }
+      showToast("正在加载评论…");
+      const deadline = Date.now() + 1400;
+      while (Date.now() < deadline && token === commentOpenToken) {
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+        const late = getCommentsSheet();
+        if (late !== null) {
+          openNativeComments(late);
+          return;
+        }
+      }
+      if (token === commentOpenToken) openFallbackComments();
+    };
+
+    const resetReaderComments = () => {
+      commentOpenToken += 1;
+      document.body.classList.remove(READER_COMMENT_CLASS);
+      if (host !== null) host.inert = false;
+      if (commentPanel !== null) {
+        commentPanel.hidden = true;
+        const link = commentPanel.querySelector(".hbu-reader-comments-foot a");
+        if (link !== null) link.href = LINK_HREF_PREFIX + articleId;
+      }
+      commentState = createCommentState();
+      clearSheetStatus();
+    };
+
+    document.addEventListener(HIDE_CY_EVENT, () => {
+      if (commentPanel !== null && !commentPanel.hidden) renderReaderComments();
+    });
 
     const clearSheetStatus = () => {
       window.clearTimeout(sheetStatusTimer);
@@ -5400,9 +5809,12 @@
     };
 
     const closeComments = () => {
-      if (!document.body.classList.contains(READER_COMMENT_CLASS)) return;
-      clearSheetStatus();
-      document.body.classList.remove(READER_COMMENT_CLASS);
+      commentOpenToken += 1;
+      if (document.body.classList.contains(READER_COMMENT_CLASS)) {
+        clearSheetStatus();
+        document.body.classList.remove(READER_COMMENT_CLASS);
+      }
+      if (commentPanel !== null && !commentPanel.hidden) commentPanel.hidden = true;
       if (host !== null) host.inert = false;
       host?.querySelector('[data-action="comment"]')?.focus({ preventScroll: true });
     };
@@ -5447,7 +5859,7 @@
 
     const getCommentsSheet = () => {
       const sheet = document.querySelector("#page-bbs-link .link-comment");
-      if (sheet === null) return;
+      if (sheet === null) return null;
       if (closeSheetButton === null) closeSheetButton = document.createElement("button");
       closeSheetButton.type = "button";
       closeSheetButton.className = "hbu-reader-sheet-close";
@@ -5754,7 +6166,7 @@
       share.setAttribute("aria-label", "分享");
       share.title = "分享";
       share.innerHTML = READER_ICONS.share;
-      share.addEventListener("click", () => clickNative(".page-header__share-btn"));
+      share.addEventListener("click", () => void shareArticle(data));
       const exit = document.createElement("button");
       exit.type = "button";
       exit.className = "hbu-reader-round";
@@ -5812,14 +6224,14 @@
       comment.dataset.action = "comment";
       comment.setAttribute("aria-label", "查看评论");
       comment.title = "查看评论（C）";
-      comment.addEventListener("click", openComments);
+      comment.addEventListener("click", () => void openComments());
       const share = document.createElement("button");
       share.type = "button";
       share.className = "hbu-reader-action";
       share.setAttribute("aria-label", "分享");
       share.title = "分享";
       share.innerHTML = READER_ICONS.share;
-      share.addEventListener("click", () => clickNative(".page-header__share-btn"));
+      share.addEventListener("click", () => void shareArticle(data));
       rail.append(avatar, like, favour, cy, comment, share);
       return rail;
     };
@@ -6049,6 +6461,7 @@
       observer?.disconnect();
       window.cancelAnimationFrame(scrollRaf);
       scrollRaf = 0;
+      resetReaderComments();
       host.textContent = "";
       linkState = null;
       linkStatePromise = null;
@@ -6109,7 +6522,7 @@
       restoring = ratio >= 0;
       updateProgress();
       if (ratio >= 0) writeReaderRatio(articleId, ratio);
-      if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) requestAnimationFrame(openComments);
+      if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) requestAnimationFrame(() => void openComments());
       if (ratio >= 0) {
         requestAnimationFrame(() => {
           const node = host?.querySelector(".hbu-reader-scroll");
@@ -6168,6 +6581,16 @@
       cyStatus = null;
       clearSheetStatus();
       document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
+      commentOpenToken += 1;
+      if (host !== null) host.inert = false;
+      commentPanel?.remove();
+      commentPanel = null;
+      commentPanelList = null;
+      commentPanelStatus = null;
+      commentPanelMeta = null;
+      commentPanelMore = null;
+      commentPanelClose = null;
+      commentState = createCommentState();
       closeSheetButton?.remove();
       closeSheetButton = null;
       favourPanel = null;
@@ -6209,6 +6632,7 @@
         return;
       }
       articleId = match[1];
+      if (document.body.classList.contains(READER_COMMENT_CLASS) && document.querySelector("#page-bbs-link .link-comment") === null) closeComments();
       const data = readData();
       if (data === null) {
         showPending();
@@ -6250,7 +6674,7 @@
         } else if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
           closeFavourMenu();
-        } else if (document.body.classList.contains(READER_COMMENT_CLASS)) {
+        } else if (document.body.classList.contains(READER_COMMENT_CLASS) || (commentPanel !== null && !commentPanel.hidden)) {
           event.preventDefault();
           closeComments();
         } else if (lightbox !== null) {
@@ -6288,8 +6712,8 @@
         scrollToPage(pageCount - 1);
       } else if (event.key === "c" || event.key === "C") {
         event.preventDefault();
-        if (document.body.classList.contains(READER_COMMENT_CLASS)) closeComments();
-        else openComments();
+        if (document.body.classList.contains(READER_COMMENT_CLASS) || (commentPanel !== null && !commentPanel.hidden)) closeComments();
+        else void openComments();
       } else if (event.key === "r" || event.key === "R") {
         event.preventDefault();
         setReaderPreference(false);
