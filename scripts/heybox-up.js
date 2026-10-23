@@ -4796,10 +4796,11 @@
       ui.globalLink.setAttribute("href", "/app/search/list?q=" + encodeURIComponent(state.keyword));
       renderChips();
       renderItems();
+      const moreHadFocus = document.activeElement === ui.more;
       ui.foot.hidden = loaded > 0 || state.loading === true ? false : true;
       ui.more.hidden = state.noMore === true;
       ui.more.disabled = state.loading === true;
-      if (ui.more.hidden === true && document.activeElement === ui.more) ui.input.focus();
+      if ((ui.more.hidden === true || ui.more.disabled === true) && moreHadFocus) ui.input.focus();
       if (state.status !== "") ui.status.textContent = state.status;
       else if (state.noMore === true && loaded > 0) ui.status.textContent = "已到最后一页";
       else ui.status.textContent = "";
