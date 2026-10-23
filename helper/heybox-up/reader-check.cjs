@@ -17,6 +17,13 @@ assert.match(source, /host\.inert = true/, "comment sheet must trap background f
 assert.match(source, /host\.inert = false/, "closing the sheet must restore focus");
 assert.match(source, /sessionStorage\.setItem\(READER_SCROLL_KEY/, "scroll restore must persist");
 
+assert.match(source, /const nativeLike = \(\) => articleActionBox\(\)/, "article like must resolve from the non-comment action box");
+assert.match(source, /hbu-reader-favour-menu/, "favour folder menu must exist");
+assert.match(source, /cy\.dataset\.action = "cy"/, "rail must expose a CY toggle");
+assert.match(source, /z-index: 4010 !important/, "open drawer must lift the native layer");
+assert.match(source, /z-index: 4009/, "backdrop must sit between stage and drawer");
+assert.match(source, /calc\(var\(--hbu-reader-stage\) \+ 80px\)/, "stage must reserve rail space");
+
 assert.ok(source.includes('data-heybox-up-dark="true"'), "missing reader tokens for dark");
 for (const theme of ["oled", "paper", "mist"]) {
   assert.ok(source.includes(`data-heybox-up-theme="${theme}"`), `missing reader tokens for ${theme}`);
