@@ -4675,6 +4675,8 @@
     headTitle.className = "head-title";
     const headMeta = document.createElement("p");
     headMeta.className = "head-meta";
+    headMeta.setAttribute("role", "status");
+    headMeta.setAttribute("aria-live", "polite");
     headText.append(headTitle, headMeta);
     const headActions = document.createElement("div");
     headActions.className = "head-actions";
@@ -4710,6 +4712,8 @@
     more.textContent = "加载更多";
     const status = document.createElement("p");
     status.className = "status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
     foot.append(more, status);
 
     panel.append(head, filters, list, foot);
@@ -4795,6 +4799,7 @@
       ui.foot.hidden = loaded > 0 || state.loading === true ? false : true;
       ui.more.hidden = state.noMore === true;
       ui.more.disabled = state.loading === true;
+      if (ui.more.hidden === true && document.activeElement === ui.more) ui.input.focus();
       if (state.status !== "") ui.status.textContent = state.status;
       else if (state.noMore === true && loaded > 0) ui.status.textContent = "已到最后一页";
       else ui.status.textContent = "";
@@ -4823,12 +4828,16 @@
         return;
       }
       const known = new Set(current.items.map((item) => item.id));
-      const incoming = response.items
-        .map(normalizeSearchResult)
-        .filter((item) => item !== null && !known.has(item.id));
+      const incoming = [];
+      for (const entry of response.items) {
+        const item = normalizeSearchResult(entry);
+        if (item === null || known.has(item.id)) continue;
+        known.add(item.id);
+        incoming.push(item);
+      }
       current.items = reset === true ? incoming : current.items.concat(incoming);
       current.offset = offset + response.linkCount;
-      current.noMore = response.linkCount === 0 || incoming.length === 0;
+      current.noMore = response.linkCount === 0;
       current.tip = response.tip;
       if (current.timeRanges.length === 0 && response.timeRanges.length > 0) current.timeRanges = response.timeRanges;
       render();
@@ -4842,10 +4851,11 @@
       ui.headMeta.textContent = "";
     };
 
-    const close = () => {
+    const close = (restoreFocus) => {
       state = null;
       clearPanel();
       setActive(false);
+      if (restoreFocus === true) ui.input.focus();
     };
 
     const submit = () => {
@@ -4880,13 +4890,22 @@
       submit();
     });
     document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || state === null) return;
+      if (event.key !== "Escape" || state === null || event.defaultPrevented === true) return;
       const target = event.target;
-      if (target !== ui.input && target instanceof Element && target.closest("input, textarea, [contenteditable='true']")) return;
+      if (target instanceof Element) {
+        if (target !== ui.input && target.closest("input, textarea, select, [contenteditable]") !== null) return;
+        const onPage = target === document.body || target === document.documentElement;
+        if (onPage !== true && ui.root.contains(target) !== true) return;
+        if (onPage === true) {
+          const overlayOpen = Array.from(document.querySelectorAll("[aria-modal='true'], .el-overlay-dialog"))
+            .some((node) => node.getClientRects().length > 0);
+          if (overlayOpen === true) return;
+        }
+      }
       event.preventDefault();
-      close();
+      close(true);
     });
-    ui.close.addEventListener("click", close);
+    ui.close.addEventListener("click", () => close(true));
     ui.more.addEventListener("click", () => {
       void run(false);
     });
@@ -4935,7 +4954,7 @@
       });
     }).observe(document.body, { childList: true, subtree: true });
     window.addEventListener("popstate", () => {
-      if (state !== null) close();
+      if (state !== null) close(false);
     });
     sync();
   }
