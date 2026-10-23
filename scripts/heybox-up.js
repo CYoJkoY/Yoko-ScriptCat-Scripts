@@ -5192,6 +5192,13 @@
       scroll.scrollBy({ top: Math.round(scroll.clientHeight * 0.82) * direction, behavior: behavior });
     };
 
+    const coverInView = () => {
+      const scroll = host?.querySelector(".hbu-reader-scroll");
+      const hero = host?.querySelector('.hbu-reader-page[data-kind="hero"]');
+      if (!scroll || !hero) return false;
+      return hero.getBoundingClientRect().bottom > scroll.clientHeight * 0.45;
+    };
+
     const bindSwipe = (scroll) => {
       let startX = 0;
       let startY = 0;
@@ -5205,7 +5212,7 @@
         const deltaX = event.changedTouches[0].clientX - startX;
         const deltaY = event.changedTouches[0].clientY - startY;
         if (Math.abs(deltaX) < 52 || Math.abs(deltaX) < Math.abs(deltaY) * 1.3) return;
-        if (activeIndex === 0 && coverTotal > 1) {
+        if (coverInView() && coverTotal > 1) {
           if (deltaX < 0 && coverIndex === coverTotal - 1) scrollToPage(1);
           else if (deltaX > 0 && coverIndex === 0) scrollToPage(0);
           else setCover(coverIndex + (deltaX < 0 ? 1 : -1));
@@ -5960,12 +5967,12 @@
         return;
       }
       if (isTypingTarget(event.target)) return;
-      if (event.key === "ArrowRight" && activeIndex === 0 && coverTotal > 1) {
+      if (event.key === "ArrowRight" && coverInView() && coverTotal > 1) {
         event.preventDefault();
         setCover(coverIndex + 1);
         return;
       }
-      if (event.key === "ArrowLeft" && activeIndex === 0 && coverTotal > 1) {
+      if (event.key === "ArrowLeft" && coverInView() && coverTotal > 1) {
         event.preventDefault();
         setCover(coverIndex - 1);
         return;
