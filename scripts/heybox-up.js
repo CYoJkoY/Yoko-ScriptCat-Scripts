@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.26
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏分页沉浸阅读：封面、正文、图片与结尾逐页吸附，右侧竖排原生点赞/收藏/评论/CY/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
+// @version      0.4.27
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排原生点赞/收藏/评论/CY/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名），只读取当前账号的数据；偏好与缓存仅写入本机 localStorage，不上传、不修改账号数据、不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -2172,7 +2172,7 @@
     return node;
   }
 
-  // 沉浸阅读开关：帖子页默认进入全屏分页阅读，关闭后保留原有双栏布局。
+  // 沉浸阅读开关：帖子页默认进入全屏沉浸阅读，关闭后保留原有双栏布局。
   function createReaderToggle() {
     const node = document.createElement("button");
     node.type = "button";
@@ -2186,7 +2186,7 @@
     name.textContent = "沉浸阅读";
     const hint = document.createElement("span");
     hint.className = "hint";
-    hint.textContent = "帖子页全屏分页，评论收进侧栏";
+    hint.textContent = "帖子页全屏沉浸阅读，评论收进侧栏";
     copy.append(name, hint);
     const toggle = document.createElement("span");
     toggle.className = "switch";
@@ -4117,13 +4117,14 @@
     @media (prefers-reduced-motion: reduce) { .btn, .btn svg { transition: none; } }
   `;
 
-  // 沉浸阅读：帖子页改为全屏分页，顶部只留返回与作者，右侧放原生互动，评论收进抽屉。
+  // 沉浸阅读：帖子页改为全屏连续阅读，顶部只留返回与作者，右侧放原生互动，评论收进抽屉。
   const READER_ID = "heybox-up-reader";
   const READER_STYLE_ID = "heybox-up-reader-style";
   const READER_CLASS = "heybox-up-reader";
   const READER_COMMENT_CLASS = "heybox-up-reader-comments";
   const READER_BACKDROP_CLASS = "heybox-up-reader-backdrop";
   const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
+  const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
 
   const READER_ICONS = {
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
@@ -4270,7 +4271,6 @@
       overflow-y: auto;
       margin-inline: auto;
       overscroll-behavior: contain;
-      scroll-snap-type: y mandatory;
       scrollbar-width: none;
       scroll-behavior: smooth;
     }
@@ -4281,12 +4281,14 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 100%;
-      padding: 88px 60px 104px;
-      scroll-snap-align: start;
-      scroll-snap-stop: always;
+      min-height: 0;
+      padding: 44px 60px 72px;
       background: var(--hbu-reader-page);
     }
+    .hbu-reader-page[data-kind="text"] { padding: 24px 60px 40px; }
+    .hbu-reader-page[data-kind="heading"] { padding: 56px 60px 28px; }
+    .hbu-reader-page[data-kind="hero"] { min-height: 100dvh; padding: 0; }
+    .hbu-reader-page[data-kind="end"] { min-height: 100dvh; }
     .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
       width: min(34em, 100%);
@@ -4306,10 +4308,7 @@
     .hbu-reader-page[data-kind="rich"] {
       align-items: stretch;
       justify-content: flex-start;
-      height: 100%;
-      padding-top: 96px;
-      overflow-y: auto;
-      overscroll-behavior: contain;
+      padding-top: 40px;
     }
     .hbu-reader-rich {
       width: 100%;
@@ -4342,7 +4341,7 @@
       color: var(--hbu-reader-ink) !important;
     }
     .hbu-reader-rich :is(a, .prose-link) { color: var(--heybox-up-accent, #4f7ea8); }
-    .hbu-reader-page[data-kind="media"] { justify-content: flex-start; height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 72px 20px 96px; background: #05070a; }
+    .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 32px 20px; background: #05070a; }
     .hbu-reader-media {
       display: block;
       max-width: 100%;
@@ -4363,12 +4362,13 @@
       color: #fff;
     }
     .hbu-reader-cover { position: absolute; inset: 0; overflow: hidden; background: #05070a; }
+    .hbu-reader-cover-glow { position: absolute; inset: -48px; background-position: center; background-size: cover; filter: blur(42px) brightness(.5); transform: scale(1.1); }
     .hbu-reader-cover img {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain;
       opacity: 0;
       transition: opacity .32s ease;
       pointer-events: none;
@@ -4378,7 +4378,7 @@
       content: "";
       position: absolute;
       inset: 0;
-      background: linear-gradient(180deg, rgba(0, 0, 0, .34), transparent 26%, transparent 46%, rgba(0, 0, 0, .86));
+      background: linear-gradient(180deg, rgba(0, 0, 0, .28), transparent 22%, transparent 36%, rgba(0, 0, 0, .58) 58%, rgba(0, 0, 0, .93));
     }
     .hbu-reader-cover--empty { background: radial-gradient(80% 60% at 25% 15%, rgba(143, 176, 207, .35), transparent 70%), linear-gradient(150deg, #18222c, #070a0e); }
     .hbu-reader-cover-nav {
@@ -4404,7 +4404,18 @@
     .hbu-reader-cover-dots button { position: relative; width: 36px; height: 36px; padding: 0; border: 0; background: transparent; cursor: pointer; }
     .hbu-reader-cover-dots button::after { content: ""; position: absolute; top: 16px; right: 8px; left: 8px; height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .38); }
     .hbu-reader-cover-dots button[aria-current="true"]::after { background: #fff; }
-    .hbu-reader-caption { position: relative; z-index: 2; padding: 0 60px 104px; }
+    .hbu-reader-caption {
+      position: relative;
+      z-index: 2;
+      width: min(680px, calc(100% - 48px));
+      margin: 0 auto 88px;
+      padding: 22px 26px 24px;
+      border: 1px solid rgba(255, 255, 255, .14);
+      border-radius: 24px;
+      background: rgba(7, 10, 14, .72);
+      box-shadow: 0 28px 70px rgba(0, 0, 0, .45);
+      backdrop-filter: blur(18px) saturate(1.05);
+    }
     .hbu-reader-kicker { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-bottom: 13px; color: rgba(255, 255, 255, .8); font-size: 12px; line-height: 1.4; }
     .hbu-reader-kicker span { padding: 3px 9px; border: 1px solid rgba(255, 255, 255, .22); border-radius: 99px; background: rgba(0, 0, 0, .22); }
     .hbu-reader-title { display: -webkit-box; margin: 0 0 12px; overflow: hidden; font-size: 31px; line-height: 1.28; font-weight: 750; letter-spacing: -.02em; text-wrap: balance; text-shadow: 0 2px 18px rgba(0, 0, 0, .42); -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
@@ -4443,7 +4454,7 @@
       .hbu-reader-page[data-kind="end"] .hbu-reader-stats { display: none; }
       .hbu-reader-end-head img { width: 40px; height: 40px; }
     }
-    .hbu-reader-head { position: absolute; top: 0; right: 0; left: 0; z-index: 12; display: flex; gap: 9px; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); background: linear-gradient(180deg, rgba(3, 5, 8, .62), transparent); color: var(--hbu-reader-glass-ink); pointer-events: none; }
+    .hbu-reader-head { position: absolute; top: 0; right: 0; left: 0; z-index: 12; display: flex; gap: 9px; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); background: linear-gradient(180deg, rgba(3, 5, 8, .92), rgba(3, 5, 8, .48) 58%, transparent); color: var(--hbu-reader-glass-ink); pointer-events: none; }
     .hbu-reader-head > * { pointer-events: auto; }
     .hbu-reader-round { display: grid; place-items: center; width: 40px; height: 40px; flex: none; padding: 0; border: 1px solid rgba(255, 255, 255, .2); border-radius: 50%; background: rgba(8, 11, 15, .46); color: #fff; cursor: pointer; backdrop-filter: blur(8px); }
     .hbu-reader-round svg { width: 19px; height: 19px; }
@@ -4555,17 +4566,20 @@
       .hbu-reader-scroll { width: 100%; }
       .hbu-reader-rail { right: 14px; bottom: 96px; }
       .hbu-reader-page { padding-right: 86px; }
-      .hbu-reader-caption { padding-right: 86px; }
+      .hbu-reader-caption { width: min(680px, calc(100% - 64px)); }
     }
     @media (max-width: 760px) {
       :root { --hbu-reader-stage: 100%; }
       .hbu-reader-rail-avatar-link { display: none; }
-      .hbu-reader-page { padding: 78px 72px 98px; }
+      .hbu-reader-page { padding: 22px 64px 48px 24px; }
+      .hbu-reader-page[data-kind="hero"] { padding: 0; }
+      .hbu-reader-page[data-kind="text"] { padding: 18px 64px 32px 24px; }
+      .hbu-reader-page[data-kind="media"] { padding: 20px 16px; }
       .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
       .hbu-reader-rich { font-size: 17px; }
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy { font-size: 24px; }
-      .hbu-reader-caption { padding: 0 72px 100px; }
+      .hbu-reader-caption { width: calc(100% - 32px); margin-bottom: 84px; padding: 18px 20px 20px; }
       .hbu-reader-title { font-size: 26px; }
       .hbu-reader-rail { gap: 9px; bottom: 88px; right: 10px; }
       .hbu-reader-action { width: 42px; min-height: 42px; }
@@ -4579,14 +4593,17 @@
       .hbu-reader-head-author span { display: none; }
       .hbu-reader-head-author { padding-right: 4px; }
       .hbu-reader-follow { min-width: 48px; padding: 0 10px; }
-      .hbu-reader-page { padding-right: 72px; }
-      .hbu-reader-caption { padding-right: 72px; }
+      .hbu-reader-page { padding-right: 64px; }
+      .hbu-reader-page[data-kind="media"] { padding-right: 16px; padding-left: 16px; }
+      .hbu-reader-caption { width: calc(100% - 28px); }
       .hbu-reader-hint { display: none; }
       .hbu-reader-related { display: none; }
     }
     @media (max-height: 620px) {
       .hbu-reader-page { padding-top: 72px; padding-bottom: 76px; }
-      .hbu-reader-caption { padding-bottom: 82px; }
+      .hbu-reader-page[data-kind="hero"] { padding: 0; }
+      .hbu-reader-page[data-kind="text"] { padding-top: 16px; padding-bottom: 28px; }
+      .hbu-reader-caption { margin-bottom: 70px; padding: 14px 18px 16px; }
       .hbu-reader-rail { bottom: 70px; gap: 7px; }
       .hbu-reader-action { width: 38px; min-height: 38px; }
       .hbu-reader-action-count { display: none; }
@@ -4805,7 +4822,26 @@
     try {
       sessionStorage.setItem(READER_SCROLL_KEY + id, String(index));
     } catch (error) {
-      // 隐私模式下不记录阅读位置，本次仍可正常翻页。
+      // 隐私模式下不记录阅读位置，本次仍可正常阅读。
+    }
+  }
+
+  function readReaderRatio(id) {
+    if (id === "") return 0;
+    try {
+      const value = Number(sessionStorage.getItem(READER_RATIO_KEY + id));
+      return Number.isFinite(value) && value > 0 && value <= 1 ? value : 0;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  function writeReaderRatio(id, ratio) {
+    if (id === "") return;
+    try {
+      sessionStorage.setItem(READER_RATIO_KEY + id, ratio.toFixed(4));
+    } catch (error) {
+      // 隐私模式下不记录滚动比例，本次仍可正常阅读。
     }
   }
 
@@ -4840,6 +4876,8 @@
     let coverTotal = 0;
     let observer = null;
     let scheduled = false;
+    let scrollRaf = 0;
+    let restoring = false;
 
     const showToast = (message) => {
       let toast = host?.querySelector(".hbu-reader-toast") || null;
@@ -5146,6 +5184,13 @@
       pages[next].scrollIntoView({ block: "start", behavior: behavior });
     };
 
+    const scrollViewport = (direction) => {
+      const scroll = host?.querySelector(".hbu-reader-scroll");
+      if (!scroll) return;
+      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      scroll.scrollBy({ top: Math.round(scroll.clientHeight * 0.82) * direction, behavior: behavior });
+    };
+
     const bindSwipe = (scroll) => {
       let startX = 0;
       let startY = 0;
@@ -5167,14 +5212,19 @@
         }
         const page = host?.querySelectorAll(".hbu-reader-page")[activeIndex];
         if (page !== undefined && page.scrollWidth > page.clientWidth + 8) return;
-        scrollToPage(activeIndex + (deltaX < 0 ? 1 : -1));
+        scrollViewport(deltaX < 0 ? 1 : -1);
       }, { passive: true });
     };
 
     const setCover = (value) => {
       if (host === null || coverTotal === 0) return;
       coverIndex = (value + coverTotal) % coverTotal;
-      for (const [index, node] of Array.from(host.querySelectorAll(".hbu-reader-cover img")).entries()) {
+      const sources = Array.from(host.querySelectorAll(".hbu-reader-cover img"));
+      const glow = host.querySelector(".hbu-reader-cover-glow");
+      if (glow !== null && sources[coverIndex] !== undefined) {
+        glow.style.backgroundImage = 'url("' + (sources[coverIndex].getAttribute("src") || "").replace(/"/g, '\\"') + '")';
+      }
+      for (const [index, node] of sources.entries()) {
         node.dataset.active = String(index === coverIndex);
       }
       for (const [index, node] of Array.from(host.querySelectorAll(".hbu-reader-cover-dots button")).entries()) {
@@ -5236,7 +5286,7 @@
         if (buffer !== "") buffer += "\n\n";
         buffer += line;
         bufferLines += 1;
-        if (bufferLines >= 2 || buffer.length >= 220) flush();
+        if (bufferLines >= 4 || buffer.length >= 420) flush();
       }
       flush();
     };
@@ -5343,12 +5393,16 @@
 
     const updateProgress = () => {
       if (host === null) return;
+      const scroll = host.querySelector(".hbu-reader-scroll");
       const current = host.querySelector(".hbu-reader-progress [data-current]");
       const total = host.querySelector(".hbu-reader-progress [data-total]");
       const fill = host.querySelector(".hbu-reader-progress-bar i");
-      if (current !== null) current.textContent = String(activeIndex + 1);
-      if (total !== null) total.textContent = String(pageCount);
-      if (fill !== null) fill.style.width = pageCount <= 1 ? "100%" : String(((activeIndex + 1) / pageCount) * 100) + "%";
+      const max = scroll === null ? 0 : scroll.scrollHeight - scroll.clientHeight;
+      const ratio = max <= 0 ? 1 : Math.min(1, Math.max(0, scroll.scrollTop / max));
+      if (current !== null) current.textContent = Math.round(ratio * 100) + "%";
+      if (total !== null) total.textContent = "";
+      if (fill !== null) fill.style.width = Math.max(2, ratio * 100) + "%";
+      if (!restoring) writeReaderRatio(articleId, ratio);
     };
 
     const setActive = (index) => {
@@ -5491,6 +5545,12 @@
       page.dataset.kind = "hero";
       const cover = document.createElement("div");
       cover.className = "hbu-reader-cover" + (data.covers.length === 0 ? " hbu-reader-cover--empty" : "");
+      if (data.covers.length > 0) {
+        const glow = document.createElement("div");
+        glow.className = "hbu-reader-cover-glow";
+        glow.style.backgroundImage = 'url("' + data.covers[0].replace(/"/g, '\\"') + '")';
+        cover.append(glow);
+      }
       coverTotal = data.covers.length;
       coverIndex = 0;
       data.covers.forEach((source, index) => {
@@ -5702,6 +5762,8 @@
     const render = (data) => {
       if (host === null) return;
       observer?.disconnect();
+      window.cancelAnimationFrame(scrollRaf);
+      scrollRaf = 0;
       host.textContent = "";
       favourPanel = null;
       favourButton = null;
@@ -5712,7 +5774,7 @@
       const scroll = document.createElement("div");
       scroll.className = "hbu-reader-scroll";
       scroll.tabIndex = 0;
-      scroll.setAttribute("aria-label", "文章分页");
+      scroll.setAttribute("aria-label", "文章内容");
       bindSwipe(scroll);
       scroll.append(createHero(data));
       buildPages(scroll, data.body);
@@ -5732,7 +5794,7 @@
       total.textContent = "1";
       const hint = document.createElement("span");
       hint.className = "hbu-reader-hint";
-      hint.textContent = "滚轮 / ↑↓ 翻页";
+      hint.textContent = "滚轮 / ↑↓ 滚动";
       progress.append(current, bar, total, hint);
       const toast = document.createElement("div");
       toast.className = "hbu-reader-toast";
@@ -5740,11 +5802,47 @@
       host.append(progress, toast);
       pageCount = host.querySelectorAll(".hbu-reader-page").length;
       observePages(scroll);
+      scroll.addEventListener("scroll", () => {
+        if (scrollRaf !== 0) return;
+        scrollRaf = window.requestAnimationFrame(() => {
+          scrollRaf = 0;
+          updateProgress();
+        });
+      }, { passive: true });
       syncActionStates();
+      const ratio = readReaderRatio(articleId);
+      const restore = ratio === 0 ? Math.min(pageCount - 1, readReaderScroll(articleId)) : 0;
+      restoring = ratio > 0;
       updateProgress();
+      if (ratio > 0) writeReaderRatio(articleId, ratio);
       if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) requestAnimationFrame(openComments);
-      const restore = Math.min(pageCount - 1, readReaderScroll(articleId));
-      if (restore > 0) {
+      if (ratio > 0) {
+        requestAnimationFrame(() => {
+          const node = host?.querySelector(".hbu-reader-scroll");
+          if (node === null || node === undefined) return;
+          const apply = () => {
+            node.scrollTop = (node.scrollHeight - node.clientHeight) * ratio;
+          };
+          apply();
+          let cancelled = false;
+          const stop = () => {
+            cancelled = true;
+            restoring = false;
+          };
+          for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) node.addEventListener(type, stop, { once: true, passive: true });
+          const images = Array.from(node.querySelectorAll("img"));
+          const settle = Promise.race([
+            Promise.allSettled(images.map((image) => image.decode())),
+            new Promise((resolve) => window.setTimeout(resolve, 1200)),
+          ]);
+          settle.then(() => {
+            if (cancelled) return;
+            apply();
+            restoring = false;
+            updateProgress();
+          });
+        });
+      } else if (restore > 0) {
         requestAnimationFrame(() => {
           const pages = host?.querySelectorAll(".hbu-reader-page");
           pages?.[restore]?.scrollIntoView({ block: "start", behavior: "auto" });
@@ -5765,6 +5863,7 @@
     const teardown = () => {
       observer?.disconnect();
       observer = null;
+      restoring = false;
       clearSheetStatus();
       document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
       closeSheetButton?.remove();
@@ -5872,10 +5971,10 @@
       }
       if (["ArrowDown", "PageDown", "j", "J", " "].includes(event.key)) {
         event.preventDefault();
-        scrollToPage(activeIndex + 1);
+        scrollViewport(1);
       } else if (["ArrowUp", "PageUp", "k", "K"].includes(event.key)) {
         event.preventDefault();
-        scrollToPage(activeIndex - 1);
+        scrollViewport(-1);
       } else if (event.key === "Home") {
         event.preventDefault();
         scrollToPage(0);
