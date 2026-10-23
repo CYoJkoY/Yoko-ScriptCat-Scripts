@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.32
+// @version      0.4.33
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -26,6 +26,7 @@
   const CACHE_TTL_MS = 10 * 60 * 1000;
   const CACHE_KEY_PREFIX = "heybox-up.cy.v1:";
   const LINK_HREF_PREFIX = "/app/bbs/link/";
+  const FAVOUR_PATH = "/app/user/favour/content";
 
   const HIDE_CY_KEY = "heybox-up.hideCy.v1";
   const HIDE_CY_EVENT = "heybox-up:hide-cy";
@@ -33,11 +34,7 @@
   const HIDE_CY_CLASS = "heybox-up-hide-cy";
 
   function readHideCyPreference() {
-    try {
-      return localStorage.getItem(HIDE_CY_KEY) === "1";
-    } catch (error) {
-      return false;
-    }
+    return localStore.read(HIDE_CY_KEY) === "1";
   }
 
   function ensureHideCyStyle() {
@@ -55,11 +52,7 @@
   }
 
   function setHideCyPreference(value) {
-    try {
-      localStorage.setItem(HIDE_CY_KEY, value ? "1" : "0");
-    } catch (error) {
-      // 隐私模式下 localStorage 可能不可写，本次页面仍按新状态生效。
-    }
+    localStore.write(HIDE_CY_KEY, value ? "1" : "0");
     applyHideCyPreference(value);
   }
 
@@ -68,19 +61,11 @@
   const COMMENT_PREVIEW_EVENT = "heybox-up:comment-preview";
 
   function readCommentPreviewPreference() {
-    try {
-      return localStorage.getItem(COMMENT_PREVIEW_KEY) !== "0";
-    } catch (error) {
-      return true;
-    }
+    return localStore.read(COMMENT_PREVIEW_KEY) !== "0";
   }
 
   function setCommentPreviewPreference(value) {
-    try {
-      localStorage.setItem(COMMENT_PREVIEW_KEY, value ? "1" : "0");
-    } catch (error) {
-      console.warn("[HeyBox Up] 保存评论预览设置失败", error);
-    }
+    localStore.write(COMMENT_PREVIEW_KEY, value ? "1" : "0");
     document.dispatchEvent(new CustomEvent(COMMENT_PREVIEW_EVENT, { detail: value }));
   }
 
@@ -89,19 +74,11 @@
   const NAV_MOTION_EVENT = "heybox-up:nav-motion";
 
   function readNavMotionPreference() {
-    try {
-      return localStorage.getItem(NAV_MOTION_KEY) !== "0";
-    } catch (error) {
-      return true;
-    }
+    return localStore.read(NAV_MOTION_KEY) !== "0";
   }
 
   function setNavMotionPreference(value) {
-    try {
-      localStorage.setItem(NAV_MOTION_KEY, value ? "1" : "0");
-    } catch (error) {
-      console.warn("[HeyBox Up] 保存导航图标设置失败", error);
-    }
+    localStore.write(NAV_MOTION_KEY, value ? "1" : "0");
     document.dispatchEvent(new CustomEvent(NAV_MOTION_EVENT, { detail: value }));
   }
 
@@ -110,19 +87,11 @@
   const READER_EVENT = "heybox-up:reader";
 
   function readReaderPreference() {
-    try {
-      return localStorage.getItem(READER_KEY) !== "0";
-    } catch (error) {
-      return true;
-    }
+    return localStore.read(READER_KEY) !== "0";
   }
 
   function setReaderPreference(value) {
-    try {
-      localStorage.setItem(READER_KEY, value ? "1" : "0");
-    } catch (error) {
-      console.warn("[HeyBox Up] 保存阅读模式设置失败", error);
-    }
+    localStore.write(READER_KEY, value ? "1" : "0");
     document.dispatchEvent(new CustomEvent(READER_EVENT, { detail: value }));
   }
 
@@ -141,11 +110,7 @@
   }
 
   function readFeedWidth() {
-    try {
-      return normalizeFeedWidth(localStorage.getItem(FEED_WIDTH_KEY));
-    } catch (error) {
-      return FEED_WIDTH_DEFAULT;
-    }
+    return normalizeFeedWidth(localStore.read(FEED_WIDTH_KEY));
   }
 
   function applyFeedWidth(value) {
@@ -156,11 +121,7 @@
 
   function setFeedWidthPreference(value) {
     const width = applyFeedWidth(value);
-    try {
-      localStorage.setItem(FEED_WIDTH_KEY, String(width));
-    } catch (error) {
-      // 隐私模式下写不进去，本次页面仍按新宽度排版。
-    }
+    localStore.write(FEED_WIDTH_KEY, String(width));
     return width;
   }
 
@@ -169,29 +130,181 @@
     return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
   }
 
+  function createStorageAccess(storageName) {
+    const memory = new Map();
+    const read = (key) => {
+      if (memory.has(key)) return memory.get(key);
+      try {
+        const value = window[storageName].getItem(key);
+        if (value !== null) memory.set(key, value);
+        return value;
+      } catch (error) {
+        return null;
+      }
+    };
+    const write = (key, value) => {
+      memory.set(key, value);
+      try {
+        window[storageName].setItem(key, value);
+        return true;
+      } catch (error) {
+        return false;
+      }
+    };
+    return {
+      read: read,
+      write: write,
+      readJson: (key, fallback) => {
+        const raw = read(key);
+        if (raw === null) return fallback;
+        try {
+          return JSON.parse(raw);
+        } catch (error) {
+          return fallback;
+        }
+      },
+      writeJson: (key, value) => write(key, JSON.stringify(value)),
+    };
+  }
+
+  const localStore = createStorageAccess("localStorage");
+  const sessionStore = createStorageAccess("sessionStorage");
+
+  const REQUEST_TIMEOUT_MS = 15000;
+
+  function isAbortError(error) {
+    return error instanceof DOMException && error.name === "AbortError";
+  }
+
+  function waitForDelay(ms, signal) {
+    if (ms <= 0) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted === true) {
+        reject(signal.reason || new DOMException("请求已取消", "AbortError"));
+        return;
+      }
+      const timer = window.setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        window.clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        reject(signal?.reason || new DOMException("请求已取消", "AbortError"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const externalSignal = options.signal;
+    const abortFromExternal = () => controller.abort(externalSignal.reason);
+    if (externalSignal?.aborted === true) controller.abort(externalSignal.reason);
+    else externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+    const timer = window.setTimeout(() => {
+      controller.abort(new DOMException("请求超时", "TimeoutError"));
+    }, timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      window.clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", abortFromExternal);
+    }
+  }
+
   // Page edits arrive in bursts. One bounded observer replaces the independent body observers
   // so unrelated mutations cannot fan out into every route-specific sync on the same frame.
   const PAGE_SYNC_INTERVAL_MS = 120;
+  const PAGE_ROUTE = Object.freeze({
+    ARTICLE: "article",
+    FAVOUR: "favour",
+    FEED: "feed",
+    TOPIC: "topic",
+    CREATOR: "creator",
+    OTHER: "other",
+  });
+  const PAGE_ROUTE_RULES = [
+    { id: PAGE_ROUTE.ARTICLE, pattern: /^\/app\/bbs\/link\/\d+(?:\/|$)/ },
+    { id: PAGE_ROUTE.FAVOUR, pattern: /^\/app\/user\/favour\/content(?:\/|$)/ },
+    { id: PAGE_ROUTE.FEED, pattern: /^\/(?:$|app\/bbs\/home(?:\/|$))/ },
+    { id: PAGE_ROUTE.TOPIC, pattern: /^\/app\/topic\/link\/\d+(?:\/|$)/ },
+    { id: PAGE_ROUTE.CREATOR, pattern: /^\/creator(?:\/|$)/ },
+  ];
   const pageSyncTasks = new Map();
+  const pageMutationRevisions = { feed: 0, article: 0, topic: 0, favour: 0, creator: 0, chrome: 0 };
+  const PAGE_MUTATION_REGION_SELECTORS = {
+    feed: "#page-bbs-community, #heybox-up-comment-rail",
+    article: "#page-bbs-link, #heybox-up-reader",
+    topic: "#page-topic-link, #heybox-up-community-search",
+    favour: ".user-favour, #heybox-up-favour",
+    creator: "#page-creator-content-management, #page-creator-content-management-detail",
+    chrome: ".nav, .nav-actions, #heybox-up-nav, #heybox-up-theme-entry",
+  };
+  const PAGE_MUTATION_REGION_ENTRIES = Object.entries(PAGE_MUTATION_REGION_SELECTORS);
+  const PAGE_MUTATION_REGION_COMBINED = PAGE_MUTATION_REGION_ENTRIES.map((entry) => entry[1]).join(", ");
+  const PAGE_MUTATION_IGNORE_SELECTOR = '[id^="heybox-up-"], input, textarea, select, [contenteditable]:not([contenteditable="false"])';
   let pageSyncTimer = 0;
   let pageSyncLastRun = 0;
+  let pageSyncRoute = readPageRoute();
+  let pageSyncForceAll = false;
 
-  function registerPageSync(task, intervalMs = 0) {
-    pageSyncTasks.set(task, { intervalMs, lastRun: 0 });
+  function readPageRoute(pathname = location.pathname) {
+    for (const rule of PAGE_ROUTE_RULES) {
+      if (rule.pattern.test(pathname)) return rule.id;
+    }
+    return PAGE_ROUTE.OTHER;
+  }
+
+  function registerPageSync(task, intervalMs = 0, routes = null, region = null) {
+    pageSyncTasks.set(task, {
+      intervalMs: Math.max(0, Number(intervalMs) || 0),
+      lastRun: 0,
+      lastRegionRevision: -1,
+      pending: false,
+      routes: Array.isArray(routes) ? new Set(routes) : null,
+      region: region,
+    });
   }
 
   function runPageSyncTasks() {
     pageSyncTimer = 0;
     const now = performance.now();
+    const route = readPageRoute();
+    const routeChanged = route !== pageSyncRoute;
+    const forceAll = routeChanged || pageSyncForceAll;
+    pageSyncForceAll = false;
     pageSyncLastRun = now;
-    for (const [task, state] of pageSyncTasks) {
-      if (now - state.lastRun < state.intervalMs) continue;
-      state.lastRun = now;
+    pageSyncRoute = route;
+    for (const [task, entry] of pageSyncTasks) {
+      const routeMatches = entry.routes === null || entry.routes.has(route);
+      // Route changes run every task once so the previous route can tear down its UI.
+      if (!routeMatches && !forceAll) {
+        entry.pending = false;
+        continue;
+      }
+      const regionRevision = entry.region === null ? -1 : pageMutationRevisions[entry.region];
+      if (!forceAll && entry.region !== null && regionRevision === entry.lastRegionRevision) continue;
+      if (!forceAll && now - entry.lastRun < entry.intervalMs) {
+        entry.pending = true;
+        continue;
+      }
+      entry.lastRun = now;
+      entry.lastRegionRevision = regionRevision;
+      entry.pending = false;
       try {
         task();
       } catch (error) {
         console.error("[HeyBox Up] DOM sync failed", error);
       }
+    }
+    let nextDelay = Infinity;
+    for (const [, entry] of pageSyncTasks) {
+      if (!entry.pending) continue;
+      nextDelay = Math.min(nextDelay, Math.max(0, entry.lastRun + entry.intervalMs - now));
+    }
+    if (nextDelay !== Infinity) {
+      pageSyncTimer = window.setTimeout(runPageSyncTasks, nextDelay);
     }
   }
 
@@ -201,39 +314,126 @@
     pageSyncTimer = window.setTimeout(runPageSyncTasks, Math.max(0, PAGE_SYNC_INTERVAL_MS - elapsed));
   }
 
-  function isRelevantPageMutation(record) {
+  function scheduleForcedPageSync() {
+    pageSyncForceAll = true;
+    schedulePageSync();
+  }
+
+  function bumpRegionsForRoot(root) {
+    if (!(root instanceof Element)) return;
+    for (const [region, selector] of PAGE_MUTATION_REGION_ENTRIES) {
+      if (root.matches(selector)) pageMutationRevisions[region] += 1;
+    }
+  }
+
+  function notePageMutationRegions(record) {
     const target = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
-    if (target === null || target === undefined) return true;
-    // The script's own panels and editable content cannot affect route-level mounts.
-    if (target.closest('[id^="heybox-up-"]') !== null) return false;
-    return target.closest("input, textarea, select, [contenteditable='true']") === null;
+    if (target === null || target === undefined) return false;
+    const closestTracked = target.closest(PAGE_MUTATION_REGION_COMBINED + ", " + PAGE_MUTATION_IGNORE_SELECTOR);
+    if (closestTracked !== null && closestTracked.matches(PAGE_MUTATION_IGNORE_SELECTOR)) return false;
+    let touched = false;
+    if (closestTracked !== null) {
+      bumpRegionsForRoot(closestTracked);
+      touched = true;
+    }
+    const changedNodes = [];
+    if (record.type === "childList") {
+      for (const node of record.addedNodes) changedNodes.push(node);
+      for (const node of record.removedNodes) changedNodes.push(node);
+    }
+    let removedScriptUi = false;
+    if (record.type === "childList") {
+      for (const node of record.removedNodes) {
+        if (node instanceof Element && (node.id.startsWith("heybox-up-")
+          || node.querySelector('[id^="heybox-up-"]') !== null)) {
+          removedScriptUi = true;
+          break;
+        }
+      }
+    }
+    if (removedScriptUi) {
+      for (const region of Object.keys(pageMutationRevisions)) pageMutationRevisions[region] += 1;
+      return true;
+    }
+    for (const node of changedNodes) {
+      if (!(node instanceof Element)) continue;
+      if (node.matches(PAGE_MUTATION_REGION_COMBINED)) {
+        bumpRegionsForRoot(node);
+        touched = true;
+      }
+      for (const root of node.querySelectorAll(PAGE_MUTATION_REGION_COMBINED)) {
+        bumpRegionsForRoot(root);
+        touched = true;
+      }
+    }
+    return touched;
   }
 
   function startPageSyncObserver() {
     if (!document.body || !document.body.isConnected) return;
     new MutationObserver((records) => {
-      if (records.some(isRelevantPageMutation)) schedulePageSync();
+      let relevant = false;
+      for (const record of records) {
+        relevant = notePageMutationRegions(record) || relevant;
+      }
+      if (relevant) schedulePageSync();
     }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    window.addEventListener("popstate", scheduleForcedPageSync);
+    window.addEventListener("hashchange", scheduleForcedPageSync);
   }
 
-  const ensuredStyleIds = new Set();
+  const trackedStyleContent = new WeakMap();
+  const constructedStylesById = new Map();
+  let CAN_USE_CONSTRUCTED_STYLES = false;
+  try {
+    const testSheet = typeof CSSStyleSheet === "function" && typeof CSSStyleSheet.prototype.replaceSync === "function"
+      ? new CSSStyleSheet()
+      : null;
+    if (testSheet !== null && "adoptedStyleSheets" in document) {
+      testSheet.replaceSync(":root{}");
+      CAN_USE_CONSTRUCTED_STYLES = true;
+    }
+  } catch (error) {
+    CAN_USE_CONSTRUCTED_STYLES = false;
+  }
 
   function ensureStyleElement(id, css, appendToEnd = false) {
+    if (CAN_USE_CONSTRUCTED_STYLES) {
+      try {
+        let entry = constructedStylesById.get(id);
+        if (entry === undefined) {
+          const sheet = new CSSStyleSheet();
+          sheet.replaceSync(css);
+          entry = { sheet: sheet, css: css };
+          constructedStylesById.set(id, entry);
+        } else if (entry.css !== css) {
+          entry.sheet.replaceSync(css);
+          entry.css = css;
+        }
+        if (!document.adoptedStyleSheets.includes(entry.sheet)) {
+          document.adoptedStyleSheets = [...document.adoptedStyleSheets, entry.sheet];
+        }
+        return;
+      } catch (error) {
+        CAN_USE_CONSTRUCTED_STYLES = false;
+      }
+    }
     let style = document.getElementById(id);
     if (style === null) {
       style = document.createElement("style");
       style.id = id;
       style.textContent = css;
-    } else if (!ensuredStyleIds.has(id) && style.textContent !== css) {
-      /* Reuse a hot-updated node once, then avoid comparing the full stylesheet on every sync. */
+      trackedStyleContent.set(style, css);
+    } else if (trackedStyleContent.get(style) !== css) {
+      /* A replaced or hot-updated style node must be repaired even after the first mount. */
       style.textContent = css;
+      trackedStyleContent.set(style, css);
     }
     const parent = document.head || document.documentElement;
     if (parent === null) return;
     if (style.parentNode !== parent || (appendToEnd && parent === document.head && parent.lastElementChild !== style)) {
       parent.append(style);
     }
-    ensuredStyleIds.add(id);
   }
 
   const THEME_CLASS = "heybox-up-theme";
@@ -274,20 +474,11 @@
   let feedWidthChips = [];
 
   function readThemeMode() {
-    try {
-      return normalizeThemeMode(localStorage.getItem(THEME_STORAGE_KEY));
-    } catch (error) {
-      console.warn("[HeyBox Up] 读取主题设置失败", error);
-      return "system";
-    }
+    return normalizeThemeMode(localStore.read(THEME_STORAGE_KEY));
   }
 
   function writeThemeMode(mode) {
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, mode);
-    } catch (error) {
-      console.warn("[HeyBox Up] 保存主题设置失败", error);
-    }
+    localStore.write(THEME_STORAGE_KEY, mode);
   }
 
   const THEME_CSS = `
@@ -1124,6 +1315,10 @@
       text-underline-offset: 2px;
     }
     /* 版式：定宽阅读栏 + 卡片化信息流。站点通栏列表每行超过 90 字，长读易疲劳。 */
+    @media (max-width: 799px) {
+      /* 站点给 #app 写死 800px 下限；实际手机宽度会被裁切，这里恢复单列收缩。 */
+      #app { min-width: 0 !important; width: 100% !important; }
+    }
     :root {
       --heybox-up-page-w: 1360px;
       /* 中间栏占视口百分比，可在齿轮设置菜单里调；上限避免超宽屏上正文行过长。 */
@@ -1915,7 +2110,7 @@
       void pullCyIds();
     };
 
-    registerPageSync(sync, 250);
+    registerPageSync(sync, 250, [PAGE_ROUTE.ARTICLE], "article");
     document.addEventListener(HIDE_CY_EVENT, () => {
       updateCyButton();
       markCy();
@@ -2323,7 +2518,8 @@
       mountThemeEntry();
       scheduleDarkSweep();
     };
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 400, null, "chrome");
+    registerPageSync(() => scheduleDarkSweep(), 600, [PAGE_ROUTE.CREATOR, PAGE_ROUTE.TOPIC]);
     sync();
   }
 
@@ -2342,6 +2538,7 @@
   ]);
   const RGB_COLOR = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/;
   let darkSweepTimer = 0;
+  let darkSweepIdleHandle = 0;
   let darkSweepLastRun = 0;
 
   function parseRgbColor(value) {
@@ -2366,17 +2563,15 @@
     return false;
   }
 
-  // 找到自己的第一层不透明背景祖先（含自身），用来判断文字是否落在被兜底改暗的底色上。
-  function flatBackgroundAncestor(node) {
-    for (let el = node; el; el = el.parentElement) {
-      if (el.classList.contains(DARK_FLAT_CLASS) || el.classList.contains(DARK_FLAT_SUBTLE_CLASS)) return true;
-      const color = parseRgbColor(getComputedStyle(el).backgroundColor);
-      if (color !== null && color.a >= 0.6) return false;
-    }
-    return false;
-  }
-
   function clearDarkSweep() {
+    if (darkSweepTimer !== 0) {
+      window.clearTimeout(darkSweepTimer);
+      darkSweepTimer = 0;
+    }
+    if (darkSweepIdleHandle !== 0 && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(darkSweepIdleHandle);
+      darkSweepIdleHandle = 0;
+    }
     const selector = "." + DARK_FLAT_CLASS + ", ." + DARK_FLAT_SUBTLE_CLASS + ", ." + DARK_EDGE_CLASS + ", ." + DARK_INK_CLASS;
     for (const node of document.querySelectorAll(selector)) {
       node.classList.remove(DARK_FLAT_CLASS, DARK_FLAT_SUBTLE_CLASS, DARK_EDGE_CLASS, DARK_INK_CLASS);
@@ -2390,18 +2585,52 @@
     }
     const roots = document.querySelectorAll(DARK_SWEEP_ROOT_SELECTOR);
     if (roots.length === 0) return;
+    const styleCache = new WeakMap();
+    const flatCache = new WeakMap();
+    const readStyle = (node) => {
+      let style = styleCache.get(node);
+      if (style === undefined) {
+        style = getComputedStyle(node);
+        styleCache.set(node, style);
+      }
+      return style;
+    };
+    // Cache opaque/flat ancestor state within one sweep instead of forcing style reads at every depth.
+    const hasFlatBackground = (node) => {
+      const path = [];
+      for (let element = node; element !== null; element = element.parentElement) {
+        if (element.classList.contains(DARK_FLAT_CLASS) || element.classList.contains(DARK_FLAT_SUBTLE_CLASS)) {
+          for (const item of path) flatCache.set(item, true);
+          return true;
+        }
+        const known = flatCache.get(element);
+        if (known !== undefined) {
+          for (const item of path) flatCache.set(item, known);
+          return known;
+        }
+        path.push(element);
+        const color = parseRgbColor(readStyle(element).backgroundColor);
+        if (color !== null && color.a >= 0.6) {
+          for (const item of path) flatCache.set(item, false);
+          return false;
+        }
+      }
+      for (const item of path) flatCache.set(item, false);
+      return false;
+    };
     for (const root of roots) {
       const nodes = root.querySelectorAll("*");
       const total = Math.min(nodes.length, DARK_SWEEP_LIMIT);
       for (let index = 0; index < total; index += 1) {
         const node = nodes[index];
         if (DARK_SWEEP_SKIP.has(node.tagName) || node.id.startsWith("heybox-up")) continue;
-        const style = getComputedStyle(node);
+        const style = readStyle(node);
         if (!node.classList.contains(DARK_FLAT_CLASS) && !node.classList.contains(DARK_FLAT_SUBTLE_CLASS)) {
           if (style.backgroundImage === "none") {
             const bg = parseRgbColor(style.backgroundColor);
             if (isNearWhite(bg, 240)) {
               node.classList.add(isNearWhite(bg, 250) ? DARK_FLAT_CLASS : DARK_FLAT_SUBTLE_CLASS);
+              flatCache.set(node, true);
             }
           }
         }
@@ -2410,7 +2639,7 @@
         }
         if (!node.classList.contains(DARK_INK_CLASS) && hasOwnText(node)) {
           const ink = parseRgbColor(style.color);
-          if (ink !== null && (ink.r + ink.g + ink.b) / 3 < 120 && flatBackgroundAncestor(node)) {
+          if (ink !== null && (ink.r + ink.g + ink.b) / 3 < 120 && hasFlatBackground(node)) {
             node.classList.add(DARK_INK_CLASS);
           }
         }
@@ -2432,17 +2661,28 @@
   function scheduleDarkSweep(force = false) {
     if (document.documentElement.getAttribute("data-heybox-up-dark") !== "true") return;
     if (document.querySelector(DARK_SWEEP_ROOT_SELECTOR) === null) return;
-    if (darkSweepTimer !== 0) {
+    if (darkSweepTimer !== 0 || darkSweepIdleHandle !== 0) {
       if (!force) return;
       window.clearTimeout(darkSweepTimer);
       darkSweepTimer = 0;
+      if (darkSweepIdleHandle !== 0 && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(darkSweepIdleHandle);
+        darkSweepIdleHandle = 0;
+      }
     }
     const elapsed = performance.now() - darkSweepLastRun;
     const delay = force ? 350 : Math.max(350, 1200 - elapsed);
     darkSweepTimer = window.setTimeout(() => {
       darkSweepTimer = 0;
       darkSweepLastRun = performance.now();
-      sweepDarkSurfaces();
+      if (typeof window.requestIdleCallback === "function") {
+        darkSweepIdleHandle = window.requestIdleCallback(() => {
+          darkSweepIdleHandle = 0;
+          sweepDarkSurfaces();
+        }, { timeout: 1000 });
+      } else {
+        sweepDarkSurfaces();
+      }
     }, delay);
   }
 
@@ -2682,7 +2922,7 @@
     };
     window.addEventListener("hashchange", syncNavActive);
     window.addEventListener("popstate", syncNavActive);
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 300, null, "chrome");
     sync();
   }
 
@@ -2858,7 +3098,13 @@
     const prefix = name + "=";
     for (const part of document.cookie.split(";")) {
       const entry = part.trim();
-      if (entry.startsWith(prefix)) return decodeURIComponent(entry.slice(prefix.length));
+      if (entry.startsWith(prefix)) {
+        try {
+          return decodeURIComponent(entry.slice(prefix.length));
+        } catch (error) {
+          return entry.slice(prefix.length);
+        }
+      }
     }
     return "";
   }
@@ -2896,10 +3142,11 @@
     return "https://api.xiaoheihe.cn" + CY_API_PATH + "?" + query.toString();
   }
 
-  async function fetchCyPage(userId, offset) {
-    const response = await fetch(buildCyApiUrl(userId, offset), {
+  async function fetchCyPage(userId, offset, signal) {
+    const response = await fetchWithTimeout(buildCyApiUrl(userId, offset), {
       credentials: "include",
       headers: { accept: "application/json" },
+      signal: signal,
     });
     if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
     const data = await response.json();
@@ -2922,12 +3169,12 @@
     };
   }
 
-  async function loadCyFavorites(userId, onProgress) {
+  async function loadCyFavorites(userId, onProgress, signal) {
     const seen = new Set();
     const items = [];
     let offset = 0;
     for (;;) {
-      const page = await fetchCyPage(userId, offset);
+      const page = await fetchCyPage(userId, offset, signal);
       for (const raw of page.list) {
         const item = normalizeCyItem(raw);
         if (item && !seen.has(item.id)) {
@@ -2944,25 +3191,14 @@
   }
 
   function readCache(userId) {
-    try {
-      const raw = localStorage.getItem(CACHE_KEY_PREFIX + userId);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (!parsed || !Array.isArray(parsed.items)) return null;
-      if (Date.now() - Number(parsed.savedAt) > CACHE_TTL_MS) return null;
-      return parsed.items;
-    } catch (error) {
-      console.warn("[HeyBox Up] 读取缓存失败", error);
-      return null;
-    }
+    const parsed = localStore.readJson(CACHE_KEY_PREFIX + userId, null);
+    if (!parsed || !Array.isArray(parsed.items)) return null;
+    if (Date.now() - Number(parsed.savedAt) > CACHE_TTL_MS) return null;
+    return parsed.items;
   }
 
   function writeCache(userId, items) {
-    try {
-      localStorage.setItem(CACHE_KEY_PREFIX + userId, JSON.stringify({ savedAt: Date.now(), items: items }));
-    } catch (error) {
-      console.warn("[HeyBox Up] 写入缓存失败", error);
-    }
+    localStore.writeJson(CACHE_KEY_PREFIX + userId, { savedAt: Date.now(), items: items });
   }
 
   function formatTime(value) {
@@ -3026,7 +3262,6 @@
     return card;
   }
 
-  const FAVOUR_PATH = "/app/user/favour/content";
   const FAVOUR_HOST_ID = "heybox-up-favour";
   // shortcut: 依赖站点类名 .user-favour__list 及其父级 .list，站点改版时需升级。
   const FAVOUR_LIST_SELECTOR = ".user-favour__list";
@@ -3113,6 +3348,7 @@
     shadow.append(section);
 
     const state = { items: [], loading: false, error: "", notice: "", progress: 0, query: "", signature: "" };
+    let loadController = null;
 
     const readPageIds = () => {
       const ids = new Set();
@@ -3181,6 +3417,8 @@
       state.notice = "";
       state.progress = 0;
       render();
+      loadController?.abort();
+      loadController = new AbortController();
       try {
         const cached = force ? null : readCache(userId);
         if (cached) {
@@ -3190,12 +3428,14 @@
         state.items = await loadCyFavorites(userId, (count) => {
           state.progress = count;
           note.textContent = "正在读取插眼收藏… 已获取 " + count + " 条";
-        });
+        }, loadController.signal);
         writeCache(userId, state.items);
       } catch (error) {
+        if (isAbortError(error)) return;
         state.error = error instanceof Error ? error.message : String(error);
       } finally {
         state.loading = false;
+        loadController = null;
         render();
       }
     };
@@ -3209,7 +3449,15 @@
 
     place();
     void load(false);
-    return { host, place };
+    return {
+      host,
+      place,
+      dispose: () => {
+        loadController?.abort();
+        loadController = null;
+        state.loading = false;
+      },
+    };
   }
 
   function watchFavourPage() {
@@ -3221,6 +3469,7 @@
       if (location.pathname !== FAVOUR_PATH || getHeyboxId() === "") {
         cyJumpDone = false;
         if (section) {
+          section.dispose();
           section.host.remove();
           section = null;
         }
@@ -3236,7 +3485,7 @@
       }
     };
 
-    registerPageSync(sync, 300);
+    registerPageSync(sync, 300, [PAGE_ROUTE.FAVOUR], "favour");
     sync();
   }
 
@@ -3587,16 +3836,60 @@
   }
 
   let lastRailRequestAt = 0;
+  const RAIL_PAGE_CACHE_TTL_MS = 2 * 60 * 1000;
+  const RAIL_PAGE_CACHE_MAX = 24;
+  const railPageCache = new Map();
 
-  async function fetchRailPage(linkId, page) {
+  function readRailPageCache(linkId, page) {
+    const key = linkId + ":" + page;
+    const cached = railPageCache.get(key);
+    if (cached === undefined) return null;
+    if (Date.now() - cached.savedAt > RAIL_PAGE_CACHE_TTL_MS) {
+      railPageCache.delete(key);
+      return null;
+    }
+    railPageCache.delete(key);
+    railPageCache.set(key, cached);
+    return {
+      items: cached.data.items,
+      total: cached.data.total,
+      title: cached.data.title,
+      link: { ...cached.data.link },
+      groups: cached.data.groups,
+    };
+  }
+
+  function writeRailPageCache(linkId, page, data) {
+    const key = linkId + ":" + page;
+    railPageCache.delete(key);
+    railPageCache.set(key, { savedAt: Date.now(), data: data });
+    while (railPageCache.size > RAIL_PAGE_CACHE_MAX) {
+      const oldest = railPageCache.keys().next().value;
+      if (oldest === undefined) break;
+      railPageCache.delete(oldest);
+    }
+  }
+
+  function clearRailPageCache(linkId) {
+    const prefix = linkId + ":";
+    for (const key of railPageCache.keys()) {
+      if (key.startsWith(prefix)) railPageCache.delete(key);
+    }
+  }
+
+  async function fetchRailPage(linkId, page, options = {}) {
+    const cached = readRailPageCache(linkId, page);
+    if (cached !== null) return cached;
+    const signal = options.signal;
     const wait = Math.max(0, 700 - (Date.now() - lastRailRequestAt));
-    if (wait > 0) await new Promise((resolve) => window.setTimeout(resolve, wait));
+    await waitForDelay(wait, signal);
     lastRailRequestAt = Date.now();
     const request = async (signed) => {
-      const response = await fetch(buildLinkCommentUrl(linkId, page, signed), {
+      const response = await fetchWithTimeout(buildLinkCommentUrl(linkId, page, signed), {
         credentials: "include",
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal: signal,
       });
       if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
       const payload = await response.json();
@@ -3607,16 +3900,18 @@
     try {
       data = await request(true);
     } catch (primaryError) {
+      if (isAbortError(primaryError)) throw primaryError;
       try {
         data = await request(false);
       } catch (fallbackError) {
+        if (isAbortError(fallbackError)) throw fallbackError;
         throw new Error((primaryError && primaryError.message ? primaryError.message : "签名请求失败") + " / 匿名请求：" + (fallbackError && fallbackError.message ? fallbackError.message : "失败"));
       }
     }
     const result = data.result && typeof data.result === "object" ? data.result : {};
     const groups = Array.isArray(result.comments) ? result.comments : Array.isArray(result.comment) ? result.comment : [];
     const link = result.link && typeof result.link === "object" ? result.link : {};
-    return {
+    const normalized = {
       items: groups.map(normalizeRailGroup).filter((item) => item !== null),
       total: Number(link.comment_num || result.total_floor_num) || 0,
       title: typeof link.title === "string" ? link.title.trim() : "",
@@ -3629,6 +3924,8 @@
       },
       groups,
     };
+    writeRailPageCache(linkId, page, normalized);
+    return { ...normalized, link: { ...normalized.link } };
   }
 
   function formatRailAge(value) {
@@ -3650,7 +3947,7 @@
 
     const panel = document.createElement("div");
     panel.className = "panel";
-    const cache = new Map();
+    let loadController = null;
 
     const tab = document.createElement("button");
     tab.type = "button";
@@ -3910,29 +4207,18 @@
       state.loading = true;
       state.error = "";
       render();
-      const cached = page === 1 ? cache.get(state.linkId) : undefined;
-      if (cached !== undefined && Date.now() - cached.at < 5 * 60 * 1000) {
-        state.items = cached.items;
-        state.page = 1;
-        state.hasMore = cached.hasMore;
-        state.total = cached.total;
-        state.title = cached.title;
-        state.loading = false;
-        render();
-        return;
-      }
+      loadController?.abort();
+      loadController = new AbortController();
       try {
-        const data = await fetchRailPage(state.linkId, page);
+        const data = await fetchRailPage(state.linkId, page, { signal: loadController.signal });
         if (seq !== state.seq) return;
         state.items = page === 1 ? data.items : state.items.concat(data.items);
         state.page = page;
         state.hasMore = data.items.length > 0;
         if (data.total > 0) state.total = data.total;
         if (data.title !== "" && state.title === "") state.title = data.title;
-        if (page === 1) {
-          cache.set(state.linkId, { at: Date.now(), items: data.items, total: state.total, title: state.title, hasMore: state.hasMore });
-        }
       } catch (error) {
+        if (isAbortError(error)) return;
         if (seq !== state.seq) return;
         const message = error && error.message ? error.message : "未知错误";
         state.error = /show_captcha|captcha/i.test(message)
@@ -3942,6 +4228,7 @@
       } finally {
         if (seq === state.seq) {
           state.loading = false;
+          loadController = null;
           render();
         }
       }
@@ -3953,6 +4240,10 @@
       state.mode = "open";
       applyMode();
       if (next === state.linkId) return;
+      loadController?.abort();
+      loadController = null;
+      state.seq += 1;
+      state.loading = false;
       state.linkId = next;
       state.title = "";
       state.total = 0;
@@ -3971,6 +4262,9 @@
 
     const setActive = (active) => {
       if (!active) {
+        if (state.mode === "hidden" && !state.loading && loadController === null) return;
+        loadController?.abort();
+        loadController = null;
         state.seq += 1;
         state.loading = false;
         state.mode = "hidden";
@@ -4073,11 +4367,11 @@
       hoverId = "";
     };
     document.addEventListener("pointerover", (event) => {
+      if (!isEnabled() || !rail.isOpen()) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       const card = target.closest("#page-bbs-community .bbs-home__content-item");
       if (!card) return;
-      if (!isEnabled() || !isFeedPage() || !rail.isOpen()) return;
       const linkId = readCardLinkId(card);
       if (linkId === "" || linkId === hoverId) return;
       cancelHover();
@@ -4086,7 +4380,17 @@
         hoverTimer = 0;
         if (!rail.isOpen() || rail.getLinkId() === linkId) return;
         rail.open(linkId);
-      }, 900);
+      }, 600);
+    }, true);
+    document.addEventListener("pointerout", (event) => {
+      if (hoverTimer === 0) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const card = target.closest("#page-bbs-community .bbs-home__content-item");
+      if (!card) return;
+      const related = event.relatedTarget;
+      if (related instanceof Node && card.contains(related)) return;
+      cancelHover();
     }, true);
     document.addEventListener("pointerdown", cancelHover, true);
     document.addEventListener("scroll", cancelHover, true);
@@ -4099,18 +4403,20 @@
 
     let autoOpened = false;
     const sync = () => {
-      if (rail.host.parentNode !== document.body) document.body.append(rail.host);
       if (!isEnabled()) {
         autoOpened = false;
         rail.setActive(false);
+        rail.host.remove();
         return;
       }
       const active = isFeedPage();
       rail.setActive(active);
       if (!active) {
         autoOpened = false;
+        rail.host.remove();
         return;
       }
+      if (rail.host.parentNode !== document.body) document.body.append(rail.host);
       // 开启预览后，进入首页直接带出首条帖子的评论，不必先点评论数字。
       if (!autoOpened && !rail.isOpen()) {
         const linkId = readFirstFeedLinkId();
@@ -4121,7 +4427,7 @@
       }
     };
     document.addEventListener(COMMENT_PREVIEW_EVENT, sync);
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 200, [PAGE_ROUTE.FEED], "feed");
     sync();
   }
 
@@ -4731,20 +5037,12 @@
   }
 
   function readSessionArray(key) {
-    try {
-      const value = JSON.parse(sessionStorage.getItem(key) || "[]");
-      return Array.isArray(value) ? value : [];
-    } catch (error) {
-      return [];
-    }
+    const value = sessionStore.readJson(key, []);
+    return Array.isArray(value) ? value : [];
   }
 
   function writeSessionValue(key, value) {
-    try {
-      sessionStorage.setItem(key, JSON.stringify(value));
-    } catch (error) {
-      // 隐私模式下连读仍可按推荐列表工作，只是记不住顺序。
-    }
+    sessionStore.writeJson(key, value);
   }
 
   function readFeedOrder() {
@@ -4844,7 +5142,6 @@
     nextButton.innerHTML = PAGER_ICONS.next;
     pager.append(prevButton, nextButton);
     shadow.append(style, pager);
-    document.body.append(host);
 
     let currentId = "";
     let prevId = "";
@@ -4887,9 +5184,11 @@
       const id = readPostLinkId();
       if (id === "") {
         host.hidden = true;
+        host.remove();
         currentId = "";
         return;
       }
+      if (host.parentNode !== document.body) document.body.append(host);
       if (id !== currentId) {
         currentId = id;
         pushPostTrail(id);
@@ -4906,48 +5205,32 @@
       nextButton.setAttribute("aria-label", nextButton.title);
     };
 
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 200, [PAGE_ROUTE.ARTICLE], "article");
     sync();
   }
 
   function readReaderScroll(id) {
     if (id === "") return 0;
-    try {
-      const value = Number(sessionStorage.getItem(READER_SCROLL_KEY + id));
-      return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
-    } catch (error) {
-      return 0;
-    }
+    const value = Number(sessionStore.read(READER_SCROLL_KEY + id));
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
   }
 
   function writeReaderScroll(id, index) {
     if (id === "") return;
-    try {
-      sessionStorage.setItem(READER_SCROLL_KEY + id, String(index));
-    } catch (error) {
-      // 隐私模式下不记录阅读位置，本次仍可正常阅读。
-    }
+    sessionStore.write(READER_SCROLL_KEY + id, String(index));
   }
 
   function readReaderRatio(id) {
     if (id === "") return -1;
-    try {
-      const stored = sessionStorage.getItem(READER_RATIO_KEY + id);
-      if (stored === null) return -1;
-      const value = Number(stored);
-      return Number.isFinite(value) && value >= 0 && value <= 1 ? value : -1;
-    } catch (error) {
-      return -1;
-    }
+    const stored = sessionStore.read(READER_RATIO_KEY + id);
+    if (stored === null) return -1;
+    const value = Number(stored);
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : -1;
   }
 
   function writeReaderRatio(id, ratio) {
     if (id === "") return;
-    try {
-      sessionStorage.setItem(READER_RATIO_KEY + id, ratio.toFixed(4));
-    } catch (error) {
-      // 隐私模式下不记录滚动比例，本次仍可正常阅读。
-    }
+    sessionStore.write(READER_RATIO_KEY + id, ratio.toFixed(4));
   }
 
   function ensureReaderStyle() {
@@ -4975,6 +5258,21 @@
     let scrollRaf = 0;
     let restoring = false;
     let lastActionSyncAt = 0;
+    let progressScroll = null;
+    let progressCurrent = null;
+    let progressFill = null;
+    let lastProgressPercent = -1;
+    let ratioSaveTimer = 0;
+    let pendingRatio = null;
+    let sourceCache = null;
+    let nativeActionArticle = null;
+    let nativeActionBox = null;
+    let nativeFavourButton = null;
+    let nativeFollowButton = null;
+    let linkStateController = null;
+    let commentLoadController = null;
+    let favourLoadController = null;
+    let readerGeneration = 0;
     let linkState = null;
     let linkStatePromise = null;
     let actionBusy = false;
@@ -5068,12 +5366,29 @@
       showToast(copied ? "链接已复制" : "复制失败，请手动复制链接");
     };
 
-    const articleActionBox = () => Array.from(document.querySelectorAll("#page-bbs-link .link-reply__operation-box"))
-      .find((box) => box.closest("[data-comment-id]") === null) || null;
+    const articleActionBox = () => {
+      if (nativeActionBox !== null && nativeActionBox.isConnected) return nativeActionBox;
+      const article = sourceCache?.article?.isConnected === true
+        ? sourceCache.article
+        : document.querySelector("#page-bbs-link .hb-bbs-image-text, #page-bbs-link .hb-bbs-post");
+      if (article !== nativeActionArticle) {
+        nativeActionArticle = article;
+        nativeActionBox = null;
+        nativeFavourButton = null;
+        nativeFollowButton = null;
+      }
+      nativeActionBox = Array.from(article?.querySelectorAll(".link-reply__operation-box") || [])
+        .find((box) => box.closest("[data-comment-id]") === null) || null;
+      return nativeActionBox;
+    };
 
     const nativeLike = () => articleActionBox()?.querySelector("button:first-child") || null;
 
-    const nativeFavour = () => document.querySelector("#page-bbs-link .hb-cpt__favour-btn");
+    const nativeFavour = () => {
+      if (nativeFavourButton !== null && nativeFavourButton.isConnected) return nativeFavourButton;
+      nativeFavourButton = document.querySelector("#page-bbs-link .hb-cpt__favour-btn");
+      return nativeFavourButton;
+    };
 
     const readCounts = () => {
       const values = Array.from(articleActionBox()?.querySelectorAll(".link-reply__operation-desc") || [])
@@ -5090,7 +5405,7 @@
 
     const postReaderApi = async (path, body) => {
       const query = new URLSearchParams({ ...createApiParams(path), heybox_id: getHeyboxId(), target: "heybox_app" });
-      const response = await fetch("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
+      const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
         method: "POST",
         credentials: "include",
         cache: "no-store",
@@ -5104,14 +5419,15 @@
       return data.result;
     };
 
-    const fetchFavourFolders = async () => {
+    const fetchFavourFolders = async (signal) => {
       if (getHeyboxId() === "") throw new Error("请先登录小黑盒");
       const path = "/bbs/app/profile/fav/folders";
       const query = new URLSearchParams({ ...createApiParams(path), heybox_id: getHeyboxId(), target: "heybox_app" });
-      const response = await fetch("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
+      const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
         credentials: "include",
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal: signal,
       });
       if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
       const data = await response.json();
@@ -5124,16 +5440,23 @@
     const loadLinkState = async () => {
       if (articleId === "") return null;
       if (linkStatePromise !== null) return linkStatePromise;
+      const targetId = articleId;
+      const controller = new AbortController();
+      linkStateController = controller;
       linkStatePromise = (async () => {
         try {
-          const page = await fetchRailPage(articleId, 1);
+          const page = await fetchRailPage(targetId, 1, { signal: controller.signal });
+          if (articleId !== targetId || linkStateController !== controller) return null;
           linkState = page.link;
           syncActionStates();
           return linkState;
         } catch (error) {
           return null;
         } finally {
-          linkStatePromise = null;
+          if (linkStateController === controller) {
+            linkStateController = null;
+            linkStatePromise = null;
+          }
         }
       })();
       return linkStatePromise;
@@ -5146,15 +5469,19 @@
         return;
       }
       actionBusy = true;
+      const targetId = articleId;
+      const generation = readerGeneration;
       try {
         const counts = readCounts();
         const current = linkState === null ? await loadLinkState() : linkState;
+        if (articleId !== targetId || readerGeneration !== generation) return;
         const on = current !== null && current.isAward;
         const base = current === null ? parseCompactCount(counts.like) : current.awardCount;
         await postReaderApi("/bbs/app/profile/award/link", {
-          link_id: articleId,
+          link_id: targetId,
           award_type: on ? 0 : 1,
         });
+        if (articleId !== targetId || readerGeneration !== generation) return;
         linkState = {
           ...(current || {
             isAward: false,
@@ -5178,19 +5505,23 @@
     const toggleFavour = async (folderId) => {
       if (actionBusy || articleId === "") return;
       actionBusy = true;
+      const targetId = articleId;
+      const generation = readerGeneration;
       try {
         const counts = readCounts();
         const current = linkState === null ? await loadLinkState() : linkState;
+        if (articleId !== targetId || readerGeneration !== generation) return;
         const on = current !== null && current.isFavour;
         const base = current === null ? parseCompactCount(counts.favour) : current.favourCount;
         const userId = getHeyboxId();
         if (userId === "") throw new Error("请先登录小黑盒");
         await postReaderApi("/bbs/app/link/favour", {
           favour_type: on ? 2 : 1,
-          link_id: articleId,
+          link_id: targetId,
           userid: userId,
           folder_id: on ? "" : String(folderId || ""),
         });
+        if (articleId !== targetId || readerGeneration !== generation) return;
         linkState = {
           ...(current || {
             isAward: false,
@@ -5258,7 +5589,10 @@
           valueNode.textContent = counts[key];
         }
       }
-      const follow = document.querySelector("#page-bbs-link .link-user__follow-btn");
+      if (nativeFollowButton === null || !nativeFollowButton.isConnected) {
+        nativeFollowButton = document.querySelector("#page-bbs-link .link-user__follow-btn");
+      }
+      const follow = nativeFollowButton;
       const followNodes = host.querySelectorAll(".hbu-reader-follow");
       for (const followNode of followNodes) {
         const on = follow !== null && /已关注|互相关注/.test((follow.textContent || ""));
@@ -5273,17 +5607,27 @@
     };
 
     const closeFavourMenu = () => {
+      favourLoadController?.abort();
+      favourLoadController = null;
       if (favourPanel === null) return;
       favourPanel.hidden = true;
       favourButton?.setAttribute("aria-expanded", "false");
     };
+    document.addEventListener("pointerdown", (event) => {
+      if (favourPanel === null || favourPanel.hidden) return;
+      if (favourPanel.contains(event.target) || favourButton?.contains(event.target)) return;
+      closeFavourMenu();
+    }, true);
 
     const openFavourMenu = async (rail, button) => {
       if (favourPanel !== null && !favourPanel.hidden) {
         closeFavourMenu();
         return;
       }
+      const targetId = articleId;
+      const generation = readerGeneration;
       if (linkState === null) await loadLinkState();
+      if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
       if (linkState !== null && linkState.isFavour) {
         void toggleFavour();
         return;
@@ -5298,11 +5642,6 @@
         favourPanel.setAttribute("role", "menu");
         favourPanel.setAttribute("aria-label", "选择收藏夹");
         rail.append(favourPanel);
-        document.addEventListener("pointerdown", (event) => {
-          if (favourPanel === null || favourPanel.hidden) return;
-          if (favourPanel.contains(event.target) || favourButton?.contains(event.target)) return;
-          closeFavourMenu();
-        }, true);
       }
       favourButton = button;
       favourPanel.hidden = false;
@@ -5311,9 +5650,13 @@
       status.className = "hbu-reader-favour-empty";
       status.textContent = "正在读取收藏夹…";
       favourPanel.replaceChildren(status);
+      favourLoadController?.abort();
+      const controller = new AbortController();
+      favourLoadController = controller;
       try {
-        const folders = await fetchFavourFolders();
-        if (favourPanel === null) return;
+        const folders = await fetchFavourFolders(controller.signal);
+        if (favourPanel === null || favourLoadController !== controller) return;
+        favourLoadController = null;
         if (folders.length === 0) {
           const empty = document.createElement("div");
           empty.className = "hbu-reader-favour-empty";
@@ -5333,11 +5676,14 @@
           return proxy;
         }));
       } catch (error) {
-        if (favourPanel === null) return;
+        if (isAbortError(error) || favourPanel === null || favourLoadController !== controller) return;
+        favourLoadController = null;
         const empty = document.createElement("div");
         empty.className = "hbu-reader-favour-empty";
         empty.textContent = error instanceof Error ? error.message : "获取收藏夹失败";
         favourPanel.replaceChildren(empty);
+      } finally {
+        if (favourLoadController === controller) favourLoadController = null;
       }
     };
 
@@ -5365,15 +5711,19 @@
       cySubmit.disabled = true;
       cySubmit.textContent = "发布中…";
       cyStatus.textContent = "";
+      const targetId = articleId;
+      const generation = readerGeneration;
       try {
         await postReaderApi("/bbs/app/comment/create", {
           is_cy: 1,
-          link_id: articleId,
+          link_id: targetId,
           reply_id: "-1",
           root_id: "-1",
           text: text,
         });
+        if (articleId !== targetId || readerGeneration !== generation) return;
         if (linkState !== null) linkState.commentCount += 1;
+        clearRailPageCache(targetId);
         showToast("CY 已发布");
         closeCyDialog();
         syncActionStates();
@@ -5596,6 +5946,9 @@
     const loadReaderComments = async (page) => {
       if (commentState.loading) return;
       const seq = ++commentState.seq;
+      commentLoadController?.abort();
+      const controller = new AbortController();
+      commentLoadController = controller;
       commentState.loading = true;
       commentState.error = "";
       if (page === 1) {
@@ -5607,8 +5960,8 @@
       }
       renderReaderComments();
       try {
-        const data = await fetchRailPage(articleId, page);
-        if (seq !== commentState.seq) return;
+        const data = await fetchRailPage(articleId, page, { signal: controller.signal });
+        if (seq !== commentState.seq || commentLoadController !== controller) return;
         const seen = new Set(commentState.items.map((item) => item.id));
         const fresh = data.items.filter((item) => item.id === "" || !seen.has(item.id));
         commentState.items = page === 1 ? fresh : commentState.items.concat(fresh);
@@ -5619,13 +5972,15 @@
         if (linkState !== null && data.total > 0) linkState.commentCount = data.total;
         syncActionStates();
       } catch (error) {
-        if (seq !== commentState.seq) return;
+        if (isAbortError(error)) return;
+        if (seq !== commentState.seq || commentLoadController !== controller) return;
         const message = error instanceof Error ? error.message : "评论加载失败";
         commentState.error = /captcha|show_captcha/i.test(message) ? "评论需要验证，请稍后重试" : "评论加载失败：" + message;
         commentState.hasMore = false;
       } finally {
-        if (seq === commentState.seq) {
+        if (seq === commentState.seq && commentLoadController === controller) {
           commentState.loading = false;
+          commentLoadController = null;
           renderReaderComments();
         }
       }
@@ -5770,6 +6125,8 @@
 
     const resetReaderComments = () => {
       commentOpenToken += 1;
+      commentLoadController?.abort();
+      commentLoadController = null;
       document.body.classList.remove(READER_COMMENT_CLASS);
       if (host !== null) host.inert = false;
       if (commentPanel !== null) {
@@ -6003,7 +6360,7 @@
       }
     };
 
-    const addTextPages = (scroll, lines) => {
+    const addTextPages = (target, lines) => {
       let buffer = "";
       let bufferLines = 0;
       const flush = () => {
@@ -6018,7 +6375,7 @@
         copy.className = "hbu-reader-copy";
         copy.textContent = text;
         page.append(copy);
-        scroll.append(page);
+        target.append(page);
       };
       for (const raw of lines) {
         const line = raw.replace(/\s+/g, " ").trim();
@@ -6031,7 +6388,7 @@
       flush();
     };
 
-    const addMediaPage = (scroll, source, caption) => {
+    const addMediaPage = (target, source, caption) => {
       if (source === "") return;
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
@@ -6044,10 +6401,10 @@
       img.decoding = "async";
       img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
       page.append(img);
-      scroll.append(page);
+      target.append(page);
     };
 
-    const addHeadingPage = (scroll, text) => {
+    const addHeadingPage = (target, text) => {
       const value = text.replace(/\s+/g, " ").trim();
       if (value === "") return;
       const page = document.createElement("section");
@@ -6057,10 +6414,10 @@
       copy.className = "hbu-reader-copy";
       copy.textContent = value;
       page.append(copy);
-      scroll.append(page);
+      target.append(page);
     };
 
-    const addRichPage = (scroll, native) => {
+    const addRichPage = (target, native) => {
       const clone = native.cloneNode(true);
       bindRichProxy(clone, native);
       const page = document.createElement("section");
@@ -6070,14 +6427,14 @@
       rich.className = "hbu-reader-rich";
       rich.append(clone);
       page.append(rich);
-      scroll.append(page);
+      target.append(page);
     };
 
-    const buildPages = (scroll, body) => {
+    const buildPages = (target, body) => {
       const lines = [];
       const flush = () => {
         if (lines.length === 0) return;
-        addTextPages(scroll, lines.splice(0, lines.length));
+        addTextPages(target, lines.splice(0, lines.length));
       };
       const visit = (node) => {
         if (node.nodeType === Node.TEXT_NODE) {
@@ -6090,12 +6447,12 @@
         if (tag === "script" || tag === "style") return;
         if (tag === "img") {
           flush();
-          addMediaPage(scroll, (node.getAttribute("data-src") || node.getAttribute("src") || ""), node.getAttribute("alt") || "");
+          addMediaPage(target, (node.getAttribute("data-src") || node.getAttribute("src") || ""), node.getAttribute("alt") || "");
           return;
         }
         if (/^h[1-4]$/.test(tag)) {
           flush();
-          addHeadingPage(scroll, node.textContent || "");
+          addHeadingPage(target, node.textContent || "");
           return;
         }
         const images = Array.from(node.querySelectorAll("img"));
@@ -6104,7 +6461,7 @@
         if (mediaOnly) {
           flush();
           const image = images[0];
-          addMediaPage(scroll, image.getAttribute("data-src") || image.getAttribute("src") || image.currentSrc || "", image.getAttribute("alt") || "");
+          addMediaPage(target, image.getAttribute("data-src") || image.getAttribute("src") || image.currentSrc || "", image.getAttribute("alt") || "");
           return;
         }
         const className = typeof node.className === "string" ? node.className : "";
@@ -6119,7 +6476,7 @@
           return;
         }
         flush();
-        if (text !== "" || images.length > 0) addRichPage(scroll, node);
+        if (text !== "" || images.length > 0) addRichPage(target, node);
       };
       for (const child of Array.from(body.childNodes)) visit(child);
       flush();
@@ -6131,18 +6488,37 @@
       return button instanceof HTMLButtonElement && !button.disabled ? button : null;
     };
 
+    const flushReaderRatio = () => {
+      if (ratioSaveTimer !== 0) {
+        window.clearTimeout(ratioSaveTimer);
+        ratioSaveTimer = 0;
+      }
+      if (pendingRatio === null) return;
+      writeReaderRatio(pendingRatio.id, pendingRatio.ratio);
+      pendingRatio = null;
+    };
+
+    const scheduleReaderRatio = (id, ratio) => {
+      if (id === "") return;
+      pendingRatio = { id: id, ratio: ratio };
+      if (ratioSaveTimer !== 0) return;
+      ratioSaveTimer = window.setTimeout(flushReaderRatio, 400);
+    };
+
     const updateProgress = () => {
-      if (host === null) return;
-      const scroll = host.querySelector(".hbu-reader-scroll");
-      const current = host.querySelector(".hbu-reader-progress [data-current]");
-      const total = host.querySelector(".hbu-reader-progress [data-total]");
-      const fill = host.querySelector(".hbu-reader-progress-bar i");
-      const max = scroll === null ? 0 : scroll.scrollHeight - scroll.clientHeight;
+      const scroll = progressScroll;
+      if (scroll === null || !scroll.isConnected) return;
+      const max = scroll.scrollHeight - scroll.clientHeight;
       const ratio = max <= 0 ? 1 : Math.min(1, Math.max(0, scroll.scrollTop / max));
-      if (current !== null) current.textContent = Math.round(ratio * 100) + "%";
-      if (total !== null) total.textContent = "";
-      if (fill !== null) fill.style.width = Math.max(2, ratio * 100) + "%";
-      if (!restoring) writeReaderRatio(articleId, ratio);
+      const percent = Math.round(ratio * 100);
+      if (progressCurrent !== null && progressCurrent.textContent !== percent + "%") {
+        progressCurrent.textContent = percent + "%";
+      }
+      if (progressFill !== null && lastProgressPercent !== percent) {
+        progressFill.style.width = Math.max(2, ratio * 100) + "%";
+        lastProgressPercent = percent;
+      }
+      if (!restoring) scheduleReaderRatio(articleId, ratio);
     };
 
     const setActive = (index) => {
@@ -6448,11 +6824,29 @@
     };
 
     const readSource = () => {
-      const pageRoot = document.querySelector("#page-bbs-link");
-      const article = pageRoot?.querySelector(".hb-bbs-image-text, .hb-bbs-post");
-      const body = article?.querySelector(".image-text__content, .post__content");
-      const titleNode = article?.querySelector(".section-title__content, .post__title, .image-text__title");
-      if (!pageRoot || !article || !body) return null;
+      let pageRoot;
+      let article;
+      let body;
+      let titleNode;
+      const cached = sourceCache;
+      if (cached !== null && cached.articleId === articleId && cached.pageRoot.isConnected
+        && cached.article.isConnected && cached.body.isConnected
+        && cached.titleNode !== null && cached.titleNode.isConnected) {
+        pageRoot = cached.pageRoot;
+        article = cached.article;
+        body = cached.body;
+        titleNode = cached.titleNode;
+      } else {
+        pageRoot = document.querySelector("#page-bbs-link");
+        article = pageRoot?.querySelector(".hb-bbs-image-text, .hb-bbs-post");
+        body = article?.querySelector(".image-text__content, .post__content");
+        titleNode = article?.querySelector(".section-title__content, .post__title, .image-text__title");
+        if (!pageRoot || !article || !body) {
+          sourceCache = null;
+          return null;
+        }
+        sourceCache = { articleId: articleId, pageRoot: pageRoot, article: article, body: body, titleNode: titleNode };
+      }
       const covers = pageRoot.querySelectorAll(".image-text__header-image img, .post__header-image img");
       const tags = pageRoot.querySelectorAll(".link-tags__tag-item");
       const related = pageRoot.querySelectorAll(".bbs-link__related-recommend a[href*='/app/bbs/link/'], .related-recommend__container a[href*='/app/bbs/link/']");
@@ -6507,11 +6901,23 @@
 
     const render = (data) => {
       if (host === null) return;
+      readerGeneration += 1;
       observer?.disconnect();
       window.cancelAnimationFrame(scrollRaf);
       scrollRaf = 0;
+      flushReaderRatio();
       resetReaderComments();
       host.textContent = "";
+      progressScroll = null;
+      progressCurrent = null;
+      progressFill = null;
+      lastProgressPercent = -1;
+      linkStateController?.abort();
+      linkStateController = null;
+      commentLoadController?.abort();
+      commentLoadController = null;
+      favourLoadController?.abort();
+      favourLoadController = null;
       linkState = null;
       linkStatePromise = null;
       actionBusy = false;
@@ -6532,7 +6938,9 @@
       scroll.setAttribute("aria-label", "文章内容");
       bindSwipe(scroll);
       scroll.append(createHero(data));
-      buildPages(scroll, data.body);
+      const pages = document.createDocumentFragment();
+      buildPages(pages, data.body);
+      scroll.append(pages);
       scroll.append(createEndPage(data));
       const rail = createRail(data);
       host.append(scroll, rail);
@@ -6543,10 +6951,11 @@
       current.textContent = "1";
       const bar = document.createElement("span");
       bar.className = "hbu-reader-progress-bar";
-      bar.append(document.createElement("i"));
+      const fill = document.createElement("i");
+      bar.append(fill);
       const total = document.createElement("span");
       total.dataset.total = "";
-      total.textContent = "1";
+      total.textContent = "";
       const hint = document.createElement("span");
       hint.className = "hbu-reader-hint";
       hint.textContent = "滚轮 / ↑↓ 滚动";
@@ -6555,6 +6964,9 @@
       toast.className = "hbu-reader-toast";
       toast.setAttribute("aria-live", "polite");
       host.append(progress, toast);
+      progressScroll = scroll;
+      progressCurrent = current;
+      progressFill = fill;
       pageCount = host.querySelectorAll(".hbu-reader-page").length;
       observePages(scroll);
       scroll.addEventListener("scroll", () => {
@@ -6618,9 +7030,26 @@
     };
 
     const teardown = () => {
+      readerGeneration += 1;
       observer?.disconnect();
       observer = null;
+      flushReaderRatio();
       restoring = false;
+      progressScroll = null;
+      progressCurrent = null;
+      progressFill = null;
+      lastProgressPercent = -1;
+      sourceCache = null;
+      nativeActionArticle = null;
+      nativeActionBox = null;
+      nativeFavourButton = null;
+      nativeFollowButton = null;
+      linkStateController?.abort();
+      linkStateController = null;
+      commentLoadController?.abort();
+      commentLoadController = null;
+      favourLoadController?.abort();
+      favourLoadController = null;
       linkState = null;
       linkStatePromise = null;
       actionBusy = false;
@@ -6681,7 +7110,16 @@
         signature = "";
         return;
       }
-      articleId = match[1];
+      const nextArticleId = match[1];
+      if (articleId !== nextArticleId) {
+        flushReaderRatio();
+        sourceCache = null;
+        nativeActionArticle = null;
+        nativeActionBox = null;
+        nativeFavourButton = null;
+        nativeFollowButton = null;
+      }
+      articleId = nextArticleId;
       if (document.body.classList.contains(READER_COMMENT_CLASS) && document.querySelector("#page-bbs-link .link-comment") === null) closeComments();
       const source = readSource();
       if (source === null) {
@@ -6769,8 +7207,12 @@
       }
     });
 
-    registerPageSync(sync, 200);
+    registerPageSync(sync, 200, [PAGE_ROUTE.ARTICLE], "article");
     window.addEventListener("popstate", () => { signature = ""; sync(); });
+    window.addEventListener("pagehide", flushReaderRatio);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushReaderRatio();
+    });
     sync();
   }
 
@@ -7105,12 +7547,13 @@
     return "https://api.xiaoheihe.cn" + COMMUNITY_SEARCH_API_PATH + "?" + query.toString();
   }
 
-  async function fetchCommunitySearchPage(url) {
+  async function fetchCommunitySearchPage(url, signal) {
     let response;
     try {
-      response = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
+      response = await fetchWithTimeout(url, { credentials: "include", headers: { accept: "application/json" }, signal: signal });
     } catch (error) {
-      return { ok: false, message: "网络请求失败，请稍后重试" };
+      if (isAbortError(error)) return { ok: false, message: "搜索已取消", aborted: true };
+      return { ok: false, message: error instanceof Error && error.message !== "" ? error.message : "网络请求失败，请稍后重试" };
     }
     if (response.ok !== true) return { ok: false, message: "接口返回 HTTP " + response.status };
     let data;
@@ -7138,11 +7581,12 @@
     return { ok: true, items, linkCount, timeRanges, tip: scopedTip !== "" ? scopedTip : resultTip };
   }
 
-  async function requestCommunitySearch(topicId, keyword, offset, timeRange) {
+  async function requestCommunitySearch(topicId, keyword, offset, timeRange, signal) {
     // 站点搜索接口接受带签名的请求；签名被风控拒绝时退回不带签名的请求，两者都失败才报错。
-    const signed = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, true));
+    const signed = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, true), signal);
+    if (signed.aborted === true) return signed;
     if (signed.ok === true) return signed;
-    const plain = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, false));
+    const plain = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, false), signal);
     return plain.ok === true ? plain : signed;
   }
 
@@ -7315,6 +7759,7 @@
     if (!document.body) return;
     const ui = createCommunitySearchPanel();
     let state = null;
+    let searchController = null;
 
     const pageNode = () => document.querySelector("#page-topic-link");
     const mainNode = () => document.querySelector("#page-topic-link .topic-link__main");
@@ -7403,10 +7848,19 @@
       current.status = reset === true ? "" : "加载中…";
       render();
       const offset = reset === true ? 0 : current.offset;
-      const response = await requestCommunitySearch(current.topicId, current.keyword, offset, current.timeRange);
-      if (state !== current) return;
+      searchController?.abort();
+      const controller = new AbortController();
+      searchController = controller;
+      const response = await requestCommunitySearch(current.topicId, current.keyword, offset, current.timeRange, controller.signal);
+      if (state !== current || searchController !== controller) return;
+      searchController = null;
       current.loading = false;
       current.status = "";
+      if (response.aborted === true) {
+        current.status = "搜索已取消";
+        render();
+        return;
+      }
       if (response.ok !== true) {
         if (reset === true) {
           current.items = [];
@@ -7442,6 +7896,8 @@
     };
 
     const close = (restoreFocus) => {
+      searchController?.abort();
+      searchController = null;
       state = null;
       clearPanel();
       setActive(false);
@@ -7456,6 +7912,8 @@
         ui.input.focus();
         return;
       }
+      searchController?.abort();
+      searchController = null;
       state = {
         topicId: context.topicId,
         topicName: context.name,
@@ -7505,6 +7963,8 @@
       const context = readTopicContext();
       const main = mainNode();
       if (context === null || main === null) {
+        searchController?.abort();
+        searchController = null;
         if (ui.root.parentNode !== null) ui.root.remove();
         if (state !== null) {
           state = null;
@@ -7528,13 +7988,15 @@
       if (ui.input.getAttribute("aria-label") !== placeholder) ui.input.setAttribute("aria-label", placeholder);
       // 换到另一个社区时旧结果不再适用，直接回到信息流。
       if (state !== null && state.topicId !== context.topicId) {
+        searchController?.abort();
+        searchController = null;
         state = null;
         clearPanel();
       }
       setActive(state !== null);
     };
 
-    registerPageSync(sync, 250);
+    registerPageSync(sync, 250, [PAGE_ROUTE.TOPIC], "topic");
     window.addEventListener("popstate", () => {
       if (state !== null) close(false);
     });
@@ -7990,6 +8452,7 @@
 
   function watchDesktopShell() {
     if (!document.body) return;
+    const desktopViewport = window.matchMedia("(min-width: 1200px)");
     const left = createDesktopLeftRail();
     const right = createDesktopRightRail();
     const cache = { channels: "", hot: "" };
@@ -8012,6 +8475,10 @@
       }
       if (!force && now - lastDesktopSyncAt < 500) return;
       lastDesktopSyncAt = now;
+      if (!desktopViewport.matches) {
+        teardown();
+        return;
+      }
       const page = document.querySelector("#page-bbs-community");
       const content = page === null ? null : page.querySelector(".content");
       if (page === null || content === null || page.querySelector("main.list") === null) {
@@ -8027,8 +8494,9 @@
       syncDesktopHot(right, cache);
     };
 
-    registerPageSync(sync, 400);
+    registerPageSync(sync, 400, [PAGE_ROUTE.FEED], "feed");
     window.addEventListener("popstate", () => requestAnimationFrame(() => sync(true)));
+    desktopViewport.addEventListener("change", () => sync(true));
     sync(true);
   }
 
