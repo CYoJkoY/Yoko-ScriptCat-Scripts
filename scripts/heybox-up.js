@@ -1000,15 +1000,6 @@
       display: none !important;
     }
     @media (min-width: 1200px) {
-      body.heybox-up-rail-open #page-bbs-community .bbs-community__search-module {
-        /* 搜索条与栅格中栏同宽同起点，避免预览展开后横跨左栏上方。 */
-        width: min(
-          var(--heybox-up-feed-w),
-          calc(100% - var(--heybox-up-rail-w) - var(--heybox-up-rail-w) - 48px)
-        ) !important;
-        margin-left: calc(var(--heybox-up-rail-w) + 24px) !important;
-        margin-right: 0 !important;
-      }
       body.heybox-up-rail-open #page-bbs-community .content {
         justify-content: flex-start !important;
       }
@@ -5007,6 +4998,13 @@
         bottom: auto !important;
         height: 80px !important;
       }
+      /* 站点还让 main.list 的 8px sticky 伪元素停在原搜索条下沿；搜索条隐藏后
+         它会在 138px 处横切信息流并截获点击。保留其占位，取消吸顶与绘制。 */
+      #page-bbs-community.heybox-up-desktop main.list::before {
+        position: static !important;
+        background: transparent !important;
+        pointer-events: none !important;
+      }
       #page-bbs-community.heybox-up-desktop .content {
         display: grid !important;
         width: 100% !important;
@@ -5169,7 +5167,6 @@
     toolsTitle.textContent = "快捷入口";
     toolsBlock.append(toolsTitle);
     const tools = [
-      { id: "search", label: "全站搜索", href: "/app/search/list", icon: COMMUNITY_SEARCH_ICONS.search },
       { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: NAV_ICONS.favour },
       { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: NAV_ICONS.article },
     ];
