@@ -381,6 +381,13 @@
     :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__space {
       background-color: transparent !important;
     }
+    /* The User tab paints a fixed light notice bar above the result list. */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__middle.user {
+      background-color: var(--heybox-up-surface) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__middle.user::after {
+      color: var(--heybox-up-muted) !important;
+    }
     /* Horizontal result scroller fades to hard-coded white on the right edge. */
     :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .hb-cpt__pagination--right {
       background-image: linear-gradient(to left, var(--heybox-up-surface), var(--heybox-up-surface), transparent) !important;
