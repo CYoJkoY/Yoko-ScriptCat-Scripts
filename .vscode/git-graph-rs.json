@@ -1,0 +1,24 @@
+{
+    "includeCommitsMentionedByReflogs": false,
+    "issueLinkingConfig": {
+        "issue": "#(\\d+)",
+        "url": "https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues/$1"
+    },
+    "onlyFollowFirstParent": false,
+    "pinnedBranches": [],
+    "pinnedCommits": [],
+    "pullRequestConfig": {
+        "provider": "github",
+        "hostRootUrl": "https://github.com",
+        "sourceRemote": "origin",
+        "sourceOwner": "CYoJkoY",
+        "sourceRepo": "Yoko-ScriptCat-Scripts",
+        "destRemote": "origin",
+        "destOwner": "CYoJkoY",
+        "destRepo": "Yoko-ScriptCat-Scripts",
+        "destProjectId": "",
+        "destBranch": "main",
+        "custom": null
+    },
+    "exportedAt": 1792730709362
+}
