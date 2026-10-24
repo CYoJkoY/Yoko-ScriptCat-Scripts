@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.14.0
+// @version      0.14.1
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -1018,6 +1018,8 @@
   const turnIndex = new Map();
   const codeState = new Map();
   const processedUserTurns = new WeakSet();
+  // 用户手动恢复过的轮次：即使仍在保留轮次之外也不再脱水，避免阅读被打断
+  const restoredTurns = new WeakSet();
   const virtualFileChatRows = new WeakMap();
   let activeVirtualFiles = [];
   let trayIsDirty = false;
@@ -1885,7 +1887,8 @@
     const toHydrate = [];
 
     turns.forEach((turnElement, index) => {
-      const shouldDehydrate = state.pruneEnabled && index < cutoff;
+      const shouldDehydrate =
+        state.pruneEnabled && index < cutoff && !restoredTurns.has(turnElement);
       const isDehydrated = turnElement.classList.contains(
         "ai-turbo-dehydrated",
       );
@@ -3762,6 +3765,22 @@
     }, 0);
   }
 
+  // 点击被脱水的空白占位区即恢复该轮渲染，单向不回退
+  function handleDehydratedClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const turnElement = target.closest(".ai-turbo-dehydrated");
+    if (!turnElement) return;
+
+    restoredTurns.add(turnElement);
+    withSelfMutation(() => {
+      turnElement.classList.remove("ai-turbo-dehydrated");
+      turnElement.style.removeProperty("--turbo-cached-h");
+    });
+    fullTurnSyncRequested = true;
+    requestUpdate();
+  }
+
   function applyReasoningMemory() {
     const saved = loadReasoningMemory()[location.hostname];
     if (!saved) {
@@ -3848,6 +3867,15 @@
         content-visibility: hidden !important;
         contain: layout paint style !important;
         contain-intrinsic-size: auto var(--turbo-cached-h, 120px) !important;
+        /* 占位区可点击恢复：用不占地布局的 outline + 斜纹做可见提示 */
+        cursor: pointer !important;
+        outline: 1px dashed rgba(153, 166, 161, 0.45) !important;
+        outline-offset: -1px !important;
+        background-image: repeating-linear-gradient(
+          45deg,
+          rgba(153, 166, 161, 0.06) 0 6px,
+          transparent 6px 14px
+        ) !important;
       }
       .ai-turbo-dehydrated * {
         pointer-events: none !important;
@@ -6083,6 +6111,7 @@
     window.addEventListener("keydown", handleSendIntercept, true);
     window.addEventListener("click", handleSendIntercept, true);
     window.addEventListener("click", handleReasoningClick, true);
+    window.addEventListener("click", handleDehydratedClick, true);
   }
 
   function boot() {
