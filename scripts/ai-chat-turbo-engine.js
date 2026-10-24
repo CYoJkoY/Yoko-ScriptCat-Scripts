@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.3
+// @version      0.15.4
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -3835,11 +3835,15 @@
    * 所以按词逐层点：主菜单里的行优先，找不到就展开 aria-controls 指向的子菜单再找。
    * shortcut: only two levels deep, widen if a platform nests selections deeper.
    */
-  function restoreChoice(saved, control) {
+  function restoreChoice(saved, control, onSettled) {
     const tokens = saved.option.split(/\s+/).filter(Boolean);
     let index = 0;
-    const done = () => {
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
       applyingReasoning = false;
+      if (onSettled) onSettled(ok);
     };
     const step = (attempt) => {
       const token = tokens[index];
@@ -3862,22 +3866,23 @@
             return;
           }
           closeOpenPopup();
-          done();
+          finish(false);
         }, 400);
         return;
       }
-      if (attempt >= 3) {
+      // 首次展开弹层较慢时菜单还不在 DOM 里，多等几轮（约 2s），否则会在空菜单上白点一下
+      if (attempt >= 8) {
         // 没找到就关掉菜单，不留一个弹层挡着用户
         closeOpenPopup();
-        done();
+        finish(false);
         return;
       }
-      window.setTimeout(() => step(attempt + 1), 300);
+      window.setTimeout(() => step(attempt + 1), 250);
     };
     const next = () => {
       index += 1;
       if (index >= tokens.length) {
-        done();
+        finish(true);
         return;
       }
       // 下一层要重新展开弹层；先关掉，避免停在中间状态
@@ -4059,14 +4064,21 @@
     }
     const control = findRememberedControl(saved);
     if (!control) return; // 页还没渲染好，下次再试
-    reasoningRestoreDone = true;
+    if (applyingReasoning) return; // 上一次还原还在进行中
 
     if (saved.mode === "choice" && saved.option) {
-      if (controlLabel(control) === saved.option) return; // 已经是上次选的那个
-      restoreChoice(saved, control);
+      if (controlLabel(control) === saved.option) {
+        reasoningRestoreDone = true;
+        return;
+      }
+      // 还原序列真正成功才算完成；失败就留给轮询重试（页面初始化慢时首次展开常踩空）
+      restoreChoice(saved, control, (ok) => {
+        reasoningRestoreDone = ok;
+      });
       return;
     }
 
+    reasoningRestoreDone = true;
     if (saved.mode !== "toggle") return;
     const now = controlOnState(control);
     if (now === null || now === (saved.on === true)) return;
@@ -4087,7 +4099,7 @@
     reasoningRestoreTimer = window.setInterval(() => {
       reasoningRestoreAttempts += 1;
       applyReasoningMemory();
-      if (reasoningRestoreDone || reasoningRestoreAttempts >= 40) {
+      if (reasoningRestoreDone || reasoningRestoreAttempts >= 120) {
         window.clearInterval(reasoningRestoreTimer);
       }
     }, 500);
