@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.6
+// @version      0.15.7
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -3816,6 +3816,15 @@
   }
 
   /**
+   * 真正接收点击的元素。菜单行（gem-menu-item 之类）只是壳，监听器常常挂在里面的 button 上，
+   * 直接向壳发事件不会被当成选中。
+   */
+  function interactiveTarget(node) {
+    if (node.matches("button, a, [role='menuitemradio'], [role='radio']")) return node;
+    return node.querySelector("button, a") || node;
+  }
+
+  /**
    * 在可见弹层里按文案找一行。菜单的 id 每次打开都变、子菜单还可能挂到别处，
    * 所以顶层找不到时退回到整栈可见弹层，从最上层往下找。
    */
@@ -3871,7 +3880,7 @@
       const root = popupRootFor(control);
       const hit = findRowIn(root, token) || findRowInOpenMenus(token);
       if (hit) {
-        triggerSendButton(hit);
+        triggerSendButton(interactiveTarget(hit));
         next();
         return;
       }
@@ -3882,7 +3891,7 @@
           new PointerEvent("pointerover", { bubbles: true, cancelable: true, view: window }),
         );
         parent.dispatchEvent(new MouseEvent("mouseenter", { view: window }));
-        triggerSendButton(parent);
+        triggerSendButton(interactiveTarget(parent));
         // 子菜单点开才渲染，等它出现再找（最多约 1.4s）
         const lookInSub = (deep) => {
           const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
@@ -3891,7 +3900,7 @@
             findRowIn(popupRootFor(control), token) ||
             findRowInOpenMenus(token);
           if (row) {
-            triggerSendButton(row);
+            triggerSendButton(interactiveTarget(row));
             next();
             return;
           }
@@ -3923,12 +3932,12 @@
       // 下一层要重新展开弹层；先关掉，避免停在中间状态
       closeOpenPopup();
       window.setTimeout(() => {
-        triggerSendButton(control);
+        triggerSendButton(interactiveTarget(control));
         window.setTimeout(() => step(0), 350);
       }, 200);
     };
     applyingReasoning = true;
-    triggerSendButton(control);
+    triggerSendButton(interactiveTarget(control));
     window.setTimeout(() => step(0), 350);
   }
 
