@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.15.8**
+当前版本：**0.15.9**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -277,19 +277,22 @@ pointerdown → mousedown → pointerup → mouseup → click
 
 ### 推理强度记忆
 
-各平台的"深度思考 / 推理强度"是会话级状态，刷新或新建对话后常常回到默认值。脚本把它变成跨会话记忆。记录分两种形态，都按 `location.hostname` 存进 `localStorage` 的 `ai_turbo_reasoning_memory`：
+各平台的"深度思考 / 推理强度"是会话级状态，刷新或新建对话后常常回到默认值。脚本把它变成跨会话记忆。记录分两种形态，存进 `localStorage` 的 `ai_turbo_reasoning_memory`。Gemini 带账号槽位的路径（`/u/0`、`/u/1` 等）按 `hostname#uN` 分开存放，其余页面按主机名存放；读取时若当前账号还没有记录，会回退到旧版的主机名记录。
 
 - `{ mode: "toggle", label, on }`：开关型控件（`深度思考`、`Thinking` 等）。
-- `{ mode: "choice", key, controlLabel, option }`：选择型控件（Gemini 的模型 / 思考强度、ChatGPT 的推理等级）。`key` 取控件的 `data-test-id` / `id` / `aria-label`，`option` 是那一次选择后控件上显示的文案，`controlLabel` 是选之前的文案。不记录任何固定等级词表，所以平台换文案也不会失效。
+- `{ mode: "choice", key, controlLabel, path, option, hint, resultLabel }`：选择型控件（Gemini 的模型 / 思考强度、ChatGPT 的推理等级）。`key` 优先取 `data-test-id` / `data-testid` / `id`，最后才用 `aria-label`；`path` 是从触发器到目标行经过的可见子菜单标题（如 `["Thinking level"]` 或 `["思考等级"]`）；`option` 是目标行的标题；`hint` 是同一行的说明；`controlLabel` 是点击前的可见文案；`resultLabel` 是选完后触发器上出现的文案。不记录任何固定等级词表。
+
+控件文案优先读可见的 `innerText`。Gemini 触发器的 `aria-label` 是一整句 `Open mode picker, currently Flash High`，不能当作选项值；可见文案才是实际值。选项行优先取行内可见的 `.label` 与 `.sublabel`，因此即使中文菜单把标题和说明挤进同一行 `innerText`（如 `中 深度适中`），仍会分别记录 `中` 和 `深度适中`；没有这两个结构类时，才退回首行与第二行文案。
 
 1. **录制**：两种途径写同一种记录。
    - 文案变化：点击带弹层语义的控件后，在 400 / 900 / 1600 / 2600ms 读控件文案，变了就把新文案记为 `option`。弹层语义包括 `aria-expanded` / `aria-haspopup`，以及 Angular Material / CDK 系的 `gemmenutrigger` / `cdkoverlayorigin` / `data-state` / `.mat-mdc-menu-trigger`（Gemini 的模型选择器就只有后者）。
-   - 选项配对：点击控件后 20 秒内点中带单选语义（`aria-checked`、`aria-selected`、`role=menuitemradio/radio`）的选项，把该选项文案与刚才的控件配对。带关键词的开关控件（`深度思考` 等）另走 `toggle` 记录。
-2. **还原**：页面加载与 SPA 路由变化后，以 500ms 间隔最多轮询 120 次（约 60 秒）等待控件渲染完成，然后按 `key` → 旧文案 → 最像推理/模型选择的控件依次定位：
+   - 选项配对：点击控件后 20 秒内点中选项行，把该行标题、说明以及由可见 `aria-controls` 父行组成的 `path` 与刚才的控件配对。选中态既认 `aria-checked` / `aria-selected` / `data-state` / `role=menuitemradio`，也认 `.selected` / `.checked`、本地化的“已选中”标签和勾选图标；带 `aria-haspopup` 的父行不会被当成选项。带关键词的开关控件（`深度思考` 等）另走 `toggle` 记录。
+2. **还原**：页面加载与 SPA 路由变化后，以 500ms 间隔最多轮询 120 次（约 60 秒）等待控件渲染完成，然后按 `key` → 旧文案（可前缀匹配）→ 最像推理/模型选择的控件依次定位：
    - 开关型：状态与记录不一致时用 pointer 序列点击一次；
-   - 选择型：控件文案已经是 `option` 就不动；否则点击控件展开弹层，再以 250ms 间隔最多试 9 次（约 2 秒，等弹层渲染与动画）按文案找回该选项；精确匹配失败时允许“以该文案结尾且弹层内唯一命中”（Gemini 的行文案带版本号前缀，如按钮 `Flash` / 行 `3.8 Flash`）；主菜单找不到就沿 `aria-haspopup` 行的 `aria-controls` 展开子菜单再找。整串点完才算还原成功，中途失败会收起弹层并把这一轮记为未完成，由轮询在稍后重试。
+    - 选择型：控件文案已经是 `option` 或 `resultLabel` 就不动；否则打开弹层，沿 `path` 中每个可见父行的 `aria-controls` 逐层展开，在当前层按行标题精确找叶子行，点完会重新打开菜单确认选中标记。确认成功后关闭弹层；失败同样关闭弹层，并把这一轮记为未完成交给轮询重试。没有 `path` 的旧记录继续走原来的逐词文案回退。
+   - 兼容：旧版记录若把 `aria-label` 整句当成了 `key`，会按可访问名称前缀重新找到控件；`option` 中残留的 `, currently ...` 会先归一到当前值再匹配。账号隔离前的旧主机名记录只作为读取回退，账号内产生新记录时会被替换。
 3. **去抖**：还原过程中的点击被 `applyingReasoning` 标记屏蔽，不会被当成用户操作而覆盖记录。
-4. **可见性**：面板开关下方显示当前状态（`未记录` / `控件 → 选项` / `标签（开\|关）`），并可一键清除本站记录。
+4. **可见性**：面板开关下方显示当前状态（`未记录` / `控件 → 路径 / 选项` / `标签（开\|关）`），并可一键清除当前账号与旧版主机名记录。
 5. **边界**：平台未暴露开 / 关状态（没有 `aria-pressed`、`aria-checked`、`data-state` 或 active 类名）时只记录不还原，避免把用户的开关反向切掉；控件文案不随选择变化的平台只能靠"选项配对"路径记录。
 
 面板开关「记住推理强度」控制整个功能，关闭后立即写入配置并停止轮询。
@@ -331,7 +334,7 @@ pointerdown → mousedown → pointerup → mouseup → click
 | `virtualFileEnabled` | boolean | true | 是否启用长文本伪文件 |
 | `rememberReasoning` | boolean | true | 是否记住并在新对话中还原推理强度 |
 
-悬浮球位置存储在 `ai_turbo_pill_pos`；推理强度记忆按主机名存放在 `ai_turbo_reasoning_memory`；跨页交接暂存使用 `sessionStorage` 的 `ai_turbo_handoff_restore`。
+悬浮球位置存储在 `ai_turbo_pill_pos`；推理强度记忆存放在 `ai_turbo_reasoning_memory`，Gemini 的 `/u/N` 路径按账号槽位分开，其他页面按主机名存放，并保留对旧主机名记录的读取回退；跨页交接暂存使用 `sessionStorage` 的 `ai_turbo_handoff_restore`。
 
 ---
 
@@ -398,11 +401,18 @@ pointerdown → mousedown → pointerup → mouseup → click
 - 伪文件托盘的 rAF 追踪仅在存在虚拟文件时运行；页面极度繁忙（大量流式输出 + 频繁重排）时，托盘跟随可能出现一帧延迟，属于权衡选择。
 - AI 生成中若平台将发送按钮替换为"停止生成"按钮，脚本会通过 `isSendLikeButton` 的排除规则跳过；请等生成结束后再发送。
 - 一键交接的等待交接包上限为 **3 分钟**；模型回答极其冗长时可能触发超时，此时生成指令会被复制到剪贴板供手动重试。
-- 推理强度记忆的开关型控件依赖平台把开 / 关状态暴露在无障碍属性上；纯 class 切换的控件能识别 `active / selected / checked / is-on` 形式的类名，其余情况只记录不还原。选择型控件（如 Gemini 的模型 / 思考强度）不靠文案词表，触发器识别覆盖 `aria-expanded` / `aria-haspopup` 与 Angular Material / CDK 的自定义属性；选项优先按单选语义（`aria-checked` / `aria-selected` / `role=menuitemradio`）识别，没有单选语义时靠“控件文案变化”这条路记录。触发按钮把多级选择拼成一段文案（如 `Flash High`）时，还原按词逐层点，支持一级弹层 + 一层 `aria-controls` 子菜单（Gemini 的 `Thinking level`）；子菜单项的文案必须与按钮文案能对上（精确，或以该文案结尾），对不上时只记录不还原。页面刚打开、按钮尚未接上事件时点击不会生效，这类情况靠轮询重试（约 60 秒内），超时后需手动选择或刷新。
+- 推理强度记忆的开关型控件依赖平台把开 / 关状态暴露在无障碍属性上；纯 class 切换的控件能识别 `active / selected / checked / is-on` 形式的类名，其余情况只记录不还原。选择型控件（如 Gemini 的模型 / 思考强度）不靠文案词表，触发器识别覆盖 `aria-expanded` / `aria-haspopup` 与 Angular Material / CDK 的自定义属性；选项行优先按单选语义（`aria-checked` / `aria-selected` / `role=menuitemradio`）识别，Gemini 这种只用 class 和选中图标的行也能配对。路径还原依赖每层子菜单有稳定的 `aria-controls` 与可见标题；触发文案无法唯一对应选项、且没有路径信息时，仍可能只记录不还原。页面刚打开、按钮尚未接上事件时点击不会生效，这类情况靠轮询重试（约 60 秒内），超时后需手动选择或刷新。
 
 ---
 
 ## 版本记录
+
+### 0.15.9
+
+- **记录真实选项，不再猜按钮文案。** Gemini 的思考等级是二级菜单：点击时同时记录它的可见父级标题、目标行标题与说明（例如 `path: ["Thinking level"]`、`High`、`Extra thorough`），并用 `bard-mode-menu-button` 作为稳定 key。行标题优先读 `.label` / `.sublabel`，兼容标题与说明被 `innerText` 合并成单行的本地化布局。旧记录若把整句 `Open mode picker, currently ...` 当成键或选项，会先归一化再重试。
+- **按路径还原并校验。** 打开菜单后沿 `aria-controls` 逐层进入，只在当前层按行标题精确匹配叶子行；点击后重新打开菜单，以 `.selected` / 选中图标确认，成功或失败都会关闭弹层。
+- **账号槽位隔离。** `/u/0`、`/u/1` 等路径分别写入 `hostname#uN`，互不覆盖；旧版主机名记录只作为读取回退，新记录写入后移除该旧键。清除按钮同时清理当前账号与旧键。
+- **触发器文案优先可见文本。** 记录和比较都使用 `Flash` / `Flash High` 这类可见文案，去掉无障碍名称里的说明句；通用选择型控件仍保留旧的逐词回退。
 
 ### 0.15.8
 
