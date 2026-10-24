@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.13.8**
+当前版本：**0.14.0**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -15,6 +15,7 @@
 - **长代码折叠**：超过阈值的助手代码块自动折叠，保留语言与行数
 - **长文本伪文件**：粘贴超长文本时转为悬浮托盘中的"虚拟文件"，发送时合并附加
 - **发送鲁棒性**：多级发送按钮查找 + pointer 序列模拟 + form 兜底提交
+- **推理强度记忆**：自动记住每个平台上次使用的思考开关 / 推理强度，新对话与刷新后静默还原
 - **一键交接**：单按钮完成"生成交接包 → 打开新对话 → 填入恢复指令"，任一步失败自动把进度复制到剪贴板
 - **会话历史检索**：当前会话全文检索，命中后定位并高亮
 - **原始上下文导出**：把整段对话提取为 Markdown 复制到剪贴板
@@ -271,6 +272,19 @@ pointerdown → mousedown → pointerup → mouseup → click
 - 无法识别新建对话入口或无法暂存 `sessionStorage` 时，同样回退为复制到剪贴板。
 - `sessionStorage` 暂存超过 5 分钟自动失效；新对话页面识别不到输入框时也会回退为复制。
 
+### 推理强度记忆
+
+各平台的"深度思考 / 推理强度"是会话级状态，刷新或新建对话后常常回到默认值。脚本把它变成跨会话记忆：
+
+1. **录制**：用户点击推理控件（`深度思考`、`Thinking`、`推理强度` 等）或弹出菜单里的强度选项（`低 / 中 / 高`）后，把 `{ label, on }` 或 `{ level }` 写入 `localStorage` 的 `ai_turbo_reasoning_memory`，按 `location.hostname` 分区。
+2. **还原**：页面加载与 SPA 路由变化后，以 500ms 间隔最多轮询 40 次（约 20 秒）等待控件渲染完成，然后：
+   - 开关型：状态与记录不一致时用 pointer 序列点击一次；
+   - 强度型：先点击推理控件展开菜单，450ms 后在可见菜单项里找同名强度并点击；找不到就派发 `Escape` 收起菜单，不留弹层。
+3. **去抖**：还原过程中的点击被 `applyingReasoning` 标记屏蔽，不会被当成用户操作而覆盖记录。
+4. **边界**：平台未暴露开 / 关状态（没有 `aria-pressed`、`aria-checked`、`data-state` 或 active 类名）时只记录不还原，避免把用户的开关反向切掉。
+
+面板开关「记住推理强度」控制整个功能，关闭后立即写入配置并停止轮询。
+
 ### 会话历史检索
 
 面板中的检索框在输入后经 100ms 防抖执行全文匹配，最多返回 10 条，每条显示消息序号与 180 字符预览。
@@ -306,8 +320,9 @@ pointerdown → mousedown → pointerup → mouseup → click
 | `pruneEnabled` | boolean | true | 是否启用视口脱水 |
 | `collapseCode` | boolean | true | 是否启用长代码折叠 |
 | `virtualFileEnabled` | boolean | true | 是否启用长文本伪文件 |
+| `rememberReasoning` | boolean | true | 是否记住并在新对话中还原推理强度 |
 
-悬浮球位置存储在 `ai_turbo_pill_pos`；跨页交接暂存使用 `sessionStorage` 的 `ai_turbo_handoff_restore`。
+悬浮球位置存储在 `ai_turbo_pill_pos`；推理强度记忆按主机名存放在 `ai_turbo_reasoning_memory`；跨页交接暂存使用 `sessionStorage` 的 `ai_turbo_handoff_restore`。
 
 ---
 
@@ -374,10 +389,22 @@ pointerdown → mousedown → pointerup → mouseup → click
 - 伪文件托盘的 rAF 追踪仅在存在虚拟文件时运行；页面极度繁忙（大量流式输出 + 频繁重排）时，托盘跟随可能出现一帧延迟，属于权衡选择。
 - AI 生成中若平台将发送按钮替换为"停止生成"按钮，脚本会通过 `isSendLikeButton` 的排除规则跳过；请等生成结束后再发送。
 - 一键交接的等待交接包上限为 **3 分钟**；模型回答极其冗长时可能触发超时，此时生成指令会被复制到剪贴板供手动重试。
+- 推理强度记忆依赖平台把开 / 关状态暴露在无障碍属性上；纯 class 切换的控件能识别 `active / selected / checked / is-on` 形式的类名，其余情况只记录不还原。
 
 ---
 
 ## 版本记录
+
+### 0.14.0
+
+**新增推理强度记忆：AI 会记住你上次用的思考强度，新对话自动还原。**
+
+- 新增 `handleReasoningClick`：捕获阶段监听 `click`，识别 `REASONING_CONTROL_PATTERN`（深度思考 / 思考 / 推理 / thinking / reasoning / effort 等）命中的控件，以及推理菜单里的强度选项，写入 `localStorage` 的 `ai_turbo_reasoning_memory`（按 `location.hostname` 分区）
+- 新增 `controlOnState`：依次读 `input.checked`、`aria-pressed`、`aria-checked`、`data-state`、`active / selected / checked / is-on` 类名，读不到就返回 `null` 表示不可还原
+- 新增 `applyReasoningMemory` / `scheduleReasoningRestore`：加载后 500ms 间隔最多轮询 40 次，等待控件渲染；开关型直接点击修正，强度型先展开菜单再点同名选项，失败则派发 `Escape` 收起
+- 新增 `applyingReasoning` 守卫，还原期间的点击不会覆盖记忆
+- `patchHistoryForSpaNavigation` 的 `pushState` / `popstate` 与 `boot` 均接入 `scheduleReasoningRestore`，切换会话或新对话后重新还原
+- 面板新增「记住推理强度」开关，配置项 `rememberReasoning` 默认开启
 
 ### 0.13.9
 

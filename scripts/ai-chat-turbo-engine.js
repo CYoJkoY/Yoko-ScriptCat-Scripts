@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.13.9
-// @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水
+// @version      0.14.0
+// @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/ai-chat-turbo-engine.js
@@ -139,6 +139,43 @@
     "[aria-label*='推理']",
     "[data-type='reasoning']",
   ].join(", ");
+
+  const STORAGE_KEY_REASONING = "ai_turbo_reasoning_memory";
+  const REASONING_CONTROL_PATTERN =
+    /深度思考|深度推理|思考|推理|思维链|thinking|reasoning|think harder|effort|智商|extended thinking/i;
+  // 长词在前，避免「高」先于「极高」命中
+  const REASONING_LEVEL_WORDS = [
+    "极低",
+    "最低",
+    "极高",
+    "最高",
+    "低",
+    "中等",
+    "中",
+    "高",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "max",
+    "extreme",
+  ];
+  const REASONING_CONTROL_SELECTOR = [
+    "button",
+    "[role='button']",
+    "[role='switch']",
+    "[role='checkbox']",
+    "[role='radio']",
+    "[role='menuitemradio']",
+    "[role='menuitem']",
+    "[role='option']",
+    "[aria-pressed]",
+    "[aria-checked]",
+    "[data-state]",
+  ].join(", ");
+  const REASONING_MENU_SELECTOR =
+    "[role='menu'], [role='listbox'], [role='dialog'], [role='radiogroup'], [data-radix-popper-content-wrapper], [data-floating-ui-portal]";
+
   const BLOCK_TEXT_TAGS = new Set([
     "ADDRESS",
     "ARTICLE",
@@ -933,6 +970,7 @@
     keepTurns: 8,
     collapseCode: true,
     virtualFileEnabled: true,
+    rememberReasoning: true,
     hudOpen: false,
     totalTurns: 0,
     hiddenCount: 0,
@@ -957,6 +995,9 @@
         if (typeof parsed.virtualFileEnabled === "boolean") {
           state.virtualFileEnabled = parsed.virtualFileEnabled;
         }
+        if (typeof parsed.rememberReasoning === "boolean") {
+          state.rememberReasoning = parsed.rememberReasoning;
+        }
       }
     } catch (_) {}
   }
@@ -968,6 +1009,7 @@
         pruneEnabled: state.pruneEnabled,
         collapseCode: state.collapseCode,
         virtualFileEnabled: state.virtualFileEnabled,
+        rememberReasoning: state.rememberReasoning,
       };
       localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
     } catch (_) {}
@@ -3596,6 +3638,206 @@
     }
   }
 
+  /* ---------------- 推理强度记忆 ---------------- */
+
+  let reasoningRestoreTimer = 0;
+  let reasoningRestoreAttempts = 0;
+  let reasoningRestoreDone = false;
+  let applyingReasoning = false;
+
+  function loadReasoningMemory() {
+    try {
+      const parsed = JSON.parse(
+        localStorage.getItem(STORAGE_KEY_REASONING) || "{}",
+      );
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveReasoningMemory(memory) {
+    try {
+      localStorage.setItem(STORAGE_KEY_REASONING, JSON.stringify(memory));
+    } catch (_) {}
+  }
+
+  function isInsideTurboUI(node) {
+    if (!node || typeof node.closest !== "function") return false;
+    return Boolean(node.closest("[id^='ai-turbo-'], .ai-turbo-code-bar"));
+  }
+
+  function controlLabel(control) {
+    const raw =
+      control.getAttribute("aria-label") ||
+      control.getAttribute("title") ||
+      control.textContent ||
+      "";
+    return raw.replace(/\s+/g, " ").trim().slice(0, 60);
+  }
+
+  /** true/false = 已知开/关；null = 平台未暴露状态 */
+  function controlOnState(control) {
+    if (control.tagName === "INPUT")
+      return control.checked === true ? true : false;
+    const input = control.querySelector?.('input[type="checkbox"]');
+    if (input) return input.checked === true;
+    const pressed = control.getAttribute("aria-pressed");
+    if (pressed !== null) return pressed === "true";
+    const checked = control.getAttribute("aria-checked");
+    if (checked !== null) return checked === "true";
+    const dataState = control.getAttribute("data-state");
+    if (dataState)
+      return /^(on|open|checked|active|selected|true)$/i.test(dataState);
+    const cls = typeof control.className === "string" ? control.className : "";
+    if (/(^|[\s_-])(active|selected|checked|is-on)([\s_-]|$)/i.test(cls))
+      return true;
+    return null;
+  }
+
+  function extractReasoningLevel(text) {
+    const source = String(text || "").toLowerCase();
+    for (let i = 0; i < REASONING_LEVEL_WORDS.length; i += 1) {
+      if (source.includes(REASONING_LEVEL_WORDS[i])) return REASONING_LEVEL_WORDS[i];
+    }
+    return "";
+  }
+
+  function visibleReasoningControls() {
+    const found = [];
+    document
+      .querySelectorAll(REASONING_CONTROL_SELECTOR)
+      .forEach((candidate) => {
+        if (isInsideTurboUI(candidate)) return;
+        const label = controlLabel(candidate);
+        if (!label || !REASONING_CONTROL_PATTERN.test(label)) return;
+        const rect = candidate.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return;
+        found.push({
+          el: candidate,
+          label,
+          level: extractReasoningLevel(label),
+        });
+      });
+    return found;
+  }
+
+  /** 用户在页面上点了推理控件（或菜单里的强度选项）就记下来 */
+  function handleReasoningClick(event) {
+    if (!state.rememberReasoning || applyingReasoning) return;
+    const target = event.target;
+    if (!(target instanceof Element) || isInsideTurboUI(target)) return;
+
+    const option = target.closest(
+      "[role='menuitemradio'], [role='option'], [role='menuitem'], [role='radio']",
+    );
+    const optionMenu = option ? option.closest(REASONING_MENU_SELECTOR) : null;
+    const inReasoningMenu = Boolean(
+      optionMenu && REASONING_CONTROL_PATTERN.test(optionMenu.textContent || ""),
+    );
+    const control =
+      option && inReasoningMenu ? null : target.closest(REASONING_CONTROL_SELECTOR);
+    if (!control && !(option && inReasoningMenu)) return;
+
+    window.setTimeout(() => {
+      if (applyingReasoning) return;
+      const memory = loadReasoningMemory();
+      const host = location.hostname;
+
+      if (option && inReasoningMenu && !control) {
+        const level = extractReasoningLevel(controlLabel(option));
+        if (!level) return;
+        memory[host] = { mode: "level", level, ts: Date.now() };
+        saveReasoningMemory(memory);
+        return;
+      }
+
+      if (!control || isInsideTurboUI(control)) return;
+      const label = controlLabel(control);
+      if (!label || !REASONING_CONTROL_PATTERN.test(label)) return;
+      const on = controlOnState(control);
+      if (on === null) return; // 状态不可读，记了也安全不了
+      memory[host] = { mode: "toggle", label, on, ts: Date.now() };
+      saveReasoningMemory(memory);
+    }, 0);
+  }
+
+  function applyReasoningMemory() {
+    const saved = loadReasoningMemory()[location.hostname];
+    if (!saved) {
+      reasoningRestoreDone = true;
+      return;
+    }
+    const controls = visibleReasoningControls();
+    if (!controls.length) return; // 页还没渲染好，下次再试
+    reasoningRestoreDone = true;
+
+    if (saved.mode === "level" && saved.level) {
+      if (controls.some((c) => c.level === saved.level)) return; // 已是上次的强度
+      const trigger = controls[0];
+      applyingReasoning = true;
+      triggerSendButton(trigger.el);
+      window.setTimeout(() => {
+        const options = Array.from(
+          document.querySelectorAll(
+            "[role='menuitemradio'], [role='option'], [role='menuitem'], [role='radio']",
+          ),
+        );
+        const match = options.find(
+          (node) => extractReasoningLevel(controlLabel(node)) === saved.level,
+        );
+        if (match) {
+          triggerSendButton(match);
+        } else {
+          // 没找到就关掉菜单，不留一个弹层挡着用户
+          const esc = new KeyboardEvent("keydown", {
+            key: "Escape",
+            code: "Escape",
+            keyCode: 27,
+            bubbles: true,
+            cancelable: true,
+          });
+          document.activeElement?.dispatchEvent(esc);
+          document.dispatchEvent(esc);
+        }
+        applyingReasoning = false;
+      }, 450);
+      return;
+    }
+
+    const target =
+      controls.find((c) => c.label === saved.label) ||
+      controls.find(
+        (c) =>
+          saved.label &&
+          (c.label.includes(saved.label) || saved.label.includes(c.label)),
+      );
+    if (!target) return;
+    const now = controlOnState(target.el);
+    if (now === null || now === (saved.on === true)) return;
+    applyingReasoning = true;
+    triggerSendButton(target.el);
+    window.setTimeout(() => {
+      applyingReasoning = false;
+    }, 500);
+  }
+
+  /** 渲染往往晚于脚本启动，所以有限次轮询，直到应用或超时 */
+  function scheduleReasoningRestore() {
+    window.clearInterval(reasoningRestoreTimer);
+    reasoningRestoreDone = false;
+    reasoningRestoreAttempts = 0;
+    if (!state.rememberReasoning) return;
+    if (!loadReasoningMemory()[location.hostname]) return;
+    reasoningRestoreTimer = window.setInterval(() => {
+      reasoningRestoreAttempts += 1;
+      applyReasoningMemory();
+      if (reasoningRestoreDone || reasoningRestoreAttempts >= 40) {
+        window.clearInterval(reasoningRestoreTimer);
+      }
+    }, 500);
+  }
+
   function injectEngineStyles() {
     if (document.getElementById(STYLE_ID)) return;
 
@@ -4467,6 +4709,17 @@
       },
     });
 
+    const chkReasoning = el("input", {
+      type: "checkbox",
+      checked: state.rememberReasoning ? "checked" : "",
+      onchange: () => {
+        state.rememberReasoning = chkReasoning.checked;
+        saveCurrentConfig();
+        // 关闭时也要调用：它会先清掉轮询定时器
+        scheduleReasoningRestore();
+      },
+    });
+
     const forkText = el("span", { id: "fork-text" }, [
       "复制原始上下文（回退）",
     ]);
@@ -4528,6 +4781,13 @@
         el("span", {}, ["长文本伪文件胶囊"]),
         el("label", { className: "switch" }, [
           chkVirtualFile,
+          el("span", { className: "slider" }),
+        ]),
+      ]),
+      el("div", { className: "control-row" }, [
+        el("span", {}, ["记住推理强度"]),
+        el("label", { className: "switch" }, [
+          chkReasoning,
           el("span", { className: "slider" }),
         ]),
       ]),
@@ -5756,6 +6016,7 @@
         fullTurnSyncRequested = true;
         codeScanRequested = true;
         requestUpdate();
+        scheduleReasoningRestore();
       }, 0);
       return result;
     };
@@ -5776,6 +6037,7 @@
       fullTurnSyncRequested = true;
       codeScanRequested = true;
       requestUpdate();
+      scheduleReasoningRestore();
     });
   }
 
@@ -5820,6 +6082,7 @@
     window.addEventListener("paste", handlePasteIntercept, true);
     window.addEventListener("keydown", handleSendIntercept, true);
     window.addEventListener("click", handleSendIntercept, true);
+    window.addEventListener("click", handleReasoningClick, true);
   }
 
   function boot() {
@@ -5830,6 +6093,7 @@
     observeDom();
     patchHistoryForSpaNavigation();
     bindGlobalListeners();
+    scheduleReasoningRestore();
 
     window.addEventListener("resize", scheduleVirtualFileTrayPosition, {
       passive: true,
