@@ -1858,6 +1858,35 @@
     #page-bbs-link .scroll-list__button-group {
       display: none !important;
     }
+    /* Site confirm dialogs mount on body with fixed light surfaces behind the reader layer. */
+    :root.heybox-up-theme .alert-container-wrapper .hb-cpt__alert {
+      background-color: var(--heybox-up-surface) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme .alert-container-wrapper .hb-cpt__alert-title {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme .alert-container-wrapper .hb-cpt__alert-desc {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme .alert-container-wrapper .hb-cpt__alert-input-wrapper {
+      background-color: var(--heybox-up-subtle) !important;
+      box-shadow: inset 0 0 0 1px var(--heybox-up-border) !important;
+    }
+    :root.heybox-up-theme .alert-container-wrapper .hb-cpt__alert-input {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme .alert-container-wrapper .hb-cpt__alert-input::placeholder {
+      color: var(--heybox-up-muted) !important;
+    }
+    :root.heybox-up-theme .alert-container-wrapper .alert-btn-box__btn.cancel {
+      background-color: var(--heybox-up-subtle) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme .alert-container-wrapper .alert-btn-box__btn.confirm {
+      background: var(--heybox-up-accent) !important;
+      color: var(--heybox-up-on-accent) !important;
+    }
   `;
 
   const COMMENT_SORTS = [
@@ -4623,6 +4652,8 @@
     body.heybox-up-reader .hb-bbs-image-text,
     body.heybox-up-reader .hb-bbs-post { display: none !important; }
     body.heybox-up-reader .cpt-right-side.right { display: none !important; }
+    /* The reader sits at 4001, so lift the site confirmation dialog above it. */
+    body.heybox-up-reader .alert-container-wrapper .hb-cpt__alert-wrapper { z-index: 4100 !important; }
     #${READER_ID} {
       position: fixed;
       top: 0;
@@ -5162,6 +5193,27 @@
     return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
   }
 
+  // Site alerts mount under body; the inner wrapper is the only reliable open marker.
+  function isSiteAlertOpen() {
+    return document.querySelector(".alert-container-wrapper .hb-cpt__alert-wrapper") !== null;
+  }
+
+  // Shadow DOM retargets events to the host, so check every node on the composed path.
+  function eventHitsTypingTarget(event) {
+    for (const node of event.composedPath()) {
+      if (isTypingTarget(node)) return true;
+    }
+    return isTypingTarget(event.target);
+  }
+
+  // The site marks followed authors by class, aria-pressed, or label depending on version.
+  function isFollowedAuthor(button) {
+    if (!(button instanceof Element)) return false;
+    if (button.classList.contains("followed")) return true;
+    if (button.getAttribute("aria-pressed") === "true") return true;
+    return /^(已关注|互相关注)$/.test((button.textContent || "").trim());
+  }
+
   function watchPostPager() {
     if (!document.body) return;
     const host = document.createElement("div");
@@ -5209,7 +5261,7 @@
     document.addEventListener("keydown", (event) => {
       if (host.hidden || document.body.classList.contains(READER_CLASS) || event.defaultPrevented) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (isTypingTarget(event.target)) return;
+      if (isSiteAlertOpen() || eventHitsTypingTarget(event)) return;
       if (event.key === "[" && prevId !== "") {
         event.preventDefault();
         go(prevId);
@@ -5314,7 +5366,6 @@
     let nativeActionArticle = null;
     let nativeActionBox = null;
     let nativeFavourButton = null;
-    let nativeFollowButton = null;
     let linkStateController = null;
     let commentLoadController = null;
     let favourLoadController = null;
@@ -5421,7 +5472,6 @@
         nativeActionArticle = article;
         nativeActionBox = null;
         nativeFavourButton = null;
-        nativeFollowButton = null;
       }
       nativeActionBox = Array.from(article?.querySelectorAll(".link-reply__operation-box") || [])
         .find((box) => box.closest("[data-comment-id]") === null) || null;
@@ -5639,13 +5689,10 @@
           valueNode.textContent = counts[key];
         }
       }
-      if (nativeFollowButton === null || !nativeFollowButton.isConnected) {
-        nativeFollowButton = document.querySelector("#page-bbs-link .link-user__follow-btn");
-      }
-      const follow = nativeFollowButton;
-      const followNodes = host.querySelectorAll(".hbu-reader-follow");
-      for (const followNode of followNodes) {
-        const on = follow !== null && /已关注|互相关注/.test((follow.textContent || ""));
+      // The site replaces the header button after a follow change, so re-query every sync.
+      const nativeFollowButton = document.querySelector("#page-bbs-link .link-user__follow-btn");
+      const on = isFollowedAuthor(nativeFollowButton);
+      for (const followNode of host.querySelectorAll(".hbu-reader-follow")) {
         followNode.setAttribute("aria-pressed", String(on));
         if (followNode.textContent !== (on ? "已关注" : "关注")) followNode.textContent = on ? "已关注" : "关注";
       }
@@ -5654,6 +5701,13 @@
     const clickNative = (selector) => {
       const node = document.querySelector("#page-bbs-link " + selector);
       if (node instanceof HTMLElement) node.click();
+    };
+
+    // Delegate follow toggling to the site button, then resync once its request settles.
+    const toggleFollowAuthor = () => {
+      clickNative(".link-user__follow-btn");
+      window.setTimeout(syncActionStates, 400);
+      window.setTimeout(syncActionStates, 1200);
     };
 
     const closeFavourMenu = () => {
@@ -6630,7 +6684,7 @@
       follow.type = "button";
       follow.className = "hbu-reader-follow";
       follow.textContent = "关注";
-      follow.addEventListener("click", () => clickNative(".link-user__follow-btn"));
+      follow.addEventListener("click", toggleFollowAuthor);
       const spacer = document.createElement("span");
       spacer.className = "hbu-reader-head-spacer";
       const share = document.createElement("button");
@@ -6816,7 +6870,7 @@
       follow.type = "button";
       follow.className = "hbu-reader-follow";
       follow.textContent = "关注";
-      follow.addEventListener("click", () => clickNative(".link-user__follow-btn"));
+      follow.addEventListener("click", toggleFollowAuthor);
       head.append(name, follow);
       const stats = document.createElement("div");
       stats.className = "hbu-reader-stats";
@@ -7113,7 +7167,6 @@
       nativeActionArticle = null;
       nativeActionBox = null;
       nativeFavourButton = null;
-      nativeFollowButton = null;
       linkStateController?.abort();
       linkStateController = null;
       commentLoadController?.abort();
@@ -7199,7 +7252,6 @@
         nativeActionArticle = null;
         nativeActionBox = null;
         nativeFavourButton = null;
-        nativeFollowButton = null;
       }
       articleId = nextArticleId;
       if (document.body.classList.contains(READER_COMMENT_CLASS) && document.querySelector("#page-bbs-link .link-comment") === null) closeComments();
@@ -7251,13 +7303,16 @@
           event.preventDefault();
           lightbox.remove();
           lightbox = null;
+        } else if (isSiteAlertOpen()) {
+          // The site confirmation dialog sits above the reader, so let it own this Escape.
+          return;
         } else {
           event.preventDefault();
           closeCurrentReader();
         }
         return;
       }
-      if (isTypingTarget(event.target)) return;
+      if (isSiteAlertOpen() || eventHitsTypingTarget(event)) return;
       if (event.key === "h" || event.key === "H") {
         event.preventDefault();
         navigateToPath("/app/bbs/home");
