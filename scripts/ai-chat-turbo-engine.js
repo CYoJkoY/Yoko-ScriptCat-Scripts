@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.0
+// @version      0.15.1
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -145,23 +145,6 @@
   const STORAGE_KEY_REASONING = "ai_turbo_reasoning_memory";
   const REASONING_CONTROL_PATTERN =
     /深度思考|深度推理|思考|推理|思维链|thinking|reasoning|think harder|effort|智商|extended thinking/i;
-  // 长词在前，避免「高」先于「极高」命中
-  const REASONING_LEVEL_WORDS = [
-    "极低",
-    "最低",
-    "极高",
-    "最高",
-    "低",
-    "中等",
-    "中",
-    "高",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "max",
-    "extreme",
-  ];
   const REASONING_CONTROL_SELECTOR = [
     "button",
     "[role='button']",
@@ -177,6 +160,12 @@
   ].join(", ");
   const REASONING_MENU_SELECTOR =
     "[role='menu'], [role='listbox'], [role='dialog'], [role='radiogroup'], [data-radix-popper-content-wrapper], [data-floating-ui-portal]";
+  // 弹层里可能被选中的项：只用于找回上次的选项，不依赖任何文案关键词
+  const CHOICE_OPTION_SELECTOR =
+    "[aria-checked], [aria-selected], [role='menuitemradio'], [role='radio'], [role='option'], [role='menuitem'], button, a";
+  // 只带单选语义的项：普通菜单项不算，避免把“工具菜单”当成强度选择
+  const CHOICE_RADIO_SELECTOR =
+    "[aria-checked], [aria-selected], [role='menuitemradio'], [role='radio']";
 
   const BLOCK_TEXT_TAGS = new Set([
     "ADDRESS",
@@ -1031,6 +1020,7 @@
   let hudShadowRoot = null;
   let hudStats = null;
   let handoffStatusNode = null;
+  let reasoningStatusNode = null;
   let searchInput = null;
   let searchResultsBox = null;
   let virtualFileTrayAnchor = null;
@@ -3707,6 +3697,10 @@
   let reasoningRestoreAttempts = 0;
   let reasoningRestoreDone = false;
   let applyingReasoning = false;
+  // 最近点开的控件：弹层里的选项点击时用来把“哪个控件的哪个选项”配对
+  let reasoningMenuTrigger = null;
+  let reasoningMenuTriggerAt = 0;
+  let reasoningMenuTriggerLabel = "";
 
   function loadReasoningMemory() {
     try {
@@ -3758,71 +3752,138 @@
     return null;
   }
 
-  function extractReasoningLevel(text) {
-    const source = String(text || "").toLowerCase();
-    for (let i = 0; i < REASONING_LEVEL_WORDS.length; i += 1) {
-      if (source.includes(REASONING_LEVEL_WORDS[i])) return REASONING_LEVEL_WORDS[i];
-    }
-    return "";
+  /** 控件的稳定身份：选完值后按钮文案会变，所以优先读 aria-label 这类属性 */
+  function controlKey(control) {
+    const raw =
+      control.getAttribute("aria-label") ||
+      control.getAttribute("data-test-id") ||
+      control.getAttribute("data-testid") ||
+      control.id ||
+      "";
+    return String(raw).replace(/\s+/g, " ").trim().slice(0, 60);
   }
 
-  function visibleReasoningControls() {
-    const found = [];
-    document
-      .querySelectorAll(REASONING_CONTROL_SELECTOR)
-      .forEach((candidate) => {
-        if (isInsideTurboUI(candidate)) return;
-        const label = controlLabel(candidate);
-        if (!label || !REASONING_CONTROL_PATTERN.test(label)) return;
-        const rect = candidate.getBoundingClientRect();
-        if (rect.width < 1 || rect.height < 1) return;
-        found.push({
-          el: candidate,
-          label,
-          level: extractReasoningLevel(label),
-        });
-      });
-    return found;
+  /** 只有下拉/弹层类按钮才可能承载“选一个选项”的语义 */
+  function isDropdownTrigger(control) {
+    if (control.hasAttribute("aria-expanded")) return true;
+    const popup = control.getAttribute("aria-haspopup");
+    return popup !== null && popup !== "false";
   }
 
-  /** 用户在页面上点了推理控件（或菜单里的强度选项）就记下来 */
+  function closeOpenPopup() {    const esc = new KeyboardEvent("keydown", {
+      key: "Escape",
+      code: "Escape",
+      keyCode: 27,
+      bubbles: true,
+      cancelable: true,
+    });
+    if (document.activeElement) document.activeElement.dispatchEvent(esc);
+    document.dispatchEvent(esc);
+  }
+
+  /** 在刚打开的弹层里按文案找回那次选择；取最内层命中，避免点到包裹容器 */
+  function findChoiceOption(text, trigger) {
+    const matches = Array.from(document.querySelectorAll(CHOICE_OPTION_SELECTOR)).filter(
+      (node) => {
+        if (isInsideTurboUI(node)) return false;
+        if (node === trigger || trigger.contains(node) || node.contains(trigger)) return false;
+        if (controlLabel(node) !== text) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 1 && rect.height >= 1;
+      },
+    );
+    if (!matches.length) return null;
+    const inPopup = matches.filter((node) => node.closest(REASONING_MENU_SELECTOR));
+    const pool = inPopup.length ? inPopup : matches;
+    return pool.reduce((best, node) => (best.contains(node) ? node : best));
+  }
+
+  /**
+   * 控件文案变了 = 用户在这个弹层里换了选项。
+   * 不猜弹层结构：只记控件最后显示的是哪个选项，恢复时再按文案点回去。
+   */
+  function observeControlChoice(control, labelBefore) {
+    [400, 900, 1600, 2600].forEach((delay) => {
+      window.setTimeout(() => {
+        if (applyingReasoning || !control.isConnected) return;
+        const labelNow = controlLabel(control);
+        if (!labelNow || labelNow === labelBefore) return;
+        const memory = loadReasoningMemory();
+        const saved = memory[location.hostname];
+        if (saved && saved.mode === "choice" && saved.option === labelNow) return;
+        memory[location.hostname] = {
+          mode: "choice",
+          key: controlKey(control),
+          controlLabel: labelBefore,
+          option: labelNow,
+          ts: Date.now(),
+        };
+        saveReasoningMemory(memory);
+        renderReasoningStatus();
+      }, delay);
+    });
+  }
+
+  /** 弹层里带单选语义的项被点了：和最近点开的控件配对，记成“控件 → 选项” */
+  function pairOptionClick(target) {
+    const option = target.closest(CHOICE_RADIO_SELECTOR);
+    if (!option) return false;
+    const trigger = reasoningMenuTrigger;
+    if (!trigger || !trigger.isConnected) return false;
+    if (Date.now() - reasoningMenuTriggerAt > 20000) return false;
+    if (option === trigger || option.contains(trigger)) return false;
+    const optionText = controlLabel(option);
+    if (!optionText) return false;
+    const triggerLabel = reasoningMenuTriggerLabel;
+    window.setTimeout(() => {
+      if (applyingReasoning) return;
+      const memory = loadReasoningMemory();
+      memory[location.hostname] = {
+        mode: "choice",
+        key: controlKey(trigger),
+        controlLabel: triggerLabel,
+        option: optionText,
+        ts: Date.now(),
+      };
+      saveReasoningMemory(memory);
+      renderReasoningStatus();
+    }, 0);
+    return true;
+  }
+
+  /** 用户点了页面上的推理控件就记下当前状态 */
   function handleReasoningClick(event) {
     if (!state.rememberReasoning || applyingReasoning) return;
     const target = event.target;
     if (!(target instanceof Element) || isInsideTurboUI(target)) return;
+    if (pairOptionClick(target)) return;
+    // 弹层里的项不单独记：它的效果会体现在控件的文案上
+    if (target.closest(REASONING_MENU_SELECTOR)) return;
+    const control = target.closest(REASONING_CONTROL_SELECTOR);
+    if (!control) return;
 
-    const option = target.closest(
-      "[role='menuitemradio'], [role='option'], [role='menuitem'], [role='radio']",
-    );
-    const optionMenu = option ? option.closest(REASONING_MENU_SELECTOR) : null;
-    const inReasoningMenu = Boolean(
-      optionMenu && REASONING_CONTROL_PATTERN.test(optionMenu.textContent || ""),
-    );
-    const control =
-      option && inReasoningMenu ? null : target.closest(REASONING_CONTROL_SELECTOR);
-    if (!control && !(option && inReasoningMenu)) return;
+    const labelBefore = controlLabel(control);
+    if (!labelBefore) return;
+    const keywordMatch = REASONING_CONTROL_PATTERN.test(labelBefore);
+    // 不靠关键词也得是下拉/弹层触发器，否则“发送→停止”这类文案变化会被当成强度选择
+    if (!keywordMatch && !isDropdownTrigger(control)) return;
+    reasoningMenuTrigger = control;
+    reasoningMenuTriggerAt = Date.now();
+    reasoningMenuTriggerLabel = labelBefore;
 
-    window.setTimeout(() => {
-      if (applyingReasoning) return;
-      const memory = loadReasoningMemory();
-      const host = location.hostname;
-
-      if (option && inReasoningMenu && !control) {
-        const level = extractReasoningLevel(controlLabel(option));
-        if (!level) return;
-        memory[host] = { mode: "level", level, ts: Date.now() };
+    if (keywordMatch) {
+      window.setTimeout(() => {
+        if (applyingReasoning || !control.isConnected) return;
+        const on = controlOnState(control);
+        if (on === null) return; // 状态不可读，记了也安全不了
+        const memory = loadReasoningMemory();
+        memory[location.hostname] = { mode: "toggle", label: labelBefore, on, ts: Date.now() };
         saveReasoningMemory(memory);
-        return;
-      }
+        renderReasoningStatus();
+      }, 0);
+    }
 
-      if (!control || isInsideTurboUI(control)) return;
-      const label = controlLabel(control);
-      if (!label || !REASONING_CONTROL_PATTERN.test(label)) return;
-      const on = controlOnState(control);
-      if (on === null) return; // 状态不可读，记了也安全不了
-      memory[host] = { mode: "toggle", label, on, ts: Date.now() };
-      saveReasoningMemory(memory);
-    }, 0);
+    observeControlChoice(control, labelBefore);
   }
 
   // 点击被脱水的空白占位区即恢复该轮渲染，单向不回退
@@ -3841,61 +3902,93 @@
     requestUpdate();
   }
 
+  function renderReasoningStatus() {
+    if (!reasoningStatusNode) return;
+    reasoningStatusNode.textContent = "";
+    if (!state.rememberReasoning) {
+      reasoningStatusNode.textContent = "推理记忆：已关闭";
+      return;
+    }
+    const saved = loadReasoningMemory()[location.hostname];
+    if (!saved || !saved.mode) {
+      reasoningStatusNode.textContent =
+        "推理记忆：未记录（在页面里点一次强度/模型选项即可）";
+      return;
+    }
+    const shown =
+      saved.mode === "choice"
+        ? `${saved.controlLabel || "控件"} → ${saved.option}`
+        : `${saved.label}（${saved.on ? "开" : "关"}）`;
+    reasoningStatusNode.textContent = `推理记忆：${shown} `;
+    reasoningStatusNode.appendChild(
+      el(
+        "button",
+        {
+          type: "button",
+          onclick: () => {
+            const memory = loadReasoningMemory();
+            delete memory[location.hostname];
+            saveReasoningMemory(memory);
+            renderReasoningStatus();
+          },
+        },
+        ["清除"],
+      ),
+    );
+  }
+
+  /** 按记忆里的身份找回控件：key 优先，其次可见文案 */
+  function findRememberedControl(saved) {
+    const visible = Array.from(document.querySelectorAll(REASONING_CONTROL_SELECTOR)).filter(
+      (node) => {
+        if (isInsideTurboUI(node)) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 1 && rect.height >= 1;
+      },
+    );
+    if (saved.key) {
+      const byKey = visible.find((node) => controlKey(node) === saved.key);
+      if (byKey) return byKey;
+    }
+    if (!saved.controlLabel) return null;
+    const byLabel = visible.find((node) => controlLabel(node) === saved.controlLabel);
+    if (byLabel) return byLabel;
+    // 文案会随选择变化，最后退一步找最像推理/模型选择的控件
+    return visible.find((node) => REASONING_CONTROL_PATTERN.test(controlLabel(node))) || null;
+  }
+
   function applyReasoningMemory() {
     const saved = loadReasoningMemory()[location.hostname];
-    if (!saved) {
+    if (!saved || !saved.mode) {
       reasoningRestoreDone = true;
       return;
     }
-    const controls = visibleReasoningControls();
-    if (!controls.length) return; // 页还没渲染好，下次再试
+    const control = findRememberedControl(saved);
+    if (!control) return; // 页还没渲染好，下次再试
     reasoningRestoreDone = true;
 
-    if (saved.mode === "level" && saved.level) {
-      if (controls.some((c) => c.level === saved.level)) return; // 已是上次的强度
-      const trigger = controls[0];
+    if (saved.mode === "choice" && saved.option) {
+      if (controlLabel(control) === saved.option) return; // 已经是上次选的那个
       applyingReasoning = true;
-      triggerSendButton(trigger.el);
+      triggerSendButton(control);
       window.setTimeout(() => {
-        const options = Array.from(
-          document.querySelectorAll(
-            "[role='menuitemradio'], [role='option'], [role='menuitem'], [role='radio']",
-          ),
-        );
-        const match = options.find(
-          (node) => extractReasoningLevel(controlLabel(node)) === saved.level,
-        );
+        const match = findChoiceOption(saved.option, control);
         if (match) {
           triggerSendButton(match);
         } else {
           // 没找到就关掉菜单，不留一个弹层挡着用户
-          const esc = new KeyboardEvent("keydown", {
-            key: "Escape",
-            code: "Escape",
-            keyCode: 27,
-            bubbles: true,
-            cancelable: true,
-          });
-          document.activeElement?.dispatchEvent(esc);
-          document.dispatchEvent(esc);
+          closeOpenPopup();
         }
         applyingReasoning = false;
       }, 450);
       return;
     }
 
-    const target =
-      controls.find((c) => c.label === saved.label) ||
-      controls.find(
-        (c) =>
-          saved.label &&
-          (c.label.includes(saved.label) || saved.label.includes(c.label)),
-      );
-    if (!target) return;
-    const now = controlOnState(target.el);
+    if (saved.mode !== "toggle") return;
+    const now = controlOnState(control);
     if (now === null || now === (saved.on === true)) return;
     applyingReasoning = true;
-    triggerSendButton(target.el);
+    triggerSendButton(control);
     window.setTimeout(() => {
       applyingReasoning = false;
     }, 500);
@@ -4623,6 +4716,10 @@
       .action-btn:hover { background: rgba(101, 210, 164, 0.07); border-color: rgba(101, 210, 164, 0.25); color: #72d6ab; }
       .action-btn.copied { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.4); }
       .handoff-status { margin-top: 8px; color: #8da097; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+      .reasoning-status { margin-top: 6px; color: #8da097; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+      .reasoning-status:empty { display: none; }
+      .reasoning-status button { margin-left: 6px; padding: 0 4px; border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 4px; background: transparent; color: #72d6ab; font-size: 10px; line-height: 1.6; cursor: pointer; }
+      .reasoning-status button:hover { border-color: rgba(101, 210, 164, 0.55); }
 
       .search-wrap { position: relative; margin-top: 8px; }
       .search-input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid rgba(153, 166, 161, 0.16); border-radius: 8px; background: #0f1416; color: #e6eeea; font-size: 11px; outline: none; }
@@ -4837,6 +4934,7 @@
         saveCurrentConfig();
         // 关闭时也要调用：它会先清掉轮询定时器
         scheduleReasoningRestore();
+        renderReasoningStatus();
       },
     });
 
@@ -4911,6 +5009,7 @@
           el("span", { className: "slider" }),
         ]),
       ]),
+      reasoningStatusNode = el("div", { className: "reasoning-status", role: "status" }, []),
     ]);
 
     const handoffSection = el("div", { className: "section" }, [
@@ -6225,6 +6324,7 @@
     patchHistoryForSpaNavigation();
     bindGlobalListeners();
     scheduleReasoningRestore();
+    renderReasoningStatus();
 
     window.addEventListener("resize", scheduleVirtualFileTrayPosition, {
       passive: true,
