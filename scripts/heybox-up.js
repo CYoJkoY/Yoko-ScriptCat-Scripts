@@ -1607,6 +1607,14 @@
       border-left: 3px solid var(--heybox-up-accent) !important;
       color: var(--heybox-up-muted) !important;
     }
+    /* The native article styles hard-code dark text on nested paragraphs and ordered-list lines. */
+    #page-bbs-link :is(.post__content, .image-text__content) :is(p, li, ol, ul, .line, .order-line, .text) {
+      color: var(--heybox-up-text) !important;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) blockquote,
+    #page-bbs-link :is(.post__content, .image-text__content) blockquote :is(p, .text) {
+      color: var(--heybox-up-muted) !important;
+    }
     #page-bbs-link :is(.post__content, .image-text__content) :is(img, .hb-cpt__image) {
       border-radius: 10px !important;
     }
@@ -1657,6 +1665,48 @@
       background-color: var(--heybox-up-surface) !important;
       border-color: var(--heybox-up-border) !important;
       color: var(--heybox-up-text);
+    }
+    /* Profile submissions use a near-white 4px divider and dark text colors from the original skin. */
+    :root.heybox-up-theme #page-user-profile .user-profile-article-item::after {
+      background-color: transparent !important;
+      background-image: none !important;
+    }
+    :root.heybox-up-theme #page-user-profile .article-title .title {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme #page-user-profile .bottom-line :is(.time, .comment, .comment span) {
+      color: var(--heybox-up-text-2) !important;
+    }
+    :root.heybox-up-theme #page-user-profile .tab-item {
+      color: var(--heybox-up-text-2) !important;
+    }
+    :root.heybox-up-theme #page-user-profile .tab-item.active {
+      color: var(--heybox-up-text) !important;
+    }
+    /* The profile right rail only carries the app QR code, promotions and ICP text. */
+    #page-user-profile .cpt-right-side.right {
+      display: none !important;
+    }
+    #page-user-profile .content > .list {
+      flex: 1 1 auto !important;
+      width: auto !important;
+      min-width: 0 !important;
+      max-width: none !important;
+    }
+    /* Theme the author hover card without changing its 315x146 box or z-index. */
+    :root.heybox-up-theme #page-user-profile .name-box .detail-info {
+      background-color: var(--heybox-up-surface) !important;
+      color: var(--heybox-up-text) !important;
+      box-shadow: 0 0 0 1px var(--heybox-up-border), 0 18px 46px rgba(0, 0, 0, .32) !important;
+    }
+    :root.heybox-up-theme #page-user-profile .name-box .detail-info::after {
+      background-color: var(--heybox-up-surface) !important;
+    }
+    :root.heybox-up-theme #page-user-profile .name-box .detail-info .main-info {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme #page-user-profile .name-box .detail-info .sub-info {
+      color: var(--heybox-up-text-2) !important;
     }
     /* 站点用伪元素画页面底色与帖子分隔条，颜色不随变量走，需单独覆盖。 */
     :root.heybox-up-theme[data-heybox-up-dark="true"] {
@@ -4754,6 +4804,14 @@
       color: var(--hbu-reader-ink) !important;
     }
     .hbu-reader-rich :is(a, .prose-link) { color: var(--heybox-up-accent, #4f7ea8); }
+    /* Cloned article nodes keep their original dark text colors on nested paragraphs and list lines. */
+    .hbu-reader-rich :is(p, li, ol, ul, .line, .order-line, .text) {
+      color: var(--hbu-reader-ink) !important;
+    }
+    .hbu-reader-rich blockquote,
+    .hbu-reader-rich blockquote :is(p, .text) {
+      color: var(--hbu-reader-ink-2) !important;
+    }
     .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 32px 20px; background: #05070a; }
     .hbu-reader-media {
       display: block;
