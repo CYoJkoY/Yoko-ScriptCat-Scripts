@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.33
+// @version      0.4.34
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -4486,6 +4486,7 @@
 
   const READER_ICONS = {
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
+    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 10.5 7.5-6 7.5 6"/><path d="M6.5 9.5V20h11V9.5"/><path d="M10 20v-5h4v5"/></svg>',
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>',
     like: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10.5v9H4.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"/><path d="M7 11 10.6 4a2 2 0 0 1 3.8.9V9h4.1a2 2 0 0 1 2 2.4l-1.1 6.2a2.3 2.3 0 0 1-2.3 1.9H7"/></svg>',
     likeOn: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10.5v9H4.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"/><path d="M7 11 10.6 4a2 2 0 0 1 3.8.9V9h4.1a2 2 0 0 1 2 2.4l-1.1 6.2a2.3 2.3 0 0 1-2.3 1.9H7"/></svg>',
@@ -4800,6 +4801,7 @@
     .hbu-reader-related a:hover { background: var(--hbu-reader-subtle); }
     .hbu-reader-end-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
     .hbu-reader-end-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 8px 14px; border: 1px solid var(--hbu-reader-border); border-radius: 99px; background: transparent; color: var(--hbu-reader-ink); font: inherit; font-size: 13px; cursor: pointer; }
+    .hbu-reader-end-actions button[data-home] { border-color: transparent; background: var(--hbu-reader-ink); color: var(--hbu-reader-page); font-weight: 650; }
     .hbu-reader-end-actions button:disabled { opacity: .42; cursor: default; }
     .hbu-reader-end-actions button svg { width: 15px; height: 15px; }
     @media (max-height: 820px) {
@@ -4817,6 +4819,8 @@
     .hbu-reader-head > * { pointer-events: auto; }
     .hbu-reader-round { display: grid; place-items: center; width: 40px; height: 40px; flex: none; padding: 0; border: 1px solid rgba(255, 255, 255, .2); border-radius: 50%; background: rgba(8, 11, 15, .46); color: #fff; cursor: pointer; backdrop-filter: blur(8px); }
     .hbu-reader-round svg { width: 19px; height: 19px; }
+    .hbu-reader-home { display: inline-flex; align-items: center; gap: 6px; height: 40px; flex: none; padding: 0 13px 0 10px; border: 1px solid rgba(255, 255, 255, .2); border-radius: 99px; background: rgba(8, 11, 15, .46); color: #fff; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px); }
+    .hbu-reader-home svg { width: 17px; height: 17px; flex: none; }
     .hbu-reader-head-author { display: flex; gap: 7px; align-items: center; min-width: 0; max-width: 42%; padding: 4px 10px 4px 4px; border: 1px solid rgba(255, 255, 255, .18); border-radius: 99px; background: rgba(8, 11, 15, .46); color: #fff; text-decoration: none; backdrop-filter: blur(8px); }
     .hbu-reader-head-author img { width: 30px; height: 30px; flex: none; border-radius: 50%; object-fit: cover; background: #1e2630; }
     .hbu-reader-head-author span { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -4887,6 +4891,7 @@
     .hbu-reader-progress-bar { flex: 1 1 auto; height: 2px; overflow: hidden; border-radius: 99px; background: rgba(255, 255, 255, .26); }
     .hbu-reader-progress-bar i { display: block; width: 0; height: 100%; background: #fff; transition: width .2s linear; }
     .hbu-reader-hint { color: rgba(255, 255, 255, .72); white-space: nowrap; }
+    body.${READER_CLASS} #${PAGER_ID} { display: none !important; }
     body.${READER_CLASS} #page-bbs-link .link-comment {
       position: fixed !important;
       top: 0 !important;
@@ -5000,11 +5005,14 @@
       .hbu-reader-head-author { max-width: 38%; }
       .hbu-reader-progress { padding: 0 12px; }
       .hbu-reader-round { width: 38px; height: 38px; }
+      .hbu-reader-home { height: 38px; padding: 0 11px 0 9px; }
     }
     @media (max-width: 520px) {
       .hbu-reader-head-author span { display: none; }
       .hbu-reader-head-author { padding-right: 4px; }
       .hbu-reader-follow { min-width: 48px; padding: 0 10px; }
+      .hbu-reader-home { width: 38px; justify-content: center; padding: 0; border-radius: 50%; }
+      .hbu-reader-home span { display: none; }
       .hbu-reader-page { padding-right: 64px; }
       .hbu-reader-page[data-kind="media"] { padding-right: 16px; padding-left: 16px; }
       .hbu-reader-caption { padding-right: 64px; }
@@ -5083,6 +5091,12 @@
     return readSessionArray(POST_TRAIL_KEY).filter((id) => typeof id === "string" && /^\d+$/.test(id));
   }
 
+  function readVisitedPostIds(currentId) {
+    const visited = new Set(readPostTrail());
+    if (currentId !== "") visited.add(currentId);
+    return visited;
+  }
+
   function pushPostTrail(id) {
     const trail = readPostTrail();
     if (trail[trail.length - 1] === id) return;
@@ -5096,11 +5110,19 @@
   function resolvePostNeighbors(id) {
     const order = readFeedOrder();
     const index = order.findIndex((item) => item.id === id);
+    const visited = readVisitedPostIds(id);
     let prev = index > 0 ? order[index - 1] : null;
-    let next = index !== -1 && index < order.length - 1 ? order[index + 1] : null;
-    if (!next) {
-      const related = readRelatedPostLinks().filter((item) => item.id !== id);
-      if (related.length > 0) next = related[0];
+    let next = null;
+    if (index !== -1) {
+      for (let cursor = index + 1; cursor < order.length; cursor += 1) {
+        const candidate = order[cursor];
+        if (visited.has(candidate.id)) continue;
+        next = candidate;
+        break;
+      }
+    }
+    if (next === null) {
+      next = readRelatedPostLinks().find((item) => !visited.has(item.id)) || null;
     }
     if (!prev) {
       const trail = readPostTrail();
@@ -5162,7 +5184,7 @@
     nextButton.addEventListener("click", () => go(nextId));
 
     document.addEventListener("keydown", (event) => {
-      if (host.hidden || event.defaultPrevented) return;
+      if (host.hidden || document.body.classList.contains(READER_CLASS) || event.defaultPrevented) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (isTypingTarget(event.target)) return;
       if (event.key === "[" && prevId !== "") {
@@ -5248,6 +5270,7 @@
     let favourPanel = null;
     let favourButton = null;
     let articleId = "";
+    let dismissedArticleId = "";
     let signature = "";
     let activeIndex = 0;
     let pageCount = 0;
@@ -6540,6 +6563,12 @@
       for (const page of pages) observer.observe(page);
     };
 
+    const closeCurrentReader = () => {
+      dismissedArticleId = articleId;
+      teardown();
+      showToast("已退出当前文章的沉浸阅读");
+    };
+
     const createHead = (data) => {
       const head = document.createElement("div");
       head.className = "hbu-reader-head";
@@ -6550,6 +6579,13 @@
       back.title = "返回";
       back.innerHTML = READER_ICONS.back;
       back.addEventListener("click", () => history.back());
+      const home = document.createElement("button");
+      home.type = "button";
+      home.className = "hbu-reader-home";
+      home.setAttribute("aria-label", "返回社区首页");
+      home.title = "返回社区首页（H）";
+      home.innerHTML = READER_ICONS.home + "<span>社区首页</span>";
+      home.addEventListener("click", () => navigateToPath("/app/bbs/home"));
       const author = document.createElement("a");
       author.className = "hbu-reader-head-author";
       author.href = data.authorHref;
@@ -6580,11 +6616,11 @@
       const exit = document.createElement("button");
       exit.type = "button";
       exit.className = "hbu-reader-round";
-      exit.setAttribute("aria-label", "退出沉浸阅读");
-      exit.title = "退出沉浸阅读（R）";
+      exit.setAttribute("aria-label", "关闭当前文章的沉浸阅读");
+      exit.title = "关闭当前文章的沉浸阅读（R）";
       exit.innerHTML = READER_ICONS.close;
-      exit.addEventListener("click", () => setReaderPreference(false));
-      head.append(back, author, follow, spacer, share, exit);
+      exit.addEventListener("click", closeCurrentReader);
+      head.append(back, home, author, follow, spacer, share, exit);
       return head;
     };
 
@@ -6786,13 +6822,15 @@
         card.append(tags);
       }
       page.append(card);
-      if (data.related.length > 0) {
+      const visitedPostIds = readVisitedPostIds(articleId);
+      const visibleRelated = data.related.filter((item) => !visitedPostIds.has(item.id));
+      if (visibleRelated.length > 0) {
         const related = document.createElement("div");
         related.className = "hbu-reader-related";
         const heading = document.createElement("h2");
         heading.textContent = "继续阅读";
         related.append(heading);
-        for (const item of data.related.slice(0, 4)) {
+        for (const item of visibleRelated.slice(0, 4)) {
           const link = document.createElement("a");
           link.href = LINK_HREF_PREFIX + item.id;
           link.textContent = item.title || "帖子 " + item.id;
@@ -6804,6 +6842,11 @@
       actions.className = "hbu-reader-end-actions";
       const prev = readPager("prev");
       const next = readPager("next");
+      const homeButton = document.createElement("button");
+      homeButton.type = "button";
+      homeButton.dataset.home = "";
+      homeButton.innerHTML = READER_ICONS.home + " 社区首页";
+      homeButton.addEventListener("click", () => navigateToPath("/app/bbs/home"));
       const prevButton = document.createElement("button");
       prevButton.type = "button";
       prevButton.disabled = prev === null;
@@ -6818,7 +6861,7 @@
       topButton.type = "button";
       topButton.textContent = "回到封面";
       topButton.addEventListener("click", () => scrollToPage(0));
-      actions.append(prevButton, topButton, nextButton);
+      actions.append(homeButton, prevButton, topButton, nextButton);
       page.append(actions);
       return page;
     };
@@ -7105,13 +7148,25 @@
 
     const sync = () => {
       const match = /^\/app\/bbs\/link\/(\d+)/.exec(location.pathname);
-      if (match === null || !readReaderPreference()) {
+      if (match === null) {
+        dismissedArticleId = "";
+        if (host !== null || document.body.classList.contains(READER_CLASS)) teardown();
+        signature = "";
+        return;
+      }
+      if (!readReaderPreference()) {
         if (host !== null || document.body.classList.contains(READER_CLASS)) teardown();
         signature = "";
         return;
       }
       const nextArticleId = match[1];
+      if (dismissedArticleId === nextArticleId) {
+        if (host !== null || document.body.classList.contains(READER_CLASS)) teardown();
+        signature = "";
+        return;
+      }
       if (articleId !== nextArticleId) {
+        dismissedArticleId = "";
         flushReaderRatio();
         sourceCache = null;
         nativeActionArticle = null;
@@ -7148,6 +7203,7 @@
         showToast("已退出沉浸阅读，可在设置中重新开启");
         return;
       }
+      dismissedArticleId = "";
       signature = "";
       sync();
     });
@@ -7170,11 +7226,16 @@
           lightbox = null;
         } else {
           event.preventDefault();
-          setReaderPreference(false);
+          closeCurrentReader();
         }
         return;
       }
       if (isTypingTarget(event.target)) return;
+      if (event.key === "h" || event.key === "H") {
+        event.preventDefault();
+        navigateToPath("/app/bbs/home");
+        return;
+      }
       if (event.key === "ArrowRight" && coverInView() && coverTotal > 1) {
         event.preventDefault();
         setCover(coverIndex + 1);
@@ -7203,7 +7264,7 @@
         else void openComments();
       } else if (event.key === "r" || event.key === "R") {
         event.preventDefault();
-        setReaderPreference(false);
+        closeCurrentReader();
       }
     });
 
