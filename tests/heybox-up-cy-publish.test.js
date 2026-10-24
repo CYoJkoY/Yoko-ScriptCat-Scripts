@@ -33,14 +33,67 @@ test("comment-create RND matches the site HMAC vector", async () => {
   assert.equal(actual, "15:0b5ff148c4143dc8ec50bb56304ef17caf0dbeae61aa4a738048ac139b0c40a3");
 });
 
-test("reader adds RND only when creating a comment", () => {
-  assert.equal(readConstant("COMMENT_CREATE_API_PATH"), "/bbs/app/comment/create");
-  const assignments = source.match(/\._rnd\s*=/g) ?? [];
-  assert.equal(assignments.length, 1);
-  assert.match(
-    source,
-    /if \(path === COMMENT_CREATE_API_PATH\) \{\s*params\._rnd = await createCommentRnd\(params\.nonce, params\._time\);\s*\}/,
+function loadPostReaderApi() {
+  const start = source.indexOf("const postReaderApi = async");
+  const end = source.indexOf("const fetchFavourFolders = async", start);
+  assert.ok(start >= 0 && end > start, "Missing postReaderApi block");
+  return new Function(
+    "createApiParams",
+    "createCommentRnd",
+    "getHeyboxId",
+    "fetchWithTimeout",
+    "COMMENT_CREATE_API_PATH",
+    "\"use strict\";\n"
+      + source.slice(start, end)
+      + "\nreturn postReaderApi;",
   );
+}
+
+test("reader sends RND only in the serialized comment-create request", async () => {
+  const nonce = "0123456789ABCDEF0123456789ABCDEF";
+  const timestamp = "1729728000";
+  const commentCreatePath = "/bbs/app/comment/create";
+  const expectedRnd = "15:0b5ff148c4143dc8ec50bb56304ef17caf0dbeae61aa4a738048ac139b0c40a3";
+  const requests = [];
+  const requestedPaths = [];
+  const postReaderApi = loadPostReaderApi()(
+    (path) => {
+      requestedPaths.push(path);
+      return { nonce, _time: timestamp, hkey: "fixture-hkey" };
+    },
+    loadCommentRnd(),
+    () => "fixture-user",
+    async (url, options) => {
+      requests.push({ url, options });
+      return { ok: true, json: async () => ({ status: "ok", result: {} }) };
+    },
+    commentCreatePath,
+  );
+
+  await postReaderApi(commentCreatePath, {
+    is_cy: 1,
+    link_id: "fixture-link",
+    reply_id: "-1",
+    root_id: "-1",
+    text: "fixture text",
+  });
+  await postReaderApi("/bbs/app/link/favour", { favour_type: 1, link_id: "fixture-link" });
+
+  assert.deepEqual(requestedPaths, [commentCreatePath, "/bbs/app/link/favour"]);
+  assert.equal(requests.length, 2);
+  const commentUrl = new URL(requests[0].url);
+  assert.equal(commentUrl.searchParams.get("_rnd"), expectedRnd);
+  assert.equal(commentUrl.searchParams.get("nonce"), nonce);
+  assert.equal(commentUrl.searchParams.get("_time"), timestamp);
+  assert.equal(commentUrl.searchParams.get("target"), "heybox_app");
+  assert.deepEqual(Object.fromEntries(new URLSearchParams(requests[0].options.body)), {
+    is_cy: "1",
+    link_id: "fixture-link",
+    reply_id: "-1",
+    root_id: "-1",
+    text: "fixture text",
+  });
+  assert.equal(new URL(requests[1].url).searchParams.has("_rnd"), false);
 });
 
 test("reader keeps the existing comment-create form fields", () => {
