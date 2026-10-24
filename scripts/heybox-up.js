@@ -305,6 +305,8 @@
   const PAGE_MUTATION_REGION_ENTRIES = Object.entries(PAGE_MUTATION_REGION_SELECTORS);
   const PAGE_MUTATION_REGION_COMBINED = PAGE_MUTATION_REGION_ENTRIES.map((entry) => entry[1]).join(", ");
   const PAGE_MUTATION_IGNORE_SELECTOR = '[id^="heybox-up-"], input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+  const EMBEDDED_MEDIA_SELECTOR = "iframe, video, audio, embed, object";
+  const EMBEDDED_MEDIA_ATTRIBUTES = ["src", "srcdoc", "data"];
   let pageSyncTimer = 0;
   let pageSyncLastRun = 0;
   let pageSyncRoute = readPageRoute();
@@ -435,10 +437,18 @@
     new MutationObserver((records) => {
       let relevant = false;
       for (const record of records) {
+        if (record.type === "attributes"
+          && !(record.target instanceof Element && record.target.matches(EMBEDDED_MEDIA_SELECTOR))) continue;
         relevant = notePageMutationRegions(record) || relevant;
       }
       if (relevant) schedulePageSync();
-    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: EMBEDDED_MEDIA_ATTRIBUTES,
+    });
     window.addEventListener("popstate", scheduleForcedPageSync);
     window.addEventListener("hashchange", scheduleForcedPageSync);
   }
@@ -6808,9 +6818,10 @@
     };
 
     const EMBED_TAGS = new Set(["iframe", "video", "audio", "embed", "object"]);
-    const EMBED_SELECTOR = "iframe, video, audio, embed, object";
+    const EMBED_SELECTOR = EMBEDDED_MEDIA_SELECTOR;
 
-    const isInlineHidden = (node) => node instanceof HTMLElement && (node.style.display === "none" || node.style.visibility === "hidden");
+    const isInlineHidden = (node) => node instanceof HTMLElement
+      && (node.hasAttribute("hidden") || node.style.display === "none" || node.style.visibility === "hidden");
     const isEmbedElement = (node) => node instanceof Element && EMBED_TAGS.has(node.tagName.toLowerCase());
     const isEmbedWrapper = (node) => node instanceof Element && node.tagName.toLowerCase() === "div" && node.classList.contains("iframe");
     const hasHiddenInlineAncestor = (node) => {
@@ -6839,17 +6850,20 @@
       return { source: node, embeds };
     };
 
-    const readEmbedHeight = (node) => {
-      const inlineHeight = node instanceof HTMLElement ? node.style.height.trim() : "";
-      if (/^\d+(\.\d+)?px$/.test(inlineHeight)) {
-        const value = Number.parseFloat(inlineHeight);
-        return value > 0 ? value : 0;
+    const readEmbedDimension = (node, name) => {
+      const inlineValue = node instanceof HTMLElement ? node.style[name].trim() : "";
+      if (/^\d+(\.\d+)?px$/.test(inlineValue)) {
+        const value = Number.parseFloat(inlineValue);
+        return Number.isFinite(value) && value > 0 ? value : 0;
       }
-      const attributeHeight = (node.getAttribute("height") || "").trim();
-      if (!/^\d+(\.\d+)?$/.test(attributeHeight)) return 0;
-      const value = Number.parseFloat(attributeHeight);
+      const attributeValue = (node.getAttribute(name) || "").trim();
+      if (!/^\d+(\.\d+)?$/.test(attributeValue)) return 0;
+      const value = Number.parseFloat(attributeValue);
       return Number.isFinite(value) && value > 0 ? value : 0;
     };
+
+    const readEmbedHeight = (node) => readEmbedDimension(node, "height");
+    const readEmbedWidth = (node) => readEmbedDimension(node, "width");
 
     const isAudioOnlyGroup = (embeds) => embeds.length > 0 && embeds.every((embed) => embed.tagName.toLowerCase() === "audio");
 
@@ -6866,7 +6880,7 @@
         return;
       }
       const attributes = {};
-      for (const name of ["src", "srcdoc", "data"]) {
+      for (const name of EMBEDDED_MEDIA_ATTRIBUTES) {
         const value = embed.getAttribute(name);
         if (value !== null) attributes[name] = value;
       }
@@ -6888,18 +6902,33 @@
           continue;
         }
         if (!(embed instanceof Element)) continue;
-        for (const [name, value] of Object.entries(state.attributes)) embed.setAttribute(name, value);
+        for (const [name, value] of Object.entries(state.attributes)) {
+          const current = embed.getAttribute(name);
+          if (current !== null && current.trim() !== "") continue;
+          embed.setAttribute(name, value);
+        }
       }
       suspendedEmbeds.clear();
     };
 
+    const removeHiddenEmbedDescendants = (clone) => {
+      for (const embed of Array.from(clone.querySelectorAll(EMBED_SELECTOR))) {
+        if (isUnavailableEmbed(embed)) embed.remove();
+      }
+    };
+
     const addEmbedPage = (target, group) => {
       const clone = group.source.cloneNode(true);
+      removeHiddenEmbedDescendants(clone);
       const frame = document.createElement("div");
       frame.className = "hbu-reader-embed";
       frame.append(clone);
+      const width = readEmbedWidth(group.source);
       const height = readEmbedHeight(group.source);
-      if (height > 0) frame.style.height = height + "px";
+      if (width > 0 && height > 0) {
+        frame.style.width = "min(100%, " + width + "px)";
+        frame.style.aspectRatio = width + " / " + height;
+      } else if (height > 0) frame.style.height = height + "px";
       else if (!isAudioOnlyGroup(group.embeds)) frame.style.aspectRatio = "16 / 9";
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
@@ -7051,6 +7080,9 @@
           style?.display || "",
           node.getAttribute("width") || "",
           node.getAttribute("height") || "",
+          node.getAttribute("src") || "",
+          node.getAttribute("srcdoc") || "",
+          node.getAttribute("data") || "",
         ].join("~");
       })
       .join("|");
@@ -7547,6 +7579,8 @@
       scroll.append(createHero(data));
       const pages = document.createDocumentFragment();
       buildPages(pages, data.body);
+      const refreshedSource = readSource();
+      if (refreshedSource !== null) signature = refreshedSource.signature;
       scroll.append(pages);
       scroll.append(createEndPage(data));
       const rail = createRail(data);
