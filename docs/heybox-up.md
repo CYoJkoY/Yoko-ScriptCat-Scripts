@@ -4,7 +4,7 @@
 
 面向小黑盒 Web 端的用户脚本（UserScript）：网页收藏列表不显示“插眼”（CY）条目，但主页收藏总数会把它们算进去。本脚本单独拉取插眼收藏，在收藏页把插眼条目补到收藏列表下方，按帖子去重。社区首页（`/app/bbs/home`）移除右栏热门社区等冗余模块，改为定宽卡片信息流，并支持在右侧预览帖子评论；帖子详情页（`/app/bbs/link/*`）默认进入全屏沉浸阅读，封面与标题上下分栏、正文连续滚动，原生评论收进侧栏，保留原生回复与点赞，并在评论区补充默认/时间/点赞/作者排序。右侧互动栏可直接点赞、收藏与发布 CY，评论区仍可按 `is_cy` 过滤插眼评论。顶部导航收敛为首页、社区、收藏、文章四个「SVG + 文本」入口；帖子页纵轴中心左右两侧提供 SVG 上一篇/下一篇箭头，切换走站内路由，不整页刷新。社区页（`/app/topic/link/*`）提供只在该社区内生效的帖子搜索；宽屏社区首页改为左频道、中信息流、右热度三栏工作台。
 
-- 版本：0.4.34
+- 版本：0.4.35
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://www.xiaoheihe.cn/*`、`https://xiaoheihe.cn/*`
@@ -53,13 +53,13 @@
 
 信息流评论预览走帖子评论树接口 `/bbs/app/link/tree`，除同一套基础参数外传 `heybox_id`（Cookie）、`link_id`、`is_first`（首页为 `1`）、`page`（从 1 起）、`index=1`、`limit=20`、`owner_only=0`。站点网页端还会带一个空的 `h_src` 参数，脚本在 `link_id` 前补齐，缺省时更容易触发风控。响应 `status === "ok"` 时读 `result.comments`（按楼层分组的数组，每组 `comment[0]` 为楼，后续为楼中楼）、`result.link.title` 与 `result.link.comment_num`。单条评论取 `user.username`、`user.avatar`（兼容拼写 `avartar`）、`text`（去标签后截断 400 字）、`create_at`、`support_num`（兼容 `support_count`）、`reply_count`（兼容 `sub_comment_num`）、`is_cy`（`1`、`"1"` 或 `true` 视为插眼）。
 
-沉浸阅读的点赞、收藏与 CY 发布走站点写接口，全部由用户点击触发：`POST /bbs/app/profile/award/link` 传 `link_id` 与 `award_type`（点赞 `1`、取消 `0`）；`POST /bbs/app/link/favour` 传 `favour_type`（收藏 `1`、取消 `2`）、`link_id`、`userid` 与 `folder_id`；`POST /bbs/app/comment/create` 传 `is_cy: 1`、`link_id`、`reply_id: "-1"`、`root_id: "-1"` 与 `text`。收藏夹列表走 `GET /bbs/app/profile/fav/folders`。写请求与站点自身 axios 配置一致，使用 `application/x-www-form-urlencoded;charset=UTF-8` 请求体，query 携带同一套签名参数与 `target=heybox_app`；`status === "login"` 时统一提示「请先登录小黑盒」。
+沉浸阅读的点赞、收藏与 CY 发布走站点写接口，全部由用户点击触发：`POST /bbs/app/profile/award/link` 传 `link_id` 与 `award_type`（点赞 `1`、取消 `0`）；`POST /bbs/app/link/favour` 传 `favour_type`（收藏 `1`、取消 `2`）、`link_id`、`userid` 与 `folder_id`；`POST /bbs/app/comment/create` 传 `is_cy: 1`、`link_id`、`reply_id: "-1"`、`root_id: "-1"` 与 `text`。收藏夹列表走 `GET /bbs/app/profile/fav/folders`。写请求与站点自身 axios 配置一致，使用 `application/x-www-form-urlencoded;charset=UTF-8` 请求体，query 携带同一套签名参数、评论创建专用的 `_rnd` 与 `target=heybox_app`；`status === "login"` 时统一提示「请先登录小黑盒」。
 
 社区内搜索走通用搜索接口 `/bbs/app/api/general/search/v1`，除同一套基础参数外传 `q`、`search_type=link`、`topic_id`（当前社区 ID）、`offset`、`limit=30`、`is_pull_down=0`；时间筛选非空时追加 `time_range`。响应 `status === "ok"` 时读 `result.items` 与 `result.time_range_list`；`result.items` 里的 `space` 条目只用于占位，`offset` 按 `link` 条数推进，空页或没有新增帖子时停止翻页。空结果提示优先取顶层 `search_not_result_tips`，其次取 `result.search_not_result_tips`。脚本先带 `hkey`、`_time`、`nonce` 请求，失败后回退不带签名的请求，两条都失败才显示错误。
 
 ## 三、接口签名
 
-接口要求 `hkey`、`_time`、`nonce` 三个签名参数。脚本内独立实现，全部为纯函数：
+通用接口要求 `hkey`、`_time`、`nonce` 三个签名参数；评论创建接口 `/bbs/app/comment/create` 另要求 `_rnd`。脚本内独立实现：
 
 1. `time = floor(Date.now() / 1000)`。
 2. `nonce = md5(time + Math.random()).toUpperCase()`，32 位十六进制。
@@ -72,6 +72,15 @@
 - 列混合只改写前 4 个字节，但求和必须包含原数组全部 6 个字节，否则校验位偏移。
 
 MD5 覆盖 UTF-8 字节，`md5Hex` 与 Node `crypto` 结果一致。签名只覆盖路径与时间，不覆盖查询参数。
+
+评论创建的 `_rnd` 复用同一次请求的 `nonce` 与 `_time`。站点当前使用 `15` 作为版本前缀，并以 `Z7mFG4tQp9Ws2LxB8H` 作为 HMAC 密钥；签名为小写十六进制：
+
+```text
+message = secret + nonce + _time + ":" + nonce
+_rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
+```
+
+`_rnd` 只加在评论创建请求上，点赞与收藏沿用原有查询参数。
 
 ## 四、UI 与交互
 
@@ -288,6 +297,11 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 - 全站搜索页整栏隐藏右栏；隐藏与撑满规则依赖 `#page-bbs-list`、`.content > .list` 与 `.cpt-right-side.right` 结构，站点改版换容器后需同步选择器。
 
 ## 九、版本历史
+
+### v0.4.35
+
+- 发布 CY 的评论创建请求补上站点当前要求的 `_rnd` 签名，使用本次请求的 `nonce` 与 `_time` 计算 HMAC-SHA256，修复输入内容后提示缺少参数的问题。
+- 点赞与收藏请求保持原有参数，评论创建的五个表单字段与请求体编码不变。
 
 ### v0.4.34
 
@@ -619,7 +633,7 @@ MIT License
 
 - 权限：`@grant none`，无特权 API，无 `GM_xmlhttpRequest`，无跨域提权。
 - 数据访问：读取当前登录账号的 `heybox_id` Cookie，并以该登录态请求小黑盒自身接口 `/bbs/app/profile/bbs/comment/list`（本账号的插眼记录）。信息流评论预览、抽屉分页与 CY 标记会按需请求站点评论树接口 `/bbs/app/link/tree`。点赞、收藏、收藏夹列表与 CY 发布仅在用户点击对应按钮时调用站点写接口或收藏夹接口。
-- 请求签名：接口要求 `hkey`、`_time`、`nonce`。脚本在本地自行计算，不下载、不执行任何外部代码；规则见「三、接口签名」。
+- 请求签名：接口要求 `hkey`、`_time`、`nonce`，评论创建另要求 `_rnd`。脚本在本地自行计算，不下载、不执行任何外部代码；规则见「三、接口签名」。
 - 数据流向：插眼结果只写入本机 `localStorage`（键 `heybox-up.cy.v1:<userid>`），主题与功能开关写入 `heybox-up.theme.v1`、`heybox-up.commentPreview.v1`、`heybox-up.navMotion.v1`；连读顺序只写入当前标签页的 `sessionStorage`。评论内容与排序由站点自己管理，脚本不保存。不向任何第三方服务器发送数据，无统计、无埋点、无追踪。
 - 账号影响：仅在用户主动点击阅读栏的点赞、收藏或 CY 发布时，以当前登录态提交对应操作；浏览、收藏补全、评论预览与排序不改站点数据，也不改写站点收藏总数。
 - 必须登录：写操作未登录时只提示「请先登录小黑盒」，不发起写请求。
