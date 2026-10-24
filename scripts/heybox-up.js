@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.35
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节，窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页与频道页补齐深色适配。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.36
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -123,6 +123,57 @@
     const width = applyFeedWidth(value);
     localStore.write(FEED_WIDTH_KEY, String(width));
     return width;
+  }
+
+  function parseFeedWidthInput(value) {
+    // Empty or invalid input returns null so the caller restores the stored value;
+    // normalizeFeedWidth would silently fall back to the default instead.
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    if (text === "") return null;
+    const parsed = Number(text);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.min(FEED_WIDTH_MAX, Math.max(FEED_WIDTH_MIN, Math.round(parsed)));
+  }
+
+  // Body line height: applies to article body text only; headings, code blocks and
+  // site cards keep their own line heights.
+  const READER_LINE_HEIGHT_KEY = "heybox-up.readerLineHeight.v1";
+  const READER_LINE_HEIGHT_DEFAULT = 1.7;
+  const READER_LINE_HEIGHT_MIN = 1.4;
+  const READER_LINE_HEIGHT_MAX = 2.2;
+  const READER_LINE_HEIGHT_STEP = 0.05;
+
+  function normalizeReaderLineHeight(value) {
+    if (value === null || value === undefined || value === "") return READER_LINE_HEIGHT_DEFAULT;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return READER_LINE_HEIGHT_DEFAULT;
+    return Math.min(READER_LINE_HEIGHT_MAX, Math.max(READER_LINE_HEIGHT_MIN, Math.round(parsed * 100) / 100));
+  }
+
+  function parseReaderLineHeightInput(value) {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    if (text === "") return null;
+    const parsed = Number(text);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.min(READER_LINE_HEIGHT_MAX, Math.max(READER_LINE_HEIGHT_MIN, Math.round(parsed * 100) / 100));
+  }
+
+  function readReaderLineHeight() {
+    return normalizeReaderLineHeight(localStore.read(READER_LINE_HEIGHT_KEY));
+  }
+
+  function applyReaderLineHeight(value) {
+    const lineHeight = normalizeReaderLineHeight(value);
+    document.documentElement.style.setProperty("--heybox-up-reading-line-height", String(lineHeight));
+    return lineHeight;
+  }
+
+  function setReaderLineHeightPreference(value) {
+    const lineHeight = applyReaderLineHeight(value);
+    localStore.write(READER_LINE_HEIGHT_KEY, String(lineHeight));
+    return lineHeight;
   }
 
   // 站点会在评论上带 is_cy，值可能是数字 1、字符串 "1" 或布尔 true。
@@ -472,6 +523,8 @@
   let navMotionToggle = null;
   let readerToggle = null;
   let feedWidthChips = [];
+  let feedWidthInput = null;
+  let readerLineHeightInput = null;
 
   function readThemeMode() {
     return normalizeThemeMode(localStore.read(THEME_STORAGE_KEY));
@@ -1323,6 +1376,8 @@
       --heybox-up-page-w: 1360px;
       /* 中间栏占视口百分比，可在齿轮设置菜单里调；上限避免超宽屏上正文行过长。 */
       --heybox-up-feed-pct: 56;
+      /* Body line height multiplier, adjustable in the settings menu or the reader rail panel. */
+      --heybox-up-reading-line-height: 1.7;
       --heybox-up-feed-w: min(calc(var(--heybox-up-feed-pct) * 1vw), 1180px);
       --heybox-up-radius-card: 14px;
       --heybox-up-gap: 12px;
@@ -1574,7 +1629,7 @@
         background-color: var(--heybox-up-surface) !important;
       }
     }
-    /* 正文：16px/1.85 行高，段落限 46em，连续阅读不串行。 */
+    /* Body: line height comes from the user preference; paragraphs stay under 46em. */
     #page-bbs-link :is(.post__title, .image-text__title, .section-title__content) {
       font-size: 25px !important;
       line-height: 1.42 !important;
@@ -1583,13 +1638,18 @@
     }
     #page-bbs-link :is(.post__content, .image-text__content) {
       font-size: 16px !important;
-      line-height: 1.85 !important;
+      line-height: var(--heybox-up-reading-line-height) !important;
+    }
+    /* The site hard-codes a 25px line height on nested paragraphs; cover body text
+       only so cards and blockquotes keep their own styles. */
+    #page-bbs-link :is(.post__content, .image-text__content) :is(p, li, ul, ol, .line, .order-line, .text):not([class*="com-"], [class*="com-"] *):not(blockquote, blockquote *) {
+      line-height: var(--heybox-up-reading-line-height) !important;
     }
     #page-bbs-link :is(.post__content, .image-text__content) :is(p, blockquote, h1, h2, h3, h4) {
       max-width: 46em;
     }
     #page-bbs-link :is(.post__content, .image-text__content) p {
-      margin: 0 0 .9em !important;
+      margin: 0 0 .72em !important;
     }
     #page-bbs-link :is(.post__content, .image-text__content) h2 {
       margin: 1.4em 0 .6em !important;
@@ -1606,6 +1666,10 @@
       padding: 2px 0 2px 14px !important;
       border-left: 3px solid var(--heybox-up-accent) !important;
       color: var(--heybox-up-muted) !important;
+      line-height: 1.8 !important;
+    }
+    #page-bbs-link :is(.post__content, .image-text__content) blockquote :is(p, .text) {
+      line-height: 1.8 !important;
     }
     /* The native article styles hard-code dark text on nested paragraphs and ordered-list lines. */
     #page-bbs-link :is(.post__content, .image-text__content) :is(p, li, ol, ul, .line, .order-line, .text) {
@@ -2220,6 +2284,7 @@
       box-shadow: 0 14px 34px rgba(0, 0, 0, .18);
     }
     .theme-menu { right: 34px; }
+    .settings-menu { max-height: min(70vh, 560px); overflow-y: auto; overscroll-behavior: contain; }
     .menu[hidden] { display: none; }
     .menu-title {
       padding: 6px 10px 4px; font-size: 11px; letter-spacing: .08em;
@@ -2244,7 +2309,16 @@
     .item[aria-checked="true"] .check { opacity: 1; }
     .sep { height: 1px; margin: 6px 4px; background: var(--hbu-menu-border, rgba(20, 25, 30, .12)); }
     .field { padding: 2px 8px 6px; }
+    .field + .field { padding-top: 0; }
     .field-label { padding: 0 2px 6px; font-size: 11px; letter-spacing: .08em; color: var(--hbu-menu-muted, #6b7280); }
+    .field-row { display: flex; gap: 6px; align-items: center; }
+    .number {
+      width: 76px; height: 28px; padding: 0 8px; border: 1px solid var(--hbu-menu-border, rgba(20, 25, 30, .12));
+      border-radius: 7px; outline: none; background: transparent; color: inherit;
+      font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+    }
+    .number:focus { border-color: var(--heybox-up-accent, #6f8db3); }
+    .unit { font-size: 11px; color: var(--hbu-menu-muted, #6b7280); }
     .chips { display: flex; gap: 4px; }
     .chip {
       flex: 1 1 0; min-width: 0; padding: 5px 0; border: 1px solid var(--hbu-menu-border, rgba(20, 25, 30, .12));
@@ -2303,7 +2377,8 @@
     if (previewToggle) previewToggle.setAttribute("aria-checked", String(readCommentPreviewPreference()));
     if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
     if (readerToggle) readerToggle.setAttribute("aria-checked", String(readReaderPreference()));
-    syncFeedWidthChips(readFeedWidth());
+    syncFeedWidthControls(readFeedWidth());
+    syncNumberInput(readerLineHeightInput, readReaderLineHeight());
   }
 
   function applyTheme(mode, persist) {
@@ -2386,6 +2461,7 @@
       createCommentPreviewToggle(),
       createNavMotionToggle(),
       createReaderToggle(),
+      createReaderLineHeightControl(),
       createThemeMenuSeparator(),
       createFeedWidthControl()
     );
@@ -2538,13 +2614,77 @@
     return node;
   }
 
-  // 中栏宽度：按视口百分比分段，只改 CSS 变量，不重排 DOM。
+  // Feed width: preset chips and the custom percentage share one preference. Only the
+  // CSS variable changes; the DOM is never reflowed by this feature.
   const FEED_WIDTH_STEPS = [40, 48, 56, 64, 72];
+
+  function inputRootActiveElement(input) {
+    const root = input.getRootNode();
+    return root instanceof ShadowRoot ? root.activeElement : document.activeElement;
+  }
+
+  function syncNumberInput(input, value) {
+    if (input === null) return;
+    // Never overwrite the draft the user is still typing into a focused input.
+    if (inputRootActiveElement(input) === input) return;
+    input.value = String(value);
+  }
+
+  function bindNumberInput(input, commit) {
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      commit();
+      input.blur();
+    });
+    input.addEventListener("change", commit);
+    input.addEventListener("blur", commit);
+  }
+
+  function createReaderLineHeightControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "正文行距");
+    const label = document.createElement("div");
+    label.className = "field-label";
+    label.textContent = "正文行距";
+    const row = document.createElement("div");
+    row.className = "field-row";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "number";
+    input.min = String(READER_LINE_HEIGHT_MIN);
+    input.max = String(READER_LINE_HEIGHT_MAX);
+    input.step = String(READER_LINE_HEIGHT_STEP);
+    input.inputMode = "decimal";
+    input.value = String(readReaderLineHeight());
+    input.setAttribute("aria-label", "正文行距倍数");
+    input.title = "正文行距 " + READER_LINE_HEIGHT_MIN + " - " + READER_LINE_HEIGHT_MAX + " 倍";
+    const unit = document.createElement("span");
+    unit.className = "unit";
+    unit.textContent = "倍";
+    row.append(input, unit);
+    wrap.append(label, row);
+    bindNumberInput(input, () => {
+      const next = parseReaderLineHeightInput(input.value);
+      const value = next === null ? readReaderLineHeight() : setReaderLineHeightPreference(next);
+      input.value = String(value);
+      updateThemeEntry();
+    });
+    readerLineHeightInput = input;
+    return wrap;
+  }
 
   function syncFeedWidthChips(value) {
     for (const chip of feedWidthChips) {
       chip.setAttribute("aria-checked", String(Number(chip.dataset.width) === value));
     }
+  }
+
+  function syncFeedWidthControls(value) {
+    syncFeedWidthChips(value);
+    syncNumberInput(feedWidthInput, value);
   }
 
   function createFeedWidthControl() {
@@ -2567,14 +2707,38 @@
       chip.setAttribute("role", "menuitemradio");
       chip.setAttribute("aria-checked", "false");
       chip.addEventListener("click", () => {
-        setFeedWidthPreference(step);
-        syncFeedWidthChips(step);
+        const width = setFeedWidthPreference(step);
+        syncFeedWidthControls(width);
       });
       chips.append(chip);
     }
-    wrap.append(label, chips);
+    const row = document.createElement("div");
+    row.className = "field-row";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "number";
+    input.min = String(FEED_WIDTH_MIN);
+    input.max = String(FEED_WIDTH_MAX);
+    input.step = "1";
+    input.inputMode = "numeric";
+    input.value = String(readFeedWidth());
+    input.setAttribute("aria-label", "自定义中栏宽度百分比");
+    input.title = "自定义中栏宽度 " + FEED_WIDTH_MIN + " - " + FEED_WIDTH_MAX + "%";
+    const unit = document.createElement("span");
+    unit.className = "unit";
+    unit.textContent = "%";
+    row.append(input, unit);
+    bindNumberInput(input, () => {
+      const next = parseFeedWidthInput(input.value);
+      const value = next === null ? readFeedWidth() : setFeedWidthPreference(next);
+      input.value = String(value);
+      syncFeedWidthChips(value);
+      updateThemeEntry();
+    });
+    feedWidthInput = input;
+    wrap.append(label, chips, row);
     feedWidthChips = Array.from(chips.children);
-    syncFeedWidthChips(readFeedWidth());
+    syncFeedWidthControls(readFeedWidth());
     return wrap;
   }
 
@@ -3010,6 +3174,7 @@
   });
   applyTheme(readThemeMode(), false);
   applyFeedWidth(readFeedWidth());
+  applyReaderLineHeight(readReaderLineHeight());
   document.addEventListener(NAV_MOTION_EVENT, (event) => applyNavMotionPreference(event.detail === true));
   applyNavMotionPreference(readNavMotionPreference());
 
@@ -4602,6 +4767,7 @@
 
   const READER_CSS = `
     :root {
+      --heybox-up-reading-line-height: 1.7;
       --hbu-reader-stage: 732px;
       --hbu-reader-bg: #e9eef3;
       --hbu-reader-page: #fff;
@@ -4756,7 +4922,7 @@
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
       width: min(34em, 100%);
       font-size: 18px;
-      line-height: 1.86;
+      line-height: var(--heybox-up-reading-line-height);
       color: var(--hbu-reader-ink);
       overflow-wrap: anywhere;
       white-space: pre-wrap;
@@ -4776,19 +4942,27 @@
     .hbu-reader-rich {
       width: 100%;
       font-size: 18px;
-      line-height: 1.8;
+      line-height: var(--heybox-up-reading-line-height);
       color: var(--hbu-reader-ink);
       overflow-wrap: anywhere;
     }
+    /* The cloned markup keeps a hard-coded 25px line height; cover body text only so
+       cards and blockquotes keep their own styles. */
+    .hbu-reader-rich :is(p, li, ul, ol, .line, .order-line, .text):not([class*="com-"], [class*="com-"] *):not(blockquote, blockquote *) {
+      line-height: var(--heybox-up-reading-line-height) !important;
+    }
     .hbu-reader-rich :is(h1, h2, h3, h4, h5, h6) { margin: 0 0 .7em; font-size: 22px; line-height: 1.45; }
-    .hbu-reader-rich :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 1em; }
+    .hbu-reader-rich :is(p, .text) { margin: 0 0 .72em; }
+    .hbu-reader-rich :is(ul, ol, pre, blockquote, table) { margin: 0 0 1em; }
     .hbu-reader-rich :is(ul, ol) { padding-left: 1.35em; }
     .hbu-reader-rich li + li { margin-top: .45em; }
     .hbu-reader-rich blockquote {
       padding: 2px 0 2px 15px;
       border-left: 3px solid var(--heybox-up-accent, #8fb0cf);
       color: var(--hbu-reader-ink-2);
+      line-height: 1.8;
     }
+    .hbu-reader-rich blockquote :is(p, .text) { line-height: 1.8 !important; }
     .hbu-reader-rich pre {
       padding: 14px 16px;
       border: 1px solid var(--hbu-reader-border);
@@ -4985,6 +5159,15 @@
     .hbu-reader-favour-menu button svg, .hbu-reader-favour-menu button i { flex: none; width: 15px; height: 15px; }
     .hbu-reader-favour-menu button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .hbu-reader-favour-empty { padding: 10px; color: rgba(242, 246, 250, .7); font-size: 12px; line-height: 1.5; }
+    .hbu-reader-spacing-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; width: 196px; max-width: calc(100vw - 84px); padding: 10px; border: 1px solid rgba(255, 255, 255, .16); border-radius: 14px; background: rgba(12, 17, 23, .96); color: #f2f6fa; box-shadow: 0 16px 40px rgba(0, 0, 0, .4); backdrop-filter: blur(12px); }
+    .hbu-reader-spacing-menu[hidden] { display: none; }
+    .hbu-reader-spacing-label { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: rgba(242, 246, 250, .86); }
+    .hbu-reader-spacing-row { display: flex; gap: 7px; align-items: center; }
+    .hbu-reader-spacing-row input { width: 70px; height: 32px; padding: 0 8px; border: 1px solid rgba(255, 255, 255, .2); border-radius: 8px; outline: none; background: rgba(255, 255, 255, .08); color: inherit; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; }
+    .hbu-reader-spacing-row input:focus { border-color: rgba(255, 255, 255, .48); }
+    .hbu-reader-spacing-unit { font-size: 12px; color: rgba(242, 246, 250, .7); }
+    .hbu-reader-spacing-reset { height: 32px; margin-left: auto; padding: 0 9px; border: 1px solid rgba(255, 255, 255, .18); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+    .hbu-reader-spacing-reset:hover { background: rgba(255, 255, 255, .1); }
     .hbu-reader-cy-dialog { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(2, 4, 7, .62); backdrop-filter: blur(4px); }
     .hbu-reader-cy-dialog[hidden] { display: none; }
     .hbu-reader-cy-card { width: min(520px, 100%); padding: 20px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); box-shadow: 0 24px 70px rgba(0, 0, 0, .45); }
@@ -5402,6 +5585,9 @@
     let sheetStatusTimer = 0;
     let favourPanel = null;
     let favourButton = null;
+    let spacingPanel = null;
+    let spacingButton = null;
+    let spacingInput = null;
     let articleId = "";
     let dismissedArticleId = "";
     let signature = "";
@@ -5781,11 +5967,84 @@
       closeFavourMenu();
     }, true);
 
+    const closeSpacingMenu = () => {
+      if (spacingPanel === null) return;
+      spacingPanel.hidden = true;
+      spacingButton?.setAttribute("aria-expanded", "false");
+    };
+    document.addEventListener("pointerdown", (event) => {
+      if (spacingPanel === null || spacingPanel.hidden) return;
+      if (spacingPanel.contains(event.target) || spacingButton?.contains(event.target)) return;
+      closeSpacingMenu();
+    }, true);
+
+    const commitSpacingInput = () => {
+      if (spacingInput === null) return;
+      const next = parseReaderLineHeightInput(spacingInput.value);
+      const value = next === null ? readReaderLineHeight() : setReaderLineHeightPreference(next);
+      spacingInput.value = String(value);
+      syncNumberInput(readerLineHeightInput, value);
+    };
+
+    const openSpacingMenu = (rail, button) => {
+      if (spacingPanel !== null && !spacingPanel.hidden) {
+        closeSpacingMenu();
+        button.focus({ preventScroll: true });
+        return;
+      }
+      closeFavourMenu();
+      if (spacingPanel === null) {
+        const panel = document.createElement("div");
+        panel.className = "hbu-reader-spacing-menu";
+        panel.hidden = true;
+        panel.setAttribute("role", "group");
+        panel.setAttribute("aria-label", "正文行距");
+        const label = document.createElement("div");
+        label.className = "hbu-reader-spacing-label";
+        label.textContent = "正文行距";
+        const row = document.createElement("div");
+        row.className = "hbu-reader-spacing-row";
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = String(READER_LINE_HEIGHT_MIN);
+        input.max = String(READER_LINE_HEIGHT_MAX);
+        input.step = String(READER_LINE_HEIGHT_STEP);
+        input.inputMode = "decimal";
+        input.setAttribute("aria-label", "正文行距倍数");
+        input.title = "正文行距 " + READER_LINE_HEIGHT_MIN + " - " + READER_LINE_HEIGHT_MAX + " 倍";
+        const unit = document.createElement("span");
+        unit.className = "hbu-reader-spacing-unit";
+        unit.textContent = "倍";
+        const reset = document.createElement("button");
+        reset.type = "button";
+        reset.className = "hbu-reader-spacing-reset";
+        reset.textContent = "默认";
+        reset.title = "恢复默认行距 " + READER_LINE_HEIGHT_DEFAULT + " 倍";
+        reset.addEventListener("click", () => {
+          const value = setReaderLineHeightPreference(READER_LINE_HEIGHT_DEFAULT);
+          if (spacingInput !== null) spacingInput.value = String(value);
+          syncNumberInput(readerLineHeightInput, value);
+        });
+        row.append(input, unit, reset);
+        panel.append(label, row);
+        bindNumberInput(input, commitSpacingInput);
+        spacingPanel = panel;
+        spacingInput = input;
+      }
+      spacingButton = button;
+      if (spacingPanel.parentNode !== rail) rail.append(spacingPanel);
+      spacingInput.value = String(readReaderLineHeight());
+      spacingPanel.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      spacingInput.focus({ preventScroll: true });
+    };
+
     const openFavourMenu = async (rail, button) => {
       if (favourPanel !== null && !favourPanel.hidden) {
         closeFavourMenu();
         return;
       }
+      closeSpacingMenu();
       const targetId = articleId;
       const generation = readerGeneration;
       if (linkState === null) await loadLinkState();
@@ -6817,7 +7076,17 @@
       share.title = "分享";
       share.innerHTML = READER_ICONS.share;
       share.addEventListener("click", () => void shareArticle(data));
-      rail.append(avatar, like, favour, cy, comment, share);
+      const spacing = document.createElement("button");
+      spacing.type = "button";
+      spacing.className = "hbu-reader-action";
+      spacing.dataset.action = "spacing";
+      spacing.setAttribute("aria-label", "正文行距设置");
+      spacing.setAttribute("aria-haspopup", "true");
+      spacing.setAttribute("aria-expanded", "false");
+      spacing.title = "正文行距设置";
+      spacing.innerHTML = SETTINGS_ICON;
+      spacing.addEventListener("click", () => openSpacingMenu(rail, spacing));
+      rail.append(avatar, like, favour, cy, comment, share, spacing);
       return rail;
     };
 
@@ -7110,6 +7379,9 @@
       cyStatus = null;
       favourPanel = null;
       favourButton = null;
+      spacingPanel = null;
+      spacingButton = null;
+      spacingInput = null;
       coverIndex = 0;
       coverTotal = 0;
       activeIndex = 0;
@@ -7255,6 +7527,9 @@
       closeSheetButton = null;
       favourPanel = null;
       favourButton = null;
+      spacingPanel = null;
+      spacingButton = null;
+      spacingInput = null;
       host?.remove();
       host = null;
       backdrop?.remove();
@@ -7351,6 +7626,10 @@
         if (cyDialog !== null) {
           event.preventDefault();
           closeCyDialog();
+        } else if (spacingPanel !== null && !spacingPanel.hidden) {
+          event.preventDefault();
+          closeSpacingMenu();
+          spacingButton?.focus({ preventScroll: true });
         } else if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
           closeFavourMenu();
