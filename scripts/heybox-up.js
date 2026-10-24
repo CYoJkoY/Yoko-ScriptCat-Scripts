@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.36
+// @version      0.4.37
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -4999,6 +4999,17 @@
       color: var(--hbu-reader-ink-2) !important;
     }
     .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 32px 20px; background: #05070a; }
+    .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: 32px 20px; background: #05070a; }
+    .hbu-reader-embed {
+      width: min(100%, 960px);
+      margin: auto;
+      overflow: hidden;
+      background: #05070a;
+      border-radius: 12px;
+    }
+    .hbu-reader-embed > * { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+    .hbu-reader-embed :is(iframe, video, embed, object) { display: block !important; width: 100% !important; height: 100% !important; border: 0 !important; }
+    .hbu-reader-embed audio { display: block !important; width: 100% !important; height: auto !important; min-height: 54px !important; border: 0 !important; }
     .hbu-reader-media {
       display: block;
       max-width: 100%;
@@ -5298,6 +5309,7 @@
       .hbu-reader-page[data-kind="text"] { padding: 18px 64px 32px 24px; }
       .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
       .hbu-reader-page[data-kind="media"] { padding: 20px 16px; }
+      .hbu-reader-page[data-kind="embed"] { padding: 20px 16px; }
       .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
       .hbu-reader-rich { font-size: 17px; }
@@ -5322,6 +5334,7 @@
       .hbu-reader-home span { display: none; }
       .hbu-reader-page { padding-right: 64px; }
       .hbu-reader-page[data-kind="media"] { padding-right: 16px; padding-left: 16px; }
+      .hbu-reader-page[data-kind="embed"] { padding-right: 16px; padding-left: 16px; }
       .hbu-reader-caption { padding-right: 64px; }
       .hbu-reader-hint { display: none; }
       .hbu-reader-related { display: none; }
@@ -5619,6 +5632,7 @@
     let ratioSaveTimer = 0;
     let pendingRatio = null;
     let sourceCache = null;
+    const suspendedEmbeds = new Map();
     let nativeActionArticle = null;
     let nativeActionBox = null;
     let nativeFavourButton = null;
@@ -6793,6 +6807,108 @@
       }
     };
 
+    const EMBED_TAGS = new Set(["iframe", "video", "audio", "embed", "object"]);
+    const EMBED_SELECTOR = "iframe, video, audio, embed, object";
+
+    const isInlineHidden = (node) => node instanceof HTMLElement && (node.style.display === "none" || node.style.visibility === "hidden");
+    const isEmbedElement = (node) => node instanceof Element && EMBED_TAGS.has(node.tagName.toLowerCase());
+    const isEmbedWrapper = (node) => node instanceof Element && node.tagName.toLowerCase() === "div" && node.classList.contains("iframe");
+    const hasHiddenInlineAncestor = (node) => {
+      let current = node.parentElement;
+      while (current !== null) {
+        if (isInlineHidden(current)) return true;
+        current = current.parentElement;
+      }
+      return false;
+    };
+    const isUnavailableEmbed = (node) => isInlineHidden(node) || hasHiddenInlineAncestor(node);
+    const isHiddenEmbedNode = (node) => (isEmbedElement(node) || isEmbedWrapper(node)) && isUnavailableEmbed(node);
+
+    const readEmbedGroup = (node) => {
+      if (!(node instanceof Element) || isInlineHidden(node)) return null;
+      const tag = node.tagName.toLowerCase();
+      if (EMBED_TAGS.has(tag)) return isUnavailableEmbed(node) ? null : { source: node, embeds: [node] };
+      if (isEmbedWrapper(node)) {
+        const embeds = Array.from(node.querySelectorAll(EMBED_SELECTOR)).filter((embed) => !isUnavailableEmbed(embed));
+        return embeds.length === 0 ? null : { source: node, embeds };
+      }
+      const embeds = Array.from(node.querySelectorAll(EMBED_SELECTOR)).filter((embed) => !isUnavailableEmbed(embed));
+      if (embeds.length === 0) return null;
+      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+      if (text !== "" || node.querySelector("img, picture") !== null) return null;
+      return { source: node, embeds };
+    };
+
+    const readEmbedHeight = (node) => {
+      const inlineHeight = node instanceof HTMLElement ? node.style.height.trim() : "";
+      if (/^\d+(\.\d+)?px$/.test(inlineHeight)) {
+        const value = Number.parseFloat(inlineHeight);
+        return value > 0 ? value : 0;
+      }
+      const attributeHeight = (node.getAttribute("height") || "").trim();
+      if (!/^\d+(\.\d+)?$/.test(attributeHeight)) return 0;
+      const value = Number.parseFloat(attributeHeight);
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    };
+
+    const isAudioOnlyGroup = (embeds) => embeds.length > 0 && embeds.every((embed) => embed.tagName.toLowerCase() === "audio");
+
+    const suspendNativeEmbed = (embed) => {
+      if (suspendedEmbeds.has(embed)) return;
+      if (embed instanceof HTMLMediaElement) {
+        suspendedEmbeds.set(embed, {
+          kind: "media",
+          muted: embed.muted,
+          currentTime: Number.isFinite(embed.currentTime) ? embed.currentTime : 0,
+        });
+        embed.muted = true;
+        embed.pause();
+        return;
+      }
+      const attributes = {};
+      for (const name of ["src", "srcdoc", "data"]) {
+        const value = embed.getAttribute(name);
+        if (value !== null) attributes[name] = value;
+      }
+      suspendedEmbeds.set(embed, { kind: "markup", attributes });
+      for (const name of Object.keys(attributes)) embed.removeAttribute(name);
+    };
+
+    const restoreSuspendedEmbeds = () => {
+      for (const [embed, state] of suspendedEmbeds) {
+        if (state.kind === "media" && embed instanceof HTMLMediaElement) {
+          embed.muted = state.muted;
+          if (state.currentTime > 0 && embed.readyState > 0) {
+            try {
+              embed.currentTime = state.currentTime;
+            } catch (error) {
+              console.debug("[HeyBox Up] Failed to restore embedded media position", error);
+            }
+          }
+          continue;
+        }
+        if (!(embed instanceof Element)) continue;
+        for (const [name, value] of Object.entries(state.attributes)) embed.setAttribute(name, value);
+      }
+      suspendedEmbeds.clear();
+    };
+
+    const addEmbedPage = (target, group) => {
+      const clone = group.source.cloneNode(true);
+      const frame = document.createElement("div");
+      frame.className = "hbu-reader-embed";
+      frame.append(clone);
+      const height = readEmbedHeight(group.source);
+      if (height > 0) frame.style.height = height + "px";
+      else if (!isAudioOnlyGroup(group.embeds)) frame.style.aspectRatio = "16 / 9";
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "embed";
+      page.append(frame);
+      target.append(page);
+      for (const embed of group.embeds) suspendNativeEmbed(embed);
+    };
+
     const addTextPages = (target, lines) => {
       let buffer = "";
       let bufferLines = 0;
@@ -6878,6 +6994,7 @@
         const tag = node.tagName.toLowerCase();
         if (tag === "br") { flush(); return; }
         if (tag === "script" || tag === "style") return;
+        if (isHiddenEmbedNode(node)) return;
         if (tag === "img") {
           flush();
           addMediaPage(target, (node.getAttribute("data-src") || node.getAttribute("src") || ""), node.getAttribute("alt") || "");
@@ -6886,6 +7003,12 @@
         if (/^h[1-4]$/.test(tag)) {
           flush();
           addHeadingPage(target, node.textContent || "");
+          return;
+        }
+        const embedGroup = readEmbedGroup(node);
+        if (embedGroup !== null) {
+          flush();
+          addEmbedPage(target, embedGroup);
           return;
         }
         const images = Array.from(node.querySelectorAll("img"));
@@ -6914,6 +7037,23 @@
       for (const child of Array.from(body.childNodes)) visit(child);
       flush();
     };
+
+    const readEmbedSignature = (body) => Array.from(body.querySelectorAll(".iframe, iframe, video, audio, embed, object"))
+      .slice(0, 12)
+      .map((node) => {
+        const style = node instanceof HTMLElement ? node.style : null;
+        return [
+          node.tagName.toLowerCase(),
+          node.classList.contains("iframe") ? "wrapper" : "",
+          style?.width || "",
+          style?.height || "",
+          style?.visibility || "",
+          style?.display || "",
+          node.getAttribute("width") || "",
+          node.getAttribute("height") || "",
+        ].join("~");
+      })
+      .join("|");
 
     const readPager = (side) => {
       const shadow = document.getElementById("heybox-up-post-pager")?.shadowRoot;
@@ -7318,7 +7458,7 @@
         article,
         body,
         titleNode,
-        signature: [articleId, titleNode?.textContent?.length || 0, body.childNodes.length, (body.textContent || "").length, covers.length, tags.length, related.length].join(":"),
+        signature: [articleId, titleNode?.textContent?.length || 0, body.childNodes.length, (body.textContent || "").length, covers.length, tags.length, related.length, readEmbedSignature(body)].join(":"),
       };
     };
 
@@ -7364,6 +7504,7 @@
 
     const render = (data) => {
       if (host === null) return;
+      restoreSuspendedEmbeds();
       readerGeneration += 1;
       observer?.disconnect();
       window.cancelAnimationFrame(scrollRaf);
@@ -7496,6 +7637,7 @@
     };
 
     const teardown = () => {
+      restoreSuspendedEmbeds();
       readerGeneration += 1;
       observer?.disconnect();
       observer = null;
