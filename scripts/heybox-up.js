@@ -5083,6 +5083,12 @@
     return readSessionArray(POST_TRAIL_KEY).filter((id) => typeof id === "string" && /^\d+$/.test(id));
   }
 
+  function readVisitedPostIds(currentId) {
+    const visited = new Set(readPostTrail());
+    if (currentId !== "") visited.add(currentId);
+    return visited;
+  }
+
   function pushPostTrail(id) {
     const trail = readPostTrail();
     if (trail[trail.length - 1] === id) return;
@@ -5096,11 +5102,19 @@
   function resolvePostNeighbors(id) {
     const order = readFeedOrder();
     const index = order.findIndex((item) => item.id === id);
+    const visited = readVisitedPostIds(id);
     let prev = index > 0 ? order[index - 1] : null;
-    let next = index !== -1 && index < order.length - 1 ? order[index + 1] : null;
-    if (!next) {
-      const related = readRelatedPostLinks().filter((item) => item.id !== id);
-      if (related.length > 0) next = related[0];
+    let next = null;
+    if (index !== -1) {
+      for (let cursor = index + 1; cursor < order.length; cursor += 1) {
+        const candidate = order[cursor];
+        if (visited.has(candidate.id)) continue;
+        next = candidate;
+        break;
+      }
+    }
+    if (next === null) {
+      next = readRelatedPostLinks().find((item) => !visited.has(item.id)) || null;
     }
     if (!prev) {
       const trail = readPostTrail();
@@ -6786,13 +6800,15 @@
         card.append(tags);
       }
       page.append(card);
-      if (data.related.length > 0) {
+      const visitedPostIds = readVisitedPostIds(articleId);
+      const visibleRelated = data.related.filter((item) => !visitedPostIds.has(item.id));
+      if (visibleRelated.length > 0) {
         const related = document.createElement("div");
         related.className = "hbu-reader-related";
         const heading = document.createElement("h2");
         heading.textContent = "继续阅读";
         related.append(heading);
-        for (const item of data.related.slice(0, 4)) {
+        for (const item of visibleRelated.slice(0, 4)) {
           const link = document.createElement("a");
           link.href = LINK_HREF_PREFIX + item.id;
           link.textContent = item.title || "帖子 " + item.id;
