@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.14.1
+// @version      0.14.2
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -2245,6 +2245,25 @@
     return true;
   }
 
+  function flashCopyState(button, label) {
+    button.textContent = label;
+    window.setTimeout(() => {
+      if (button.isConnected) button.textContent = "复制";
+    }, 1200);
+  }
+
+  function copyCodeText(button, codeElement) {
+    const text = getCodeText(codeElement);
+    if (!navigator.clipboard?.writeText) {
+      flashCopyState(button, "不可用");
+      return;
+    }
+    navigator.clipboard.writeText(text).then(
+      () => flashCopyState(button, "已复制"),
+      () => flashCopyState(button, "复制失败"),
+    );
+  }
+
   function mountCodeControls(codeElement) {
     if (
       !state.collapseCode ||
@@ -2287,6 +2306,21 @@
       "aria-expanded": "false",
     });
 
+    const copyButton = el("button", {
+      type: "button",
+      className: "ai-turbo-code-copy",
+      "aria-label": "复制整段代码",
+    });
+    copyButton.textContent = "复制";
+    copyButton.addEventListener("click", () => {
+      copyCodeText(copyButton, codeElement);
+    });
+
+    const actionsWrap = el("div", { className: "ai-turbo-code-bar-actions" }, [
+      copyButton,
+      toggleButton,
+    ]);
+
     const bar = el(
       "div",
       {
@@ -2295,7 +2329,7 @@
             ? "ai-turbo-code-bar ai-turbo-code-bar-chatgpt"
             : "ai-turbo-code-bar",
       },
-      [metaWrap, toggleButton],
+      [metaWrap, actionsWrap],
     );
 
     const entry = {
@@ -3916,6 +3950,8 @@
         display: inline-flex !important;
         align-items: center !important;
         gap: 8px !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
         font: 11px ui-monospace, SFMono-Regular, Menlo, monospace !important;
       }
 
@@ -3943,7 +3979,15 @@
         animation: ai-turbo-pulse 1.3s infinite ease-in-out !important;
       }
 
-      .ai-turbo-code-toggle {
+      .ai-turbo-code-bar-actions {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex: 0 0 auto !important;
+      }
+
+      .ai-turbo-code-toggle,
+      .ai-turbo-code-copy {
         appearance: none !important;
         background: rgba(255, 255, 255, 0.035) !important;
         border: 1px solid rgba(153, 166, 161, 0.14) !important;
@@ -3955,7 +3999,8 @@
         transition: all 120ms ease !important;
       }
 
-      .ai-turbo-code-toggle:hover {
+      .ai-turbo-code-toggle:hover,
+      .ai-turbo-code-copy:hover {
         background: rgba(101, 210, 164, 0.08) !important;
         color: #72d6ab !important;
         border-color: rgba(101, 210, 164, 0.28) !important;
@@ -4270,7 +4315,8 @@
         .ai-turbo-vf-pill,
         .ai-turbo-vf-action,
         .ai-turbo-code-bar,
-        .ai-turbo-code-toggle {
+        .ai-turbo-code-toggle,
+        .ai-turbo-code-copy {
           transition: none !important;
         }
       }
@@ -4491,6 +4537,9 @@
         pointer-events: auto;
         width: 392px;
         max-width: 94vw;
+        max-height: calc(100vh - 48px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
         padding: 18px;
         border: 1px solid rgba(153, 166, 161, 0.19);
         border-radius: 14px;
