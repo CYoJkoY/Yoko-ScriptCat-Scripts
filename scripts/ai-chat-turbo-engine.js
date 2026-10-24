@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.5
+// @version      0.15.6
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -3815,20 +3815,34 @@
     return tail.length === 1 ? tail[0] : null;
   }
 
-  /** 子菜单父行：其 aria-controls 指向的菜单里含这一行（Gemini 的 Thinking level） */
+  /**
+   * 在可见弹层里按文案找一行。菜单的 id 每次打开都变、子菜单还可能挂到别处，
+   * 所以顶层找不到时退回到整栈可见弹层，从最上层往下找。
+   */
+  function findRowInOpenMenus(token) {
+    const menus = Array.from(document.querySelectorAll(REASONING_MENU_SELECTOR)).filter((node) => {
+      if (isInsideTurboUI(node)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 1 && rect.height >= 1;
+    });
+    for (let i = menus.length - 1; i >= 0; i -= 1) {
+      const row = findRowIn(menus[i], token);
+      if (row) return row;
+    }
+    return null;
+  }
+
   /**
    * 负责展开子菜单的行。子菜单是点开才渲染的，所以不能要求它里面已经有目标项：
    * 先挑子菜单里已经能看到目标项的那个，没有就退回唯一的可展开行。
    */
   function findSubmenuParent(root, token) {
     if (!root) return null;
-    const parents = Array.from(root.querySelectorAll("[aria-haspopup][aria-controls]")).filter(
-      (node) => {
-        if (isInsideTurboUI(node)) return false;
-        const rect = node.getBoundingClientRect();
-        return rect.width >= 1 && rect.height >= 1;
-      },
-    );
+    const parents = Array.from(root.querySelectorAll("[aria-haspopup]")).filter((node) => {
+      if (isInsideTurboUI(node)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 1 && rect.height >= 1;
+    });
     if (!parents.length) return null;
     const loaded = parents.find((parent) => {
       const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
@@ -3855,7 +3869,7 @@
     const step = (attempt) => {
       const token = tokens[index];
       const root = popupRootFor(control);
-      const hit = findRowIn(root, token);
+      const hit = findRowIn(root, token) || findRowInOpenMenus(token);
       if (hit) {
         triggerSendButton(hit);
         next();
@@ -3863,11 +3877,19 @@
       }
       const parent = findSubmenuParent(root, token);
       if (parent) {
+        // 子菜单可能是悬停展开的，先给一个移入事件，再点
+        parent.dispatchEvent(
+          new PointerEvent("pointerover", { bubbles: true, cancelable: true, view: window }),
+        );
+        parent.dispatchEvent(new MouseEvent("mouseenter", { view: window }));
         triggerSendButton(parent);
         // 子菜单点开才渲染，等它出现再找（最多约 1.4s）
         const lookInSub = (deep) => {
           const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
-          const row = findRowIn(sub, token) || findRowIn(popupRootFor(control), token);
+          const row =
+            findRowIn(sub, token) ||
+            findRowIn(popupRootFor(control), token) ||
+            findRowInOpenMenus(token);
           if (row) {
             triggerSendButton(row);
             next();
