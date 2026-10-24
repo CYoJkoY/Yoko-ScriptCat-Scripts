@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.2
+// @version      0.15.3
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -3786,33 +3786,110 @@
     document.dispatchEvent(esc);
   }
 
-  /** 在刚打开的弹层里按文案找回那次选择；取最内层命中，避免点到包裹容器 */
-  function findChoiceOption(text, trigger, knownBefore) {
-    const candidates = Array.from(document.querySelectorAll(CHOICE_OPTION_SELECTOR)).filter(
-      (node) => {
-        if (isInsideTurboUI(node)) return false;
-        if (node === trigger || trigger.contains(node) || node.contains(trigger)) return false;
-        const rect = node.getBoundingClientRect();
-        return rect.width >= 1 && rect.height >= 1;
-      },
-    );
-    const innermost = (pool) =>
-      pool.reduce((best, node) => (best.contains(node) ? node : best));
-    const exact = candidates.filter((node) => controlLabel(node) === text);
-    if (exact.length) {
-      const inPopup = exact.filter((node) => node.closest(REASONING_MENU_SELECTOR));
-      return innermost(inPopup.length ? inPopup : exact);
-    }
-    // 宽松：平台把多个选项拼在一个按钮上时（如“Flash High”），记录文案包含选项文案。
-    // 只认可点击后才出现的元素，且只唯一命中才点，避免误选模型/强度。
-    const fresh = knownBefore
-      ? candidates.filter((node) => !knownBefore.has(node))
-      : candidates;
-    const loose = fresh.filter((node) => {
-      const label = controlLabel(node);
-      return label.length > 1 && text.includes(label);
+  /** 弹层根：优先用 aria-controls 指向的菜单，避免在整页里捞按钮 */
+  function popupRootFor(control) {
+    const id = control.getAttribute("aria-controls");
+    const byId = id ? document.getElementById(id) : null;
+    return byId || control.closest(REASONING_MENU_SELECTOR);
+  }
+
+  /** 行文案取第一行：Gemini 的模型行是“3.8 Flash”+说明两行 */
+  function rowLabel(node) {
+    const line = (node.innerText || "").split("\n").find((part) => part.trim());
+    return line ? line.replace(/\s+/g, " ").trim() : "";
+  }
+
+  /** 弹层内按文案找一行：先精确，再只认“以该文案结尾”（模型行带版本号前缀） */
+  function findRowIn(root, token) {
+    if (!root || !token) return null;
+    const rows = Array.from(root.querySelectorAll(CHOICE_OPTION_SELECTOR)).filter((node) => {
+      if (isInsideTurboUI(node)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 1 && rect.height >= 1;
     });
-    return loose.length === 1 ? loose[0] : null;
+    const exact = rows.filter((node) => rowLabel(node) === token);
+    if (exact.length) {
+      return exact.reduce((best, node) => (best.contains(node) ? node : best));
+    }
+    const tail = rows.filter((node) => rowLabel(node).endsWith(token));
+    return tail.length === 1 ? tail[0] : null;
+  }
+
+  /** 子菜单父行：其 aria-controls 指向的菜单里含这一行（Gemini 的 Thinking level） */
+  function findSubmenuParent(root, token) {
+    if (!root) return null;
+    const parents = Array.from(root.querySelectorAll("[aria-haspopup][aria-controls]"));
+    return (
+      parents.find((parent) => {
+        const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
+        if (!sub) return false;
+        return Array.from(sub.querySelectorAll(CHOICE_OPTION_SELECTOR)).some(
+          (node) => rowLabel(node) === token,
+        );
+      }) || null
+    );
+  }
+
+  /**
+   * 还原一次选择型记录。触发器文案可能把两级选择拼在一起（Gemini 的“Flash High”），
+   * 所以按词逐层点：主菜单里的行优先，找不到就展开 aria-controls 指向的子菜单再找。
+   * shortcut: only two levels deep, widen if a platform nests selections deeper.
+   */
+  function restoreChoice(saved, control) {
+    const tokens = saved.option.split(/\s+/).filter(Boolean);
+    let index = 0;
+    const done = () => {
+      applyingReasoning = false;
+    };
+    const step = (attempt) => {
+      const token = tokens[index];
+      const root = popupRootFor(control);
+      const hit = findRowIn(root, token);
+      if (hit) {
+        triggerSendButton(hit);
+        next();
+        return;
+      }
+      const parent = findSubmenuParent(root, token);
+      if (parent) {
+        triggerSendButton(parent);
+        window.setTimeout(() => {
+          const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
+          const row = findRowIn(sub, token);
+          if (row) {
+            triggerSendButton(row);
+            next();
+            return;
+          }
+          closeOpenPopup();
+          done();
+        }, 400);
+        return;
+      }
+      if (attempt >= 3) {
+        // 没找到就关掉菜单，不留一个弹层挡着用户
+        closeOpenPopup();
+        done();
+        return;
+      }
+      window.setTimeout(() => step(attempt + 1), 300);
+    };
+    const next = () => {
+      index += 1;
+      if (index >= tokens.length) {
+        done();
+        return;
+      }
+      // 下一层要重新展开弹层；先关掉，避免停在中间状态
+      closeOpenPopup();
+      window.setTimeout(() => {
+        triggerSendButton(control);
+        window.setTimeout(() => step(0), 350);
+      }, 200);
+    };
+    applyingReasoning = true;
+    triggerSendButton(control);
+    window.setTimeout(() => step(0), 350);
   }
 
   /**
@@ -3986,26 +4063,7 @@
 
     if (saved.mode === "choice" && saved.option) {
       if (controlLabel(control) === saved.option) return; // 已经是上次选的那个
-      const knownBefore = new Set(Array.from(document.querySelectorAll(CHOICE_OPTION_SELECTOR)));
-      applyingReasoning = true;
-      triggerSendButton(control);
-      // 弹层有动画，固定延时容易踩空，改为短轮询（共约 1.2s）
-      const tryPick = (attempt) => {
-        const match = findChoiceOption(saved.option, control, knownBefore);
-        if (match) {
-          triggerSendButton(match);
-          applyingReasoning = false;
-          return;
-        }
-        if (attempt >= 3) {
-          // 没找到就关掉菜单，不留一个弹层挡着用户
-          closeOpenPopup();
-          applyingReasoning = false;
-          return;
-        }
-        window.setTimeout(() => tryPick(attempt + 1), 300);
-      };
-      window.setTimeout(() => tryPick(0), 300);
+      restoreChoice(saved, control);
       return;
     }
 
