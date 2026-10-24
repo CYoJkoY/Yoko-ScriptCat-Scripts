@@ -52,7 +52,8 @@ function loadPostReaderApi() {
 test("reader sends RND only in the serialized comment-create request", async () => {
   const nonce = "0123456789ABCDEF0123456789ABCDEF";
   const timestamp = "1729728000";
-  const commentCreatePath = "/bbs/app/comment/create";
+  const commentCreatePath = readConstant("COMMENT_CREATE_API_PATH");
+  assert.equal(commentCreatePath, "/bbs/app/comment/create");
   const expectedRnd = "15:0b5ff148c4143dc8ec50bb56304ef17caf0dbeae61aa4a738048ac139b0c40a3";
   const requests = [];
   const requestedPaths = [];
@@ -104,4 +105,8 @@ test("reader keeps the existing comment-create form fields", () => {
   for (const field of ["is_cy: 1", 'link_id: targetId', 'reply_id: "-1"', 'root_id: "-1"', "text: text"]) {
     assert.ok(submitSource.includes(field), "Missing form field: " + field);
   }
+  assert.ok(
+    submitSource.includes("postReaderApi(COMMENT_CREATE_API_PATH, {"),
+    "submitCy must use COMMENT_CREATE_API_PATH",
+  );
 });
