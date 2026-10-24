@@ -100,6 +100,7 @@
   const FEED_WIDTH_DEFAULT = 56;
   const FEED_WIDTH_MIN = 40;
   const FEED_WIDTH_MAX = 76;
+  const FEED_WIDTH_STEP = 1;
 
   function normalizeFeedWidth(value) {
     // localStorage 未设置时 getItem 返回 null；Number(null) 是 0，会被误夹到下限 40。
@@ -125,6 +126,13 @@
     return width;
   }
 
+  // Number inputs declare a step; a value off that grid is invalid even when it is
+  // inside the range, so callers must restore the stored value instead of rounding.
+  function isStepAligned(value, base, step) {
+    const steps = (value - base) / step;
+    return Math.abs(steps - Math.round(steps)) < 1e-6;
+  }
+
   function parseFeedWidthInput(value) {
     // Empty or invalid input returns null so the caller restores the stored value;
     // normalizeFeedWidth would silently fall back to the default instead.
@@ -133,6 +141,7 @@
     if (text === "") return null;
     const parsed = Number(text);
     if (!Number.isFinite(parsed)) return null;
+    if (!isStepAligned(parsed, FEED_WIDTH_MIN, FEED_WIDTH_STEP)) return null;
     return Math.min(FEED_WIDTH_MAX, Math.max(FEED_WIDTH_MIN, Math.round(parsed)));
   }
 
@@ -157,6 +166,7 @@
     if (text === "") return null;
     const parsed = Number(text);
     if (!Number.isFinite(parsed)) return null;
+    if (!isStepAligned(parsed, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP)) return null;
     return Math.min(READER_LINE_HEIGHT_MAX, Math.max(READER_LINE_HEIGHT_MIN, Math.round(parsed * 100) / 100));
   }
 
@@ -2719,7 +2729,7 @@
     input.className = "number";
     input.min = String(FEED_WIDTH_MIN);
     input.max = String(FEED_WIDTH_MAX);
-    input.step = "1";
+    input.step = String(FEED_WIDTH_STEP);
     input.inputMode = "numeric";
     input.value = String(readFeedWidth());
     input.setAttribute("aria-label", "自定义中栏宽度百分比");
