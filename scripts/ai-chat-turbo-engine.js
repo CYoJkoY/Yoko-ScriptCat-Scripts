@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.8
+// @version      0.15.9
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -3719,13 +3719,49 @@
     } catch (_) {}
   }
 
+  /** Gemini account slots (/u/0, /u/1, ...) keep independent reasoning memories. */
+  function reasoningScope() {
+    const account = location.pathname.match(/^\/u\/(\d+)(?:\/|$)/);
+    return account ? `${location.hostname}#u${account[1]}` : location.hostname;
+  }
+
+  function readReasoningRecord(memory) {
+    const all = memory || loadReasoningMemory();
+    const scoped = all[reasoningScope()];
+    if (scoped && typeof scoped === "object") return scoped;
+    return all[location.hostname] || null;
+  }
+
+  function writeReasoningRecord(record) {
+    const memory = loadReasoningMemory();
+    const scope = reasoningScope();
+    memory[scope] = record;
+    // A scoped write supersedes the old hostname-wide record.
+    if (scope !== location.hostname) delete memory[location.hostname];
+    saveReasoningMemory(memory);
+    return record;
+  }
+
+  function clearReasoningRecord() {
+    const memory = loadReasoningMemory();
+    delete memory[reasoningScope()];
+    delete memory[location.hostname];
+    saveReasoningMemory(memory);
+  }
+
   function isInsideTurboUI(node) {
     if (!node || typeof node.closest !== "function") return false;
     return Boolean(node.closest("[id^='ai-turbo-'], .ai-turbo-code-bar"));
   }
 
   function controlLabel(control) {
+    // Prefer what the user can read; Gemini's aria-label is a sentence such as
+    // "Open mode picker, currently Flash High" and cannot be used as an option.
+    const visible = String(control.innerText || "")
+      .replace(/\s+/g, " ")
+      .trim();
     const raw =
+      visible ||
       control.getAttribute("aria-label") ||
       control.getAttribute("title") ||
       control.textContent ||
@@ -3752,13 +3788,13 @@
     return null;
   }
 
-  /** 控件的稳定身份：选完值后按钮文案会变，所以优先读 aria-label 这类属性 */
+  /** Stable control identity: prefer structural attributes over changeable labels. */
   function controlKey(control) {
     const raw =
-      control.getAttribute("aria-label") ||
       control.getAttribute("data-test-id") ||
       control.getAttribute("data-testid") ||
       control.id ||
+      control.getAttribute("aria-label") ||
       "";
     return String(raw).replace(/\s+/g, " ").trim().slice(0, 60);
   }
@@ -3793,10 +3829,214 @@
     return byId || control.closest(REASONING_MENU_SELECTOR);
   }
 
-  /** 行文案取第一行：Gemini 的模型行是“3.8 Flash”+说明两行 */
+  function hasVisibleMenu() {
+    return Array.from(document.querySelectorAll(REASONING_MENU_SELECTOR)).some(
+      (node) => !isInsideTurboUI(node) && nodeVisible(node),
+    );
+  }
+
+  /** Read row copy from the row's own visible label structure, not a nested menu. */
+  function rowScopedText(node, selector) {
+    if (!(node instanceof Element)) return "";
+    const part = Array.from(node.querySelectorAll(selector)).find((candidate) => {
+      if (isInsideTurboUI(candidate) || !nodeVisible(candidate)) return false;
+      const owner = candidate.closest(
+        "gem-menu-item, [role='menuitem'], [role='menuitemradio'], [role='option'], [role='radio']",
+      );
+      return owner === node;
+    });
+    return part ? String(part.innerText || "").replace(/\s+/g, " ").trim() : "";
+  }
+
+  /** Gemini exposes label / sublabel elements even when innerText flattens them. */
   function rowLabel(node) {
+    const structured = rowScopedText(node, ".label");
+    if (structured) return structured;
     const line = (node.innerText || "").split("\n").find((part) => part.trim());
     return line ? line.replace(/\s+/g, " ").trim() : "";
+  }
+
+  function rowHint(node) {
+    const structured = rowScopedText(node, ".sublabel");
+    if (structured) return structured;
+    const lines = (node.innerText || "")
+      .split("\n")
+      .map((part) => part.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    return lines[1] || "";
+  }
+
+  /** Read selection without requiring radio semantics; Gemini marks rows with class and icon. */
+  function choiceRowSelected(node) {
+    if (!(node instanceof Element)) return null;
+    const checked = node.getAttribute("aria-checked");
+    if (checked !== null && checked !== "") return checked === "true";
+    const selected = node.getAttribute("aria-selected");
+    if (selected !== null && selected !== "") return selected === "true";
+    const dataState = node.getAttribute("data-state");
+    if (dataState === "checked" || dataState === "selected" || dataState === "on") return true;
+    if (dataState === "unchecked" || dataState === "unselected" || dataState === "off") return false;
+    if (node.matches(".selected, .checked")) return true;
+    if (
+      node.querySelector(
+      ".selected, .checked, [aria-label='Selected'], [aria-label='selected'], [aria-label='已选中'], [data-state='checked'], [data-mat-icon-name='check']",
+      )
+    ) {
+      return true;
+    }
+    return null;
+  }
+
+  function menuHasSelectionState(menu) {
+    if (!menu) return false;
+    return Boolean(
+      menu.querySelector(
+        "[aria-checked], [aria-selected], [role='menuitemradio'], [role='radio'], .selected, .checked, [aria-label='Selected'], [aria-label='已选中'], [data-mat-icon-name='check']",
+      ),
+    );
+  }
+
+  function nodeVisible(node) {
+    if (!(node instanceof Element)) return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width >= 1 && rect.height >= 1;
+  }
+
+  /**
+   * Selected state is explicit on some rows and implied by a sibling marker on
+   * others (Gemini marks only the active row).
+   */
+  function choiceRowIsSelected(row) {
+    const explicit = choiceRowSelected(row);
+    if (explicit !== null) return explicit;
+    const menu = row.closest(REASONING_MENU_SELECTOR);
+    return menu && menuHasSelectionState(menu) ? false : null;
+  }
+
+  /** Build the visible parent path, e.g. ["Thinking level"], from nested menu owners. */
+  function choicePathForRow(row) {
+    const path = [];
+    let menu = row.closest(REASONING_MENU_SELECTOR);
+    let depth = 0;
+    while (menu && depth < 5) {
+      const menuId = menu.id;
+      if (!menuId) break;
+      const parent = Array.from(document.querySelectorAll("[aria-controls]")).find(
+        (node) => {
+          if (isInsideTurboUI(node) || !nodeVisible(node)) return false;
+          if (node.getAttribute("aria-controls") !== menuId) return false;
+          const popup = node.getAttribute("aria-haspopup");
+          if (popup === null || popup === "false") return false;
+          const owner = node.closest(REASONING_MENU_SELECTOR);
+          return Boolean(owner && owner !== menu);
+        },
+      );
+      if (!parent) break;
+      const owner = parent.closest(REASONING_MENU_SELECTOR);
+      if (!owner || owner === menu) break;
+      const label = rowLabel(parent);
+      if (label) path.unshift(label);
+      menu = owner;
+      depth += 1;
+    }
+    return path;
+  }
+
+  function choiceRowForTarget(target) {
+    const row = target.closest(
+      "gem-menu-item, [role='menuitem'], [role='menuitemradio'], [role='option'], [aria-checked], [aria-selected]",
+    );
+    if (!row || !row.closest(REASONING_MENU_SELECTOR)) return null;
+    const popup = row.getAttribute("aria-haspopup");
+    if (popup !== null && popup !== "false") return null;
+    return rowLabel(row) ? row : null;
+  }
+
+  /** Parent row for one saved path segment, at the current menu level only. */
+  function findPathParent(menu, label) {
+    if (!menu || !label) return null;
+    const parents = Array.from(
+      menu.querySelectorAll("[aria-haspopup]:not([aria-haspopup='false'])"),
+    ).filter((node) => {
+      if (isInsideTurboUI(node) || !nodeVisible(node)) return false;
+      const owner = node.closest("[role='menu']");
+      if (owner && owner !== menu && menu.contains(owner)) return false;
+      return rowLabel(node) === label;
+    });
+    return parents[0] || null;
+  }
+
+  /** Exact leaf row by its first visible line; never a submenu parent. */
+  function findExactChoiceRow(menu, option) {
+    if (!menu || !option) return null;
+    const rows = Array.from(menu.querySelectorAll(CHOICE_OPTION_SELECTOR)).filter(
+      (node) => {
+        if (isInsideTurboUI(node) || !nodeVisible(node)) return false;
+        if (node.closest(REASONING_MENU_SELECTOR) !== menu) return false;
+        const popup = node.getAttribute("aria-haspopup");
+        if (popup !== null && popup !== "false") return false;
+        return rowLabel(node) === option;
+      },
+    );
+    return rows.reduce((deepest, node) => {
+      if (!deepest) return node;
+      return deepest.contains(node) ? node : deepest;
+    }, null);
+  }
+
+  function submenuForParent(parent) {
+    const id = parent.getAttribute("aria-controls");
+    const menu = id ? document.getElementById(id) : null;
+    return menu && nodeVisible(menu) ? menu : null;
+  }
+
+  /** Whether the trigger already shows the remembered choice. */
+  function choiceLooksApplied(saved, control) {
+    const label = controlLabel(control).toLowerCase();
+    if (!label) return false;
+    if (saved.resultLabel && label === String(saved.resultLabel).toLowerCase()) {
+      return true;
+    }
+    const option = String(saved.option || "").trim();
+    if (!option) return false;
+    if (/\bcurrently\s+/i.test(option)) {
+      const tail = option.replace(/^.*\bcurrently\s+/i, "").trim().toLowerCase();
+      return Boolean(tail) && (label === tail || label.endsWith(` ${tail}`));
+    }
+    const expected = option.toLowerCase();
+    return label === expected || label.endsWith(` ${expected}`);
+  }
+
+  /** Keep the old trigger-label fallback, but discard accessible-name prose. */
+  function choiceTokens(saved) {
+    const option = String(saved.option || "").trim();
+    if (Array.isArray(saved.path) && saved.path.length) {
+      return [...saved.path, option].map((part) => String(part).trim()).filter(Boolean);
+    }
+    const currentValue = option.replace(/^.*\bcurrently\s+/i, "").trim();
+    return currentValue.split(/\s+/).filter(Boolean);
+  }
+
+  /** Replace a legacy or label-only record with the exact row the user chose. */
+  function upgradeChoiceRecord(saved, control, info) {
+    const stableKey = controlKey(control);
+    if (!stableKey || !info || !info.option) return;
+    const samePath =
+      JSON.stringify(Array.isArray(saved.path) ? saved.path : []) ===
+      JSON.stringify(info.path);
+    if (saved.key === stableKey && saved.option === info.option && samePath) return;
+    const labelNow = controlLabel(control);
+    writeReasoningRecord({
+      mode: "choice",
+      key: stableKey,
+      controlLabel: saved.controlLabel || "",
+      path: info.path,
+      option: info.option,
+      hint: info.hint || "",
+      resultLabel: labelNow || saved.resultLabel || "",
+      ts: Date.now(),
+    });
+    renderReasoningStatus();
   }
 
   /** 弹层内按文案找一行：先精确，再只认“以该文案结尾”（模型行带版本号前缀） */
@@ -3869,26 +4109,194 @@
     return loaded || (parents.length === 1 ? parents[0] : null);
   }
 
+  function choiceRowInfo(row) {
+    if (!row || !row.isConnected) return null;
+    const option = rowLabel(row);
+    if (!option) return null;
+    return { option, hint: rowHint(row), path: choicePathForRow(row) };
+  }
+
   /**
-   * 还原一次选择型记录。触发器文案可能把两级选择拼在一起（Gemini 的“Flash High”），
-   * 所以按词逐层点：主菜单里的行优先，找不到就展开 aria-controls 指向的子菜单再找。
-   * shortcut: only two levels deep, widen if a platform nests selections deeper.
+   * Restore a path-aware record by walking the exact aria-controls chain.
+   * The final row is checked for its selected marker before and after a click.
    */
-  function restoreChoice(saved, control, onSettled) {
-    const tokens = saved.option.split(/\s+/).filter(Boolean);
-    let index = 0;
+  function restorePathChoice(saved, control, onSettled) {
+    const path = (Array.isArray(saved.path) ? saved.path : [])
+      .map((part) => String(part).trim())
+      .filter(Boolean);
+    const option = String(saved.option || "").trim();
+    if (!option) {
+      if (onSettled) onSettled(false);
+      return;
+    }
+
     let settled = false;
-    const finish = (ok) => {
+    let lastRow = null;
+
+    const finish = (ok, conclusive) => {
       if (settled) return;
       settled = true;
+      const info = ok ? choiceRowInfo(lastRow) : null;
+      window.setTimeout(closeOpenPopup, 100);
+      if (info) {
+        window.setTimeout(() => {
+          if (control.isConnected) upgradeChoiceRecord(saved, control, info);
+        }, 300);
+      }
       applyingReasoning = false;
-      if (onSettled) onSettled(ok);
+      // A missing path or option will not appear on a later attempt; only a slow popup is retried.
+      if (onSettled) onSettled(ok, conclusive === true);
+    };
+
+    const waitForSubmenu = (parent, done, attempt) => {
+      if (settled) return;
+      const sub = submenuForParent(parent);
+      if (sub) {
+        done(sub);
+        return;
+      }
+      if (attempt >= 10) {
+        done(null);
+        return;
+      }
+      window.setTimeout(() => waitForSubmenu(parent, done, attempt + 1), 180);
+    };
+
+    const walk = (menu, index, done, fail) => {
+      if (settled) return;
+      if (!menu) {
+        fail(false);
+        return;
+      }
+      if (index >= path.length) {
+        const row = findExactChoiceRow(menu, option);
+        if (row) done(row);
+        else fail(true);
+        return;
+      }
+      const parent = findPathParent(menu, path[index]);
+      if (!parent) {
+        fail(true);
+        return;
+      }
+      // Some menus expand on hover, so send both events before the click.
+      parent.dispatchEvent(
+        new PointerEvent("pointerover", { bubbles: true, cancelable: true, view: window }),
+      );
+      parent.dispatchEvent(new MouseEvent("mouseenter", { view: window }));
+      triggerSendButton(interactiveTarget(parent));
+      waitForSubmenu(parent, (sub) => {
+        if (!sub) {
+          fail(false);
+          return;
+        }
+        walk(sub, index + 1, done, fail);
+      }, 0);
+    };
+
+    const openRoot = (done, attempt) => {
+      if (settled) return;
+      const root = popupRootFor(control);
+      if (root && nodeVisible(root)) {
+        done(root);
+        return;
+      }
+      const fallback = Array.from(
+        document.querySelectorAll(REASONING_MENU_SELECTOR),
+      ).find((node) => !isInsideTurboUI(node) && nodeVisible(node));
+      if (fallback) {
+        done(fallback);
+        return;
+      }
+      if (attempt >= 10) {
+        finish(false, false);
+        return;
+      }
+      if (attempt === 0) triggerSendButton(interactiveTarget(control));
+      window.setTimeout(() => openRoot(done, attempt + 1), 180);
+    };
+
+    const verifySelection = () => {
+      window.setTimeout(() => {
+        if (settled) return;
+        closeOpenPopup();
+        window.setTimeout(() => {
+          if (settled) return;
+          openRoot((menu) => {
+            walk(
+              menu,
+              0,
+              (row) => {
+                lastRow = row;
+                const selected = choiceRowIsSelected(row);
+                if (selected === true) finish(true);
+                else if (selected === false) finish(false);
+                else finish(choiceLooksApplied(saved, control));
+              },
+              (conclusive) => finish(false, conclusive === true),
+            );
+          }, 0);
+        }, 220);
+      }, 260);
+    };
+
+    applyingReasoning = true;
+    openRoot((menu) => {
+      walk(
+        menu,
+        0,
+        (row) => {
+          lastRow = row;
+          const selected = choiceRowIsSelected(row);
+          if (selected === true) {
+            finish(true);
+            return;
+          }
+          if (selected === null && choiceLooksApplied(saved, control)) {
+            finish(true);
+            return;
+          }
+          triggerSendButton(interactiveTarget(row));
+          verifySelection();
+        },
+        (conclusive) => finish(false, conclusive === true),
+      );
+    }, 0);
+  }
+
+  /**
+   * Legacy fallback: tokenize a saved trigger label and click matching rows.
+   * Path-aware records use restorePathChoice; this keeps old memory valid.
+   */
+  function restoreChoice(saved, control, onSettled) {
+    const tokens = choiceTokens(saved);
+    if (!tokens.length) {
+      if (onSettled) onSettled(false);
+      return;
+    }
+    let index = 0;
+    let settled = false;
+    let lastRow = null;
+    const finish = (ok, conclusive) => {
+      if (settled) return;
+      settled = true;
+      const info = ok ? choiceRowInfo(lastRow) : null;
+      window.setTimeout(closeOpenPopup, 100);
+      if (info) {
+        window.setTimeout(() => {
+          if (control.isConnected) upgradeChoiceRecord(saved, control, info);
+        }, 300);
+      }
+      applyingReasoning = false;
+      if (onSettled) onSettled(ok, conclusive === true);
     };
     const step = (attempt) => {
+      if (settled) return;
       const token = tokens[index];
       const root = popupRootFor(control);
       const hit = findRowIn(root, token) || findRowInOpenMenus(token);
       if (hit) {
+        lastRow = hit;
         triggerSendButton(interactiveTarget(hit));
         next();
         return;
@@ -3903,19 +4311,21 @@
         triggerSendButton(interactiveTarget(parent));
         // 子菜单点开才渲染，等它出现再找（最多约 1.4s）
         const lookInSub = (deep) => {
+          if (settled) return;
           const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
           const row =
             findRowIn(sub, token) ||
             findRowIn(popupRootFor(control), token) ||
             findRowInOpenMenus(token);
           if (row) {
+            lastRow = row;
             triggerSendButton(interactiveTarget(row));
             next();
             return;
           }
           if (deep >= 6) {
             closeOpenPopup();
-            finish(false);
+            finish(false, true);
             return;
           }
           window.setTimeout(() => lookInSub(deep + 1), 200);
@@ -3926,8 +4336,9 @@
       // 首次展开弹层较慢时菜单还不在 DOM 里，多等几轮（约 2s），否则会在空菜单上白点一下
       if (attempt >= 8) {
         // 没找到就关掉菜单，不留一个弹层挡着用户
+        const menuWasOpen = hasVisibleMenu();
         closeOpenPopup();
-        finish(false);
+        finish(false, menuWasOpen);
         return;
       }
       window.setTimeout(() => step(attempt + 1), 250);
@@ -3950,55 +4361,84 @@
     window.setTimeout(() => step(0), 350);
   }
 
-  /**
-   * 控件文案变了 = 用户在这个弹层里换了选项。
-   * 不猜弹层结构：只记控件最后显示的是哪个选项，恢复时再按文案点回去。
-   */
-  function observeControlChoice(control, labelBefore) {
+  /** Record a visible trigger-label change as a generic choice fallback. */
+  function observeControlChoice(control, labelBefore, startedAt) {
     [400, 900, 1600, 2600].forEach((delay) => {
       window.setTimeout(() => {
         if (applyingReasoning || !control.isConnected) return;
         const labelNow = controlLabel(control);
         if (!labelNow || labelNow === labelBefore) return;
         const memory = loadReasoningMemory();
-        const saved = memory[location.hostname];
-        if (saved && saved.mode === "choice" && saved.option === labelNow) return;
-        memory[location.hostname] = {
+        const saved = readReasoningRecord(memory);
+        if (saved && saved.mode === "choice") {
+          // A path-aware record from this same click is richer than the label.
+          if (startedAt && saved.ts && saved.ts >= startedAt) return;
+          if (saved.option === labelNow) return;
+        }
+        writeReasoningRecord({
           mode: "choice",
           key: controlKey(control),
           controlLabel: labelBefore,
           option: labelNow,
           ts: Date.now(),
-        };
+        });
+        renderReasoningStatus();
+      }, delay);
+    });
+  }
+
+  /** Keep the post-click trigger label for fast, non-intrusive state checks. */
+  function captureChoiceResult(trigger, record) {
+    [300, 700, 1400, 2400].forEach((delay) => {
+      window.setTimeout(() => {
+        if (applyingReasoning || !trigger.isConnected) return;
+        const labelNow = controlLabel(trigger);
+        if (!labelNow || labelNow === record.controlLabel) return;
+        const memory = loadReasoningMemory();
+        const saved = readReasoningRecord(memory);
+        if (!saved || saved.mode !== "choice" || saved.ts !== record.ts) return;
+        if (saved.resultLabel === labelNow) return;
+        saved.resultLabel = labelNow;
         saveReasoningMemory(memory);
         renderReasoningStatus();
       }, delay);
     });
   }
 
-  /** 弹层里带单选语义的项被点了：和最近点开的控件配对，记成“控件 → 选项” */
+  /** Pair a menu row with its trigger and record the path to that choice. */
   function pairOptionClick(target) {
-    const option = target.closest(CHOICE_RADIO_SELECTOR);
-    if (!option) return false;
+    const row = choiceRowForTarget(target);
+    if (!row) return false;
     const trigger = reasoningMenuTrigger;
     if (!trigger || !trigger.isConnected) return false;
     if (Date.now() - reasoningMenuTriggerAt > 20000) return false;
-    if (option === trigger || option.contains(trigger)) return false;
-    const optionText = controlLabel(option);
+    if (row === trigger || row.contains(trigger)) return false;
+    const optionText = rowLabel(row);
     if (!optionText) return false;
+    const menu = row.closest(REASONING_MENU_SELECTOR);
+    const path = choicePathForRow(row);
+    const explicitChoice = row.matches(CHOICE_RADIO_SELECTOR);
+    // Top-level action rows have no selection marker and must not be recorded.
+    if (!explicitChoice && !(path.length && menuHasSelectionState(menu))) {
+      return false;
+    }
     const triggerLabel = reasoningMenuTriggerLabel;
+    const hint = rowHint(row);
+    const ts = Date.now();
+    const record = {
+      mode: "choice",
+      key: controlKey(trigger),
+      controlLabel: triggerLabel,
+      path,
+      option: optionText,
+      hint,
+      ts,
+    };
     window.setTimeout(() => {
       if (applyingReasoning) return;
-      const memory = loadReasoningMemory();
-      memory[location.hostname] = {
-        mode: "choice",
-        key: controlKey(trigger),
-        controlLabel: triggerLabel,
-        option: optionText,
-        ts: Date.now(),
-      };
-      saveReasoningMemory(memory);
+      writeReasoningRecord(record);
       renderReasoningStatus();
+      captureChoiceResult(trigger, record);
     }, 0);
     return true;
   }
@@ -4014,6 +4454,7 @@
     const control = target.closest(REASONING_CONTROL_SELECTOR);
     if (!control) return;
 
+    const startedAt = Date.now();
     const labelBefore = controlLabel(control);
     if (!labelBefore) return;
     const keywordMatch = REASONING_CONTROL_PATTERN.test(labelBefore);
@@ -4028,14 +4469,12 @@
         if (applyingReasoning || !control.isConnected) return;
         const on = controlOnState(control);
         if (on === null) return; // 状态不可读，记了也安全不了
-        const memory = loadReasoningMemory();
-        memory[location.hostname] = { mode: "toggle", label: labelBefore, on, ts: Date.now() };
-        saveReasoningMemory(memory);
+        writeReasoningRecord({ mode: "toggle", label: labelBefore, on, ts: Date.now() });
         renderReasoningStatus();
       }, 0);
     }
 
-    observeControlChoice(control, labelBefore);
+    observeControlChoice(control, labelBefore, startedAt);
   }
 
   // 点击被脱水的空白占位区即恢复该轮渲染，单向不回退
@@ -4061,15 +4500,19 @@
       reasoningStatusNode.textContent = "推理记忆：已关闭";
       return;
     }
-    const saved = loadReasoningMemory()[location.hostname];
+    const saved = readReasoningRecord();
     if (!saved || !saved.mode) {
       reasoningStatusNode.textContent =
         "推理记忆：未记录（在页面里点一次强度/模型选项即可）";
       return;
     }
+    const pathText =
+      saved.mode === "choice" && Array.isArray(saved.path) && saved.path.length
+        ? `${saved.path.join(" / ")} / `
+        : "";
     const shown =
       saved.mode === "choice"
-        ? `${saved.controlLabel || "控件"} → ${saved.option}`
+        ? `${saved.controlLabel || "控件"} → ${pathText}${saved.option}`
         : `${saved.label}（${saved.on ? "开" : "关"}）`;
     reasoningStatusNode.textContent = `推理记忆：${shown} `;
     reasoningStatusNode.appendChild(
@@ -4078,9 +4521,7 @@
         {
           type: "button",
           onclick: () => {
-            const memory = loadReasoningMemory();
-            delete memory[location.hostname];
-            saveReasoningMemory(memory);
+            clearReasoningRecord();
             renderReasoningStatus();
           },
         },
@@ -4092,25 +4533,34 @@
   /** 按记忆里的身份找回控件：key 优先，其次可见文案 */
   function findRememberedControl(saved) {
     const visible = Array.from(document.querySelectorAll(REASONING_CONTROL_SELECTOR)).filter(
-      (node) => {
-        if (isInsideTurboUI(node)) return false;
-        const rect = node.getBoundingClientRect();
-        return rect.width >= 1 && rect.height >= 1;
-      },
+      (node) => !isInsideTurboUI(node) && nodeVisible(node),
     );
     if (saved.key) {
       const byKey = visible.find((node) => controlKey(node) === saved.key);
       if (byKey) return byKey;
     }
-    if (!saved.controlLabel) return null;
-    const byLabel = visible.find((node) => controlLabel(node) === saved.controlLabel);
-    if (byLabel) return byLabel;
+    if (/,\s*currently\b/i.test(saved.key || "")) {
+      const prefix = String(saved.key).split(/,\s*currently\b/i)[0].trim();
+      const byAccessibleName = visible.find((node) => {
+        const ariaLabel = node.getAttribute("aria-label") || "";
+        return ariaLabel === saved.key || ariaLabel.startsWith(`${prefix},`);
+      });
+      if (byAccessibleName) return byAccessibleName;
+    }
+    if (saved.controlLabel) {
+      const byLabel = visible.find((node) => controlLabel(node) === saved.controlLabel);
+      if (byLabel) return byLabel;
+      const byLabelPrefix = visible.find((node) =>
+        controlLabel(node).startsWith(`${saved.controlLabel} `),
+      );
+      if (byLabelPrefix) return byLabelPrefix;
+    }
     // 文案会随选择变化，最后退一步找最像推理/模型选择的控件
     return visible.find((node) => REASONING_CONTROL_PATTERN.test(controlLabel(node))) || null;
   }
 
   function applyReasoningMemory() {
-    const saved = loadReasoningMemory()[location.hostname];
+    const saved = readReasoningRecord();
     if (!saved || !saved.mode) {
       reasoningRestoreDone = true;
       return;
@@ -4119,14 +4569,30 @@
     if (!control) return; // 页还没渲染好，下次再试
     if (applyingReasoning) return; // 上一次还原还在进行中
 
+    const stableKey = controlKey(control);
+    if (saved.mode === "choice" && stableKey && saved.key !== stableKey) {
+      saved.key = stableKey;
+      writeReasoningRecord(saved);
+    }
+
+    if (saved.mode === "choice" && /,\s*currently\b/i.test(saved.option || "")) {
+      const normalized = String(saved.option).replace(/^.*\bcurrently\s+/i, "").trim();
+      if (normalized) {
+        saved.option = normalized;
+        writeReasoningRecord(saved);
+      }
+    }
+
     if (saved.mode === "choice" && saved.option) {
-      if (controlLabel(control) === saved.option) {
+      if (choiceLooksApplied(saved, control)) {
         reasoningRestoreDone = true;
         return;
       }
-      // 还原序列真正成功才算完成；失败就留给轮询重试（页面初始化慢时首次展开常踩空）
-      restoreChoice(saved, control, (ok) => {
-        reasoningRestoreDone = ok;
+      // Retry only transient failures; an unavailable saved option cannot appear later.
+      const restore = Array.isArray(saved.path) ? restorePathChoice : restoreChoice;
+      restore(saved, control, (ok, conclusive) => {
+        // Retrying a record whose target row is missing only makes the menu flash open forever.
+        reasoningRestoreDone = ok || conclusive === true;
       });
       return;
     }
@@ -4148,7 +4614,7 @@
     reasoningRestoreDone = false;
     reasoningRestoreAttempts = 0;
     if (!state.rememberReasoning) return;
-    if (!loadReasoningMemory()[location.hostname]) return;
+    if (!readReasoningRecord()) return;
     reasoningRestoreTimer = window.setInterval(() => {
       reasoningRestoreAttempts += 1;
       applyReasoningMemory();
