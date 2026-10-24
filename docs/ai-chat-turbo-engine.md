@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.15.1**
+当前版本：**0.15.2**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -283,11 +283,11 @@ pointerdown → mousedown → pointerup → mouseup → click
 - `{ mode: "choice", key, controlLabel, option }`：选择型控件（Gemini 的模型 / 思考强度、ChatGPT 的推理等级）。`key` 取控件的 `data-test-id` / `id` / `aria-label`，`option` 是那一次选择后控件上显示的文案，`controlLabel` 是选之前的文案。不记录任何固定等级词表，所以平台换文案也不会失效。
 
 1. **录制**：两种途径写同一种记录。
-   - 文案变化：点击带弹层语义（`aria-expanded` / `aria-haspopup`）的控件后，在 400 / 900 / 1600 / 2600ms 读控件文案，变了就把新文案记为 `option`。
+   - 文案变化：点击带弹层语义的控件后，在 400 / 900 / 1600 / 2600ms 读控件文案，变了就把新文案记为 `option`。弹层语义包括 `aria-expanded` / `aria-haspopup`，以及 Angular Material / CDK 系的 `gemmenutrigger` / `cdkoverlayorigin` / `data-state` / `.mat-mdc-menu-trigger`（Gemini 的模型选择器就只有后者）。
    - 选项配对：点击控件后 20 秒内点中带单选语义（`aria-checked`、`aria-selected`、`role=menuitemradio/radio`）的选项，把该选项文案与刚才的控件配对。带关键词的开关控件（`深度思考` 等）另走 `toggle` 记录。
 2. **还原**：页面加载与 SPA 路由变化后，以 500ms 间隔最多轮询 40 次（约 20 秒）等待控件渲染完成，然后按 `key` → 旧文案 → 最像推理/模型选择的控件依次定位：
    - 开关型：状态与记录不一致时用 pointer 序列点击一次；
-   - 选择型：控件文案已经是 `option` 就不动；否则点击控件展开弹层，450ms 后按文案找回该选项点击；找不到就收起弹层，不留遮挡。
+   - 选择型：控件文案已经是 `option` 就不动；否则点击控件展开弹层，再以 300ms 间隔最多试 4 次（共约 1.2s，等弹层动画）按文案找回该选项点击；精确文案找不到时，允许“记录文案包含选项文案”的宽容匹配（Gemini 会把模型与强度拼成一个按钮文案，如 `Flash High`），但仅限点击后才出现且唯一命中的元素；仍找不到就收起弹层，不留遮挡。
 3. **去抖**：还原过程中的点击被 `applyingReasoning` 标记屏蔽，不会被当成用户操作而覆盖记录。
 4. **可见性**：面板开关下方显示当前状态（`未记录` / `控件 → 选项` / `标签（开\|关）`），并可一键清除本站记录。
 5. **边界**：平台未暴露开 / 关状态（没有 `aria-pressed`、`aria-checked`、`data-state` 或 active 类名）时只记录不还原，避免把用户的开关反向切掉；控件文案不随选择变化的平台只能靠"选项配对"路径记录。
@@ -398,11 +398,17 @@ pointerdown → mousedown → pointerup → mouseup → click
 - 伪文件托盘的 rAF 追踪仅在存在虚拟文件时运行；页面极度繁忙（大量流式输出 + 频繁重排）时，托盘跟随可能出现一帧延迟，属于权衡选择。
 - AI 生成中若平台将发送按钮替换为"停止生成"按钮，脚本会通过 `isSendLikeButton` 的排除规则跳过；请等生成结束后再发送。
 - 一键交接的等待交接包上限为 **3 分钟**；模型回答极其冗长时可能触发超时，此时生成指令会被复制到剪贴板供手动重试。
-- 推理强度记忆的开关型控件依赖平台把开 / 关状态暴露在无障碍属性上；纯 class 切换的控件能识别 `active / selected / checked / is-on` 形式的类名，其余情况只记录不还原。选择型控件（如 Gemini 的模型 / 思考强度）不靠文案词表，但要求触发器带 `aria-expanded` / `aria-haspopup` 且选项带单选语义（`aria-checked` / `aria-selected` / `role=menuitemradio`），否则无法识别。
+- 推理强度记忆的开关型控件依赖平台把开 / 关状态暴露在无障碍属性上；纯 class 切换的控件能识别 `active / selected / checked / is-on` 形式的类名，其余情况只记录不还原。选择型控件（如 Gemini 的模型 / 思考强度）不靠文案词表，触发器识别覆盖 `aria-expanded` / `aria-haspopup` 与 Angular Material / CDK 的自定义属性；选项优先按单选语义（`aria-checked` / `aria-selected` / `role=menuitemradio`）识别，没有单选语义时靠“控件文案变化”这条路记录。
 
 ---
 
 ## 版本记录
+
+### 0.15.2
+
+- **修复：Gemini 的模型 / 强度选择器不生效。** 该按钮（`data-test-id="bard-mode-menu-button"`）只带 `gemmenutrigger` / `cdkoverlayorigin`，没有 `aria-expanded` / `aria-haspopup`，被 0.15.1 的触发器判定拦掉，导致时长记不下也还原不了。触发器识别现已覆盖 Angular Material / CDK 的自定义属性。
+- **还原更稳。** 等弹层的固定 450ms 改成 300ms 间隔最多 4 次轮询，适配带动画的弹出层。
+- **新增宽容匹配。** Gemini 把模型与强度拼成一个按钮文案（如 `Flash High`），精确等值匹配会落空；现在允许“记录文案包含选项文案”，且只限点击后才出现、唯一命中的元素，避免误点。
 
 ### 0.15.1
 

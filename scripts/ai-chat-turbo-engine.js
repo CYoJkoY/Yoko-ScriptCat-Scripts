@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.1
+// @version      0.15.2
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -3767,7 +3767,12 @@
   function isDropdownTrigger(control) {
     if (control.hasAttribute("aria-expanded")) return true;
     const popup = control.getAttribute("aria-haspopup");
-    return popup !== null && popup !== "false";
+    if (popup !== null && popup !== "false") return true;
+    // Angular Material / CDK 等框架用自定义属性或类名标记弹层触发器，不带 aria-haspopup
+    if (control.hasAttribute("gemmenutrigger") || control.hasAttribute("cdkoverlayorigin")) return true;
+    if (control.matches("[data-state], [data-radix-menu-trigger], .mat-mdc-menu-trigger")) return true;
+    const label = control.getAttribute("aria-label") || "";
+    return /^(open|选择|打开).{0,20}(picker|menu|mode|model)/i.test(label.trim());
   }
 
   function closeOpenPopup() {    const esc = new KeyboardEvent("keydown", {
@@ -3782,20 +3787,32 @@
   }
 
   /** 在刚打开的弹层里按文案找回那次选择；取最内层命中，避免点到包裹容器 */
-  function findChoiceOption(text, trigger) {
-    const matches = Array.from(document.querySelectorAll(CHOICE_OPTION_SELECTOR)).filter(
+  function findChoiceOption(text, trigger, knownBefore) {
+    const candidates = Array.from(document.querySelectorAll(CHOICE_OPTION_SELECTOR)).filter(
       (node) => {
         if (isInsideTurboUI(node)) return false;
         if (node === trigger || trigger.contains(node) || node.contains(trigger)) return false;
-        if (controlLabel(node) !== text) return false;
         const rect = node.getBoundingClientRect();
         return rect.width >= 1 && rect.height >= 1;
       },
     );
-    if (!matches.length) return null;
-    const inPopup = matches.filter((node) => node.closest(REASONING_MENU_SELECTOR));
-    const pool = inPopup.length ? inPopup : matches;
-    return pool.reduce((best, node) => (best.contains(node) ? node : best));
+    const innermost = (pool) =>
+      pool.reduce((best, node) => (best.contains(node) ? node : best));
+    const exact = candidates.filter((node) => controlLabel(node) === text);
+    if (exact.length) {
+      const inPopup = exact.filter((node) => node.closest(REASONING_MENU_SELECTOR));
+      return innermost(inPopup.length ? inPopup : exact);
+    }
+    // 宽松：平台把多个选项拼在一个按钮上时（如“Flash High”），记录文案包含选项文案。
+    // 只认可点击后才出现的元素，且只唯一命中才点，避免误选模型/强度。
+    const fresh = knownBefore
+      ? candidates.filter((node) => !knownBefore.has(node))
+      : candidates;
+    const loose = fresh.filter((node) => {
+      const label = controlLabel(node);
+      return label.length > 1 && text.includes(label);
+    });
+    return loose.length === 1 ? loose[0] : null;
   }
 
   /**
@@ -3969,18 +3986,26 @@
 
     if (saved.mode === "choice" && saved.option) {
       if (controlLabel(control) === saved.option) return; // 已经是上次选的那个
+      const knownBefore = new Set(Array.from(document.querySelectorAll(CHOICE_OPTION_SELECTOR)));
       applyingReasoning = true;
       triggerSendButton(control);
-      window.setTimeout(() => {
-        const match = findChoiceOption(saved.option, control);
+      // 弹层有动画，固定延时容易踩空，改为短轮询（共约 1.2s）
+      const tryPick = (attempt) => {
+        const match = findChoiceOption(saved.option, control, knownBefore);
         if (match) {
           triggerSendButton(match);
-        } else {
+          applyingReasoning = false;
+          return;
+        }
+        if (attempt >= 3) {
           // 没找到就关掉菜单，不留一个弹层挡着用户
           closeOpenPopup();
+          applyingReasoning = false;
+          return;
         }
-        applyingReasoning = false;
-      }, 450);
+        window.setTimeout(() => tryPick(attempt + 1), 300);
+      };
+      window.setTimeout(() => tryPick(0), 300);
       return;
     }
 
