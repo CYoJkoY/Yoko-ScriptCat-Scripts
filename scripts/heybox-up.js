@@ -1682,8 +1682,8 @@
       line-height: 1.8 !important;
     }
     /* The native article styles hard-code dark text on nested paragraphs and ordered-list lines.
-       Cards keep their own colors, matching the line-height exclusion above. */
-    #page-bbs-link :is(.post__content, .image-text__content) :is(p, li, ol, ul, .line, .order-line, .text):not([class*="com-"], [class*="com-"] *) {
+       Cards and blockquotes keep their own colors, matching the line-height exclusion above. */
+    #page-bbs-link :is(.post__content, .image-text__content) :is(p, li, ol, ul, .line, .order-line, .text):not([class*="com-"], [class*="com-"] *):not(blockquote, blockquote *) {
       color: var(--heybox-up-text) !important;
     }
     #page-bbs-link :is(.post__content, .image-text__content) blockquote,
@@ -4990,8 +4990,8 @@
     }
     .hbu-reader-rich :is(a, .prose-link) { color: var(--heybox-up-accent, #4f7ea8); }
     /* Cloned article nodes keep their original dark text colors on nested paragraphs and list lines.
-       Cards keep their own colors, matching the line-height exclusion above. */
-    .hbu-reader-rich :is(p, li, ol, ul, .line, .order-line, .text):not([class*="com-"], [class*="com-"] *) {
+       Cards and blockquotes keep their own colors, matching the line-height exclusion above. */
+    .hbu-reader-rich :is(p, li, ol, ul, .line, .order-line, .text):not([class*="com-"], [class*="com-"] *):not(blockquote, blockquote *) {
       color: var(--hbu-reader-ink) !important;
     }
     .hbu-reader-rich blockquote,
