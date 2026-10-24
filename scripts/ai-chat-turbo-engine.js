@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.7
+// @version      0.15.8
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -3812,7 +3812,10 @@
       return exact.reduce((best, node) => (best.contains(node) ? node : best));
     }
     const tail = rows.filter((node) => rowLabel(node).endsWith(token));
-    return tail.length === 1 ? tail[0] : null;
+    if (tail.length === 1) return tail[0];
+    // 子菜单行把说明挤在同一行（Gemini 的“High Extra thorough”），退回“以该词开头且唯一”
+    const head = rows.filter((node) => rowLabel(node).startsWith(`${token} `));
+    return head.length === 1 ? head[0] : null;
   }
 
   /**
@@ -3847,8 +3850,14 @@
    */
   function findSubmenuParent(root, token) {
     if (!root) return null;
-    const parents = Array.from(root.querySelectorAll("[aria-haspopup]")).filter((node) => {
+    // 只有真能展开的行才算：Gemini 的普通行也带 aria-haspopup="false"，整链会被它们撑满
+    const parents = Array.from(
+      root.querySelectorAll("[aria-haspopup]:not([aria-haspopup='false'])"),
+    ).filter((node) => {
       if (isInsideTurboUI(node)) return false;
+      // 子菜单里的行已经属于下一层，在这一层点它没有意义
+      const owner = node.closest("[role='menu']");
+      if (owner && owner !== root && root.contains(owner)) return false;
       const rect = node.getBoundingClientRect();
       return rect.width >= 1 && rect.height >= 1;
     });
