@@ -63,7 +63,7 @@
 
 1. `time = floor(Date.now() / 1000)`。
 2. `nonce = md5(time + Math.random()).toUpperCase()`，32 位十六进制。
-3. 路径归一化为 `/a/b/c/`，与 35 字符字母表 `AB45STUVWZEFGJ6CH01D237IXYPQRKLMN89` 一起映射，生成 20 字符种子。
+3. `hkey` 的签名输入为 `time + 1`、归一化路径与 `nonce`：路径归一化为 `/a/b/c/`，三部分分别按 35 字符字母表 `AB45STUVWZEFGJ6CH01D237IXYPQRKLMN89` 映射后交织，截取前 20 个字符作为种子。
 4. 种子取 MD5 后，前 5 位映射为 5 字符主体；末 6 位的字符码经列混合与求和后 `% 100` 得到 2 位校验，组合成 `hkey`。
 
 两个容易写错的细节：
@@ -71,7 +71,7 @@
 - `xtime` 左移结果不能对 255 取模，服务端算法保留高位；截断会算出不同的校验位。
 - 列混合只改写前 4 个字节，但求和必须包含原数组全部 6 个字节，否则校验位偏移。
 
-MD5 覆盖 UTF-8 字节，`md5Hex` 与 Node `crypto` 结果一致。`hkey` 签名只覆盖路径与时间，不覆盖查询参数；评论创建的 `_rnd` 则使用本次请求查询参数中的 `nonce` 与 `_time`。
+MD5 覆盖 UTF-8 字节，`md5Hex` 与 Node `crypto` 结果一致。`hkey` 的签名输入包含时间、归一化路径与 `nonce`，不包含 `link_id`、`page` 等其他查询参数；评论创建的 `_rnd` 则使用本次请求查询参数中的 `nonce` 与 `_time`。
 
 评论创建的 `_rnd` 复用同一次请求的 `nonce` 与 `_time`。站点当前使用 `15` 作为版本前缀，并以 `Z7mFG4tQp9Ws2LxB8H` 作为 HMAC 密钥；签名为小写十六进制：
 
