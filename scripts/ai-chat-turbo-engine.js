@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.14.2
+// @version      0.15.0
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -35,7 +35,9 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.13.9";
+  // Read the version from the userscript header so the panel cannot drift.
+  const VERSION =
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "0.0.0";
   const HUD_ID = "ai-turbo-extreme-hud";
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
@@ -1054,6 +1056,7 @@
   let dirtyCodeBlocks = new Set();
   let previousTurns = [];
   let activeTurnSelectorGroup = null;
+  const renderedCheckCache = new Map();
   let selfMutationDepth = 0;
 
   function el(tag, attrs = {}, children = []) {
@@ -1404,13 +1407,18 @@
       return false;
     }
 
+    const cachedResult = renderedCheckCache.get(element);
+    if (cachedResult !== undefined) return cachedResult;
+
     const computedStyle = window.getComputedStyle(element);
-    return (
+    const isRendered =
       computedStyle.display !== "none" &&
       computedStyle.visibility !== "hidden" &&
       computedStyle.visibility !== "collapse" &&
-      element.getClientRects().length > 0
-    );
+      element.getClientRects().length > 0;
+    /* One layout truth per update pass keeps streaming off the layout path. */
+    renderedCheckCache.set(element, isRendered);
+    return isRendered;
   }
 
   function selectChatGPTRootWithMostTurns(roots, turnSelector) {
@@ -1841,25 +1849,38 @@
       turns.length !== previousTurns.length ||
       turns.some((turnElement, index) => turnElement !== previousTurns[index]);
 
-    if (structuralChange) {
+    if (forceFull) {
       turnIndex.clear();
-      turns.forEach((turnElement, index) => {
-        collapseInChatFileBlocks(turnElement);
+    } else if (structuralChange) {
+      /*
+       * A new turn only appends: keep the text of every surviving turn and
+       * re-extract new or dirty ones, so one message costs O(1) not O(n).
+       * shortcut: a text edit the observer never reports stays stale, upgrade
+       * to a periodic full re-sync if a platform does that.
+       */
+      const liveTurns = new Set(turns);
+      for (const indexedTurn of [...turnIndex.keys()]) {
+        if (!liveTurns.has(indexedTurn)) turnIndex.delete(indexedTurn);
+      }
+    }
+
+    for (const turnElement of turns) {
+      collapseInChatFileBlocks(turnElement);
+      const record = turnIndex.get(turnElement);
+      if (!record) {
         turnIndex.set(turnElement, {
-          id: index,
+          id: turnIndex.size,
           element: turnElement,
           text: extractTurnText(turnElement),
         });
-      });
-    } else {
-      for (const turnElement of dirtyTurns) {
-        collapseInChatFileBlocks(turnElement);
-        const record = turnIndex.get(turnElement);
-        if (record) {
-          record.text = extractTurnText(turnElement);
-        } else {
-          fullTurnSyncRequested = true;
-        }
+      } else if (dirtyTurns.has(turnElement)) {
+        record.text = extractTurnText(turnElement);
+      }
+    }
+
+    for (const turnElement of dirtyTurns) {
+      if (!turnIndex.has(turnElement)) {
+        fullTurnSyncRequested = true;
       }
     }
 
@@ -2044,6 +2065,15 @@
   function updateCodeMeta(entry, codeElement) {
     if (!entry || !codeElement?.isConnected) return;
 
+    /* An already rendered, unchanged block has nothing new to show. */
+    if (
+      entry.renderedStaticOnce &&
+      !entry.isDisplayingStreaming &&
+      !dirtyCodeBlocks.has(codeElement)
+    ) {
+      return;
+    }
+
     const currentText = getCodeText(codeElement);
     const currentLen = currentText.length;
     const now = Date.now();
@@ -2077,10 +2107,6 @@
       entry.streamingTimer = setTimeout(() => {
         updateCodeMeta(entry, codeElement);
       }, STREAMING_IDLE_DELAY + 50);
-      return;
-    }
-
-    if (!entry.isDisplayingStreaming && entry.renderedStaticOnce) {
       return;
     }
 
@@ -4327,6 +4353,10 @@
 
   function updateHudDashboard() {
     if (!hudStats) return;
+    /* Rewriting identical text still invalidates style and paint. */
+    const hudSignature = `${state.totalTurns}|${state.hiddenCount}|${state.foldedCodeCount}|${activeVirtualFiles.length}`;
+    if (hudStats.signature === hudSignature) return;
+    hudStats.signature = hudSignature;
     hudStats.total.textContent = String(state.totalTurns);
     hudStats.hidden.textContent = String(state.hiddenCount);
     hudStats.folded.textContent = String(state.foldedCodeCount);
@@ -4540,6 +4570,8 @@
         max-height: calc(100vh - 48px);
         overflow-y: auto;
         overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
         padding: 18px;
         border: 1px solid rgba(153, 166, 161, 0.19);
         border-radius: 14px;
@@ -4552,6 +4584,14 @@
       }
       .modal-backdrop.open .hud-panel { transform: scale(1); }
 
+      @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+        .hud-panel {
+          background: rgba(12, 16, 18, 0.9);
+          -webkit-backdrop-filter: blur(18px) saturate(140%);
+          backdrop-filter: blur(18px) saturate(140%);
+        }
+      }
+
       .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
       .brand-title { font-size: 13px; font-weight: 700; color: #f8fafc; }
       .brand-subtitle { font-size: 10px; color: #64748b; margin-top: 1px; }
@@ -4561,7 +4601,7 @@
       .status-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
       .status-item { padding: 9px; border: 1px solid rgba(153, 166, 161, 0.11); border-radius: 9px; background: #101517; text-align: center; }
       .status-label { font-size: 9px; color: #64748b; display: block; }
-      .status-value { font-size: 14px; font-weight: 700; color: #e8efeb; margin-top: 2px; }
+      .status-value { font-size: 14px; font-weight: 700; color: #e8efeb; margin-top: 2px; font-variant-numeric: tabular-nums; }
 
       .section { padding-top: 10px; border-top: 1px solid rgba(153, 166, 161, 0.1); }
       .section-title { font-size: 10px; font-weight: 700; color: #68746f; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -4594,6 +4634,9 @@
       .result-empty { text-align: center; color: #64748b; }
       .footer-hint { margin-top: 12px; font-size: 9.5px; color: #475569; text-align: center; }
       kbd { padding: 2px 4px; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 4px; color: #94a3b8; font-family: ui-monospace, monospace; }
+
+      .hud-panel button:focus-visible,
+      .hud-panel input:focus-visible { outline: 2px solid rgba(101, 210, 164, 0.55); outline-offset: 2px; }
 
       @media (prefers-reduced-motion: reduce) {
         .modal-backdrop, .hud-panel, .pill-load-progress { transition: none !important; }
@@ -5223,6 +5266,16 @@
       .replace(/\s*```\s*$/, "")
       .trim();
     return isPlainHandoffShape(text) ? text : null;
+  }
+
+  function normalizeHandoffYaml(candidate) {
+    if (!candidate) return null;
+    const yaml = String(candidate)
+      .trim()
+      .replace(/^```(?:yaml|yml)?\s*/i, "")
+      .replace(/\s*```\s*$/, "")
+      .trim();
+    return isHandoffYamlShape(yaml) ? yaml : null;
   }
 
   function extractLatestHandoffText() {
@@ -5878,6 +5931,8 @@
       '[data-user-message-bubble="true"]',
       "[data-chatgpt-agent-turn-start]",
     ].join(",");
+    const anyTurnSelector = `${allTurnSelector},${turnMarkerSelector}`;
+    const codeSelectors = currentPlatform.codeSelectors || ["pre"];
     let structuralChange = false;
     let shouldRequestUpdate = false;
 
@@ -5936,7 +5991,6 @@
         dirtyTurns.add(possibleTurn);
       }
 
-      const codeSelectors = currentPlatform.codeSelectors || ["pre"];
       let possibleCode = null;
 
       if (mutationTarget instanceof Element) {
@@ -5964,10 +6018,8 @@
         if (!(changedNode instanceof Element)) continue;
 
         if (
-          changedNode.matches(allTurnSelector) ||
-          changedNode.querySelector(allTurnSelector) ||
-          changedNode.matches(turnMarkerSelector) ||
-          changedNode.querySelector(turnMarkerSelector)
+          changedNode.matches(anyTurnSelector) ||
+          changedNode.querySelector(anyTurnSelector)
         ) {
           structuralChange = true;
         }
@@ -6001,6 +6053,7 @@
   function runScheduledUpdate() {
     scheduleTimer = null;
     lastUpdateTime = performance.now();
+    renderedCheckCache.clear();
 
     if (selfMutationDepth > 0) {
       requestUpdate();
