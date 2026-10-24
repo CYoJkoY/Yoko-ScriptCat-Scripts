@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.4
+// @version      0.15.5
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -3816,18 +3816,25 @@
   }
 
   /** 子菜单父行：其 aria-controls 指向的菜单里含这一行（Gemini 的 Thinking level） */
+  /**
+   * 负责展开子菜单的行。子菜单是点开才渲染的，所以不能要求它里面已经有目标项：
+   * 先挑子菜单里已经能看到目标项的那个，没有就退回唯一的可展开行。
+   */
   function findSubmenuParent(root, token) {
     if (!root) return null;
-    const parents = Array.from(root.querySelectorAll("[aria-haspopup][aria-controls]"));
-    return (
-      parents.find((parent) => {
-        const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
-        if (!sub) return false;
-        return Array.from(sub.querySelectorAll(CHOICE_OPTION_SELECTOR)).some(
-          (node) => rowLabel(node) === token,
-        );
-      }) || null
+    const parents = Array.from(root.querySelectorAll("[aria-haspopup][aria-controls]")).filter(
+      (node) => {
+        if (isInsideTurboUI(node)) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 1 && rect.height >= 1;
+      },
     );
+    if (!parents.length) return null;
+    const loaded = parents.find((parent) => {
+      const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
+      return sub ? Boolean(findRowIn(sub, token)) : false;
+    });
+    return loaded || (parents.length === 1 ? parents[0] : null);
   }
 
   /**
@@ -3857,17 +3864,23 @@
       const parent = findSubmenuParent(root, token);
       if (parent) {
         triggerSendButton(parent);
-        window.setTimeout(() => {
+        // 子菜单点开才渲染，等它出现再找（最多约 1.4s）
+        const lookInSub = (deep) => {
           const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
-          const row = findRowIn(sub, token);
+          const row = findRowIn(sub, token) || findRowIn(popupRootFor(control), token);
           if (row) {
             triggerSendButton(row);
             next();
             return;
           }
-          closeOpenPopup();
-          finish(false);
-        }, 400);
+          if (deep >= 6) {
+            closeOpenPopup();
+            finish(false);
+            return;
+          }
+          window.setTimeout(() => lookInSub(deep + 1), 200);
+        };
+        window.setTimeout(() => lookInSub(0), 250);
         return;
       }
       // 首次展开弹层较慢时菜单还不在 DOM 里，多等几轮（约 2s），否则会在空菜单上白点一下
