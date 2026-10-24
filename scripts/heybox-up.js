@@ -4486,6 +4486,7 @@
 
   const READER_ICONS = {
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
+    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 10.5 7.5-6 7.5 6"/><path d="M6.5 9.5V20h11V9.5"/><path d="M10 20v-5h4v5"/></svg>',
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>',
     like: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10.5v9H4.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"/><path d="M7 11 10.6 4a2 2 0 0 1 3.8.9V9h4.1a2 2 0 0 1 2 2.4l-1.1 6.2a2.3 2.3 0 0 1-2.3 1.9H7"/></svg>',
     likeOn: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10.5v9H4.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"/><path d="M7 11 10.6 4a2 2 0 0 1 3.8.9V9h4.1a2 2 0 0 1 2 2.4l-1.1 6.2a2.3 2.3 0 0 1-2.3 1.9H7"/></svg>',
@@ -4800,6 +4801,7 @@
     .hbu-reader-related a:hover { background: var(--hbu-reader-subtle); }
     .hbu-reader-end-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
     .hbu-reader-end-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 8px 14px; border: 1px solid var(--hbu-reader-border); border-radius: 99px; background: transparent; color: var(--hbu-reader-ink); font: inherit; font-size: 13px; cursor: pointer; }
+    .hbu-reader-end-actions button[data-home] { border-color: transparent; background: var(--hbu-reader-ink); color: var(--hbu-reader-page); font-weight: 650; }
     .hbu-reader-end-actions button:disabled { opacity: .42; cursor: default; }
     .hbu-reader-end-actions button svg { width: 15px; height: 15px; }
     @media (max-height: 820px) {
@@ -4817,6 +4819,8 @@
     .hbu-reader-head > * { pointer-events: auto; }
     .hbu-reader-round { display: grid; place-items: center; width: 40px; height: 40px; flex: none; padding: 0; border: 1px solid rgba(255, 255, 255, .2); border-radius: 50%; background: rgba(8, 11, 15, .46); color: #fff; cursor: pointer; backdrop-filter: blur(8px); }
     .hbu-reader-round svg { width: 19px; height: 19px; }
+    .hbu-reader-home { display: inline-flex; align-items: center; gap: 6px; height: 40px; flex: none; padding: 0 13px 0 10px; border: 1px solid rgba(255, 255, 255, .2); border-radius: 99px; background: rgba(8, 11, 15, .46); color: #fff; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px); }
+    .hbu-reader-home svg { width: 17px; height: 17px; flex: none; }
     .hbu-reader-head-author { display: flex; gap: 7px; align-items: center; min-width: 0; max-width: 42%; padding: 4px 10px 4px 4px; border: 1px solid rgba(255, 255, 255, .18); border-radius: 99px; background: rgba(8, 11, 15, .46); color: #fff; text-decoration: none; backdrop-filter: blur(8px); }
     .hbu-reader-head-author img { width: 30px; height: 30px; flex: none; border-radius: 50%; object-fit: cover; background: #1e2630; }
     .hbu-reader-head-author span { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -4887,6 +4891,7 @@
     .hbu-reader-progress-bar { flex: 1 1 auto; height: 2px; overflow: hidden; border-radius: 99px; background: rgba(255, 255, 255, .26); }
     .hbu-reader-progress-bar i { display: block; width: 0; height: 100%; background: #fff; transition: width .2s linear; }
     .hbu-reader-hint { color: rgba(255, 255, 255, .72); white-space: nowrap; }
+    body.${READER_CLASS} #${PAGER_ID} { display: none !important; }
     body.${READER_CLASS} #page-bbs-link .link-comment {
       position: fixed !important;
       top: 0 !important;
@@ -5000,11 +5005,14 @@
       .hbu-reader-head-author { max-width: 38%; }
       .hbu-reader-progress { padding: 0 12px; }
       .hbu-reader-round { width: 38px; height: 38px; }
+      .hbu-reader-home { height: 38px; padding: 0 11px 0 9px; }
     }
     @media (max-width: 520px) {
       .hbu-reader-head-author span { display: none; }
       .hbu-reader-head-author { padding-right: 4px; }
       .hbu-reader-follow { min-width: 48px; padding: 0 10px; }
+      .hbu-reader-home { width: 38px; justify-content: center; padding: 0; border-radius: 50%; }
+      .hbu-reader-home span { display: none; }
       .hbu-reader-page { padding-right: 64px; }
       .hbu-reader-page[data-kind="media"] { padding-right: 16px; padding-left: 16px; }
       .hbu-reader-caption { padding-right: 64px; }
@@ -5176,7 +5184,7 @@
     nextButton.addEventListener("click", () => go(nextId));
 
     document.addEventListener("keydown", (event) => {
-      if (host.hidden || event.defaultPrevented) return;
+      if (host.hidden || document.body.classList.contains(READER_CLASS) || event.defaultPrevented) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (isTypingTarget(event.target)) return;
       if (event.key === "[" && prevId !== "") {
@@ -5262,6 +5270,7 @@
     let favourPanel = null;
     let favourButton = null;
     let articleId = "";
+    let dismissedArticleId = "";
     let signature = "";
     let activeIndex = 0;
     let pageCount = 0;
@@ -6554,6 +6563,12 @@
       for (const page of pages) observer.observe(page);
     };
 
+    const closeCurrentReader = () => {
+      dismissedArticleId = articleId;
+      teardown();
+      showToast("已退出当前文章的沉浸阅读");
+    };
+
     const createHead = (data) => {
       const head = document.createElement("div");
       head.className = "hbu-reader-head";
@@ -6564,6 +6579,13 @@
       back.title = "返回";
       back.innerHTML = READER_ICONS.back;
       back.addEventListener("click", () => history.back());
+      const home = document.createElement("button");
+      home.type = "button";
+      home.className = "hbu-reader-home";
+      home.setAttribute("aria-label", "返回社区首页");
+      home.title = "返回社区首页（H）";
+      home.innerHTML = READER_ICONS.home + "<span>社区首页</span>";
+      home.addEventListener("click", () => navigateToPath("/app/bbs/home"));
       const author = document.createElement("a");
       author.className = "hbu-reader-head-author";
       author.href = data.authorHref;
@@ -6594,11 +6616,11 @@
       const exit = document.createElement("button");
       exit.type = "button";
       exit.className = "hbu-reader-round";
-      exit.setAttribute("aria-label", "退出沉浸阅读");
-      exit.title = "退出沉浸阅读（R）";
+      exit.setAttribute("aria-label", "关闭当前文章的沉浸阅读");
+      exit.title = "关闭当前文章的沉浸阅读（R）";
       exit.innerHTML = READER_ICONS.close;
-      exit.addEventListener("click", () => setReaderPreference(false));
-      head.append(back, author, follow, spacer, share, exit);
+      exit.addEventListener("click", closeCurrentReader);
+      head.append(back, home, author, follow, spacer, share, exit);
       return head;
     };
 
@@ -6820,6 +6842,11 @@
       actions.className = "hbu-reader-end-actions";
       const prev = readPager("prev");
       const next = readPager("next");
+      const homeButton = document.createElement("button");
+      homeButton.type = "button";
+      homeButton.dataset.home = "";
+      homeButton.innerHTML = READER_ICONS.home + " 社区首页";
+      homeButton.addEventListener("click", () => navigateToPath("/app/bbs/home"));
       const prevButton = document.createElement("button");
       prevButton.type = "button";
       prevButton.disabled = prev === null;
@@ -6834,7 +6861,7 @@
       topButton.type = "button";
       topButton.textContent = "回到封面";
       topButton.addEventListener("click", () => scrollToPage(0));
-      actions.append(prevButton, topButton, nextButton);
+      actions.append(homeButton, prevButton, topButton, nextButton);
       page.append(actions);
       return page;
     };
@@ -7121,13 +7148,25 @@
 
     const sync = () => {
       const match = /^\/app\/bbs\/link\/(\d+)/.exec(location.pathname);
-      if (match === null || !readReaderPreference()) {
+      if (match === null) {
+        dismissedArticleId = "";
+        if (host !== null || document.body.classList.contains(READER_CLASS)) teardown();
+        signature = "";
+        return;
+      }
+      if (!readReaderPreference()) {
         if (host !== null || document.body.classList.contains(READER_CLASS)) teardown();
         signature = "";
         return;
       }
       const nextArticleId = match[1];
+      if (dismissedArticleId === nextArticleId) {
+        if (host !== null || document.body.classList.contains(READER_CLASS)) teardown();
+        signature = "";
+        return;
+      }
       if (articleId !== nextArticleId) {
+        dismissedArticleId = "";
         flushReaderRatio();
         sourceCache = null;
         nativeActionArticle = null;
@@ -7164,6 +7203,7 @@
         showToast("已退出沉浸阅读，可在设置中重新开启");
         return;
       }
+      dismissedArticleId = "";
       signature = "";
       sync();
     });
@@ -7186,11 +7226,16 @@
           lightbox = null;
         } else {
           event.preventDefault();
-          setReaderPreference(false);
+          closeCurrentReader();
         }
         return;
       }
       if (isTypingTarget(event.target)) return;
+      if (event.key === "h" || event.key === "H") {
+        event.preventDefault();
+        navigateToPath("/app/bbs/home");
+        return;
+      }
       if (event.key === "ArrowRight" && coverInView() && coverTotal > 1) {
         event.preventDefault();
         setCover(coverIndex + 1);
@@ -7219,7 +7264,7 @@
         else void openComments();
       } else if (event.key === "r" || event.key === "R") {
         event.preventDefault();
-        setReaderPreference(false);
+        closeCurrentReader();
       }
     });
 
