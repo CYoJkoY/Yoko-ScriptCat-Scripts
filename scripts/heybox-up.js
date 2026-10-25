@@ -6928,15 +6928,18 @@
 
     const isAudioOnlyGroup = (embeds) => embeds.length > 0 && embeds.every((embed) => embed.tagName.toLowerCase() === "audio");
 
-    const readSuspendedSourceValue = (name) => name === "srcdoc" ? "" : "about:blank";
+    const SUSPENDED_SOURCE_MARKER = "heybox-up-suspended";
+
+    const readSuspendedSourceValue = (name) => name === "srcdoc"
+      ? "<!doctype html><meta name=\"heybox-up-suspended\" content=\"\">"
+      : "about:blank#" + SUSPENDED_SOURCE_MARKER;
 
     const reconcileSuspendedSourceMutations = (embed, state, records) => {
       if (suspendedEmbeds.get(embed) !== state) return;
       for (const record of records) {
         const name = record.attributeName;
         if (name === null) continue;
-        const current = embed.getAttribute(name);
-        if (current !== readSuspendedSourceValue(name)) delete state.attributes[name];
+        delete state.attributes[name];
       }
     };
 
@@ -6962,7 +6965,7 @@
       state.sourceObserver.observe(embed, { attributes: true, attributeFilter: EMBEDDED_MEDIA_SOURCE_ATTRIBUTES });
       suspendedEmbeds.set(embed, state);
       for (const name of Object.keys(attributes)) embed.setAttribute(name, readSuspendedSourceValue(name));
-      reconcileSuspendedSourceMutations(embed, state, state.sourceObserver.takeRecords());
+      state.sourceObserver.takeRecords();
     };
 
     const restoreSuspendedEmbeds = () => {
@@ -6983,11 +6986,7 @@
           reconcileSuspendedSourceMutations(embed, state, state.sourceObserver.takeRecords());
           state.sourceObserver.disconnect();
         }
-        for (const [name, value] of Object.entries(state.attributes)) {
-          const current = embed.getAttribute(name);
-          if (current !== readSuspendedSourceValue(name)) continue;
-          embed.setAttribute(name, value);
-        }
+        for (const [name, value] of Object.entries(state.attributes)) embed.setAttribute(name, value);
       }
       suspendedEmbeds.clear();
     };
