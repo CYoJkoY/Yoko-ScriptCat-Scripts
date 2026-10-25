@@ -307,7 +307,7 @@
   const PAGE_MUTATION_IGNORE_SELECTOR = '[id^="heybox-up-"], input, textarea, select, [contenteditable]:not([contenteditable="false"])';
   const EMBEDDED_MEDIA_SELECTOR = "iframe, video, audio, embed, object";
   const EMBEDDED_MEDIA_WRAPPER_SELECTOR = "div.iframe";
-  const EMBEDDED_MEDIA_OBSERVED_SELECTOR = EMBEDDED_MEDIA_SELECTOR + ", " + EMBEDDED_MEDIA_WRAPPER_SELECTOR;
+  const EMBEDDED_MEDIA_OBSERVED_SELECTOR = `${EMBEDDED_MEDIA_SELECTOR}, ${EMBEDDED_MEDIA_WRAPPER_SELECTOR}`;
   const EMBEDDED_MEDIA_SOURCE_ATTRIBUTES = ["src", "srcdoc", "data"];
   const EMBEDDED_MEDIA_ATTRIBUTES = [...EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, "width", "height", "hidden", "style"];
   // Site layout toggles often land on an ancestor class or visibility attribute, which hides an embed indirectly.
@@ -447,12 +447,7 @@
   function startPageSyncObserver() {
     if (!document.body || !document.body.isConnected) return;
     new MutationObserver((records) => {
-      let relevant = false;
-      for (const record of records) {
-        if (record.type === "attributes" && !isObservedAttributeTarget(record.target)) continue;
-        relevant = notePageMutationRegions(record) || relevant;
-      }
-      if (relevant) schedulePageSync();
+      if (notePageSyncedRecords(records)) schedulePageSync();
     }).observe(document.body, {
       childList: true,
       subtree: true,
@@ -462,6 +457,15 @@
     });
     window.addEventListener("popstate", scheduleForcedPageSync);
     window.addEventListener("hashchange", scheduleForcedPageSync);
+  }
+
+  function notePageSyncedRecords(records) {
+    let relevant = false;
+    for (const record of records) {
+      if (record.type === "attributes" && !isObservedAttributeTarget(record.target)) continue;
+      relevant = notePageMutationRegions(record) || relevant;
+    }
+    return relevant;
   }
 
   const trackedStyleContent = new WeakMap();
@@ -6847,6 +6851,9 @@
       if (!(node instanceof Element) || !node.isConnected) return false;
       const visibility = window.getComputedStyle(node).visibility;
       if (visibility === "hidden" || visibility === "collapse") return true;
+      return hasHiddenDisplayAncestor(node);
+    };
+    const hasHiddenDisplayAncestor = (node) => {
       let current = node;
       while (current !== null && !current.matches(".hb-bbs-image-text, .hb-bbs-post")) {
         if (window.getComputedStyle(current).display === "none") return true;
@@ -6860,18 +6867,23 @@
     const readVisibleEmbeds = (node) => Array.from(node.querySelectorAll(EMBED_SELECTOR))
       .filter((embed) => !isUnavailableEmbed(embed));
 
+    const isTextFreeContainer = (node) => {
+      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+      return text === "" && node.querySelector("img, picture") === null;
+    };
+
+    const readSingleSourceGroup = (source, embeds) => embeds.length === 1 ? { source, embeds } : null;
+
+    const readContainerEmbedGroup = (node, embeds) => {
+      if (embeds.length === 0) return null;
+      if (isEmbedWrapper(node)) return readSingleSourceGroup(node, embeds);
+      return isTextFreeContainer(node) ? readSingleSourceGroup(embeds[0], embeds) : null;
+    };
+
     const readEmbedGroup = (node) => {
       if (!(node instanceof Element) || isUnavailableEmbed(node)) return null;
-      const tag = node.tagName.toLowerCase();
-      if (EMBED_TAGS.has(tag)) return { source: node, embeds: [node] };
-      const embeds = readVisibleEmbeds(node);
-      if (embeds.length === 0) return null;
-      if (isEmbedWrapper(node)) {
-        return embeds.length === 1 ? { source: node, embeds } : null;
-      }
-      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
-      if (text !== "" || node.querySelector("img, picture") !== null) return null;
-      return embeds.length === 1 ? { source: embeds[0], embeds } : null;
+      if (EMBED_TAGS.has(node.tagName.toLowerCase())) return { source: node, embeds: [node] };
+      return readContainerEmbedGroup(node, readVisibleEmbeds(node));
     };
 
     const readEmbedGroups = (root) => {
@@ -6890,20 +6902,25 @@
       return groups;
     };
 
+    const containsEmbedOrWrapper = (node) => node.matches(EMBED_SELECTOR)
+      || isEmbedWrapper(node)
+      || node.querySelector(EMBED_SELECTOR) !== null;
+
+    const readMediaSequenceItem = (node) => {
+      if (node instanceof HTMLImageElement) return { kind: "image", node };
+      if (!containsEmbedOrWrapper(node)) return null;
+      const group = readEmbedGroup(node);
+      return group === null ? null : { kind: "embed", group };
+    };
+
     const readMediaSequence = (root) => {
       if (!(root instanceof Element)) return [];
       const items = [];
       const collect = (node) => {
-        if (node instanceof HTMLImageElement) {
-          items.push({ kind: "image", node });
+        const item = readMediaSequenceItem(node);
+        if (item !== null) {
+          items.push(item);
           return;
-        }
-        if (node.matches(EMBED_SELECTOR) || isEmbedWrapper(node) || node.querySelector(EMBED_SELECTOR) !== null) {
-          const group = readEmbedGroup(node);
-          if (group !== null) {
-            items.push({ kind: "embed", group });
-            return;
-          }
         }
         for (const child of Array.from(node.children)) collect(child);
       };
@@ -6911,16 +6928,17 @@
       return items;
     };
 
+    const readPositiveDimension = (raw, pattern) => {
+      if (!pattern.test(raw)) return 0;
+      const value = Number.parseFloat(raw);
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    };
+
     const readEmbedDimension = (node, name) => {
       const inlineValue = node instanceof HTMLElement ? node.style[name].trim() : "";
-      if (/^\d+(\.\d+)?px$/.test(inlineValue)) {
-        const value = Number.parseFloat(inlineValue);
-        return Number.isFinite(value) && value > 0 ? value : 0;
-      }
+      if (/^\d+(\.\d+)?px$/.test(inlineValue)) return readPositiveDimension(inlineValue, /^\d+(\.\d+)?px$/);
       const attributeValue = (node.getAttribute(name) || "").trim();
-      if (!/^\d+(\.\d+)?$/.test(attributeValue)) return 0;
-      const value = Number.parseFloat(attributeValue);
-      return Number.isFinite(value) && value > 0 ? value : 0;
+      return readPositiveDimension(attributeValue, /^\d+(\.\d+)?$/);
     };
 
     const readEmbedHeight = (node) => readEmbedDimension(node, "height");
@@ -6932,7 +6950,7 @@
 
     const readSuspendedSourceValue = (name) => name === "srcdoc"
       ? "<!doctype html><meta name=\"heybox-up-suspended\" content=\"\">"
-      : "about:blank#" + SUSPENDED_SOURCE_MARKER;
+      : `about:blank#${SUSPENDED_SOURCE_MARKER}`;
 
     const reconcileSuspendedSourceMutations = (embed, state, records) => {
       if (suspendedEmbeds.get(embed) !== state) return;
@@ -6943,18 +6961,17 @@
       }
     };
 
-    const suspendNativeEmbed = (embed) => {
-      if (suspendedEmbeds.has(embed)) return;
-      if (embed instanceof HTMLMediaElement) {
-        suspendedEmbeds.set(embed, {
-          kind: "media",
-          muted: embed.muted,
-          currentTime: Number.isFinite(embed.currentTime) ? embed.currentTime : 0,
-        });
-        embed.muted = true;
-        embed.pause();
-        return;
-      }
+    const suspendMediaEmbed = (embed) => {
+      suspendedEmbeds.set(embed, {
+        kind: "media",
+        muted: embed.muted,
+        currentTime: Number.isFinite(embed.currentTime) ? embed.currentTime : 0,
+      });
+      embed.muted = true;
+      embed.pause();
+    };
+
+    const suspendMarkupEmbed = (embed) => {
       const attributes = {};
       for (const name of EMBEDDED_MEDIA_SOURCE_ATTRIBUTES) {
         const value = embed.getAttribute(name);
@@ -6968,26 +6985,44 @@
       state.sourceObserver.takeRecords();
     };
 
-    const restoreSuspendedEmbeds = () => {
-      for (const [embed, state] of suspendedEmbeds) {
-        if (state.kind === "media" && embed instanceof HTMLMediaElement) {
-          embed.muted = state.muted;
-          if (state.currentTime > 0 && embed.readyState > 0) {
-            try {
-              embed.currentTime = state.currentTime;
-            } catch (error) {
-              console.debug("[HeyBox Up] Failed to restore embedded media position", error);
-            }
-          }
-          continue;
-        }
-        if (!(embed instanceof Element)) continue;
-        if (state.sourceObserver !== null) {
-          reconcileSuspendedSourceMutations(embed, state, state.sourceObserver.takeRecords());
-          state.sourceObserver.disconnect();
-        }
-        for (const [name, value] of Object.entries(state.attributes)) embed.setAttribute(name, value);
+    const suspendNativeEmbed = (embed) => {
+      if (suspendedEmbeds.has(embed)) return;
+      if (embed instanceof HTMLMediaElement) {
+        suspendMediaEmbed(embed);
+        return;
       }
+      suspendMarkupEmbed(embed);
+    };
+
+    const restoreSuspendedMedia = (embed, state) => {
+      embed.muted = state.muted;
+      if (state.currentTime <= 0 || embed.readyState <= 0) return;
+      try {
+        embed.currentTime = state.currentTime;
+      } catch (error) {
+        console.debug("[HeyBox Up] Failed to restore embedded media position", error);
+      }
+    };
+
+    const restoreSuspendedMarkup = (embed, state) => {
+      if (state.sourceObserver !== null) {
+        reconcileSuspendedSourceMutations(embed, state, state.sourceObserver.takeRecords());
+        state.sourceObserver.disconnect();
+      }
+      for (const [name, value] of Object.entries(state.attributes)) embed.setAttribute(name, value);
+    };
+
+    const restoreSuspendedEmbed = (embed, state) => {
+      if (state.kind === "media" && embed instanceof HTMLMediaElement) {
+        restoreSuspendedMedia(embed, state);
+        return;
+      }
+      if (!(embed instanceof Element)) return;
+      restoreSuspendedMarkup(embed, state);
+    };
+
+    const restoreSuspendedEmbeds = () => {
+      for (const [embed, state] of suspendedEmbeds) restoreSuspendedEmbed(embed, state);
       suspendedEmbeds.clear();
     };
 
@@ -7000,28 +7035,44 @@
       });
     };
 
+    const readGroupDimension = (group, reader) => {
+      const ownValue = reader(group.source);
+      if (!isEmbedWrapper(group.source) || ownValue > 0) return ownValue;
+      const declared = group.embeds.find((embed) => reader(embed) > 0);
+      return declared === undefined ? 0 : reader(declared);
+    };
+
+    const applyDefaultEmbedRatio = (frame, group) => {
+      if (isAudioOnlyGroup(group.embeds)) return;
+      frame.style.aspectRatio = "16 / 9";
+    };
+
+    const applyEmbedFrameAspect = (frame, group, width, height) => {
+      if (width > 0 && height > 0) {
+        frame.style.aspectRatio = `${width} / ${height}`;
+        return;
+      }
+      if (height > 0) {
+        frame.style.height = `${height}px`;
+        return;
+      }
+      applyDefaultEmbedRatio(frame, group);
+    };
+
+    const applyEmbedFrameSize = (frame, group) => {
+      const width = readGroupDimension(group, readEmbedWidth);
+      const height = readGroupDimension(group, readEmbedHeight);
+      if (width > 0) frame.style.width = `min(100%, ${width}px)`;
+      applyEmbedFrameAspect(frame, group, width, height);
+    };
+
     const addEmbedPage = (target, group) => {
       const clone = group.source.cloneNode(true);
       removeUnavailableEmbedClones(clone, group.source);
       const frame = document.createElement("div");
       frame.className = "hbu-reader-embed";
       frame.append(clone);
-      let width = readEmbedWidth(group.source);
-      let height = readEmbedHeight(group.source);
-      if (isEmbedWrapper(group.source)) {
-        if (width === 0) {
-          const declaredWidth = group.embeds.find((embed) => readEmbedWidth(embed) > 0);
-          if (declaredWidth !== undefined) width = readEmbedWidth(declaredWidth);
-        }
-        if (height === 0) {
-          const declaredHeight = group.embeds.find((embed) => readEmbedHeight(embed) > 0);
-          if (declaredHeight !== undefined) height = readEmbedHeight(declaredHeight);
-        }
-      }
-      if (width > 0) frame.style.width = "min(100%, " + width + "px)";
-      if (width > 0 && height > 0) frame.style.aspectRatio = width + " / " + height;
-      else if (height > 0) frame.style.height = height + "px";
-      else if (!isAudioOnlyGroup(group.embeds)) frame.style.aspectRatio = "16 / 9";
+      applyEmbedFrameSize(frame, group);
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
       page.dataset.kind = "embed";
@@ -7176,29 +7227,29 @@
       flush();
     };
 
+    const readEmbedSourceSrcs = (node) => JSON.stringify(
+      Array.from(node.querySelectorAll("source")).map((child) => child.getAttribute("src") || "")
+    );
+
+    const readEmbedStyleValue = (node, name) => node instanceof HTMLElement ? node.style[name] || "" : "";
+
     const readEmbedSignature = (body) => Array.from(body.querySelectorAll(".iframe, iframe, video, audio, embed, object"))
-      .map((node) => {
-        const style = node instanceof HTMLElement ? node.style : null;
-        const sourceSrcs = JSON.stringify(
-          Array.from(node.querySelectorAll("source")).map((child) => child.getAttribute("src") || "")
-        );
-        return [
-          node.tagName.toLowerCase(),
-          node.classList.contains("iframe") ? "wrapper" : "",
-          style?.width || "",
-          style?.height || "",
-          style?.visibility || "",
-          style?.display || "",
-          node.getAttribute("width") || "",
-          node.getAttribute("height") || "",
-          node.getAttribute("src") || "",
-          node.getAttribute("srcdoc") || "",
-          node.getAttribute("data") || "",
-          sourceSrcs,
-          node.hasAttribute("hidden") ? "hidden" : "",
-          isUnavailableEmbed(node) ? "hidden" : "visible",
-        ].join("~");
-      })
+      .map((node) => [
+        node.tagName.toLowerCase(),
+        node.classList.contains("iframe") ? "wrapper" : "",
+        readEmbedStyleValue(node, "width"),
+        readEmbedStyleValue(node, "height"),
+        readEmbedStyleValue(node, "visibility"),
+        readEmbedStyleValue(node, "display"),
+        node.getAttribute("width") || "",
+        node.getAttribute("height") || "",
+        node.getAttribute("src") || "",
+        node.getAttribute("srcdoc") || "",
+        node.getAttribute("data") || "",
+        readEmbedSourceSrcs(node),
+        node.hasAttribute("hidden") ? "hidden" : "",
+        isUnavailableEmbed(node) ? "hidden" : "visible",
+      ].join("~"))
       .join("|");
 
     const readPager = (side) => {
@@ -7648,6 +7699,58 @@
       };
     };
 
+    const refreshReaderSignature = () => {
+      const refreshedSource = readSource();
+      if (refreshedSource !== null) signature = refreshedSource.signature;
+    };
+
+    const openLinkedComments = () => {
+      if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) {
+        requestAnimationFrame(() => void openComments());
+      }
+    };
+
+    const settleRatioRestore = (node, ratio) => {
+      const apply = () => {
+        node.scrollTop = (node.scrollHeight - node.clientHeight) * ratio;
+      };
+      apply();
+      let cancelled = false;
+      const stop = () => {
+        cancelled = true;
+        restoring = false;
+      };
+      for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) node.addEventListener(type, stop, { once: true, passive: true });
+      const images = Array.from(node.querySelectorAll("img"));
+      const settle = Promise.race([
+        Promise.allSettled(images.map((image) => image.decode())),
+        new Promise((resolve) => window.setTimeout(resolve, 1200)),
+      ]);
+      settle.then(() => {
+        if (cancelled) return;
+        apply();
+        restoring = false;
+        updateProgress();
+      });
+    };
+
+    const restoreReaderPosition = (ratio, restore) => {
+      if (ratio >= 0) {
+        requestAnimationFrame(() => {
+          const node = host?.querySelector(".hbu-reader-scroll");
+          if (node === null || node === undefined) return;
+          settleRatioRestore(node, ratio);
+        });
+        return;
+      }
+      if (restore <= 0) return;
+      requestAnimationFrame(() => {
+        const pages = host?.querySelectorAll(".hbu-reader-page");
+        pages?.[restore]?.scrollIntoView({ block: "start", behavior: "auto" });
+        setActive(restore);
+      });
+    };
+
     const render = (data) => {
       if (host === null) return;
       restoreSuspendedEmbeds();
@@ -7693,8 +7796,7 @@
       scroll.append(createHero(data));
       const pages = document.createDocumentFragment();
       buildPages(pages, data.body);
-      const refreshedSource = readSource();
-      if (refreshedSource !== null) signature = refreshedSource.signature;
+      refreshReaderSignature();
       scroll.append(pages);
       scroll.append(createEndPage(data));
       const rail = createRail(data);
@@ -7739,40 +7841,8 @@
       restoring = ratio >= 0;
       updateProgress();
       if (ratio >= 0) writeReaderRatio(articleId, ratio);
-      if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) requestAnimationFrame(() => void openComments());
-      if (ratio >= 0) {
-        requestAnimationFrame(() => {
-          const node = host?.querySelector(".hbu-reader-scroll");
-          if (node === null || node === undefined) return;
-          const apply = () => {
-            node.scrollTop = (node.scrollHeight - node.clientHeight) * ratio;
-          };
-          apply();
-          let cancelled = false;
-          const stop = () => {
-            cancelled = true;
-            restoring = false;
-          };
-          for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) node.addEventListener(type, stop, { once: true, passive: true });
-          const images = Array.from(node.querySelectorAll("img"));
-          const settle = Promise.race([
-            Promise.allSettled(images.map((image) => image.decode())),
-            new Promise((resolve) => window.setTimeout(resolve, 1200)),
-          ]);
-          settle.then(() => {
-            if (cancelled) return;
-            apply();
-            restoring = false;
-            updateProgress();
-          });
-        });
-      } else if (restore > 0) {
-        requestAnimationFrame(() => {
-          const pages = host?.querySelectorAll(".hbu-reader-page");
-          pages?.[restore]?.scrollIntoView({ block: "start", behavior: "auto" });
-          setActive(restore);
-        });
-      }
+      openLinkedComments();
+      restoreReaderPosition(ratio, restore);
     };
 
     const showPending = () => {
