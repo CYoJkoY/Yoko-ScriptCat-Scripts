@@ -27,7 +27,8 @@ function loadFeedDiscoveryFactory() {
       + helperSource
       + "\nreturn { normalizeFeedCandidate, mergeFeedCandidateMetadata, mergeFeedOrder, mergeRecentMetadata,"
       + " mergeFeedSeen, mergeFeedQueue, scoreFeedCandidate, rankFeedCandidates, selectNextFeedCandidate,"
-      + " normalizeFeedDiscoveryLinks, buildFeedDiscoveryUrl, readFeedDiscoveryResponse, requestFeedDiscoveryPage };",
+      + " normalizeFeedDiscoveryLinks, buildFeedDiscoveryUrl, readFeedDiscoveryResponse, requestFeedDiscoveryPage,"
+      + " hasDiscoverableNext };",
   );
 }
 
@@ -288,6 +289,46 @@ test("discovery skips the signed attempt when signing fails and reports transpor
   assert.match(page.message, /网络异常/);
   assert.equal(requests.length, 1);
   assert.equal(new URL(requests[0]).searchParams.has("hkey"), false);
+});
+
+test("discovery retries the public query when the signed response is not ok", async () => {
+  const requests = [];
+  const helpers = createHelpers({
+    fetchWithTimeout: async (url) => {
+      requests.push(url);
+      if (requests.length === 1) return { ok: true, status: 200, json: async () => ({ status: "error", msg: "denied" }) };
+      return { ok: true, status: 200, json: async () => ({ status: "ok", result: { links: [link("1001")] } }) };
+    },
+  });
+  const page = await helpers.requestFeedDiscoveryPage(0, new AbortController().signal);
+  assert.equal(page.ok, true);
+  assert.equal(page.links[0].id, "1001");
+  assert.equal(requests.length, 2);
+  assert.equal(new URL(requests[0]).searchParams.has("hkey"), true);
+  assert.equal(new URL(requests[1]).searchParams.has("hkey"), false);
+});
+
+test("discovery treats a signed login failure as terminal", async () => {
+  const requests = [];
+  const helpers = createHelpers({
+    fetchWithTimeout: async (url) => {
+      requests.push(url);
+      return { ok: true, status: 200, json: async () => ({ status: "login" }) };
+    },
+  });
+  const page = await helpers.requestFeedDiscoveryPage(0, new AbortController().signal);
+  assert.equal(page.ok, false);
+  assert.match(page.message, /登录/);
+  assert.equal(requests.length, 1);
+});
+
+test("discovery stops only when the next candidate comes from feed or queue", () => {
+  const helpers = createHelpers();
+  assert.equal(helpers.hasDiscoverableNext({ next: { id: "2", source: "related" } }), false);
+  assert.equal(helpers.hasDiscoverableNext({ next: { id: "2", source: "feed" } }), true);
+  assert.equal(helpers.hasDiscoverableNext({ next: { id: "2", source: "queue" } }), true);
+  assert.equal(helpers.hasDiscoverableNext({ next: null }), false);
+  assert.equal(helpers.hasDiscoverableNext(null), false);
 });
 
 test("discovery rethrows abort errors instead of treating them as failures", async () => {

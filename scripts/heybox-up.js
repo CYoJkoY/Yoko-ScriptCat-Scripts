@@ -5036,6 +5036,15 @@
     return { ok: true, links: links, message: "" };
   }
 
+  // A related link can satisfy the next slot without proving the feed was reached;
+  // only feed and queue candidates should stop the discovery pass early.
+  function hasDiscoverableNext(status) {
+    if (status === null || typeof status !== "object") return false;
+    const next = status.next;
+    if (next === null || typeof next !== "object") return false;
+    return next.source !== "related";
+  }
+
   async function requestFeedDiscoveryPage(offset, signal) {
     const attempts = [];
     try {
@@ -5065,7 +5074,11 @@
           message = "信息流返回内容无法解析";
           continue;
         }
-        return readFeedDiscoveryResponse(data);
+        const result = readFeedDiscoveryResponse(data);
+        if (result.ok) return result;
+        message = result.message;
+        // A login failure is terminal; other failures still try the public query.
+        if (data !== null && typeof data === "object" && data.status === "login") return result;
       } catch (error) {
         if (isAbortError(error)) throw error;
         message = "网络异常，请稍后重试";
@@ -5750,7 +5763,16 @@
       seen.add(match[1]);
       const titleNode = anchor.querySelector(".bbs-home__content-title, .link-item__title, .bbs-home__topic-name");
       const title = (titleNode ? titleNode.textContent : anchor.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80);
-      list.push({ id: match[1], title: title });
+      const card = anchor.closest(".bbs-home__content-item, .content-list__item, li");
+      const meta = readPostMeta(card === null ? anchor : card, title);
+      list.push({
+        id: match[1],
+        title: meta.title || title,
+        authorId: meta.authorId,
+        author: meta.author,
+        topicIds: meta.topicIds,
+        topics: meta.topics,
+      });
     }
     if (list.length === 0) return;
     const merged = mergeFeedOrder(readSessionArray(FEED_ORDER_KEY), list).slice(-FEED_ORDER_MAX);
@@ -5781,8 +5803,8 @@
   // Article pages expose author and topic hooks in several shapes; missing fields stay empty.
   function readPostMeta(root, title) {
     const scope = root instanceof Element ? root : document;
-    const authorNode = scope.querySelector(".link-user__username, .page-header__username");
-    const authorLink = scope.querySelector(".link-user__user-wrapper, .page-header__user-wrapper, a[href*='/app/user/profile/']");
+    const authorNode = scope.querySelector(".list-content__username, .link-user__username, .page-header__username");
+    const authorLink = scope.querySelector(".header__user, .link-user__user-wrapper, .page-header__user-wrapper, a[href*='/app/user/profile/']");
     const authorHref = authorLink?.getAttribute("href")
       || authorLink?.querySelector("a[href*='/app/user/profile/']")?.getAttribute("href")
       || "";
@@ -5853,7 +5875,8 @@
   }
 
   function writeFeedSeen(ids) {
-    writeSessionValue(FEED_SEEN_KEY, mergeFeedSeen(ids, []));
+    const list = ids instanceof Set ? Array.from(ids) : ids;
+    writeSessionValue(FEED_SEEN_KEY, mergeFeedSeen(list, []));
   }
 
   function readFeedRecent() {
@@ -6028,7 +6051,7 @@
           writeFeedQueue(queue);
           cursor += FEED_DISCOVERY_PAGE_SIZE;
           writeFeedCursor(cursor);
-          if (readStatus().next !== null) break;
+          if (hasDiscoverableNext(readStatus())) break;
         }
       } catch (error) {
         if (runGeneration !== generation) return;
@@ -6115,7 +6138,7 @@
     let currentId = "";
     let prevId = "";
     let navigating = false;
-    let pendingAdvance = false;
+    let pendingAdvanceSourceId = "";
 
     const go = (id) => {
       if (id === "" || navigating) return;
@@ -6137,7 +6160,7 @@
           return;
         }
       }
-      pendingAdvance = true;
+      pendingAdvanceSourceId = status.currentId;
       void navigation.discover();
     };
 
@@ -6167,8 +6190,10 @@
     navigation.subscribe((status) => {
       if (host.hidden) return;
       renderStatus(status);
-      if (!pendingAdvance || status.discovering) return;
-      pendingAdvance = false;
+      if (pendingAdvanceSourceId === "" || status.discovering) return;
+      const sourceId = pendingAdvanceSourceId;
+      pendingAdvanceSourceId = "";
+      if (status.currentId !== sourceId) return;
       const taken = navigation.takeNext();
       if (taken !== null) go(taken.id);
     });
@@ -6194,7 +6219,7 @@
         host.hidden = true;
         host.remove();
         currentId = "";
-        pendingAdvance = false;
+        pendingAdvanceSourceId = "";
         navigation.sync("", null, []);
         return;
       }
@@ -6297,7 +6322,9 @@
     let commentPanelClose = null;
     let commentOpenToken = 0;
     let commentState = createCommentState();
-    let readerPendingAdvance = false;
+    let readerPendingAdvanceSourceId = "";
+    let readerAdvanceLockTimer = 0;
+    let readerAdvanceLocked = false;
 
     function createCommentState() {
       return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loaded: false, seq: 0 };
@@ -7951,17 +7978,24 @@
       }
     };
 
+    const lockReaderAdvance = () => {
+      readerAdvanceLocked = true;
+      window.clearTimeout(readerAdvanceLockTimer);
+      readerAdvanceLockTimer = window.setTimeout(() => { readerAdvanceLocked = false; }, 900);
+    };
+
     const advanceFromReader = () => {
-      if (host === null) return;
+      if (host === null || readerAdvanceLocked) return;
       const status = navigation.readStatus();
       if (status.next !== null && status.next.source !== "related") {
         const taken = navigation.takeNext();
         if (taken !== null) {
+          lockReaderAdvance();
           navigateToPath(LINK_HREF_PREFIX + taken.id);
           return;
         }
       }
-      readerPendingAdvance = true;
+      readerPendingAdvanceSourceId = status.currentId;
       void navigation.discover();
     };
 
@@ -8519,6 +8553,10 @@
     const teardown = () => {
       restoreSuspendedEmbeds();
       readerGeneration += 1;
+      readerPendingAdvanceSourceId = "";
+      readerAdvanceLocked = false;
+      window.clearTimeout(readerAdvanceLockTimer);
+      readerAdvanceLockTimer = 0;
       observer?.disconnect();
       observer = null;
       flushReaderRatio();
@@ -8644,14 +8682,19 @@
 
     navigation.subscribe((status) => {
       if (host === null) {
-        readerPendingAdvance = false;
+        readerPendingAdvanceSourceId = "";
         return;
       }
       syncReaderEndActions();
-      if (!readerPendingAdvance || status.discovering) return;
-      readerPendingAdvance = false;
+      if (readerPendingAdvanceSourceId === "" || status.discovering) return;
+      const sourceId = readerPendingAdvanceSourceId;
+      readerPendingAdvanceSourceId = "";
+      if (status.currentId !== sourceId) return;
       const taken = navigation.takeNext();
-      if (taken !== null) navigateToPath(LINK_HREF_PREFIX + taken.id);
+      if (taken !== null) {
+        lockReaderAdvance();
+        navigateToPath(LINK_HREF_PREFIX + taken.id);
+      }
     });
 
     document.addEventListener(READER_EVENT, (event) => {
