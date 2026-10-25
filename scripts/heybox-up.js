@@ -3127,13 +3127,20 @@
 
   // 站点是 Vue 单页应用：脚本合成点击的 <a> 带 isTrusted=false，路由会忽略它并整页刷新。
   // 这里优先调用站点的 router.push，取不到时退回 <a> 点击，最坏情况只是整页加载。
+  // Resolves true only when the router accepts the transition. Vue Router reports cancelled or
+  // duplicated transitions as a resolved failure object, so callers need this distinction.
   function navigateToPath(path) {
     const router = readSiteRouter();
     if (router) {
       try {
         const pending = router.push(path);
-        if (pending && typeof pending.catch === "function") pending.catch(() => {});
-        return;
+        if (pending && typeof pending.then === "function") {
+          return Promise.resolve(pending).then(
+            (result) => !(result !== null && typeof result === "object" && typeof result.type === "number"),
+            () => false,
+          );
+        }
+        return Promise.resolve(true);
       } catch (error) {
         // 路由内部状态异常时退回原生跳转。
       }
@@ -3144,6 +3151,7 @@
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
+    return Promise.resolve(true);
   }
 
   function handleNavClick(event) {
@@ -4753,6 +4761,20 @@
   const FEED_SEEN_MAX = 600;
   const FEED_RECENT_MAX = 12;
   const FEED_TITLE_MAX = 80;
+  const FEED_DISCOVERY_BODY_TIMEOUT_MS = 15000;
+
+  function buildFeedStateKey(baseKey, accountId) {
+    const account = normalizeFeedText(accountId, 80);
+    return baseKey + ":" + (account === "" ? "anonymous" : account);
+  }
+
+  // The rendered feed is page-aligned, so an unset cursor resumes after the last loaded page.
+  function computeFeedDiscoveryOffset(feedOrder, pageSize) {
+    const loaded = Array.isArray(feedOrder) ? feedOrder.length : 0;
+    const size = Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : 30;
+    if (loaded <= 0) return 0;
+    return Math.ceil(loaded / size) * size;
+  }
 
   function normalizeFeedId(value) {
     if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
@@ -4979,9 +5001,22 @@
     };
     const feedOrder = Array.isArray(options.feedOrder) ? options.feedOrder : [];
     const currentIndex = feedOrder.findIndex((item) => normalizeFeedLegacyCandidate(item)?.id === currentId);
+    const feedPositions = new Map();
+    for (let index = 0; index < feedOrder.length; index += 1) {
+      const id = normalizeFeedLegacyCandidate(feedOrder[index])?.id;
+      if (id !== undefined && !feedPositions.has(id)) feedPositions.set(id, index);
+    }
+    // A queued post already passed in the rendered feed would move the reader backwards.
+    const isBehindCurrent = (raw) => {
+      if (currentIndex === -1) return false;
+      const id = normalizeFeedLegacyCandidate(raw)?.id;
+      if (id === undefined) return false;
+      const position = feedPositions.get(id);
+      return position !== undefined && position <= currentIndex;
+    };
     const sources = [
       { source: "feed", candidates: currentIndex === -1 ? [] : feedOrder.slice(currentIndex + 1).filter((item) => !isBlocked(item)) },
-      { source: "queue", candidates: (Array.isArray(options.queue) ? options.queue : []).filter((item) => !isBlocked(item)) },
+      { source: "queue", candidates: (Array.isArray(options.queue) ? options.queue : []).filter((item) => !isBlocked(item) && !isBehindCurrent(item)) },
       { source: "related", candidates: (Array.isArray(options.related) ? options.related : []).filter((item) => !isBlocked(item)) },
     ];
     for (const entry of sources) {
@@ -5029,12 +5064,15 @@
       return { ok: false, links: [], message: message };
     }
     const result = data.result !== null && typeof data.result === "object" ? data.result : null;
-    const links = normalizeFeedDiscoveryLinks(result === null ? null : result.links);
+    const rawLinks = result === null ? null : result.links;
+    const links = normalizeFeedDiscoveryLinks(rawLinks);
     // An empty array is a successful end-of-feed page; only a malformed payload is an error.
     if (links === null) {
       return { ok: false, links: [], message: "信息流返回内容无法解析" };
     }
-    return { ok: true, links: links, message: "" };
+    // Promoted, invalid, and duplicate entries are filtered out, so only the raw length proves
+    // that the feed has no later pages left.
+    return { ok: true, links: links, rawEmpty: rawLinks.length === 0, message: "" };
   }
 
   // A related link can satisfy the next slot without proving the feed was reached;
@@ -5046,7 +5084,34 @@
     return next.source !== "related";
   }
 
-  async function requestFeedDiscoveryPage(offset, signal) {
+  // fetchWithTimeout only covers response headers; a stalled body would otherwise hold the
+  // discovery pass open forever and keep the next control disabled.
+  function readFeedBodyJson(response, signal, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        globalThis.clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        callback(value);
+      };
+      const onAbort = () => settle(reject, signal?.reason || new DOMException("请求已取消", "AbortError"));
+      const timer = globalThis.setTimeout(() => {
+        settle(reject, new DOMException("请求超时", "TimeoutError"));
+      }, timeoutMs);
+      if (signal?.aborted === true) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      Promise.resolve()
+        .then(() => response.json())
+        .then((value) => settle(resolve, value), (error) => settle(reject, error));
+    });
+  }
+
+  async function requestFeedDiscoveryPage(offset, signal, bodyTimeoutMs = FEED_DISCOVERY_BODY_TIMEOUT_MS) {
     const attempts = [];
     try {
       attempts.push(buildFeedDiscoveryUrl(offset, { ...createApiParams(FEED_DISCOVERY_API_PATH), heybox_id: getHeyboxId() }));
@@ -5069,10 +5134,12 @@
         }
         let data;
         try {
-          data = await response.json();
+          data = await readFeedBodyJson(response, signal, bodyTimeoutMs);
         } catch (error) {
           if (isAbortError(error)) throw error;
-          message = "信息流返回内容无法解析";
+          message = error instanceof DOMException && error.name === "TimeoutError"
+            ? "信息流响应超时，请稍后重试"
+            : "信息流返回内容无法解析";
           continue;
         }
         const result = readFeedDiscoveryResponse(data);
@@ -5122,7 +5189,25 @@
     .btn svg { width: 20px; height: 20px; flex: none; transition: transform .16s ease; }
     .btn--prev:hover:not(:disabled) svg { transform: translateX(-1px); }
     .btn--next:hover:not(:disabled) svg { transform: translateX(1px); }
+    .pager-status {
+      position: absolute;
+      top: calc(50% + 46px);
+      right: max(10px, calc((100vw - var(--heybox-up-page-w, 1360px)) / 2 - 84px));
+      max-width: 180px;
+      margin: 0;
+      padding: 6px 10px;
+      border: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .12));
+      border-radius: 8px;
+      background: var(--heybox-up-surface, #fff);
+      box-shadow: var(--heybox-up-shadow-2, 0 10px 28px rgba(8, 12, 16, .18));
+      color: var(--heybox-up-muted, #6b7280);
+      font: inherit;
+      text-align: center;
+      pointer-events: none;
+    }
+    .pager-status[hidden] { display: none; }
     @media (max-width: 1199px) { .btn { width: 38px; height: 56px; opacity: .64; } .btn--prev { left: 8px; } .btn--next { right: 8px; } }
+    @media (max-width: 1199px) { .pager-status { top: calc(50% + 42px); right: 8px; max-width: 136px; } }
     @media (max-width: 1080px) { :host { display: none; } }
     @media (prefers-reduced-motion: reduce) { .btn, .btn svg { transition: none; } }
   `;
@@ -5746,11 +5831,11 @@
   }
 
   function writeSessionValue(key, value) {
-    sessionStore.writeJson(key, value);
+    return sessionStore.writeJson(key, value);
   }
 
-  function readFeedOrder() {
-    return mergeFeedOrder(readSessionArray(FEED_ORDER_KEY), []);
+  function readFeedOrder(accountId = getHeyboxId()) {
+    return mergeFeedOrder(readSessionArray(buildFeedStateKey(FEED_ORDER_KEY, accountId)), []);
   }
 
   function recordFeedOrder() {
@@ -5776,8 +5861,10 @@
       });
     }
     if (list.length === 0) return;
-    const merged = mergeFeedOrder(readSessionArray(FEED_ORDER_KEY), list).slice(-FEED_ORDER_MAX);
-    if (merged.length > 0) writeSessionValue(FEED_ORDER_KEY, merged);
+    const accountId = getHeyboxId();
+    const orderKey = buildFeedStateKey(FEED_ORDER_KEY, accountId);
+    const merged = mergeFeedOrder(readSessionArray(orderKey), list).slice(-FEED_ORDER_MAX);
+    if (merged.length > 0) writeSessionValue(orderKey, merged);
   }
 
   function readRelatedPostLinks() {
@@ -5802,8 +5889,10 @@
   }
 
   // Article pages expose author and topic hooks in several shapes; missing fields stay empty.
+  // Callers pass the article root so unrelated profile links elsewhere on the page never leak in.
   function readPostMeta(root, title) {
-    const scope = root instanceof Element ? root : document;
+    if (!(root instanceof Element)) return null;
+    const scope = root;
     const authorNode = scope.querySelector(".list-content__username, .link-user__username, .page-header__username");
     const authorLink = scope.querySelector(".header__user, .link-user__user-wrapper, .page-header__user-wrapper, a[href*='/app/user/profile/']");
     const authorHref = authorLink?.getAttribute("href")
@@ -5851,42 +5940,42 @@
     writeSessionValue(POST_TRAIL_KEY, trail);
   }
 
-  function readFeedQueue() {
-    return mergeFeedQueue(readSessionArray(FEED_QUEUE_KEY), []);
+  function readFeedQueue(accountId = getHeyboxId()) {
+    return mergeFeedQueue(readSessionArray(buildFeedStateKey(FEED_QUEUE_KEY, accountId)), []);
   }
 
-  function writeFeedQueue(items) {
-    writeSessionValue(FEED_QUEUE_KEY, mergeFeedQueue(items, [], { max: FEED_QUEUE_MAX }));
+  function writeFeedQueue(items, accountId = getHeyboxId()) {
+    return writeSessionValue(buildFeedStateKey(FEED_QUEUE_KEY, accountId), mergeFeedQueue(items, [], { max: FEED_QUEUE_MAX }));
   }
 
-  function readFeedCursor() {
-    const raw = sessionStore.read(FEED_CURSOR_KEY);
-    if (raw === null || raw === "") return 0;
+  function readFeedCursorState(accountId = getHeyboxId()) {
+    const raw = sessionStore.read(buildFeedStateKey(FEED_CURSOR_KEY, accountId));
+    if (raw === null || raw === "") return { present: false, offset: 0 };
     const value = Number(raw);
-    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    return { present: true, offset: Number.isSafeInteger(value) && value >= 0 ? value : 0 };
   }
 
-  function writeFeedCursor(offset) {
-    if (!Number.isSafeInteger(offset) || offset < 0) return;
-    sessionStore.write(FEED_CURSOR_KEY, String(offset));
+  function writeFeedCursor(offset, accountId = getHeyboxId()) {
+    if (!Number.isSafeInteger(offset) || offset < 0) return false;
+    return sessionStore.write(buildFeedStateKey(FEED_CURSOR_KEY, accountId), String(offset));
   }
 
-  function readFeedSeen() {
-    return mergeFeedSeen(readSessionArray(FEED_SEEN_KEY), []);
+  function readFeedSeen(accountId = getHeyboxId()) {
+    return mergeFeedSeen(readSessionArray(buildFeedStateKey(FEED_SEEN_KEY, accountId)), []);
   }
 
-  function writeFeedSeen(ids) {
+  function writeFeedSeen(ids, accountId = getHeyboxId()) {
     const list = mergeFeedSeen(ids instanceof Set ? Array.from(ids) : ids, []);
-    writeSessionValue(FEED_SEEN_KEY, list);
+    writeSessionValue(buildFeedStateKey(FEED_SEEN_KEY, accountId), list);
     return list;
   }
 
-  function readFeedRecent() {
-    return mergeRecentMetadata(readSessionArray(FEED_RECENT_KEY), null);
+  function readFeedRecent(accountId = getHeyboxId()) {
+    return mergeRecentMetadata(readSessionArray(buildFeedStateKey(FEED_RECENT_KEY, accountId)), null);
   }
 
-  function writeFeedRecent(recent) {
-    writeSessionValue(FEED_RECENT_KEY, mergeRecentMetadata(recent, null));
+  function writeFeedRecent(recent, accountId = getHeyboxId()) {
+    writeSessionValue(buildFeedStateKey(FEED_RECENT_KEY, accountId), mergeRecentMetadata(recent, null));
   }
 
   function readFeedRecentSignature(recent) {
@@ -5901,17 +5990,46 @@
   function createPostNavigationController() {
     let currentId = "";
     let related = [];
-    let queue = readFeedQueue();
-    let cursor = readFeedCursor();
-    let seen = new Set(readFeedSeen());
-    let recent = readFeedRecent();
-    let recentKey = readFeedRecentSignature(recent);
+    let accountId = getHeyboxId();
+    let queue = [];
+    let cursor = 0;
+    let cursorStored = false;
+    let seen = new Set();
+    let recent = [];
+    let recentKey = "";
     let discovering = false;
     let discoveryError = "";
     let exhausted = false;
     let generation = 0;
+    let revision = 0;
     const listeners = new Set();
     let statusKey = "";
+
+    const loadAccountState = () => {
+      queue = readFeedQueue(accountId);
+      const storedCursor = readFeedCursorState(accountId);
+      cursor = storedCursor.present ? storedCursor.offset : computeFeedDiscoveryOffset(readFeedOrder(), FEED_DISCOVERY_PAGE_SIZE);
+      cursorStored = storedCursor.present;
+      seen = new Set(readFeedSeen(accountId));
+      recent = readFeedRecent(accountId);
+      recentKey = readFeedRecentSignature(recent);
+    };
+
+    // Feed state belongs to one account. Switching users invalidates the running pass and
+    // reloads the new account's queue, cursor, seen IDs, and diversity metadata.
+    const syncAccount = () => {
+      const nextAccountId = getHeyboxId();
+      if (nextAccountId === accountId) return false;
+      accountId = nextAccountId;
+      generation += 1;
+      discovering = false;
+      discoveryError = "";
+      exhausted = false;
+      loadAccountState();
+      return true;
+    };
+
+    loadAccountState();
 
     const readStatus = () => {
       const trail = readPostTrail();
@@ -5936,6 +6054,7 @@
       }
       return {
         currentId: currentId,
+        revision: revision,
         prev: prev,
         next: next,
         discovering: discovering,
@@ -5948,6 +6067,7 @@
       const status = readStatus();
       const key = [
         status.currentId,
+        String(status.revision),
         status.prev === null ? "" : status.prev.id,
         status.next === null ? "" : status.next.id,
         status.discovering ? "1" : "0",
@@ -5966,12 +6086,14 @@
     };
 
     const sync = (id, meta, links) => {
+      syncAccount();
       const nextId = normalizeFeedId(id);
       const nextRelated = normalizeFeedDiscoveryLinks(links);
       related = nextRelated === null ? [] : nextRelated;
       if (nextId === "") {
         if (currentId !== "") {
           currentId = "";
+          revision += 1;
           discoveryError = "";
           exhausted = false;
           publish(true);
@@ -5981,18 +6103,19 @@
       const changed = nextId !== currentId;
       currentId = nextId;
       if (changed) {
+        revision += 1;
         pushPostTrail(nextId);
         discoveryError = "";
         exhausted = false;
         if (queue.some((item) => item.id === nextId)) {
           queue = queue.filter((item) => item.id !== nextId);
-          writeFeedQueue(queue);
+          writeFeedQueue(queue, accountId);
         }
       }
       if (!seen.has(nextId)) {
         const nextSeen = new Set(seen);
         nextSeen.add(nextId);
-        seen = new Set(writeFeedSeen(nextSeen));
+        seen = new Set(writeFeedSeen(nextSeen, accountId));
       }
       const incoming = normalizeFeedCandidate(meta !== null && typeof meta === "object" ? { ...meta, id: nextId } : { id: nextId });
       if (incoming !== null) {
@@ -6001,32 +6124,27 @@
         if (key !== recentKey) {
           recent = merged;
           recentKey = key;
-          writeFeedRecent(recent);
+          writeFeedRecent(recent, accountId);
         }
       }
       publish(changed);
     };
 
+    // Read-only: the queue, seen set, and trail advance only when sync sees the new route, so a
+    // rejected or slow navigation leaves the candidate retryable.
     const takeNext = () => {
       const status = readStatus();
       if (status.next === null) return null;
-      const id = status.next.id;
-      if (queue.some((item) => item.id === id)) {
-        queue = queue.filter((item) => item.id !== id);
-        writeFeedQueue(queue);
-      }
-      if (!seen.has(id)) {
-        const nextSeen = new Set(seen);
-        nextSeen.add(id);
-        seen = new Set(writeFeedSeen(nextSeen));
-      }
-      pushPostTrail(id);
-      publish(true);
-      return { id: id, title: status.next.title };
+      return { id: status.next.id, title: status.next.title };
     };
 
     const discover = async () => {
+      syncAccount();
       if (discovering || currentId === "") return;
+      if (!cursorStored) {
+        cursor = computeFeedDiscoveryOffset(readFeedOrder(), FEED_DISCOVERY_PAGE_SIZE);
+        cursorStored = writeFeedCursor(cursor, accountId);
+      }
       discovering = true;
       discoveryError = "";
       exhausted = false;
@@ -6042,17 +6160,28 @@
             discoveryError = page.message;
             break;
           }
-          queue = mergeFeedQueue(queue, page.links, {
+          const nextQueue = mergeFeedQueue(queue, page.links, {
             currentId: currentId,
             visited: readVisitedPostIds(currentId),
             seen: seen,
             max: FEED_QUEUE_MAX,
           });
-          writeFeedQueue(queue);
-          cursor += FEED_DISCOVERY_PAGE_SIZE;
-          writeFeedCursor(cursor);
-          // An empty page means the feed is exhausted; later offsets would repeat it.
-          if (page.links.length === 0) break;
+          // Advance only after the queue is durable; otherwise a reload loses this page while
+          // the cursor already points past it.
+          if (!writeFeedQueue(nextQueue, accountId)) {
+            if (runGeneration !== generation) return;
+            discoveryError = "无法保存连读进度；点击“下一篇”重试";
+            break;
+          }
+          queue = nextQueue;
+          const nextCursor = cursor + FEED_DISCOVERY_PAGE_SIZE;
+          if (writeFeedCursor(nextCursor, accountId)) {
+            cursor = nextCursor;
+            cursorStored = true;
+          }
+          // Only an empty raw API page proves exhaustion; a page whose entries were all filtered
+          // still has later pages to inspect.
+          if (page.rawEmpty === true) break;
           if (hasDiscoverableNext(readStatus())) break;
         }
       } catch (error) {
@@ -6134,22 +6263,37 @@
     nextButton.setAttribute("aria-label", "下一篇");
     nextButton.title = "下一篇";
     nextButton.innerHTML = PAGER_ICONS.next;
-    pager.append(prevButton, nextButton);
+    const statusNode = document.createElement("p");
+    statusNode.className = "pager-status";
+    statusNode.setAttribute("role", "status");
+    statusNode.setAttribute("aria-live", "polite");
+    statusNode.hidden = true;
+    pager.append(prevButton, nextButton, statusNode);
     shadow.append(style, pager);
 
     let currentId = "";
     let prevId = "";
     let navigating = false;
     let pendingAdvanceSourceId = "";
+    let pendingAdvanceRevision = -1;
+
+    const clearPendingAdvance = () => {
+      pendingAdvanceSourceId = "";
+      pendingAdvanceRevision = -1;
+    };
 
     const go = (id) => {
       if (id === "" || navigating) return;
       navigating = true;
-      navigateToPath(LINK_HREF_PREFIX + id);
+      // The lock survives the transition; the next sync unlocks once the route reports the new id.
+      void navigateToPath(LINK_HREF_PREFIX + id).then((accepted) => {
+        if (accepted !== true) navigating = false;
+      }, () => {
+        navigating = false;
+      });
       const toTop = () => window.scrollTo({ top: 0, behavior: "auto" });
       requestAnimationFrame(toTop);
       window.setTimeout(toTop, 120);
-      window.setTimeout(() => { navigating = false; }, 900);
     };
 
     const advance = () => {
@@ -6158,11 +6302,13 @@
       if (status.next !== null && status.next.source !== "related") {
         const taken = navigation.takeNext();
         if (taken !== null) {
+          clearPendingAdvance();
           go(taken.id);
           return;
         }
       }
       pendingAdvanceSourceId = status.currentId;
+      pendingAdvanceRevision = status.revision;
       void navigation.discover();
     };
 
@@ -6184,6 +6330,8 @@
         nextButton.title = "点击寻找下一篇（]）";
       }
       nextButton.setAttribute("aria-label", nextButton.title);
+      statusNode.textContent = status.discovering ? "正在寻找下一篇…" : "";
+      statusNode.hidden = !status.discovering;
     };
 
     prevButton.addEventListener("click", () => go(prevId));
@@ -6192,11 +6340,15 @@
     navigation.subscribe((status) => {
       if (host.hidden) return;
       renderStatus(status);
-      if (pendingAdvanceSourceId === "" || status.discovering) return;
-      const sourceId = pendingAdvanceSourceId;
-      pendingAdvanceSourceId = "";
-      if (status.currentId !== sourceId) return;
+      if (pendingAdvanceSourceId === "") return;
+      // Returning to the same article does not revive a pass that started before leaving it.
+      if (status.currentId !== pendingAdvanceSourceId || status.revision !== pendingAdvanceRevision) {
+        clearPendingAdvance();
+        return;
+      }
+      if (status.discovering) return;
       const taken = navigation.takeNext();
+      clearPendingAdvance();
       if (taken !== null) go(taken.id);
     });
 
@@ -6221,16 +6373,19 @@
         host.hidden = true;
         host.remove();
         currentId = "";
-        pendingAdvanceSourceId = "";
+        navigating = false;
+        clearPendingAdvance();
         navigation.sync("", null, []);
         return;
       }
       if (host.parentNode !== document.body) document.body.append(host);
       if (id !== currentId) {
         currentId = id;
+        navigating = false;
         host.hidden = false;
       }
-      navigation.sync(id, readPostMeta(document), readRelatedPostLinks());
+      const pageRoot = document.querySelector("#page-bbs-link");
+      navigation.sync(id, pageRoot === null ? null : readPostMeta(pageRoot, ""), readRelatedPostLinks());
       renderStatus(navigation.readStatus());
     };
 
@@ -6325,8 +6480,9 @@
     let commentOpenToken = 0;
     let commentState = createCommentState();
     let readerPendingAdvanceSourceId = "";
-    let readerAdvanceLockTimer = 0;
+    let readerPendingAdvanceRevision = -1;
     let readerAdvanceLocked = false;
+    let readerAdvanceLockToken = 0;
 
     function createCommentState() {
       return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loaded: false, seq: 0 };
@@ -7981,9 +8137,30 @@
     };
 
     const lockReaderAdvance = () => {
+      readerAdvanceLockToken += 1;
       readerAdvanceLocked = true;
-      window.clearTimeout(readerAdvanceLockTimer);
-      readerAdvanceLockTimer = window.setTimeout(() => { readerAdvanceLocked = false; }, 900);
+      return readerAdvanceLockToken;
+    };
+
+    // A late router rejection from a finished attempt must not release a newer advance lock.
+    const unlockReaderAdvance = (token = 0) => {
+      if (token !== 0 && token !== readerAdvanceLockToken) return;
+      readerAdvanceLocked = false;
+    };
+
+    const clearPendingReaderAdvance = () => {
+      readerPendingAdvanceSourceId = "";
+      readerPendingAdvanceRevision = -1;
+    };
+
+    const openReaderArticle = (id) => {
+      if (id === "") return;
+      const token = lockReaderAdvance();
+      void navigateToPath(LINK_HREF_PREFIX + id).then((accepted) => {
+        if (accepted !== true) unlockReaderAdvance(token);
+      }, () => {
+        unlockReaderAdvance(token);
+      });
     };
 
     const advanceFromReader = () => {
@@ -7992,12 +8169,13 @@
       if (status.next !== null && status.next.source !== "related") {
         const taken = navigation.takeNext();
         if (taken !== null) {
-          lockReaderAdvance();
-          navigateToPath(LINK_HREF_PREFIX + taken.id);
+          clearPendingReaderAdvance();
+          openReaderArticle(taken.id);
           return;
         }
       }
       readerPendingAdvanceSourceId = status.currentId;
+      readerPendingAdvanceRevision = status.revision;
       void navigation.discover();
     };
 
@@ -8555,10 +8733,9 @@
     const teardown = () => {
       restoreSuspendedEmbeds();
       readerGeneration += 1;
-      readerPendingAdvanceSourceId = "";
+      clearPendingReaderAdvance();
       readerAdvanceLocked = false;
-      window.clearTimeout(readerAdvanceLockTimer);
-      readerAdvanceLockTimer = 0;
+      readerAdvanceLockToken += 1;
       observer?.disconnect();
       observer = null;
       flushReaderRatio();
@@ -8654,6 +8831,7 @@
       }
       if (articleId !== nextArticleId) {
         dismissedArticleId = "";
+        unlockReaderAdvance();
         flushReaderRatio();
         sourceCache = null;
         nativeActionArticle = null;
@@ -8684,18 +8862,20 @@
 
     navigation.subscribe((status) => {
       if (host === null) {
-        readerPendingAdvanceSourceId = "";
+        clearPendingReaderAdvance();
         return;
       }
       syncReaderEndActions();
-      if (readerPendingAdvanceSourceId === "" || status.discovering) return;
-      const sourceId = readerPendingAdvanceSourceId;
-      readerPendingAdvanceSourceId = "";
-      if (status.currentId !== sourceId) return;
+      if (readerPendingAdvanceSourceId === "") return;
+      if (status.currentId !== readerPendingAdvanceSourceId || status.revision !== readerPendingAdvanceRevision) {
+        clearPendingReaderAdvance();
+        return;
+      }
+      if (status.discovering) return;
       const taken = navigation.takeNext();
+      clearPendingReaderAdvance();
       if (taken !== null) {
-        lockReaderAdvance();
-        navigateToPath(LINK_HREF_PREFIX + taken.id);
+        openReaderArticle(taken.id);
       }
     });
 

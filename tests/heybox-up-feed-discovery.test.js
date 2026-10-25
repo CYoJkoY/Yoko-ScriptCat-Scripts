@@ -28,7 +28,7 @@ function loadFeedDiscoveryFactory() {
       + "\nreturn { normalizeFeedCandidate, mergeFeedCandidateMetadata, mergeFeedOrder, mergeRecentMetadata,"
       + " mergeFeedSeen, mergeFeedQueue, scoreFeedCandidate, rankFeedCandidates, selectNextFeedCandidate,"
       + " normalizeFeedDiscoveryLinks, buildFeedDiscoveryUrl, readFeedDiscoveryResponse, requestFeedDiscoveryPage,"
-      + " hasDiscoverableNext };",
+      + " hasDiscoverableNext, buildFeedStateKey, computeFeedDiscoveryOffset };",
   );
 }
 
@@ -209,6 +209,38 @@ test("next selection uses feed, then queue, then related", () => {
   assert.equal(helpers.selectNextFeedCandidate({ currentId: "1", feedOrder: [{ id: "1" }] }), null);
 });
 
+test("next selection skips queued posts behind the current feed position", () => {
+  const helpers = createHelpers();
+  const selected = helpers.selectNextFeedCandidate({
+    currentId: "3",
+    recent: [],
+    feedOrder: [{ id: "1" }, { id: "2" }, { id: "3" }],
+    queue: [{ id: "1" }, { id: "5" }],
+    related: [],
+    visited: new Set(["3"]),
+    seen: new Set(["3"]),
+  });
+  assert.equal(selected.source, "queue");
+  assert.equal(selected.candidate.id, "5");
+  assert.equal(helpers.selectNextFeedCandidate({
+    currentId: "3",
+    feedOrder: [{ id: "1" }, { id: "2" }, { id: "3" }],
+    queue: [{ id: "1" }],
+    visited: new Set(["3"]),
+    seen: new Set(["3"]),
+  }), null);
+});
+
+test("feed state keys are account scoped and cursor offsets skip loaded pages", () => {
+  const helpers = createHelpers();
+  assert.equal(helpers.buildFeedStateKey("key", "42"), "key:42");
+  assert.equal(helpers.buildFeedStateKey("key", ""), "key:anonymous");
+  assert.equal(helpers.computeFeedDiscoveryOffset([], 30), 0);
+  assert.equal(helpers.computeFeedDiscoveryOffset(Array.from({ length: 30 }, (_, index) => String(index + 1)), 30), 30);
+  assert.equal(helpers.computeFeedDiscoveryOffset(Array.from({ length: 31 }, (_, index) => String(index + 1)), 30), 60);
+  assert.equal(helpers.computeFeedDiscoveryOffset(null, 0), 0);
+});
+
 test("discovery url carries the site feed query and skips empty extras", () => {
   const helpers = createHelpers();
   const url = new URL(helpers.buildFeedDiscoveryUrl(30, {
@@ -237,6 +269,12 @@ test("feed response normalization distinguishes success, login and empty pages",
   });
   assert.equal(success.ok, true);
   assert.deepEqual(success.links.map((item) => item.id), ["1001", "1003"]);
+  assert.equal(success.rawEmpty, false);
+
+  const filtered = helpers.readFeedDiscoveryResponse({ status: "ok", result: { links: [link("1002", { content_type: 18 })] } });
+  assert.equal(filtered.ok, true);
+  assert.deepEqual(filtered.links, []);
+  assert.equal(filtered.rawEmpty, false);
 
   const login = helpers.readFeedDiscoveryResponse({ status: "login" });
   assert.equal(login.ok, false);
@@ -249,6 +287,7 @@ test("feed response normalization distinguishes success, login and empty pages",
   const empty = helpers.readFeedDiscoveryResponse({ status: "ok", result: { links: [] } });
   assert.equal(empty.ok, true);
   assert.deepEqual(empty.links, []);
+  assert.equal(empty.rawEmpty, true);
   assert.equal(empty.message, "");
 
   const malformed = helpers.readFeedDiscoveryResponse({ status: "ok", result: { links: null } });
@@ -343,4 +382,18 @@ test("discovery rethrows abort errors instead of treating them as failures", asy
     helpers.requestFeedDiscoveryPage(0, new AbortController().signal),
     (error) => isAbortError(error),
   );
+});
+
+test("discovery times out a stalled response body for both attempts", async () => {
+  const requests = [];
+  const helpers = createHelpers({
+    fetchWithTimeout: async (url) => {
+      requests.push(url);
+      return { ok: true, status: 200, json: () => new Promise(() => {}) };
+    },
+  });
+  const page = await helpers.requestFeedDiscoveryPage(0, new AbortController().signal, 5);
+  assert.equal(page.ok, false);
+  assert.match(page.message, /超时/);
+  assert.equal(requests.length, 2);
 });
