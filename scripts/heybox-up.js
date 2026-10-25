@@ -7155,7 +7155,8 @@
           for (const child of Array.from(node.childNodes)) visit(child);
           return;
         }
-        const isSimple = tag === "p" || tag === "div" && node.children.length === 0;
+        const isSimple = (tag === "p" || tag === "div" && node.children.length === 0)
+          && node.querySelector(EMBED_SELECTOR) === null;
         if (isSimple && text !== "" && images.length === 0) {
           lines.push(text);
           return;
