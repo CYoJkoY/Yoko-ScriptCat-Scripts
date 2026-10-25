@@ -7006,17 +7006,19 @@
       frame.append(clone);
       let width = readEmbedWidth(group.source);
       let height = readEmbedHeight(group.source);
-      if (isEmbedWrapper(group.source) && width === 0 && height === 0) {
-        const declared = group.embeds.find((embed) => readEmbedWidth(embed) > 0 || readEmbedHeight(embed) > 0);
-        if (declared !== undefined) {
-          width = readEmbedWidth(declared);
-          height = readEmbedHeight(declared);
+      if (isEmbedWrapper(group.source)) {
+        if (width === 0) {
+          const declaredWidth = group.embeds.find((embed) => readEmbedWidth(embed) > 0);
+          if (declaredWidth !== undefined) width = readEmbedWidth(declaredWidth);
+        }
+        if (height === 0) {
+          const declaredHeight = group.embeds.find((embed) => readEmbedHeight(embed) > 0);
+          if (declaredHeight !== undefined) height = readEmbedHeight(declaredHeight);
         }
       }
-      if (width > 0 && height > 0) {
-        frame.style.width = "min(100%, " + width + "px)";
-        frame.style.aspectRatio = width + " / " + height;
-      } else if (height > 0) frame.style.height = height + "px";
+      if (width > 0) frame.style.width = "min(100%, " + width + "px)";
+      if (width > 0 && height > 0) frame.style.aspectRatio = width + " / " + height;
+      else if (height > 0) frame.style.height = height + "px";
       else if (!isAudioOnlyGroup(group.embeds)) frame.style.aspectRatio = "16 / 9";
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
