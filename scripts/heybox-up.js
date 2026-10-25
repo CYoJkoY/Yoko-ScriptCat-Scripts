@@ -6880,6 +6880,27 @@
       return groups;
     };
 
+    const readMediaSequence = (root) => {
+      if (!(root instanceof Element)) return [];
+      const items = [];
+      const collect = (node) => {
+        if (node instanceof HTMLImageElement) {
+          items.push({ kind: "image", node });
+          return;
+        }
+        if (node.matches(EMBED_SELECTOR) || isEmbedWrapper(node) || node.querySelector(EMBED_SELECTOR) !== null) {
+          const group = readEmbedGroup(node);
+          if (group !== null) {
+            items.push({ kind: "embed", group });
+            return;
+          }
+        }
+        for (const child of Array.from(node.children)) collect(child);
+      };
+      collect(root);
+      return items;
+    };
+
     const readEmbedDimension = (node, name) => {
       const inlineValue = node instanceof HTMLElement ? node.style[name].trim() : "";
       if (/^\d+(\.\d+)?px$/.test(inlineValue)) {
@@ -7088,9 +7109,13 @@
         const mediaOnly = images.length === 1 && text === "";
         if (mediaOnly) {
           flush();
-          const image = images[0];
-          addMediaPage(target, image.getAttribute("data-src") || image.getAttribute("src") || image.currentSrc || "", image.getAttribute("alt") || "");
-          for (const group of readEmbedGroups(node)) addEmbedPage(target, group);
+          for (const item of readMediaSequence(node)) {
+            if (item.kind === "image") {
+              addMediaPage(target, item.node.getAttribute("data-src") || item.node.getAttribute("src") || item.node.currentSrc || "", item.node.getAttribute("alt") || "");
+              continue;
+            }
+            addEmbedPage(target, item.group);
+          }
           return;
         }
         const className = typeof node.className === "string" ? node.className : "";
