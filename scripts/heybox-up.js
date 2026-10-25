@@ -6857,19 +6857,21 @@
     const isUnavailableEmbed = (node) => isInlineHidden(node) || hasHiddenInlineAncestor(node) || isComputedHidden(node);
     const isHiddenEmbedNode = (node) => (isEmbedElement(node) || isEmbedWrapper(node)) && isUnavailableEmbed(node);
 
+    const readVisibleEmbeds = (node) => Array.from(node.querySelectorAll(EMBED_SELECTOR))
+      .filter((embed) => !isUnavailableEmbed(embed));
+
     const readEmbedGroup = (node) => {
       if (!(node instanceof Element) || isUnavailableEmbed(node)) return null;
       const tag = node.tagName.toLowerCase();
       if (EMBED_TAGS.has(tag)) return { source: node, embeds: [node] };
-      if (isEmbedWrapper(node)) {
-        const embeds = Array.from(node.querySelectorAll(EMBED_SELECTOR)).filter((embed) => !isUnavailableEmbed(embed));
-        return embeds.length === 0 ? null : { source: node, embeds };
-      }
-      const embeds = Array.from(node.querySelectorAll(EMBED_SELECTOR)).filter((embed) => !isUnavailableEmbed(embed));
+      const embeds = readVisibleEmbeds(node);
       if (embeds.length === 0) return null;
+      if (isEmbedWrapper(node)) {
+        return embeds.length === 1 ? { source: node, embeds } : null;
+      }
       const text = (node.textContent || "").replace(/\s+/g, " ").trim();
       if (text !== "" || node.querySelector("img, picture") !== null) return null;
-      return { source: node, embeds };
+      return embeds.length === 1 ? { source: embeds[0], embeds } : null;
     };
 
     const readEmbedGroups = (root) => {
