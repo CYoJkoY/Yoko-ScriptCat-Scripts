@@ -7166,9 +7166,9 @@
     const readEmbedSignature = (body) => Array.from(body.querySelectorAll(".iframe, iframe, video, audio, embed, object"))
       .map((node) => {
         const style = node instanceof HTMLElement ? node.style : null;
-        const sourceSrcs = Array.from(node.querySelectorAll("source"))
-          .map((child) => child.getAttribute("src") || "")
-          .join(",");
+        const sourceSrcs = JSON.stringify(
+          Array.from(node.querySelectorAll("source")).map((child) => child.getAttribute("src") || "")
+        );
         return [
           node.tagName.toLowerCase(),
           node.classList.contains("iframe") ? "wrapper" : "",
