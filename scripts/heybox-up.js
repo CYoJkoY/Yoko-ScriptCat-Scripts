@@ -309,7 +309,7 @@
   const EMBEDDED_MEDIA_WRAPPER_SELECTOR = "div.iframe";
   const EMBEDDED_MEDIA_OBSERVED_SELECTOR = EMBEDDED_MEDIA_SELECTOR + ", " + EMBEDDED_MEDIA_WRAPPER_SELECTOR;
   const EMBEDDED_MEDIA_SOURCE_ATTRIBUTES = ["src", "srcdoc", "data"];
-  const EMBEDDED_MEDIA_ATTRIBUTES = [...EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, "hidden", "style"];
+  const EMBEDDED_MEDIA_ATTRIBUTES = [...EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, "width", "height", "hidden", "style"];
   let pageSyncTimer = 0;
   let pageSyncLastRun = 0;
   let pageSyncRoute = readPageRoute();
@@ -6864,6 +6864,22 @@
       return { source: node, embeds };
     };
 
+    const readEmbedGroups = (root) => {
+      if (!(root instanceof Element)) return [];
+      const groups = [];
+      const collect = (node) => {
+        if (!node.matches(EMBED_SELECTOR) && node.querySelector(EMBED_SELECTOR) === null) return;
+        const group = readEmbedGroup(node);
+        if (group !== null) {
+          groups.push(group);
+          return;
+        }
+        for (const child of Array.from(node.children)) collect(child);
+      };
+      collect(root);
+      return groups;
+    };
+
     const readEmbedDimension = (node, name) => {
       const inlineValue = node instanceof HTMLElement ? node.style[name].trim() : "";
       if (/^\d+(\.\d+)?px$/.test(inlineValue)) {
@@ -7022,6 +7038,9 @@
     const addRichPage = (target, native) => {
       const clone = native.cloneNode(true);
       bindRichProxy(clone, native);
+      for (const group of readEmbedGroups(native)) {
+        for (const embed of group.embeds) suspendNativeEmbed(embed);
+      }
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
       page.dataset.kind = "rich";
@@ -7071,6 +7090,7 @@
           flush();
           const image = images[0];
           addMediaPage(target, image.getAttribute("data-src") || image.getAttribute("src") || image.currentSrc || "", image.getAttribute("alt") || "");
+          for (const group of readEmbedGroups(node)) addEmbedPage(target, group);
           return;
         }
         const className = typeof node.className === "string" ? node.className : "";
