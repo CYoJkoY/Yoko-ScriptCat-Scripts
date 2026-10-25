@@ -7152,6 +7152,13 @@
         }
         const className = typeof node.className === "string" ? node.className : "";
         const isCard = /(^|\s)(com-|hb-cpt__image|card)/.test(className);
+        const isMixedLeaf = text !== "" && !isCard && readVisibleEmbeds(node).length > 0
+          && node.querySelector("p, div, section, article, ul, ol, table, blockquote, pre, h1, h2, h3, h4, h5, h6") === null;
+        if (["div", "section", "article"].includes(tag) && isMixedLeaf) {
+          flush();
+          addRichPage(target, node);
+          return;
+        }
         if (["div", "section", "article"].includes(tag) && !isCard && node.children.length > 0) {
           for (const child of Array.from(node.childNodes)) visit(child);
           return;
