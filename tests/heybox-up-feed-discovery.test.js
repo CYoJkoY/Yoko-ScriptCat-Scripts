@@ -116,7 +116,7 @@ test("feed queue filters current, visited and seen entries while merging metadat
   assert.deepEqual(queue[0].topicIds, ["4"]);
 });
 
-test("feed caps keep the newest queue, seen and recent entries", () => {
+test("feed caps trim seen and recent to newest while the queue keeps its head", () => {
   const helpers = createHelpers();
   assert.deepEqual(helpers.mergeFeedSeen(["1", "2", "3"], ["2", "4"], 3), ["2", "3", "4"]);
   assert.deepEqual(helpers.mergeFeedQueue([], ["1", "2", "3"], { max: 2 }).map((item) => item.id), ["1", "2"]);
@@ -247,11 +247,13 @@ test("feed response normalization distinguishes success, login and empty pages",
   assert.equal(failure.message, "denied");
 
   const empty = helpers.readFeedDiscoveryResponse({ status: "ok", result: { links: [] } });
-  assert.equal(empty.ok, false);
-  assert.match(empty.message, /没有发现更多文章/);
+  assert.equal(empty.ok, true);
+  assert.deepEqual(empty.links, []);
+  assert.equal(empty.message, "");
 
   const malformed = helpers.readFeedDiscoveryResponse({ status: "ok", result: { links: null } });
   assert.equal(malformed.ok, false);
+  assert.match(malformed.message, /无法解析/);
 });
 
 test("discovery requests the signed url and falls back to the public query", async () => {

@@ -5030,8 +5030,9 @@
     }
     const result = data.result !== null && typeof data.result === "object" ? data.result : null;
     const links = normalizeFeedDiscoveryLinks(result === null ? null : result.links);
-    if (links === null || links.length === 0) {
-      return { ok: false, links: [], message: "没有发现更多文章" };
+    // An empty array is a successful end-of-feed page; only a malformed payload is an error.
+    if (links === null) {
+      return { ok: false, links: [], message: "信息流返回内容无法解析" };
     }
     return { ok: true, links: links, message: "" };
   }
@@ -5875,8 +5876,9 @@
   }
 
   function writeFeedSeen(ids) {
-    const list = ids instanceof Set ? Array.from(ids) : ids;
-    writeSessionValue(FEED_SEEN_KEY, mergeFeedSeen(list, []));
+    const list = mergeFeedSeen(ids instanceof Set ? Array.from(ids) : ids, []);
+    writeSessionValue(FEED_SEEN_KEY, list);
+    return list;
   }
 
   function readFeedRecent() {
@@ -5990,8 +5992,7 @@
       if (!seen.has(nextId)) {
         const nextSeen = new Set(seen);
         nextSeen.add(nextId);
-        seen = nextSeen;
-        writeFeedSeen(seen);
+        seen = new Set(writeFeedSeen(nextSeen));
       }
       const incoming = normalizeFeedCandidate(meta !== null && typeof meta === "object" ? { ...meta, id: nextId } : { id: nextId });
       if (incoming !== null) {
@@ -6017,8 +6018,7 @@
       if (!seen.has(id)) {
         const nextSeen = new Set(seen);
         nextSeen.add(id);
-        seen = nextSeen;
-        writeFeedSeen(seen);
+        seen = new Set(writeFeedSeen(nextSeen));
       }
       pushPostTrail(id);
       publish(true);
@@ -6051,6 +6051,8 @@
           writeFeedQueue(queue);
           cursor += FEED_DISCOVERY_PAGE_SIZE;
           writeFeedCursor(cursor);
+          // An empty page means the feed is exhausted; later offsets would repeat it.
+          if (page.links.length === 0) break;
           if (hasDiscoverableNext(readStatus())) break;
         }
       } catch (error) {
