@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.36
+// @version      0.4.37
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -305,6 +305,14 @@
   const PAGE_MUTATION_REGION_ENTRIES = Object.entries(PAGE_MUTATION_REGION_SELECTORS);
   const PAGE_MUTATION_REGION_COMBINED = PAGE_MUTATION_REGION_ENTRIES.map((entry) => entry[1]).join(", ");
   const PAGE_MUTATION_IGNORE_SELECTOR = '[id^="heybox-up-"], input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+  const EMBEDDED_MEDIA_SELECTOR = "iframe, video, audio, embed, object";
+  const EMBEDDED_MEDIA_WRAPPER_SELECTOR = "div.iframe";
+  const EMBEDDED_MEDIA_OBSERVED_SELECTOR = `${EMBEDDED_MEDIA_SELECTOR}, ${EMBEDDED_MEDIA_WRAPPER_SELECTOR}`;
+  const EMBEDDED_MEDIA_SOURCE_ATTRIBUTES = ["src", "srcdoc", "data"];
+  const EMBEDDED_MEDIA_ATTRIBUTES = [...EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, "width", "height", "hidden", "style"];
+  // Site layout toggles often land on an ancestor class or visibility attribute, which hides an embed indirectly.
+  const ARTICLE_LAYOUT_OBSERVED_SELECTOR = "#page-bbs-link";
+  const PAGE_SYNC_ATTRIBUTE_FILTER = [...EMBEDDED_MEDIA_ATTRIBUTES, "class"];
   let pageSyncTimer = 0;
   let pageSyncLastRun = 0;
   let pageSyncRoute = readPageRoute();
@@ -430,17 +438,34 @@
     return touched;
   }
 
+  function isObservedAttributeTarget(node) {
+    if (!(node instanceof Element)) return false;
+    if (node.matches(EMBEDDED_MEDIA_OBSERVED_SELECTOR)) return true;
+    return node.closest(ARTICLE_LAYOUT_OBSERVED_SELECTOR) !== null;
+  }
+
   function startPageSyncObserver() {
     if (!document.body || !document.body.isConnected) return;
     new MutationObserver((records) => {
-      let relevant = false;
-      for (const record of records) {
-        relevant = notePageMutationRegions(record) || relevant;
-      }
-      if (relevant) schedulePageSync();
-    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+      if (notePageSyncedRecords(records)) schedulePageSync();
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: PAGE_SYNC_ATTRIBUTE_FILTER,
+    });
     window.addEventListener("popstate", scheduleForcedPageSync);
     window.addEventListener("hashchange", scheduleForcedPageSync);
+  }
+
+  function notePageSyncedRecords(records) {
+    let relevant = false;
+    for (const record of records) {
+      if (record.type === "attributes" && !isObservedAttributeTarget(record.target)) continue;
+      relevant = notePageMutationRegions(record) || relevant;
+    }
+    return relevant;
   }
 
   const trackedStyleContent = new WeakMap();
@@ -4999,6 +5024,17 @@
       color: var(--hbu-reader-ink-2) !important;
     }
     .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 32px 20px; background: #05070a; }
+    .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: 32px 20px; background: #05070a; }
+    .hbu-reader-embed {
+      width: min(100%, 960px);
+      margin: auto;
+      overflow: hidden;
+      background: #05070a;
+      border-radius: 12px;
+    }
+    .hbu-reader-embed > * { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+    .hbu-reader-embed :is(iframe, video, embed, object) { display: block !important; width: 100% !important; height: 100% !important; border: 0 !important; }
+    .hbu-reader-embed audio { display: block !important; width: 100% !important; height: auto !important; min-height: 54px !important; border: 0 !important; }
     .hbu-reader-media {
       display: block;
       max-width: 100%;
@@ -5298,6 +5334,7 @@
       .hbu-reader-page[data-kind="text"] { padding: 18px 64px 32px 24px; }
       .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
       .hbu-reader-page[data-kind="media"] { padding: 20px 16px; }
+      .hbu-reader-page[data-kind="embed"] { padding: 20px 16px; }
       .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
       .hbu-reader-rich { font-size: 17px; }
@@ -5322,6 +5359,7 @@
       .hbu-reader-home span { display: none; }
       .hbu-reader-page { padding-right: 64px; }
       .hbu-reader-page[data-kind="media"] { padding-right: 16px; padding-left: 16px; }
+      .hbu-reader-page[data-kind="embed"] { padding-right: 16px; padding-left: 16px; }
       .hbu-reader-caption { padding-right: 64px; }
       .hbu-reader-hint { display: none; }
       .hbu-reader-related { display: none; }
@@ -5619,6 +5657,7 @@
     let ratioSaveTimer = 0;
     let pendingRatio = null;
     let sourceCache = null;
+    const suspendedEmbeds = new Map();
     let nativeActionArticle = null;
     let nativeActionBox = null;
     let nativeFavourButton = null;
@@ -6793,6 +6832,255 @@
       }
     };
 
+    const EMBED_TAGS = new Set(["iframe", "video", "audio", "embed", "object"]);
+    const EMBED_SELECTOR = EMBEDDED_MEDIA_SELECTOR;
+
+    const isInlineHidden = (node) => node instanceof HTMLElement
+      && (node.hasAttribute("hidden") || node.style.display === "none" || node.style.visibility === "hidden");
+    const isEmbedElement = (node) => node instanceof Element && EMBED_TAGS.has(node.tagName.toLowerCase());
+    const isEmbedWrapper = (node) => node instanceof Element && node.tagName.toLowerCase() === "div" && node.classList.contains("iframe");
+    const hasHiddenInlineAncestor = (node) => {
+      let current = node.parentElement;
+      while (current !== null) {
+        if (isInlineHidden(current)) return true;
+        current = current.parentElement;
+      }
+      return false;
+    };
+    const isComputedHidden = (node) => {
+      if (!(node instanceof Element) || !node.isConnected) return false;
+      const visibility = window.getComputedStyle(node).visibility;
+      if (visibility === "hidden" || visibility === "collapse") return true;
+      return hasHiddenDisplayAncestor(node);
+    };
+    const hasHiddenDisplayAncestor = (node) => {
+      let current = node;
+      while (current !== null && !current.matches(".hb-bbs-image-text, .hb-bbs-post")) {
+        if (window.getComputedStyle(current).display === "none") return true;
+        current = current.parentElement;
+      }
+      return false;
+    };
+    const isUnavailableEmbed = (node) => isInlineHidden(node) || hasHiddenInlineAncestor(node) || isComputedHidden(node);
+    const isHiddenEmbedNode = (node) => (isEmbedElement(node) || isEmbedWrapper(node)) && isUnavailableEmbed(node);
+
+    const readVisibleEmbeds = (node) => Array.from(node.querySelectorAll(EMBED_SELECTOR))
+      .filter((embed) => !isUnavailableEmbed(embed));
+
+    const isTextFreeContainer = (node) => {
+      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+      return text === "" && node.querySelector("img, picture") === null;
+    };
+
+    const readSingleSourceGroup = (source, embeds) => embeds.length === 1 ? { source, embeds } : null;
+
+    const readContainerEmbedGroup = (node, embeds) => {
+      if (embeds.length === 0) return null;
+      if (isEmbedWrapper(node)) return readSingleSourceGroup(node, embeds);
+      return isTextFreeContainer(node) ? readSingleSourceGroup(embeds[0], embeds) : null;
+    };
+
+    const readEmbedGroup = (node) => {
+      if (!(node instanceof Element) || isUnavailableEmbed(node)) return null;
+      if (EMBED_TAGS.has(node.tagName.toLowerCase())) return { source: node, embeds: [node] };
+      return readContainerEmbedGroup(node, readVisibleEmbeds(node));
+    };
+
+    const readEmbedGroups = (root) => {
+      if (!(root instanceof Element)) return [];
+      const groups = [];
+      const collect = (node) => {
+        if (!node.matches(EMBED_SELECTOR) && node.querySelector(EMBED_SELECTOR) === null) return;
+        const group = readEmbedGroup(node);
+        if (group !== null) {
+          groups.push(group);
+          return;
+        }
+        for (const child of Array.from(node.children)) collect(child);
+      };
+      collect(root);
+      return groups;
+    };
+
+    const containsEmbedOrWrapper = (node) => node.matches(EMBED_SELECTOR)
+      || isEmbedWrapper(node)
+      || node.querySelector(EMBED_SELECTOR) !== null;
+
+    const readMediaSequenceItem = (node) => {
+      if (node instanceof HTMLImageElement) return { kind: "image", node };
+      if (!containsEmbedOrWrapper(node)) return null;
+      const group = readEmbedGroup(node);
+      return group === null ? null : { kind: "embed", group };
+    };
+
+    const readMediaSequence = (root) => {
+      if (!(root instanceof Element)) return [];
+      const items = [];
+      const collect = (node) => {
+        const item = readMediaSequenceItem(node);
+        if (item !== null) {
+          items.push(item);
+          return;
+        }
+        for (const child of Array.from(node.children)) collect(child);
+      };
+      collect(root);
+      return items;
+    };
+
+    const readPositiveDimension = (raw, pattern) => {
+      if (!pattern.test(raw)) return 0;
+      const value = Number.parseFloat(raw);
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    };
+
+    const readEmbedDimension = (node, name) => {
+      const inlineValue = node instanceof HTMLElement ? node.style[name].trim() : "";
+      if (/^\d+(\.\d+)?px$/.test(inlineValue)) return readPositiveDimension(inlineValue, /^\d+(\.\d+)?px$/);
+      const attributeValue = (node.getAttribute(name) || "").trim();
+      return readPositiveDimension(attributeValue, /^\d+(\.\d+)?$/);
+    };
+
+    const readEmbedHeight = (node) => readEmbedDimension(node, "height");
+    const readEmbedWidth = (node) => readEmbedDimension(node, "width");
+
+    const isAudioOnlyGroup = (embeds) => embeds.length > 0 && embeds.every((embed) => embed.tagName.toLowerCase() === "audio");
+
+    const SUSPENDED_SOURCE_MARKER = "heybox-up-suspended";
+
+    const readSuspendedSourceValue = (name) => name === "srcdoc"
+      ? "<!doctype html><meta name=\"heybox-up-suspended\" content=\"\">"
+      : `about:blank#${SUSPENDED_SOURCE_MARKER}`;
+
+    const reconcileSuspendedSourceMutations = (embed, state, records) => {
+      if (suspendedEmbeds.get(embed) !== state) return;
+      for (const record of records) {
+        const name = record.attributeName;
+        if (name === null) continue;
+        delete state.attributes[name];
+      }
+    };
+
+    const suspendMediaEmbed = (embed) => {
+      suspendedEmbeds.set(embed, {
+        kind: "media",
+        muted: embed.muted,
+        currentTime: Number.isFinite(embed.currentTime) ? embed.currentTime : 0,
+      });
+      embed.muted = true;
+      embed.pause();
+    };
+
+    const suspendMarkupEmbed = (embed) => {
+      const attributes = {};
+      for (const name of EMBEDDED_MEDIA_SOURCE_ATTRIBUTES) {
+        const value = embed.getAttribute(name);
+        if (value !== null) attributes[name] = value;
+      }
+      const state = { kind: "markup", attributes, sourceObserver: null };
+      state.sourceObserver = new MutationObserver((records) => reconcileSuspendedSourceMutations(embed, state, records));
+      state.sourceObserver.observe(embed, { attributes: true, attributeFilter: EMBEDDED_MEDIA_SOURCE_ATTRIBUTES });
+      suspendedEmbeds.set(embed, state);
+      for (const name of Object.keys(attributes)) embed.setAttribute(name, readSuspendedSourceValue(name));
+      state.sourceObserver.takeRecords();
+    };
+
+    const suspendNativeEmbed = (embed) => {
+      if (suspendedEmbeds.has(embed)) return;
+      if (embed instanceof HTMLMediaElement) {
+        suspendMediaEmbed(embed);
+        return;
+      }
+      suspendMarkupEmbed(embed);
+    };
+
+    const restoreSuspendedMedia = (embed, state) => {
+      embed.muted = state.muted;
+      if (state.currentTime <= 0 || embed.readyState <= 0) return;
+      try {
+        embed.currentTime = state.currentTime;
+      } catch (error) {
+        console.debug("[HeyBox Up] Failed to restore embedded media position", error);
+      }
+    };
+
+    const restoreSuspendedMarkup = (embed, state) => {
+      if (state.sourceObserver !== null) {
+        reconcileSuspendedSourceMutations(embed, state, state.sourceObserver.takeRecords());
+        state.sourceObserver.disconnect();
+      }
+      for (const [name, value] of Object.entries(state.attributes)) embed.setAttribute(name, value);
+    };
+
+    const restoreSuspendedEmbed = (embed, state) => {
+      if (state.kind === "media" && embed instanceof HTMLMediaElement) {
+        restoreSuspendedMedia(embed, state);
+        return;
+      }
+      if (!(embed instanceof Element)) return;
+      restoreSuspendedMarkup(embed, state);
+    };
+
+    const restoreSuspendedEmbeds = () => {
+      for (const [embed, state] of suspendedEmbeds) restoreSuspendedEmbed(embed, state);
+      suspendedEmbeds.clear();
+    };
+
+    const removeUnavailableEmbedClones = (clone, source) => {
+      const nativeEmbeds = Array.from(source.querySelectorAll(EMBED_SELECTOR));
+      const clonedEmbeds = Array.from(clone.querySelectorAll(EMBED_SELECTOR));
+      nativeEmbeds.forEach((embed, index) => {
+        const cloned = clonedEmbeds[index];
+        if (cloned instanceof Element && isUnavailableEmbed(embed)) cloned.remove();
+      });
+    };
+
+    const readGroupDimension = (group, reader) => {
+      const ownValue = reader(group.source);
+      if (!isEmbedWrapper(group.source) || ownValue > 0) return ownValue;
+      const declared = group.embeds.find((embed) => reader(embed) > 0);
+      return declared === undefined ? 0 : reader(declared);
+    };
+
+    const applyDefaultEmbedRatio = (frame, group) => {
+      if (isAudioOnlyGroup(group.embeds)) return;
+      frame.style.aspectRatio = "16 / 9";
+    };
+
+    const applyEmbedFrameAspect = (frame, group, width, height) => {
+      if (width > 0 && height > 0) {
+        frame.style.aspectRatio = `${width} / ${height}`;
+        return;
+      }
+      if (height > 0) {
+        frame.style.height = `${height}px`;
+        return;
+      }
+      applyDefaultEmbedRatio(frame, group);
+    };
+
+    const applyEmbedFrameSize = (frame, group) => {
+      const width = readGroupDimension(group, readEmbedWidth);
+      const height = readGroupDimension(group, readEmbedHeight);
+      if (width > 0) frame.style.width = `min(100%, ${width}px)`;
+      applyEmbedFrameAspect(frame, group, width, height);
+    };
+
+    const addEmbedPage = (target, group) => {
+      const clone = group.source.cloneNode(true);
+      removeUnavailableEmbedClones(clone, group.source);
+      const frame = document.createElement("div");
+      frame.className = "hbu-reader-embed";
+      frame.append(clone);
+      applyEmbedFrameSize(frame, group);
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "embed";
+      page.append(frame);
+      target.append(page);
+      for (const embed of group.embeds) suspendNativeEmbed(embed);
+    };
+
     const addTextPages = (target, lines) => {
       let buffer = "";
       let bufferLines = 0;
@@ -6852,7 +7140,11 @@
 
     const addRichPage = (target, native) => {
       const clone = native.cloneNode(true);
+      removeUnavailableEmbedClones(clone, native);
       bindRichProxy(clone, native);
+      for (const group of readEmbedGroups(native)) {
+        for (const embed of group.embeds) suspendNativeEmbed(embed);
+      }
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
       page.dataset.kind = "rich";
@@ -6878,6 +7170,7 @@
         const tag = node.tagName.toLowerCase();
         if (tag === "br") { flush(); return; }
         if (tag === "script" || tag === "style") return;
+        if (isHiddenEmbedNode(node)) return;
         if (tag === "img") {
           flush();
           addMediaPage(target, (node.getAttribute("data-src") || node.getAttribute("src") || ""), node.getAttribute("alt") || "");
@@ -6888,22 +7181,41 @@
           addHeadingPage(target, node.textContent || "");
           return;
         }
+        const embedGroup = readEmbedGroup(node);
+        if (embedGroup !== null) {
+          flush();
+          addEmbedPage(target, embedGroup);
+          return;
+        }
         const images = Array.from(node.querySelectorAll("img"));
         const text = (node.textContent || "").replace(/\s+/g, " ").trim();
-        const mediaOnly = images.length === 1 && text === "";
+        const mediaOnly = text === "" && (images.length === 1 || readVisibleEmbeds(node).length > 0);
         if (mediaOnly) {
           flush();
-          const image = images[0];
-          addMediaPage(target, image.getAttribute("data-src") || image.getAttribute("src") || image.currentSrc || "", image.getAttribute("alt") || "");
+          for (const item of readMediaSequence(node)) {
+            if (item.kind === "image") {
+              addMediaPage(target, item.node.getAttribute("data-src") || item.node.getAttribute("src") || item.node.currentSrc || "", item.node.getAttribute("alt") || "");
+              continue;
+            }
+            addEmbedPage(target, item.group);
+          }
           return;
         }
         const className = typeof node.className === "string" ? node.className : "";
         const isCard = /(^|\s)(com-|hb-cpt__image|card)/.test(className);
+        const isMixedLeaf = text !== "" && !isCard && readVisibleEmbeds(node).length > 0
+          && node.querySelector("p, div, section, article, ul, ol, table, blockquote, pre, h1, h2, h3, h4, h5, h6") === null;
+        if (["div", "section", "article"].includes(tag) && isMixedLeaf) {
+          flush();
+          addRichPage(target, node);
+          return;
+        }
         if (["div", "section", "article"].includes(tag) && !isCard && node.children.length > 0) {
           for (const child of Array.from(node.childNodes)) visit(child);
           return;
         }
-        const isSimple = tag === "p" || tag === "div" && node.children.length === 0;
+        const isSimple = (tag === "p" || tag === "div" && node.children.length === 0)
+          && node.querySelector(EMBED_SELECTOR) === null;
         if (isSimple && text !== "" && images.length === 0) {
           lines.push(text);
           return;
@@ -6914,6 +7226,31 @@
       for (const child of Array.from(body.childNodes)) visit(child);
       flush();
     };
+
+    const readEmbedSourceSrcs = (node) => JSON.stringify(
+      Array.from(node.querySelectorAll("source")).map((child) => child.getAttribute("src") || "")
+    );
+
+    const readEmbedStyleValue = (node, name) => node instanceof HTMLElement ? node.style[name] || "" : "";
+
+    const readEmbedSignature = (body) => Array.from(body.querySelectorAll(".iframe, iframe, video, audio, embed, object"))
+      .map((node) => [
+        node.tagName.toLowerCase(),
+        node.classList.contains("iframe") ? "wrapper" : "",
+        readEmbedStyleValue(node, "width"),
+        readEmbedStyleValue(node, "height"),
+        readEmbedStyleValue(node, "visibility"),
+        readEmbedStyleValue(node, "display"),
+        node.getAttribute("width") || "",
+        node.getAttribute("height") || "",
+        node.getAttribute("src") || "",
+        node.getAttribute("srcdoc") || "",
+        node.getAttribute("data") || "",
+        readEmbedSourceSrcs(node),
+        node.hasAttribute("hidden") ? "hidden" : "",
+        isUnavailableEmbed(node) ? "hidden" : "visible",
+      ].join("~"))
+      .join("|");
 
     const readPager = (side) => {
       const shadow = document.getElementById("heybox-up-post-pager")?.shadowRoot;
@@ -7318,7 +7655,7 @@
         article,
         body,
         titleNode,
-        signature: [articleId, titleNode?.textContent?.length || 0, body.childNodes.length, (body.textContent || "").length, covers.length, tags.length, related.length].join(":"),
+        signature: [articleId, titleNode?.textContent?.length || 0, body.childNodes.length, (body.textContent || "").length, covers.length, tags.length, related.length, readEmbedSignature(body)].join(":"),
       };
     };
 
@@ -7362,8 +7699,61 @@
       };
     };
 
+    const refreshReaderSignature = () => {
+      const refreshedSource = readSource();
+      if (refreshedSource !== null) signature = refreshedSource.signature;
+    };
+
+    const openLinkedComments = () => {
+      if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) {
+        requestAnimationFrame(() => void openComments());
+      }
+    };
+
+    const settleRatioRestore = (node, ratio) => {
+      const apply = () => {
+        node.scrollTop = (node.scrollHeight - node.clientHeight) * ratio;
+      };
+      apply();
+      let cancelled = false;
+      const stop = () => {
+        cancelled = true;
+        restoring = false;
+      };
+      for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) node.addEventListener(type, stop, { once: true, passive: true });
+      const images = Array.from(node.querySelectorAll("img"));
+      const settle = Promise.race([
+        Promise.allSettled(images.map((image) => image.decode())),
+        new Promise((resolve) => window.setTimeout(resolve, 1200)),
+      ]);
+      settle.then(() => {
+        if (cancelled) return;
+        apply();
+        restoring = false;
+        updateProgress();
+      });
+    };
+
+    const restoreReaderPosition = (ratio, restore) => {
+      if (ratio >= 0) {
+        requestAnimationFrame(() => {
+          const node = host?.querySelector(".hbu-reader-scroll");
+          if (node === null || node === undefined) return;
+          settleRatioRestore(node, ratio);
+        });
+        return;
+      }
+      if (restore <= 0) return;
+      requestAnimationFrame(() => {
+        const pages = host?.querySelectorAll(".hbu-reader-page");
+        pages?.[restore]?.scrollIntoView({ block: "start", behavior: "auto" });
+        setActive(restore);
+      });
+    };
+
     const render = (data) => {
       if (host === null) return;
+      restoreSuspendedEmbeds();
       readerGeneration += 1;
       observer?.disconnect();
       window.cancelAnimationFrame(scrollRaf);
@@ -7406,6 +7796,7 @@
       scroll.append(createHero(data));
       const pages = document.createDocumentFragment();
       buildPages(pages, data.body);
+      refreshReaderSignature();
       scroll.append(pages);
       scroll.append(createEndPage(data));
       const rail = createRail(data);
@@ -7450,40 +7841,8 @@
       restoring = ratio >= 0;
       updateProgress();
       if (ratio >= 0) writeReaderRatio(articleId, ratio);
-      if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) requestAnimationFrame(() => void openComments());
-      if (ratio >= 0) {
-        requestAnimationFrame(() => {
-          const node = host?.querySelector(".hbu-reader-scroll");
-          if (node === null || node === undefined) return;
-          const apply = () => {
-            node.scrollTop = (node.scrollHeight - node.clientHeight) * ratio;
-          };
-          apply();
-          let cancelled = false;
-          const stop = () => {
-            cancelled = true;
-            restoring = false;
-          };
-          for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) node.addEventListener(type, stop, { once: true, passive: true });
-          const images = Array.from(node.querySelectorAll("img"));
-          const settle = Promise.race([
-            Promise.allSettled(images.map((image) => image.decode())),
-            new Promise((resolve) => window.setTimeout(resolve, 1200)),
-          ]);
-          settle.then(() => {
-            if (cancelled) return;
-            apply();
-            restoring = false;
-            updateProgress();
-          });
-        });
-      } else if (restore > 0) {
-        requestAnimationFrame(() => {
-          const pages = host?.querySelectorAll(".hbu-reader-page");
-          pages?.[restore]?.scrollIntoView({ block: "start", behavior: "auto" });
-          setActive(restore);
-        });
-      }
+      openLinkedComments();
+      restoreReaderPosition(ratio, restore);
     };
 
     const showPending = () => {
@@ -7496,6 +7855,7 @@
     };
 
     const teardown = () => {
+      restoreSuspendedEmbeds();
       readerGeneration += 1;
       observer?.disconnect();
       observer = null;
