@@ -310,6 +310,9 @@
   const EMBEDDED_MEDIA_OBSERVED_SELECTOR = EMBEDDED_MEDIA_SELECTOR + ", " + EMBEDDED_MEDIA_WRAPPER_SELECTOR;
   const EMBEDDED_MEDIA_SOURCE_ATTRIBUTES = ["src", "srcdoc", "data"];
   const EMBEDDED_MEDIA_ATTRIBUTES = [...EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, "width", "height", "hidden", "style"];
+  // Site layout toggles often land on an ancestor class or visibility attribute, which hides an embed indirectly.
+  const ARTICLE_LAYOUT_OBSERVED_SELECTOR = "#page-bbs-link";
+  const PAGE_SYNC_ATTRIBUTE_FILTER = [...EMBEDDED_MEDIA_ATTRIBUTES, "class"];
   let pageSyncTimer = 0;
   let pageSyncLastRun = 0;
   let pageSyncRoute = readPageRoute();
@@ -435,13 +438,18 @@
     return touched;
   }
 
+  function isObservedAttributeTarget(node) {
+    if (!(node instanceof Element)) return false;
+    if (node.matches(EMBEDDED_MEDIA_OBSERVED_SELECTOR)) return true;
+    return node.closest(ARTICLE_LAYOUT_OBSERVED_SELECTOR) !== null;
+  }
+
   function startPageSyncObserver() {
     if (!document.body || !document.body.isConnected) return;
     new MutationObserver((records) => {
       let relevant = false;
       for (const record of records) {
-        if (record.type === "attributes"
-          && !(record.target instanceof Element && record.target.matches(EMBEDDED_MEDIA_OBSERVED_SELECTOR))) continue;
+        if (record.type === "attributes" && !isObservedAttributeTarget(record.target)) continue;
         relevant = notePageMutationRegions(record) || relevant;
       }
       if (relevant) schedulePageSync();
@@ -450,7 +458,7 @@
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: EMBEDDED_MEDIA_ATTRIBUTES,
+      attributeFilter: PAGE_SYNC_ATTRIBUTE_FILTER,
     });
     window.addEventListener("popstate", scheduleForcedPageSync);
     window.addEventListener("hashchange", scheduleForcedPageSync);
