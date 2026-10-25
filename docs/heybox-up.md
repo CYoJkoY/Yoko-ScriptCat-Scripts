@@ -53,7 +53,7 @@
 
 信息流评论预览走帖子评论树接口 `/bbs/app/link/tree`，除同一套基础参数外传 `heybox_id`（Cookie）、`link_id`、`is_first`（首页为 `1`）、`page`（从 1 起）、`index=1`、`limit=20`、`owner_only=0`。站点网页端还会带一个空的 `h_src` 参数，脚本在 `link_id` 前补齐，缺省时更容易触发风控。响应 `status === "ok"` 时读 `result.comments`（按楼层分组的数组，每组 `comment[0]` 为楼，后续为楼中楼）、`result.link.title` 与 `result.link.comment_num`。单条评论取 `user.username`、`user.avatar`（兼容拼写 `avartar`）、`text`（去标签后截断 400 字）、`create_at`、`support_num`（兼容 `support_count`）、`reply_count`（兼容 `sub_comment_num`）、`is_cy`（`1`、`"1"` 或 `true` 视为插眼）。
 
-文章连读的连续发现走信息流接口 `/bbs/app/feeds`，参数与站点信息流一致：`pull=0`、`offset`（首次为 0，每成功取一页递增 30）、`dw=660`。响应 `status === "ok"` 时读 `result.links`，并按站点规则排除 `content_type === 18` 的推广条目；同页重复帖子按 `linkid` 去重。脚本先带 `hkey`、`_time`、`nonce` 与 `heybox_id` 请求，签名计算失败、HTTP 失败、网络异常或 JSON 解析失败时，回退到同一路径的无签名请求。登录态下该接口的实际返回待确认：未登录公开请求返回 HTTP 200，但 `status` 不是 `ok`；实现按站点网页端同一路径与查询参数对齐。
+文章连读的连续发现走信息流接口 `/bbs/app/feeds`，参数与站点信息流一致：`pull=0`、`offset`、`dw=660`。没有已存游标时，首次 `offset` 取已渲染信息流之后最近的 30 的整数倍位置，避免从头重复已看过的页面；之后每成功取一页递增 30，并把成功写入的游标按账号存下来。响应 `status === "ok"` 时读 `result.links`，并按站点规则排除 `content_type === 18` 的推广条目；同页重复帖子按 `linkid` 去重。原始 `result.links` 为空数组才视为信息流末尾，整页都被过滤时继续取下一页。脚本先带 `hkey`、`_time`、`nonce` 与 `heybox_id` 请求，签名计算失败、HTTP 失败、网络异常、JSON 解析失败或签名请求返回非登录失败状态时，回退到同一路径的无签名请求；签名请求返回登录失效时不再重试。登录态下该接口的实际返回待确认：未登录公开请求返回 HTTP 200，但 `status` 不是 `ok`；实现按站点网页端同一路径与查询参数对齐。
 
 沉浸阅读的点赞、收藏与 CY 发布走站点写接口，全部由用户点击触发：`POST /bbs/app/profile/award/link` 传 `link_id` 与 `award_type`（点赞 `1`、取消 `0`）；`POST /bbs/app/link/favour` 传 `favour_type`（收藏 `1`、取消 `2`）、`link_id`、`userid` 与 `folder_id`；`POST /bbs/app/comment/create` 传 `is_cy: 1`、`link_id`、`reply_id: "-1"`、`root_id: "-1"` 与 `text`。收藏夹列表走 `GET /bbs/app/profile/fav/folders`。写请求与站点自身 axios 配置一致，使用 `application/x-www-form-urlencoded;charset=UTF-8` 请求体，query 携带同一套签名参数、评论创建专用的 `_rnd` 与 `target=heybox_app`；`status === "login"` 时统一提示「请先登录小黑盒」。
 
@@ -123,7 +123,7 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 - 桌面工作台只重排现有 DOM：频道来自 `.bbs-home__topic-item`，点击时转发给站点原按钮；热门排行读取已渲染卡片，点击滚动到对应帖子并临时描边，不请求新接口、不伪造榜单。评论预览展开时右栏自动让位给预览侧栏。
 - 原生回到顶部：站点把 `.scroll-list__button-group` 的右偏移绑在内容列上，窄视口会把它推到屏幕外，宽屏又会压到自定义右栏或评论预览下方。首页、频道页与帖子页因此隐藏原生按钮；其余页面把按钮固定到距右边 20px、距底部 24px，保证 800–1159px 下完整可见。
 - 文章连读：帖子页在纵轴中心左右两侧显示纯 SVG 箭头，不再夹带文字、页码或底部浮动条。按钮贴近页面外侧留白，宽屏不遮挡正文；窄于 1200px 时缩小并降低不透明度，1080px 以下隐藏以让出单列阅读空间。切换优先调用站点 Vue 路由（`router.push`），地址与内容由 SPA 更新，不整页刷新；切换后滚动回顶部。键盘 `[` 与 `]` 分别切上一篇、下一篇，输入框、文本域与可编辑区域内不拦截；沉浸阅读开启时由阅读器接管这两个键，外部翻页器不重复响应。
-- 连读顺序：进入帖子前，脚本把社区信息流中已渲染的帖子 ID 按顺序写入 `sessionStorage`；帖子页按当前 ID 定位，并跳过浏览记录里已访问的帖子。下一篇优先在信息流顺序中挑选与最近浏览作者、话题重合度最低的未访问项；信息流顺序没有候选时使用连续发现队列，仍不足则拉取 `/bbs/app/feeds` 的后续页（每次最多 3 页、每页 30 条）并继续挑选。只有探索请求失败或队列耗尽时，才回退到页面“相关推荐”中的未访问项。点“下一篇”后先显示“正在寻找下一篇…”，该按钮在请求期间禁用，完成后自动进入选中的文章；失败或到达信息流末尾时按钮恢复并提示可重试。结尾“继续阅读”同样过滤当前文章与已访问帖子，最多显示 4 条。“上一篇”仍由本次会话的浏览记录提供。
+- 连读顺序：进入帖子前，脚本把社区信息流中已渲染的帖子 ID 按顺序写入 `sessionStorage`；帖子页按当前 ID 定位，并跳过浏览记录里已访问的帖子。下一篇优先在信息流顺序中挑选与最近浏览作者、话题重合度最低的未访问项；信息流顺序没有候选时使用连续发现队列，仍不足则拉取 `/bbs/app/feeds` 的后续页（每次最多 3 页、每页 30 条）并继续挑选。探索请求失败、到达信息流末尾或队列耗尽后，如果页面“相关推荐”里还有未访问项，按钮会直接进入其中第一篇；只有这时也没有候选，按钮才恢复并提示可重试。点“下一篇”后先显示“正在寻找下一篇…”，该按钮在请求期间禁用，完成后自动进入选中的文章。结尾“继续阅读”同样过滤当前文章与已访问帖子，最多显示 4 条。“上一篇”仍由本次会话的浏览记录提供。
 - 评论区留在站点原有 DOM 位置：关闭沉浸阅读时脚本用 CSS Grid 把帖子内容与 `.link-comment` 排成左右两列；开启时只把 `.link-comment` 固定到抽屉，两种模式都不搬动节点，站点祖先选择器与原生样式继续生效。
 - 回复、点赞、展开楼中楼、加载更多仍由站点原生逻辑处理；脚本不克隆、不改写评论数据。
 - 评论区顶部新增“排序”工具栏：默认、时间、点赞、作者。排序只写 `style.order`，不改 DOM 顺序；站点重渲染后自动重建工具栏并恢复上次模式。
@@ -151,7 +151,7 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 - 导航图标偏好键 `heybox-up.navMotion.v1`，取值 `1` 或 `0`，默认 `1`（动态）；仅存本机，由齿轮设置菜单里的“动态导航图标”开关写入。
 - 中栏宽度键 `heybox-up.feedWidth.v1`，取值为 40–76 的整数百分比，默认 `56`；齿轮设置菜单里的分段按钮（40 / 48 / 56 / 64 / 72）与自定义输入框共用这一键，只改 CSS 变量 `--heybox-up-feed-pct`，不重排 DOM。
 - 正文行距键 `heybox-up.readerLineHeight.v1`，取值为 1.4–2.2 的倍数（保留两位小数），默认 `1.7`；齿轮设置菜单与阅读页右侧行距面板共用，写入根级 CSS 变量 `--heybox-up-reading-line-height`，只作用于正文文本，标题、代码块、引用与站点卡片保持各自行高。
-- 连读顺序键 `heybox-up.feedOrder.v1` 与浏览记录键 `heybox-up.postTrail.v1`，只写 `sessionStorage`，关闭标签页即清除；信息流顺序最多保留最近 600 条。连续发现另用 `heybox-up.feedQueue.v1`（最多 80 条待读候选）、`heybox-up.feedCursor.v1`（下一次 `/bbs/app/feeds` 的 `offset`）、`heybox-up.feedSeen.v1`（最多 600 个本次会话已见帖子）与 `heybox-up.feedRecent.v1`（最近 12 篇的作者与话题元数据）；这些键同样只写 `sessionStorage`，关闭标签页即清除。插眼区块只响应收藏页 URL 的 `#heybox-up-cy` 锚点。
+- 连读顺序键 `heybox-up.feedOrder.v1:<heybox_id>` 与浏览记录键 `heybox-up.postTrail.v1`，只写 `sessionStorage`，关闭标签页即清除；信息流顺序最多保留最近 600 条。连续发现另用 `heybox-up.feedQueue.v1:<heybox_id>`（最多 80 条待读候选）、`heybox-up.feedCursor.v1:<heybox_id>`（下一次 `/bbs/app/feeds` 的 `offset`）、`heybox-up.feedSeen.v1:<heybox_id>`（最多 600 个本次会话已见帖子）与 `heybox-up.feedRecent.v1:<heybox_id>`（最近 12 篇的作者与话题元数据）；没有 `heybox_id` 时后缀为 `:anonymous`。这些键同样只写 `sessionStorage`，关闭标签页即清除；切换账号后读取各自的状态，不会沿用上一个账号的队列与游标。插眼区块只响应收藏页 URL 的 `#heybox-up-cy` 锚点。
 - 评论区由站点组件自行请求与缓存；脚本不保存评论内容与排序。
 - 社区内搜索不写 `localStorage`：关键词、时间筛选与已加载结果只保存在当前页面的内存里，刷新或离开页面即清空。
 - 桌面工作台不写存储：频道列表与热门排行每次按当前 DOM 重新计算，不缓存到本机，也不跨页面保留。
@@ -290,7 +290,7 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 - 正文内嵌卡片（`com-game-card`、`com-album-card`、`com-award-table-card`、`com-chatroom-card`、`com-league-card`、`com-match-card`、`com-mod-card`、`com-sku-card`、`com-wiki-card`）的底色、描边、文字、药丸底与按钮在站点样式表里写死为浅色，深色主题按这 9 类容器逐组覆盖；站点新增卡片类型时同样会出现未覆盖的浅色块。
 - 顶部导航依赖 `.nav .nav-links` 与 `.nav-link` 类名：脚本隐藏原生按钮并插入自己的入口，站点改版换容器后需要同步选择器。隐藏的原生按钮仍留在 DOM 中，站点自己的路由与统计不受影响。
 - 导航按地址判断激活项；站点若改用纯前端状态切换而地址不变，激活项可能停在上一页，直到下一次地址变化或导航重建。
-- 连读候选来自会话浏览记录、已渲染信息流、连续发现队列与相关推荐：信息流每页 30 条，每次发现最多取 3 页并推进 `offset`；到达站点信息流末尾或请求失败时停止并显示可重试提示，不伪造候选。已访问与已见集合只保留在本次会话，跨标签页或清空 `sessionStorage` 后重新开始。直接打开帖子或刷新后，信息流顺序可能尚未建立，此时先尝试连续发现，相关推荐仅作兜底。登录态下 `/bbs/app/feeds` 的实际返回仍待确认；未登录公开请求返回 HTTP 200 但 `status` 不是 `ok`。
+- 连读候选来自会话浏览记录、已渲染信息流、连续发现队列与相关推荐：信息流每页 30 条，每次发现最多取 3 页并推进 `offset`；到达站点信息流末尾、队列耗尽或请求失败时，相关推荐仍有未访问项就自动进入，只有没有任何可用候选时才停止并显示可重试提示，不伪造候选。已访问与已见集合按账号隔离，只保留在本次会话，跨标签页或清空 `sessionStorage` 后重新开始。直接打开帖子或刷新后，信息流顺序可能尚未建立，此时先尝试连续发现，相关推荐仅作兜底。登录态下 `/bbs/app/feeds` 的实际返回仍待确认；未登录公开请求返回 HTTP 200 但 `status` 不是 `ok`。
 - 连读切换优先调用站点 Vue 路由（`#app.__vue_app__.config.globalProperties.$router`）；取不到 router 时退回站点 `<a>` 点击，会退化为整页跳转，功能仍可用但会刷新。
 - 社区内搜索依赖 `/app/topic/link/<topic_id>` 路由与 `.topic-link__main`、`.topic-link__filter-row` 结构；筛选行存在时优先插在它的实际父节点 `.topic-link__panel` 内，筛选行缺失时退回 `.topic-link__main`。站点改版换容器后搜索栏可能不会挂载或位置改变。
 - 社区名优先读右栏社区卡 `.topic-aside__topic-indicator`，读不到再退回页头标题与 `document.title`；右栏尚未渲染时占位文案会短暂使用页头名称。
@@ -307,8 +307,8 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 
 - 文章连读新增连续发现：下一篇先按信息流顺序与已发现队列寻找未访问帖子，候选不足时自动拉取 `/bbs/app/feeds` 的后续页（`pull=0`、`offset` 每次递增 30、`dw=660`），不再局限于进入帖子前已渲染的条目。
 - 新增作者与话题关联度排序：按最近 12 篇的作者 ID/昵称与话题 ID/名称计分，低分优先，尽量避开同一作者和相近话题；相关推荐只在探索失败或队列耗尽后兜底。
-- 翻页按钮在发现期间显示“正在寻找下一篇…”并暂时禁用，完成后自动进入下一篇；失败或到达信息流末尾时恢复按钮并提示可重试。沉浸阅读的 `[` 与 `]` 改为由阅读器接管。
-- 新增会话存储键 `heybox-up.feedQueue.v1`、`heybox-up.feedCursor.v1`、`heybox-up.feedSeen.v1`、`heybox-up.feedRecent.v1`；信息流顺序最多保留最近 600 条，关闭标签页即清除。
+- 翻页按钮在发现期间显示“正在寻找下一篇…”并暂时禁用，完成后自动进入下一篇；探索失败、到达信息流末尾或队列耗尽时，相关推荐仍有未访问项就直接进入作为兜底，只有没有可用候选时才恢复按钮并提示可重试。沉浸阅读的 `[` 与 `]` 改为由阅读器接管。
+- 新增会话存储键 `heybox-up.feedQueue.v1:<heybox_id>`、`heybox-up.feedCursor.v1:<heybox_id>`、`heybox-up.feedSeen.v1:<heybox_id>`、`heybox-up.feedRecent.v1:<heybox_id>`；信息流顺序最多保留最近 600 条，关闭标签页即清除，切换账号后读取各自的状态。
 - 登录态下信息流发现接口的实际返回待确认；未登录公开请求返回 HTTP 200，但 `status` 不是 `ok`。本次验证覆盖纯函数单元测试、语法检查与差异检查。
 
 ### v0.4.37
