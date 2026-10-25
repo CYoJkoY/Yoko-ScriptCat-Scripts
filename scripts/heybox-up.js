@@ -6928,14 +6928,15 @@
 
     const isAudioOnlyGroup = (embeds) => embeds.length > 0 && embeds.every((embed) => embed.tagName.toLowerCase() === "audio");
 
+    const readSuspendedSourceValue = (name) => name === "srcdoc" ? "" : "about:blank";
+
     const reconcileSuspendedSourceMutations = (embed, state, records) => {
       if (suspendedEmbeds.get(embed) !== state) return;
       for (const record of records) {
         const name = record.attributeName;
         if (name === null) continue;
-        if (state.pendingSourceRemovals.delete(name)) continue;
         const current = embed.getAttribute(name);
-        if (current === null || current.trim() === "") delete state.attributes[name];
+        if (current !== readSuspendedSourceValue(name)) delete state.attributes[name];
       }
     };
 
@@ -6956,12 +6957,12 @@
         const value = embed.getAttribute(name);
         if (value !== null) attributes[name] = value;
       }
-      const pendingSourceRemovals = new Set(Object.keys(attributes));
-      const state = { kind: "markup", attributes, pendingSourceRemovals, sourceObserver: null };
+      const state = { kind: "markup", attributes, sourceObserver: null };
       state.sourceObserver = new MutationObserver((records) => reconcileSuspendedSourceMutations(embed, state, records));
       state.sourceObserver.observe(embed, { attributes: true, attributeFilter: EMBEDDED_MEDIA_SOURCE_ATTRIBUTES });
       suspendedEmbeds.set(embed, state);
-      for (const name of Object.keys(attributes)) embed.removeAttribute(name);
+      for (const name of Object.keys(attributes)) embed.setAttribute(name, readSuspendedSourceValue(name));
+      reconcileSuspendedSourceMutations(embed, state, state.sourceObserver.takeRecords());
     };
 
     const restoreSuspendedEmbeds = () => {
@@ -6984,7 +6985,7 @@
         }
         for (const [name, value] of Object.entries(state.attributes)) {
           const current = embed.getAttribute(name);
-          if (current !== null && current.trim() !== "") continue;
+          if (current !== readSuspendedSourceValue(name)) continue;
           embed.setAttribute(name, value);
         }
       }
