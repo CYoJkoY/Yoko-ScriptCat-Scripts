@@ -7089,6 +7089,7 @@
 
     const addRichPage = (target, native) => {
       const clone = native.cloneNode(true);
+      removeUnavailableEmbedClones(clone, native);
       bindRichProxy(clone, native);
       for (const group of readEmbedGroups(native)) {
         for (const embed of group.embeds) suspendNativeEmbed(embed);
