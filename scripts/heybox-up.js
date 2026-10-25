@@ -6918,6 +6918,17 @@
 
     const isAudioOnlyGroup = (embeds) => embeds.length > 0 && embeds.every((embed) => embed.tagName.toLowerCase() === "audio");
 
+    const reconcileSuspendedSourceMutations = (embed, state, records) => {
+      if (suspendedEmbeds.get(embed) !== state) return;
+      for (const record of records) {
+        const name = record.attributeName;
+        if (name === null) continue;
+        if (state.pendingSourceRemovals.delete(name)) continue;
+        const current = embed.getAttribute(name);
+        if (current === null || current.trim() === "") delete state.attributes[name];
+      }
+    };
+
     const suspendNativeEmbed = (embed) => {
       if (suspendedEmbeds.has(embed)) return;
       if (embed instanceof HTMLMediaElement) {
@@ -6935,7 +6946,11 @@
         const value = embed.getAttribute(name);
         if (value !== null) attributes[name] = value;
       }
-      suspendedEmbeds.set(embed, { kind: "markup", attributes });
+      const pendingSourceRemovals = new Set(Object.keys(attributes));
+      const state = { kind: "markup", attributes, pendingSourceRemovals, sourceObserver: null };
+      state.sourceObserver = new MutationObserver((records) => reconcileSuspendedSourceMutations(embed, state, records));
+      state.sourceObserver.observe(embed, { attributes: true, attributeFilter: EMBEDDED_MEDIA_SOURCE_ATTRIBUTES });
+      suspendedEmbeds.set(embed, state);
       for (const name of Object.keys(attributes)) embed.removeAttribute(name);
     };
 
@@ -6953,6 +6968,10 @@
           continue;
         }
         if (!(embed instanceof Element)) continue;
+        if (state.sourceObserver !== null) {
+          reconcileSuspendedSourceMutations(embed, state, state.sourceObserver.takeRecords());
+          state.sourceObserver.disconnect();
+        }
         for (const [name, value] of Object.entries(state.attributes)) {
           const current = embed.getAttribute(name);
           if (current !== null && current.trim() !== "") continue;
@@ -7137,7 +7156,6 @@
     };
 
     const readEmbedSignature = (body) => Array.from(body.querySelectorAll(".iframe, iframe, video, audio, embed, object"))
-      .slice(0, 12)
       .map((node) => {
         const style = node instanceof HTMLElement ? node.style : null;
         return [
