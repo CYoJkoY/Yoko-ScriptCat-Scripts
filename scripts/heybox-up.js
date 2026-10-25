@@ -7138,7 +7138,7 @@
         }
         const images = Array.from(node.querySelectorAll("img"));
         const text = (node.textContent || "").replace(/\s+/g, " ").trim();
-        const mediaOnly = images.length === 1 && text === "";
+        const mediaOnly = text === "" && (images.length === 1 || readVisibleEmbeds(node).length > 0);
         if (mediaOnly) {
           flush();
           for (const item of readMediaSequence(node)) {
