@@ -306,7 +306,10 @@
   const PAGE_MUTATION_REGION_COMBINED = PAGE_MUTATION_REGION_ENTRIES.map((entry) => entry[1]).join(", ");
   const PAGE_MUTATION_IGNORE_SELECTOR = '[id^="heybox-up-"], input, textarea, select, [contenteditable]:not([contenteditable="false"])';
   const EMBEDDED_MEDIA_SELECTOR = "iframe, video, audio, embed, object";
-  const EMBEDDED_MEDIA_ATTRIBUTES = ["src", "srcdoc", "data"];
+  const EMBEDDED_MEDIA_WRAPPER_SELECTOR = "div.iframe";
+  const EMBEDDED_MEDIA_OBSERVED_SELECTOR = EMBEDDED_MEDIA_SELECTOR + ", " + EMBEDDED_MEDIA_WRAPPER_SELECTOR;
+  const EMBEDDED_MEDIA_SOURCE_ATTRIBUTES = ["src", "srcdoc", "data"];
+  const EMBEDDED_MEDIA_ATTRIBUTES = [...EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, "hidden", "style"];
   let pageSyncTimer = 0;
   let pageSyncLastRun = 0;
   let pageSyncRoute = readPageRoute();
@@ -438,7 +441,7 @@
       let relevant = false;
       for (const record of records) {
         if (record.type === "attributes"
-          && !(record.target instanceof Element && record.target.matches(EMBEDDED_MEDIA_SELECTOR))) continue;
+          && !(record.target instanceof Element && record.target.matches(EMBEDDED_MEDIA_OBSERVED_SELECTOR))) continue;
         relevant = notePageMutationRegions(record) || relevant;
       }
       if (relevant) schedulePageSync();
@@ -6832,13 +6835,24 @@
       }
       return false;
     };
-    const isUnavailableEmbed = (node) => isInlineHidden(node) || hasHiddenInlineAncestor(node);
+    const isComputedHidden = (node) => {
+      if (!(node instanceof Element) || !node.isConnected) return false;
+      const visibility = window.getComputedStyle(node).visibility;
+      if (visibility === "hidden" || visibility === "collapse") return true;
+      let current = node;
+      while (current !== null && !current.matches(".hb-bbs-image-text, .hb-bbs-post")) {
+        if (window.getComputedStyle(current).display === "none") return true;
+        current = current.parentElement;
+      }
+      return false;
+    };
+    const isUnavailableEmbed = (node) => isInlineHidden(node) || hasHiddenInlineAncestor(node) || isComputedHidden(node);
     const isHiddenEmbedNode = (node) => (isEmbedElement(node) || isEmbedWrapper(node)) && isUnavailableEmbed(node);
 
     const readEmbedGroup = (node) => {
-      if (!(node instanceof Element) || isInlineHidden(node)) return null;
+      if (!(node instanceof Element) || isUnavailableEmbed(node)) return null;
       const tag = node.tagName.toLowerCase();
-      if (EMBED_TAGS.has(tag)) return isUnavailableEmbed(node) ? null : { source: node, embeds: [node] };
+      if (EMBED_TAGS.has(tag)) return { source: node, embeds: [node] };
       if (isEmbedWrapper(node)) {
         const embeds = Array.from(node.querySelectorAll(EMBED_SELECTOR)).filter((embed) => !isUnavailableEmbed(embed));
         return embeds.length === 0 ? null : { source: node, embeds };
@@ -6880,7 +6894,7 @@
         return;
       }
       const attributes = {};
-      for (const name of EMBEDDED_MEDIA_ATTRIBUTES) {
+      for (const name of EMBEDDED_MEDIA_SOURCE_ATTRIBUTES) {
         const value = embed.getAttribute(name);
         if (value !== null) attributes[name] = value;
       }
@@ -6911,20 +6925,30 @@
       suspendedEmbeds.clear();
     };
 
-    const removeHiddenEmbedDescendants = (clone) => {
-      for (const embed of Array.from(clone.querySelectorAll(EMBED_SELECTOR))) {
-        if (isUnavailableEmbed(embed)) embed.remove();
-      }
+    const removeUnavailableEmbedClones = (clone, source) => {
+      const nativeEmbeds = Array.from(source.querySelectorAll(EMBED_SELECTOR));
+      const clonedEmbeds = Array.from(clone.querySelectorAll(EMBED_SELECTOR));
+      nativeEmbeds.forEach((embed, index) => {
+        const cloned = clonedEmbeds[index];
+        if (cloned instanceof Element && isUnavailableEmbed(embed)) cloned.remove();
+      });
     };
 
     const addEmbedPage = (target, group) => {
       const clone = group.source.cloneNode(true);
-      removeHiddenEmbedDescendants(clone);
+      removeUnavailableEmbedClones(clone, group.source);
       const frame = document.createElement("div");
       frame.className = "hbu-reader-embed";
       frame.append(clone);
-      const width = readEmbedWidth(group.source);
-      const height = readEmbedHeight(group.source);
+      let width = readEmbedWidth(group.source);
+      let height = readEmbedHeight(group.source);
+      if (isEmbedWrapper(group.source) && width === 0 && height === 0) {
+        const declared = group.embeds.find((embed) => readEmbedWidth(embed) > 0 || readEmbedHeight(embed) > 0);
+        if (declared !== undefined) {
+          width = readEmbedWidth(declared);
+          height = readEmbedHeight(declared);
+        }
+      }
       if (width > 0 && height > 0) {
         frame.style.width = "min(100%, " + width + "px)";
         frame.style.aspectRatio = width + " / " + height;
@@ -7083,6 +7107,8 @@
           node.getAttribute("src") || "",
           node.getAttribute("srcdoc") || "",
           node.getAttribute("data") || "",
+          node.hasAttribute("hidden") ? "hidden" : "",
+          isUnavailableEmbed(node) ? "hidden" : "visible",
         ].join("~");
       })
       .join("|");
