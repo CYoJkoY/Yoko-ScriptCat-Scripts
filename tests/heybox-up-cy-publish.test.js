@@ -4,6 +4,13 @@ import { test } from "node:test";
 
 const source = readFileSync(new URL("../scripts/heybox-up.js", import.meta.url), "utf8");
 
+function readBlock(startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  assert.ok(start >= 0 && end > start, "Missing block: " + startMarker);
+  return source.slice(start, end);
+}
+
 function readConstant(name) {
   const match = new RegExp('const ' + name + ' = "([^"]+)";').exec(source);
   assert.ok(match, "Missing constant: " + name);
@@ -109,4 +116,55 @@ test("reader keeps the existing comment-create form fields", () => {
     submitSource.includes("postReaderApi(COMMENT_CREATE_API_PATH, {"),
     "submitCy must use COMMENT_CREATE_API_PATH",
   );
+});
+
+test("reader CY badge renders the count and a zero fallback", () => {
+  const block = readBlock("const syncActionStates = () => {", "const clickNative");
+  assert.ok(block.includes("hbu-reader-cy-count"), "the rail CY action must render a count span");
+  assert.ok(block.includes("const cyTotal = linkState === null ? 0 :"), "the badge must fall back to 0 before link state loads");
+  assert.ok(block.includes("formatActionCount(cyTotal)"), "the badge must format the CY total");
+  assert.ok(block.includes("cyNode.title"), "the rail CY action must expose the count in its tooltip");
+});
+
+test("reader CY badge starts at zero in the initial rail markup", () => {
+  const start = source.indexOf("const createRail = (data) => {");
+  const end = source.indexOf("const cy = document.createElement", start);
+  assert.ok(start >= 0 && end > start, "Missing createRail block");
+  const cyMarkup = source.slice(end, source.indexOf("cy.addEventListener", end));
+  assert.ok(cyMarkup.includes('hbu-reader-cy-count">0<'), "the rail CY button must start at 0");
+  assert.ok(cyMarkup.includes('"CY 0"'), "the rail CY button must label the count for assistive tech");
+});
+
+test("publishing a CY increments the reader CY badge", () => {
+  const start = source.indexOf("const submitCy = async");
+  const end = source.indexOf("const openCyDialog", start);
+  const submitSource = source.slice(start, end);
+  assert.ok(submitSource.includes("linkState.cyCount = Math.max(0, Number(linkState.cyCount) || 0) + 1;"), "submitCy must increment the CY count");
+});
+
+function isCyComment(comment) {
+  return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
+}
+
+test("countCyInGroups counts nested CY comments", () => {
+  const countStart = source.indexOf("function countCyInGroups(");
+  const countEnd = source.indexOf("async function fetchRailPage(", countStart);
+  assert.ok(countStart >= 0 && countEnd > countStart, "Missing CY counting block");
+  const factory = new Function(
+    "isCyComment",
+    "\"use strict\";\n"
+      + source.slice(countStart, countEnd)
+      + "\nreturn { countCyInGroups, readCyCount };",
+  );
+  const { countCyInGroups, readCyCount } = factory(isCyComment);
+  const groups = [
+    { comment: [{ is_cy: 1, id: "a" }, { is_cy: "1", id: "b" }] },
+    { comment: [{ is_cy: 0, id: "c" }, { is_cy: true, id: "d" }] },
+  ];
+  assert.equal(countCyInGroups(groups), 3);
+  assert.equal(countCyInGroups([]), 0);
+  assert.equal(countCyInGroups(undefined), 0);
+  assert.equal(readCyCount({}, groups), 3);
+  assert.equal(readCyCount({ cy_num: 12 }, groups), 12);
+  assert.equal(readCyCount({ cy_count: "0" }, groups), 0);
 });
