@@ -164,6 +164,8 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 node --check scripts/heybox-up.js
 ```
 
+DOM 行为回归用例依赖 `jsdom`：先执行一次 `npm ci`，之后用 `npm test`（等价于 `node --test tests`）运行全部用例。
+
 签名用真实被服务端接受的样本 `(time=1792587363, nonce=2B3C207C9CF9AF2779DEE63C509DA4E8, path=/bbs/app/profile/bbs/comment/list)` 复核，得到 `hkey=VX2Y254`；服务端接受该签名，时间错误时返回 `系统时间不正确`。
 
 社区内搜索用无头 Edge（CDP）验证：1440×900、900×800 与 390×844（内容宽 390px）下，面板均挂在 `.topic-link__main` 内筛选行的实际父节点 `.topic-link__panel`，且紧挨筛选行之前；390px 下社区胶囊实算为 `display: none`。提交“显卡”后请求带 `topic_id=18745`、`q`、`search_type=link`、`limit=30` 与 `hkey`，渲染 10 条结果，原生筛选行与信息流同时隐藏；焦点在站点导航时按 Esc 不关闭面板，焦点回到输入框后按 Esc 关闭并把焦点交还输入框。接口每页再夹 10 条 `space` 占位时，“加载更多”仍以 `offset=10`、`offset=20` 正常追加，结果从 10 条增至 30 条。夜航下搜索栏底色 `rgb(23, 29, 36)`、结果标题 `rgb(220, 229, 239)`；浅色下分别为 `rgb(255, 255, 255)` 与 `rgb(20, 25, 30)`。
@@ -307,6 +309,7 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 
 - 修复收藏页不显示插眼收藏区块的问题：DOM 同步现在跟踪真实的页面根节点 `#page-user-favour`。站点原生收藏列表异步渲染完成后会触发重新同步，插眼区块随即挂到 `.user-favour__list` 下方，不再因为首次同步时列表尚未出现而永久缺失。
 - 收藏页路由判断改用共享路由规则，`/app/user/favour/content/` 这类带尾斜杠的地址也能正常挂载插眼区块。
+- 新增 jsdom 回归用例：在 `#page-user-favour` 内异步插入 `.user-favour__list` 后，断言 MutationObserver 与延迟同步任务把插眼区块紧跟在原生列表之后挂载。
 
 ### v0.4.38
 
