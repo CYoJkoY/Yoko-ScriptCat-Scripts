@@ -46,12 +46,15 @@ const FAVOUR_PAGE_HTML = [
 
 const MOUNT_TIMEOUT_MS = 4000;
 
-function createFavourPage() {
+// Both URL forms the shared route rule accepts: the canonical path and its trailing slash variant.
+const FAVOUR_PATHS = ["/app/user/favour/content", "/app/user/favour/content/"];
+
+function createFavourPage(pathname) {
   const domErrors = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", (error) => domErrors.push(error));
   const dom = new JSDOM(FAVOUR_PAGE_HTML, {
-    url: "https://www.xiaoheihe.cn/app/user/favour/content",
+    url: "https://www.xiaoheihe.cn" + pathname,
     runScripts: "outside-only",
     pretendToBeVisual: true,
     virtualConsole: virtualConsole,
@@ -86,36 +89,38 @@ async function waitFor(predicate) {
   return predicate();
 }
 
-test("favour watcher mounts the CY section when the native list appears late", async () => {
-  const { dom, window, domErrors } = createFavourPage();
-  try {
-    const { document } = window;
-    // The userscript boots on DOMContentLoaded because it runs at document-start.
-    window.eval(source);
-    const booted = await waitFor(() => document.readyState === "complete");
-    assert.equal(booted, true, "the userscript never finished booting");
-    assert.deepEqual(
-      domErrors.map((error) => error.message),
-      [],
-      "the favourites page raised DOM errors while the userscript booted",
-    );
+for (const pathname of FAVOUR_PATHS) {
+  test(`favour watcher mounts the CY section when the native list appears late (${pathname})`, async () => {
+    const { dom, window, domErrors } = createFavourPage(pathname);
+    try {
+      const { document } = window;
+      // The userscript boots on DOMContentLoaded because it runs at document-start.
+      window.eval(source);
+      const booted = await waitFor(() => document.readyState === "complete");
+      assert.equal(booted, true, "the userscript never finished booting");
+      assert.deepEqual(
+        domErrors.map((error) => error.message),
+        [],
+        "the favourites page raised DOM errors while the userscript booted",
+      );
 
-    // The initial sync runs before the native list exists, so nothing may mount yet.
-    assert.equal(document.getElementById("heybox-up-favour"), null);
+      // The initial sync runs before the native list exists, so nothing may mount yet.
+      assert.equal(document.getElementById("heybox-up-favour"), null);
 
-    const list = document.createElement("div");
-    list.className = "user-favour__list";
-    document.querySelector("#page-user-favour .content .list").append(list);
+      const list = document.createElement("div");
+      list.className = "user-favour__list";
+      document.querySelector("#page-user-favour .content .list").append(list);
 
-    // Mounting must come from the observed mutation, not from the insertion call itself.
-    assert.equal(document.getElementById("heybox-up-favour"), null);
+      // Mounting must come from the observed mutation, not from the insertion call itself.
+      assert.equal(document.getElementById("heybox-up-favour"), null);
 
-    const host = await waitFor(() => document.getElementById("heybox-up-favour"));
-    assert.ok(host, "asynchronously inserted favourites list never triggered a mount");
-    assert.equal(host.parentElement, list.parentElement);
-    assert.equal(host.previousElementSibling, list, "CY section must follow the native list");
-    assert.equal(host.shadowRoot.querySelector(".heading").textContent, "插眼收藏");
-  } finally {
-    dom.window.close();
-  }
-});
+      const host = await waitFor(() => document.getElementById("heybox-up-favour"));
+      assert.ok(host, "asynchronously inserted favourites list never triggered a mount");
+      assert.equal(host.parentElement, list.parentElement);
+      assert.equal(host.previousElementSibling, list, "CY section must follow the native list");
+      assert.equal(host.shadowRoot.querySelector(".heading").textContent, "插眼收藏");
+    } finally {
+      dom.window.close();
+    }
+  });
+}

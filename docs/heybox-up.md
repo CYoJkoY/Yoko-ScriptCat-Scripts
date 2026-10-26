@@ -309,7 +309,7 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 
 - 修复收藏页不显示插眼收藏区块的问题：DOM 同步现在跟踪真实的页面根节点 `#page-user-favour`。站点原生收藏列表异步渲染完成后会触发重新同步，插眼区块随即挂到 `.user-favour__list` 下方，不再因为首次同步时列表尚未出现而永久缺失。
 - 收藏页路由判断改用共享路由规则，`/app/user/favour/content/` 这类带尾斜杠的地址也能正常挂载插眼区块。
-- 新增 jsdom 回归用例：在 `#page-user-favour` 内异步插入 `.user-favour__list` 后，断言 MutationObserver 与延迟同步任务把插眼区块紧跟在原生列表之后挂载。
+- 新增 jsdom 回归用例：分别在 `/app/user/favour/content` 与带尾斜杠的 `/app/user/favour/content/` 下，于 `#page-user-favour` 内异步插入 `.user-favour__list`，断言 MutationObserver 与延迟同步任务把插眼区块紧跟在原生列表之后挂载。
 
 ### v0.4.38
 
