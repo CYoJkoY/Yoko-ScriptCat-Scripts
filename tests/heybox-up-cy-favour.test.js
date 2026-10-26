@@ -124,3 +124,87 @@ for (const pathname of FAVOUR_PATHS) {
     }
   });
 }
+
+function readCyCards(host) {
+  return Array.from(host.shadowRoot.querySelectorAll(".list .card"));
+}
+
+function findCyCard(host, id) {
+  return readCyCards(host).find((card) => card.getAttribute("href") === "/app/bbs/link/" + id) || null;
+}
+
+function createCyRecord(id, text) {
+  return {
+    comment_type: 0,
+    create_at: 1761552000,
+    text,
+    link: { id: String(id), title: "Fixture post " + id, thumbs: [] },
+  };
+}
+
+function stubCyRecords(window, records) {
+  window.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ status: "ok", result: records, no_more: true }),
+  });
+}
+
+async function mountFavourSection(window, document) {
+  const list = document.createElement("div");
+  list.className = "user-favour__list";
+  document.querySelector("#page-user-favour .content .list").append(list);
+  const host = await waitFor(() => document.getElementById("heybox-up-favour"));
+  assert.ok(host, "the CY section never mounted");
+  return { host, list };
+}
+
+test("CY records render even when the native list already shows the same post", async () => {
+  const { dom, window, domErrors } = createFavourPage(FAVOUR_PATHS[0]);
+  stubCyRecords(window, [createCyRecord("777", "fixture cy text")]);
+  try {
+    const { document } = window;
+    window.eval(source);
+    const booted = await waitFor(() => document.readyState === "complete");
+    assert.equal(booted, true, "the userscript never finished booting");
+
+    // The native favourites list holds an entry for the same post that carries the CY record.
+    const nativeList = document.createElement("div");
+    nativeList.className = "user-favour__list";
+    const nativeCard = document.createElement("a");
+    nativeCard.setAttribute("href", "/app/bbs/link/777");
+    nativeList.append(nativeCard);
+    document.querySelector("#page-user-favour .content .list").append(nativeList);
+
+    const host = await waitFor(() => document.getElementById("heybox-up-favour"));
+    assert.ok(host, "the CY section never mounted");
+    const card = await waitFor(() => findCyCard(host, "777"));
+    assert.ok(card, "a CY record must render even when the native list holds the same post id");
+    assert.ok(card.textContent.includes("fixture cy text"), "the CY card must keep its own excerpt");
+    assert.deepEqual(domErrors.map((error) => error.message), []);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("duplicate CY records for one post render a single card", async () => {
+  const { dom, window, domErrors } = createFavourPage(FAVOUR_PATHS[0]);
+  stubCyRecords(window, [createCyRecord("888", "first"), createCyRecord("888", "second"), createCyRecord("999", "third")]);
+  try {
+    const { document } = window;
+    window.eval(source);
+    await waitFor(() => document.readyState === "complete");
+    const { host } = await mountFavourSection(window, document);
+    const cards = await waitFor(() => {
+      const rendered = readCyCards(host);
+      return rendered.length >= 2 ? rendered : null;
+    });
+    assert.ok(cards, "the CY cards never rendered");
+    assert.equal(cards.length, 2, "each post must render one CY card");
+    assert.ok(findCyCard(host, "888"), "post 888 must render");
+    assert.ok(findCyCard(host, "999"), "post 999 must render");
+    assert.deepEqual(domErrors.map((error) => error.message), []);
+  } finally {
+    dom.window.close();
+  }
+});

@@ -3634,27 +3634,15 @@
     section.append(head, note, retry, search, list);
     shadow.append(section);
 
-    const state = { items: [], loading: false, error: "", notice: "", progress: 0, query: "", signature: "" };
+    const state = { items: [], loading: false, error: "", notice: "", progress: 0, query: "" };
     let loadController = null;
 
-    const readPageIds = () => {
-      const ids = new Set();
-      for (const node of document.querySelectorAll(FAVOUR_LIST_SELECTOR + ' a[href*="/bbs/link/"]')) {
-        const match = /\/bbs\/link\/(\d+)/.exec(node.getAttribute("href") || "");
-        if (match) ids.add(match[1]);
-      }
-      return ids;
-    };
-
     const render = () => {
-      const pageIds = readPageIds();
-      state.signature = Array.from(pageIds).sort().join(",");
-      const visible = state.items.filter((item) => !pageIds.has(item.id));
       const query = state.query.trim();
       const needle = query.toLowerCase();
       const matched = needle === ""
-        ? visible
-        : visible.filter((item) => item.title.toLowerCase().includes(needle) || item.text.toLowerCase().includes(needle));
+        ? state.items
+        : state.items.filter((item) => item.title.toLowerCase().includes(needle) || item.text.toLowerCase().includes(needle));
       list.replaceChildren();
       refresh.disabled = state.loading;
       refresh.textContent = state.loading ? "读取中…" : "刷新";
@@ -3668,12 +3656,10 @@
         note.textContent = "正在读取插眼收藏…" + (state.progress > 0 ? " 已获取 " + state.progress + " 条" : "");
       } else if (state.items.length === 0) {
         note.textContent = "没有插眼收藏。";
-      } else if (visible.length === 0) {
-        note.textContent = "插眼条目已全部出现在列表中。";
       } else if (matched.length === 0) {
         note.textContent = "没有匹配“" + query + "”的插眼条目。";
       } else {
-        note.textContent = "共 " + visible.length + " 条插眼收藏" + (query !== "" ? "，匹配 " + matched.length + " 条" : "") + "，网页收藏列表默认不显示。";
+        note.textContent = "共 " + state.items.length + " 条插眼收藏" + (query !== "" ? "，匹配 " + matched.length + " 条" : "") + "，网页收藏列表默认不显示。";
       }
       if (matched.length === 0) return;
       const fragment = document.createDocumentFragment();
@@ -3688,7 +3674,6 @@
       if (host.parentNode !== parent || host.previousElementSibling !== listNode) {
         parent.insertBefore(host, listNode.nextSibling);
       }
-      if (Array.from(readPageIds()).sort().join(",") !== state.signature) render();
     };
 
     const load = async (force) => {
