@@ -4,7 +4,7 @@
 
 面向小黑盒 Web 端的用户脚本（UserScript）：网页收藏列表不显示“插眼”（CY）条目，但主页收藏总数会把它们算进去。本脚本单独拉取插眼收藏，在收藏页把插眼条目补到收藏列表下方，按帖子去重。社区首页（`/app/bbs/home`）移除右栏热门社区等冗余模块，改为定宽卡片信息流，并支持在右侧预览帖子评论；帖子详情页（`/app/bbs/link/*`）默认进入全屏沉浸阅读，封面与标题上下分栏、正文连续滚动，原生评论收进侧栏，保留原生回复与点赞，并在评论区补充默认/时间/点赞/作者排序。右侧互动栏可直接点赞、收藏与发布 CY，评论区仍可按 `is_cy` 过滤插眼评论。顶部导航收敛为首页、社区、收藏、文章四个「SVG + 文本」入口；帖子页纵轴中心左右两侧提供 SVG 上一篇/下一篇箭头，切换走站内路由，不整页刷新。社区页（`/app/topic/link/*`）提供只在该社区内生效的帖子搜索；宽屏社区首页改为左频道、中信息流、右热度三栏工作台。
 
-- 版本：0.4.42
+- 版本：0.4.43
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://www.xiaoheihe.cn/*`、`https://xiaoheihe.cn/*`
@@ -34,7 +34,7 @@
 | `only_cy` | `1` | 只要插眼记录 |
 | `filter_type` | `0` | 不过滤类型 |
 | `enable_new_style_collect` | `1` | 新版收藏结构 |
-| `userid` / `heybox_id` | Cookie `heybox_id`（回退 `user_heybox_id`） | 当前登录用户 |
+| `userid` / `heybox_id` | 账号 ID：Cookie、站点 `storeV2API`、存储、`restore_login` 依次回退 | 当前登录用户 |
 | `limit` / `offset` | 20 / 递增 | 分页 |
 | `no_more` | `false` | 首页固定值 |
 
@@ -49,7 +49,7 @@
 - `create_at`：时间，按秒处理，兼容毫秒值。
 - `comment_type`：`1` 记为“回复”，其余记为“评论”。
 
-请求使用页面内 `fetch`，`credentials: include` 携带登录态。Cookie `heybox_id` 缺失或为 `None`、`null`、`undefined` 这类占位值时回退 `user_heybox_id`，两者都不可用就按未登录处理，不发出请求。接口对 `https://www.xiaoheihe.cn` 返回 `Access-Control-Allow-Origin` 与 `Access-Control-Allow-Credentials`（实测），因此无需 `GM_xmlhttpRequest`，脚本保持 `@grant none`。
+请求使用页面内 `fetch`，`credentials: include` 携带登录态。账号 ID 按可信度逐层解析：先读 Cookie `heybox_id`，缺失或为 `None`、`null`、`undefined` 这类占位值时回退 `user_heybox_id`；再读站点 `window.storeV2API.read(["account.heybox_id"])` 的快照（要求 `entry.exists === true`）；随后扫本机 `localStorage` / `sessionStorage` 的 `heybox_id`、`user_heybox_id`、`account.heybox_id`（裸数字或 JSON 快照都能取）；最后带签名调 `GET /account/restore_login`，从 `result.account_detail`、`result.profile`、`result` 依次取 ID。站点现在把账号写进 `storeV2API`，Cookie 要等站点自己的 `restore_login` 返回后才落地，只读 Cookie 会在刚进收藏页时误判成未登录，这条链就是为此补齐；解析结果在内存里缓存 60 秒。全部落空才按未登录处理，不发出插眼请求。接口对 `https://www.xiaoheihe.cn` 返回 `Access-Control-Allow-Origin` 与 `Access-Control-Allow-Credentials`（实测），因此无需 `GM_xmlhttpRequest`，脚本保持 `@grant none`。
 
 信息流评论预览走帖子评论树接口 `/bbs/app/link/tree`，除同一套基础参数外传 `heybox_id`（Cookie）、`link_id`、`is_first`（首页为 `1`）、`page`（从 1 起）、`index=1`、`limit=20`、`owner_only=0`。站点网页端还会带一个空的 `h_src` 参数，脚本在 `link_id` 前补齐，缺省时更容易触发风控。响应 `status === "ok"` 时读 `result.comments`（按楼层分组的数组，每组 `comment[0]` 为楼，后续为楼中楼）、`result.link.title` 与 `result.link.comment_num`。单条评论取 `user.username`、`user.avatar`（兼容拼写 `avartar`）、`text`（去标签后截断 400 字）、`create_at`、`support_num`（兼容 `support_count`）、`reply_count`（兼容 `sub_comment_num`）、`is_cy`（`1`、`"1"` 或 `true` 视为插眼）。
 
@@ -112,7 +112,8 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 - 卡片显示缩略图、标题、插眼内容、类型与时间，点击在新标签页打开帖子；插眼内容前带蓝灰色（#6f8db3）CY 眼睛图标，字号 14px，最多显示 3 行，悬停可看全文。
 - 加载中显示已拉取条数；失败时显示原因与“重试”按钮，已有结果会保留并标注为上次结果；空结果显示对应文案。
 - 插眼区块不再读取页面收藏列表的帖子 ID，也不随原生列表的增删变化重绘；站点分页、增量渲染或切页后，已列出的插眼卡片保持不变，只由插眼记录自身去重。
-- 未读到可用的 `heybox_id` 时区块照常挂载并提示未登录，不发起请求；`None`、`null`、`undefined` 这类占位值不算登录态。
+- 未读到可用的账号 ID 时区块照常挂载并提示未登录，不发起插眼请求；`None`、`null`、`undefined` 这类占位值不算登录态。解析链路走完后仍为空时，间隔 1.5 秒自动复查，最多 3 次，避免登录态写入较晚还需要手动刷新；离开收藏页或区块销毁时立即取消待执行的复查。
+- 插眼接口返回 `hkey 不能为空`、`该用户已注销` 或登录相关失败时，提示改为「登录状态已失效，请重新登录小黑盒后点击刷新。」，不再显示原始英文状态码。
 - 社区首页 https://xiaoheihe.cn/app/bbs/home ：隐藏整个右栏（`.cpt-right-side.right`），热门社区、二维码、App 链接与页脚一并移除；信息流收成 960px 居中阅读栏，话题条也改成同风格卡片。
 - 全站搜索页 https://xiaoheihe.cn/app/search/list ：隐藏右侧热搜、二维码、App 链接与备案栏，结果列表占满内容区；深色主题补齐页面与列表的上下固定色条、结果间 4px 分隔条，以及横向结果列表右侧的箭头遮罩渐变。
 - 全站搜索页搜索建议：深色主题下历史搜索胶囊改用主题底色与浅色文字，搜索发现标题、黑盒热榜标签与榜单条目分别使用次要/主文字色；榜单行悬停底色同步换成主题色，避免浅底浅字和深底深字。
@@ -304,6 +305,14 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 - 全站搜索页整栏隐藏右栏；隐藏与撑满规则依赖 `#page-bbs-list`、`.content > .list` 与 `.cpt-right-side.right` 结构，站点改版换容器后需同步选择器。
 
 ## 九、版本历史
+
+### v0.4.43
+
+- 修复收藏页插眼区块在已登录时仍提示“未登录”的问题：站点现在把账号 ID 写进 `window.storeV2API`（`account.heybox_id`），Cookie 要等站点自己的 `/account/restore_login` 返回后才落地；脚本此前只读 `heybox_id` / `user_heybox_id` Cookie，在 `document-start` 或刚进收藏页的瞬间拿不到账号，于是整块按未登录处理。
+- 账号解析改为逐层回退：Cookie → 内存缓存（60 秒）→ `storeV2API` 快照（要求 `entry.exists === true`）→ `localStorage` / `sessionStorage`（`heybox_id`、`user_heybox_id`、`account.heybox_id`，兼容裸数字与 JSON 快照）→ 带签名的 `GET /account/restore_login`（依次读 `result.account_detail`、`result.profile`、`result`）。占位值 `None`、`null`、`undefined` 依旧不算账号。
+- 解析仍为空时自动复查：间隔 1.5 秒、最多 3 次；区块销毁或离开收藏页时取消待执行的复查，避免登录较晚时还要手动刷新。
+- 插眼接口的账号级失败（`hkey 不能为空`、`该用户已注销`、登录失效）统一提示为「登录状态已失效，请重新登录小黑盒后点击刷新。」。
+- 新增 5 个收藏用例覆盖账号解析的每条回退分支与账号级失败文案；`npm test` 46 项全部通过。
 
 ### v0.4.42
 
@@ -689,7 +698,7 @@ MIT License
 按平台协议「脚本描述须准确反映功能、权限及可能的影响」逐条说明：
 
 - 权限：`@grant none`，无特权 API，无 `GM_xmlhttpRequest`，无跨域提权。
-- 数据访问：读取当前登录账号的 `heybox_id` Cookie，并以该登录态请求小黑盒自身接口 `/bbs/app/profile/bbs/comment/list`（本账号的插眼记录）。信息流评论预览、抽屉分页与 CY 标记会按需请求站点评论树接口 `/bbs/app/link/tree`；文章连读会按需请求只读信息流接口 `/bbs/app/feeds`。点赞、收藏、收藏夹列表与 CY 发布仅在用户点击对应按钮时调用站点写接口或收藏夹接口。
+- 数据访问：读取当前登录账号的 ID（Cookie `heybox_id` / `user_heybox_id`，回退站点自身的 `storeV2API` 快照、本机存储的同名键与站点 `GET /account/restore_login`），并以该登录态请求小黑盒自身接口 `/bbs/app/profile/bbs/comment/list`（本账号的插眼记录）。信息流评论预览、抽屉分页与 CY 标记会按需请求站点评论树接口 `/bbs/app/link/tree`；文章连读会按需请求只读信息流接口 `/bbs/app/feeds`。点赞、收藏、收藏夹列表与 CY 发布仅在用户点击对应按钮时调用站点写接口或收藏夹接口。账号 ID 只在内存中缓存 60 秒，不额外落盘。
 - 请求签名：接口要求 `hkey`、`_time`、`nonce`，评论创建另要求 `_rnd`。脚本在本地自行计算，不下载、不执行任何外部代码；规则见「三、接口签名」。
 - 数据流向：插眼结果只写入本机 `localStorage`（键 `heybox-up.cy.v1:<userid>`），主题与功能开关写入 `heybox-up.theme.v1`、`heybox-up.commentPreview.v1`、`heybox-up.navMotion.v1`；连读顺序、发现队列、游标、已见帖子与最近作者/话题只写入当前标签页的 `sessionStorage`。评论内容与排序由站点自己管理，脚本不保存。不向任何第三方服务器发送数据，无统计、无埋点、无追踪。
 - 账号影响：仅在用户主动点击阅读栏的点赞、收藏或 CY 发布时，以当前登录态提交对应操作；浏览、收藏补全、评论预览与排序不改站点数据，也不改写站点收藏总数。
