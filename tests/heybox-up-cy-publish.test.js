@@ -121,7 +121,10 @@ test("reader keeps the existing comment-create form fields", () => {
 test("reader CY badge renders the count and a zero fallback", () => {
   const block = readBlock("const syncActionStates = () => {", "const clickNative");
   assert.ok(block.includes("hbu-reader-cy-count"), "the rail CY action must render a count span");
-  assert.ok(block.includes("const cyTotal = linkState === null ? 0 :"), "the badge must fall back to 0 before link state loads");
+  assert.ok(
+    block.includes("const cyTotal = linkState === null ? cyPublishedCount :"),
+    "the badge must show the article publish count before link state loads",
+  );
   assert.ok(block.includes("formatActionCount(cyTotal)"), "the badge must format the CY total");
   assert.ok(block.includes("cyNode.title"), "the rail CY action must expose the count in its tooltip");
 });
@@ -139,7 +142,26 @@ test("publishing a CY increments the reader CY badge", () => {
   const start = source.indexOf("const submitCy = async");
   const end = source.indexOf("const openCyDialog", start);
   const submitSource = source.slice(start, end);
-  assert.ok(submitSource.includes("linkState.cyCount = Math.max(0, Number(linkState.cyCount) || 0) + 1;"), "submitCy must increment the CY count");
+  const countedAt = submitSource.indexOf("cyPublishedCount += 1;");
+  const branchAt = submitSource.indexOf("if (linkState !== null)");
+  assert.ok(countedAt >= 0, "submitCy must record every successful publish");
+  assert.ok(branchAt > countedAt, "submitCy must count the publish before checking for a loaded link state");
+  assert.ok(submitSource.includes("addPublishedCy(linkState, 1);"), "submitCy must increment a loaded CY count");
+  assert.ok(submitSource.includes("void loadLinkState();"), "submitCy must resolve link state after an early publish");
+});
+
+test("a publish is folded into link state that resolves after it", () => {
+  const start = source.indexOf("const addPublishedCy = (link, published) => {");
+  const end = source.indexOf("const loadLinkState = async", start);
+  assert.ok(start >= 0 && end > start, "Missing addPublishedCy block");
+  const addPublishedCy = new Function(
+    '"use strict";\n' + source.slice(start, end) + "\nreturn addPublishedCy;",
+  )();
+  const link = { commentCount: 5, cyCount: 2 };
+  assert.equal(addPublishedCy(link, 0), link, "a zero delta must keep the loaded link state");
+  assert.equal(addPublishedCy(link, 2), link, "the helper must update the loaded link state in place");
+  assert.equal(link.commentCount, 7);
+  assert.equal(link.cyCount, 4);
 });
 
 function isCyComment(comment) {
