@@ -164,6 +164,24 @@ test("a publish is folded into link state that resolves after it", () => {
   assert.equal(link.cyCount, 4);
 });
 
+test("link state loaded after a publish adds the publish delta", () => {
+  const block = readBlock("const loadLinkState = async () => {", "const toggleLike = async");
+  assert.ok(block.includes("const publishedAtStart = cyPublishedCount;"), "the request must snapshot the publish count");
+  assert.ok(
+    block.includes("const publishedDuringRequest = cyPublishedCount - publishedAtStart;"),
+    "the response must add publishes that happened after the request started",
+  );
+  assert.ok(
+    block.includes("linkState = addPublishedCy(page.link, publishedDuringRequest);"),
+    "the resolved link state must include the publish delta",
+  );
+  assert.ok(
+    block.includes("if (publishedDuringRequest > 0) clearRailPageCache(targetId);"),
+    "a raced response must drop its stale cache entry",
+  );
+  assert.ok(block.includes("syncActionStates();"), "the badge must refresh after the delta is applied");
+});
+
 function isCyComment(comment) {
   return Boolean(comment) && (comment.is_cy === 1 || comment.is_cy === true || comment.is_cy === "1");
 }
