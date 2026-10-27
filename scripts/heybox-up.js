@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.41
+// @version      0.4.42
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -148,7 +148,7 @@
   // site cards keep their own line heights.
   const READER_LINE_HEIGHT_KEY = "heybox-up.readerLineHeight.v1";
   const READER_LINE_HEIGHT_DEFAULT = 1.7;
-  const READER_LINE_HEIGHT_MIN = 1.4;
+  const READER_LINE_HEIGHT_MIN = 1;
   const READER_LINE_HEIGHT_MAX = 2.2;
   const READER_LINE_HEIGHT_STEP = 0.05;
 
@@ -5454,7 +5454,9 @@
       padding: 44px 60px 72px;
       background: var(--hbu-reader-page);
     }
-    .hbu-reader-page[data-kind="text"] { padding: 24px 60px 40px; }
+    /* 文本页不再用页内边距撑开段距：上下内边距归零，由段落自身的下间距形成
+       统一的 .72em 节奏，跨页处也只保留一次段间距，避免 64px 的叠加空隙。 */
+    .hbu-reader-page[data-kind="text"] { padding: 0 60px; }
     .hbu-reader-page[data-kind="heading"] { padding: 56px 60px 28px; }
     .hbu-reader-page[data-kind="hero"] { min-height: 100dvh; padding: 0; }
     .hbu-reader-page[data-kind="end"] { min-height: 100dvh; }
@@ -5465,8 +5467,10 @@
       line-height: var(--heybox-up-reading-line-height);
       color: var(--hbu-reader-ink);
       overflow-wrap: anywhere;
-      white-space: pre-wrap;
     }
+    .hbu-reader-page[data-kind="text"] .hbu-reader-copy { white-space: normal; }
+    .hbu-reader-page[data-kind="heading"] .hbu-reader-copy { white-space: pre-wrap; }
+    .hbu-reader-page[data-kind="text"] .hbu-reader-copy p { margin: 0 0 .72em; }
     .hbu-reader-page[data-kind="heading"] { justify-content: center; }
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
       font-size: 27px;
@@ -5838,7 +5842,7 @@
       .hbu-reader-rail-avatar-link { display: none; }
       .hbu-reader-page { padding: 22px 64px 48px 24px; }
       .hbu-reader-page[data-kind="hero"] { padding: 0; }
-      .hbu-reader-page[data-kind="text"] { padding: 18px 64px 32px 24px; }
+      .hbu-reader-page[data-kind="text"] { padding: 0 64px 0 24px; }
       .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
       .hbu-reader-page[data-kind="media"] { padding: 20px 16px; }
       .hbu-reader-page[data-kind="embed"] { padding: 20px 16px; }
@@ -5874,7 +5878,7 @@
     @media (max-height: 620px) {
       .hbu-reader-page { padding-top: 72px; padding-bottom: 76px; }
       .hbu-reader-page[data-kind="hero"] { padding: 0; }
-      .hbu-reader-page[data-kind="text"] { padding-top: 16px; padding-bottom: 28px; }
+      .hbu-reader-page[data-kind="text"] { padding-top: 0; padding-bottom: 0; }
       .hbu-reader-caption { padding: 14px 64px 22px 24px; }
       .hbu-reader-rail { bottom: 70px; gap: 7px; }
       .hbu-reader-action { width: 38px; min-height: 38px; }
@@ -7980,29 +7984,32 @@
     };
 
     const addTextPages = (target, lines) => {
-      let buffer = "";
-      let bufferLines = 0;
+      let buffer = [];
+      let bufferChars = 0;
       const flush = () => {
-        const text = buffer.trim();
-        buffer = "";
-        bufferLines = 0;
-        if (text === "") return;
+        const paragraphs = buffer;
+        buffer = [];
+        bufferChars = 0;
+        if (paragraphs.length === 0) return;
         const page = document.createElement("section");
         page.className = "hbu-reader-page";
         page.dataset.kind = "text";
         const copy = document.createElement("div");
         copy.className = "hbu-reader-copy";
-        copy.textContent = text;
+        for (const paragraph of paragraphs) {
+          const node = document.createElement("p");
+          node.textContent = paragraph;
+          copy.append(node);
+        }
         page.append(copy);
         target.append(page);
       };
       for (const raw of lines) {
         const line = raw.replace(/\s+/g, " ").trim();
         if (line === "") continue;
-        if (buffer !== "") buffer += "\n\n";
-        buffer += line;
-        bufferLines += 1;
-        if (bufferLines >= 4 || buffer.length >= 420) flush();
+        buffer.push(line);
+        bufferChars += line.length;
+        if (buffer.length >= 4 || bufferChars >= 420) flush();
       }
       flush();
     };
