@@ -14,7 +14,7 @@
 - 只补网页端缺失的插眼列表，不伪造、不改写站点自己的收藏总数。
 - 不复刻第三方插件的代码：签名算法在本脚本内独立实现，避免引入额外依赖或许可问题。
 - 默认只读：浏览、收藏补全、评论预览与排序不修改站点数据；只有用户主动点击阅读栏的点赞、收藏或 CY 发布时，才以当前登录态调用站点自己的写接口。
-- 一个帖子只出现一次：接口按评论维度返回，同一帖子的多条插眼按 `link.id` 去重。
+- 一个帖子只出现一次：接口按评论维度返回，同一帖子的多条插眼按帖子 ID 去重；新版收藏结构用 `link.linkid`，缺省时回退 `link.id`。
 - 复用站点原生评论：帖子详情页优先把站点自己的 `.link-comment` 节点停靠到右栏，排序、回复、点赞、展开楼中楼都由站点处理；原生评论尚未挂载时，用同一评论树接口渲染只读回退抽屉，保证按钮始终有响应。
 - 沉浸阅读优先：帖子详情默认把阅读区放到全屏舞台，封面与标题分层排列，段落、图片与富文本按自然高度连续衔接；右侧互动栏调用站点接口完成点赞、收藏与 CY 发布，评论按需滑出，读完前不让评论区持续分走宽度。
 - 可逆与可退出：沉浸阅读只是叠加类名与派生 DOM，原生正文、评论和回复编辑器原地保留；关闭后立即回到双栏，不改站点数据与路由。
@@ -40,16 +40,16 @@
 
 其余基础参数（`os_type=web`、`app=heybox`、`client_type=web`、`version=999.0.4`、`web_version=2.5`、`x_client_type=web`、`x_app=heybox_website`、`x_os_type=Windows`、`device_info=Chrome`）与站点网页端保持一致。
 
-响应判定：`status === "ok"` 时读取 `result` 数组；`no_more === true` 或本页为空即停止翻页。单条记录取以下字段：
+响应判定：`status === "ok"` 时先看 `result` 本身是否为数组，否则依次读 `result.links`、`result.list`、`result.comment_list` 中的数组，都读不到数组就按空页处理。翻页结束优先看 `has_next`（顶层或 `result` 内，`"0"` / `0` / `false` 表示没有下一页，`"1"` / `1` / `true` 表示还有），其次看 `no_more === true`，两者都缺省时以本页没有条目结束。单条记录取以下字段：
 
-- `link.id`：帖子 ID，同时用于去重与跳转 `/app/bbs/link/<id>`。
+- `link.linkid`：帖子 ID（新版收藏结构的字段），缺省时回退 `link.id`，同时用于去重与跳转 `/app/bbs/link/<id>`。
 - `link.title`：标题，空值回退“无标题帖子”。
 - `link.thumbs[0]`：缩略图，可缺省。
 - `text`：插眼时附带的评论内容。
 - `create_at`：时间，按秒处理，兼容毫秒值。
 - `comment_type`：`1` 记为“回复”，其余记为“评论”。
 
-请求使用页面内 `fetch`，`credentials: include` 携带登录态。接口对 `https://www.xiaoheihe.cn` 返回 `Access-Control-Allow-Origin` 与 `Access-Control-Allow-Credentials`（实测），因此无需 `GM_xmlhttpRequest`，脚本保持 `@grant none`。
+请求使用页面内 `fetch`，`credentials: include` 携带登录态。Cookie `heybox_id` 缺失或为 `None`、`null`、`undefined` 这类占位值时回退 `user_heybox_id`，两者都不可用就按未登录处理，不发出请求。接口对 `https://www.xiaoheihe.cn` 返回 `Access-Control-Allow-Origin` 与 `Access-Control-Allow-Credentials`（实测），因此无需 `GM_xmlhttpRequest`，脚本保持 `@grant none`。
 
 信息流评论预览走帖子评论树接口 `/bbs/app/link/tree`，除同一套基础参数外传 `heybox_id`（Cookie）、`link_id`、`is_first`（首页为 `1`）、`page`（从 1 起）、`index=1`、`limit=20`、`owner_only=0`。站点网页端还会带一个空的 `h_src` 参数，脚本在 `link_id` 前补齐，缺省时更容易触发风控。响应 `status === "ok"` 时读 `result.comments`（按楼层分组的数组，每组 `comment[0]` 为楼，后续为楼中楼）、`result.link.title` 与 `result.link.comment_num`。单条评论取 `user.username`、`user.avatar`（兼容拼写 `avartar`）、`text`（去标签后截断 400 字）、`create_at`、`support_num`（兼容 `support_count`）、`reply_count`（兼容 `sub_comment_num`）、`is_cy`（`1`、`"1"` 或 `true` 视为插眼）。
 
@@ -86,7 +86,7 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 
 ## 四、UI 与交互
 
-- 收藏页 https://xiaoheihe.cn/app/user/favour/content ：脚本把插眼条目挂在收藏列表（.user-favour__list）下方，按帖子 ID 去重后全部列出，不再对照页面已渲染的同 ID 帖子做过滤。区块使用 Shadow DOM，样式与页面隔离。
+- 收藏页 https://xiaoheihe.cn/app/user/favour/content ：脚本把插眼条目挂在收藏列表（.user-favour__list）下方，按帖子 ID 去重后全部列出，不再对照页面已渲染的同 ID 帖子做过滤。站点先渲染页面骨架、后插入收藏列表时，区块先挂在 `#page-user-favour` 的内容区末尾，列表出现后再挪到它正下方，不会因为挂载顺序而整块缺失。区块使用 Shadow DOM，样式与页面隔离。
 - 收藏与文章页右栏：收藏页、文章管理页及文章详情页的右侧只保留二维码、小黑盒加速器、黑盒语音、黑盒工坊与备案信息等推广模块；脚本将这些右栏整体隐藏，并让主列表占满内容区。
 - 顶部导航：脚本接管 `.nav-links`，隐藏站点原有的七个文字按钮，改为首页、社区、收藏、文章四个入口，每项为内联 SVG 图标加文本。图标默认在悬停、键盘聚焦与激活时播放轻量动效（房子轻晃、气泡上浮、书签落位、纸张翻角），齿轮设置菜单里的“动态导航图标”可切回静态；系统开启“减少动态效果”时同样保持静态。
 - 导航状态：按 `location.pathname` 标记当前入口，社区包含 `/app/bbs/home` 与帖子详情；收藏页同时承载插眼收藏区块。视口 ≤940px 时只显示图标，保留 `aria-label` 与悬停提示。
@@ -112,7 +112,7 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 - 卡片显示缩略图、标题、插眼内容、类型与时间，点击在新标签页打开帖子；插眼内容前带蓝灰色（#6f8db3）CY 眼睛图标，字号 14px，最多显示 3 行，悬停可看全文。
 - 加载中显示已拉取条数；失败时显示原因与“重试”按钮，已有结果会保留并标注为上次结果；空结果显示对应文案。
 - 插眼区块不再读取页面收藏列表的帖子 ID，也不随原生列表的增删变化重绘；站点分页、增量渲染或切页后，已列出的插眼卡片保持不变，只由插眼记录自身去重。
-- 未读到 `heybox_id` 时提示未登录，不发起请求。
+- 未读到可用的 `heybox_id` 时区块照常挂载并提示未登录，不发起请求；`None`、`null`、`undefined` 这类占位值不算登录态。
 - 社区首页 https://xiaoheihe.cn/app/bbs/home ：隐藏整个右栏（`.cpt-right-side.right`），热门社区、二维码、App 链接与页脚一并移除；信息流收成 960px 居中阅读栏，话题条也改成同风格卡片。
 - 全站搜索页 https://xiaoheihe.cn/app/search/list ：隐藏右侧热搜、二维码、App 链接与备案栏，结果列表占满内容区；深色主题补齐页面与列表的上下固定色条、结果间 4px 分隔条，以及横向结果列表右侧的箭头遮罩渐变。
 - 全站搜索页搜索建议：深色主题下历史搜索胶囊改用主题底色与浅色文字，搜索发现标题、黑盒热榜标签与榜单条目分别使用次要/主文字色；榜单行悬停底色同步换成主题色，避免浅底浅字和深底深字。

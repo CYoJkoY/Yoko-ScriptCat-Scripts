@@ -3396,8 +3396,19 @@
     return "";
   }
 
+  // 站点在未登录或退出后会写入 None/null 等占位值，直接当作用户 ID 请求会得到“该用户已注销”。
+  const HEYBOX_ID_PLACEHOLDERS = new Set(["", "None", "none", "NONE", "null", "NULL", "undefined"]);
+
+  function normalizeHeyboxIdValue(value) {
+    if (typeof value !== "string") return "";
+    const text = value.trim();
+    return HEYBOX_ID_PLACEHOLDERS.has(text) ? "" : text;
+  }
+
   function getHeyboxId() {
-    return readCookie("heybox_id") || readCookie("user_heybox_id");
+    const primary = normalizeHeyboxIdValue(readCookie("heybox_id"));
+    if (primary !== "") return primary;
+    return normalizeHeyboxIdValue(readCookie("user_heybox_id"));
   }
 
   function buildCyApiUrl(userId, offset) {
@@ -3429,6 +3440,36 @@
     return "https://api.xiaoheihe.cn" + CY_API_PATH + "?" + query.toString();
   }
 
+  // 收藏接口在不同版本里把条目放在 result 数组或 result.links / result.list 里，
+  // 这里逐层显式判断，读不到数组就当作空页，避免把对象当列表遍历。
+  function readCyPageRecords(result) {
+    if (Array.isArray(result)) return result;
+    if (!result || typeof result !== "object") return [];
+    for (const key of ["links", "list", "comment_list"]) {
+      const value = result[key];
+      if (Array.isArray(value)) return value;
+    }
+    return [];
+  }
+
+  // 站点的新版收藏接口用 result.has_next === "1" 表示还有下一页，
+  // 旧接口用 no_more；两者都缺省时以“本页无条目”作为结束条件。
+  function readCyPageFinished(data, list) {
+    const hasNext = data.has_next ?? (data.result && typeof data.result === "object" ? data.result.has_next : undefined);
+    if (hasNext === "0" || hasNext === 0 || hasNext === false) return true;
+    if (hasNext === "1" || hasNext === 1 || hasNext === true) return false;
+    if (data.no_more === true) return true;
+    return list.length === 0;
+  }
+
+  // 帖子 ID 在新版接口里改名为 linkid，旧字段 id 继续兼容。
+  function readCyLinkId(link) {
+    const raw = link.linkid ?? link.id;
+    if (raw === null || raw === undefined) return "";
+    const text = String(raw).trim();
+    return text === "" ? "" : text;
+  }
+
   async function fetchCyPage(userId, offset, signal) {
     const response = await fetchWithTimeout(buildCyApiUrl(userId, offset), {
       credentials: "include",
@@ -3438,16 +3479,18 @@
     if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
     const data = await response.json();
     if (data.status !== "ok") throw new Error(data.msg || "接口返回失败状态");
-    const list = Array.isArray(data.result) ? data.result : [];
-    return { list, noMore: data.no_more === true || list.length === 0 };
+    const list = readCyPageRecords(data.result);
+    return { list, noMore: readCyPageFinished(data, list) };
   }
 
   function normalizeCyItem(raw) {
     const link = raw && raw.link;
-    if (!link || link.id === undefined || link.id === null) return null;
+    if (!link) return null;
+    const linkId = readCyLinkId(link);
+    if (linkId === "") return null;
     const thumbs = Array.isArray(link.thumbs) ? link.thumbs : [];
     return {
-      id: String(link.id),
+      id: linkId,
       title: typeof link.title === "string" && link.title.trim() !== "" ? link.title.trim() : "无标题帖子",
       text: typeof raw.text === "string" ? raw.text.trim() : "",
       createAt: Number(raw.create_at) || 0,
@@ -3667,13 +3710,26 @@
       list.append(fragment);
     };
 
+    // 站点偶尔会先渲染页面骨架、后插入收藏列表；此时把区块挂到内容区末尾，
+    // 等 .user-favour__list 出现后再挪到列表正下方，用户不会因为顺序问题看不到区块。
+    const readFavourContainer = () => {
+      const page = document.querySelector("#page-user-favour");
+      if (!page) return null;
+      return page.querySelector(".content") ?? page;
+    };
+
     const place = () => {
       const listNode = document.querySelector(FAVOUR_LIST_SELECTOR);
-      const parent = listNode ? listNode.parentElement : null;
-      if (!listNode || !parent) return;
-      if (host.parentNode !== parent || host.previousElementSibling !== listNode) {
-        parent.insertBefore(host, listNode.nextSibling);
+      if (listNode && listNode.parentElement) {
+        const container = listNode.parentElement;
+        if (host.parentNode !== container || host.previousElementSibling !== listNode) {
+          container.insertBefore(host, listNode.nextSibling);
+        }
+        return;
       }
+      const container = readFavourContainer();
+      if (container === null) return;
+      if (host.parentNode !== container || host.nextSibling !== null) container.append(host);
     };
 
     const load = async (force) => {
@@ -3738,7 +3794,7 @@
     let cyJumpDone = false;
 
     const sync = () => {
-      if (readPageRoute() !== PAGE_ROUTE.FAVOUR || getHeyboxId() === "") {
+      if (readPageRoute() !== PAGE_ROUTE.FAVOUR) {
         cyJumpDone = false;
         if (section) {
           section.dispose();

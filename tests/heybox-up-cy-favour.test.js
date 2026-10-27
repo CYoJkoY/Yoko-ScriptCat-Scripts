@@ -90,7 +90,7 @@ async function waitFor(predicate) {
 }
 
 for (const pathname of FAVOUR_PATHS) {
-  test(`favour watcher mounts the CY section when the native list appears late (${pathname})`, async () => {
+  test(`favour watcher mounts the CY section before the native list appears (${pathname})`, async () => {
     const { dom, window, domErrors } = createFavourPage(pathname);
     try {
       const { document } = window;
@@ -104,18 +104,21 @@ for (const pathname of FAVOUR_PATHS) {
         "the favourites page raised DOM errors while the userscript booted",
       );
 
-      // The initial sync runs before the native list exists, so nothing may mount yet.
-      assert.equal(document.getElementById("heybox-up-favour"), null);
+      // The initial sync runs before the native list exists, so the section falls back
+      // to the page content area instead of staying invisible.
+      const early = await waitFor(() => document.getElementById("heybox-up-favour"));
+      assert.ok(early, "the CY section must mount before the native list exists");
+      assert.equal(early.parentElement, document.querySelector("#page-user-favour .content"));
 
       const list = document.createElement("div");
       list.className = "user-favour__list";
       document.querySelector("#page-user-favour .content .list").append(list);
 
-      // Mounting must come from the observed mutation, not from the insertion call itself.
-      assert.equal(document.getElementById("heybox-up-favour"), null);
-
-      const host = await waitFor(() => document.getElementById("heybox-up-favour"));
-      assert.ok(host, "asynchronously inserted favourites list never triggered a mount");
+      const host = await waitFor(() => {
+        const node = document.getElementById("heybox-up-favour");
+        return node && node.previousElementSibling === list ? node : null;
+      });
+      assert.ok(host, "the CY section never moved below the late native list");
       assert.equal(host.parentElement, list.parentElement);
       assert.equal(host.previousElementSibling, list, "CY section must follow the native list");
       assert.equal(host.shadowRoot.querySelector(".heading").textContent, "插眼收藏");
@@ -203,6 +206,85 @@ test("duplicate CY records for one post render a single card", async () => {
     assert.equal(cards.length, 2, "each post must render one CY card");
     assert.ok(findCyCard(host, "888"), "post 888 must render");
     assert.ok(findCyCard(host, "999"), "post 999 must render");
+    assert.deepEqual(domErrors.map((error) => error.message), []);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("CY records read the linkid field of the newer collect payload", async () => {
+  const { dom, window, domErrors } = createFavourPage(FAVOUR_PATHS[0]);
+  stubCyRecords(window, [{
+    comment_type: 0,
+    create_at: 1761552000,
+    text: "linkid fixture",
+    link: { linkid: "135790", title: "Fixture post 135790", thumbs: [] },
+  }]);
+  try {
+    const { document } = window;
+    window.eval(source);
+    await waitFor(() => document.readyState === "complete");
+    const { host } = await mountFavourSection(window, document);
+    const card = await waitFor(() => findCyCard(host, "135790"));
+    assert.ok(card, "a record with only link.linkid must still render a card");
+    assert.ok(card.textContent.includes("linkid fixture"));
+    assert.deepEqual(domErrors.map((error) => error.message), []);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("CY records read the newer result.links payload and its has_next flag", async () => {
+  const { dom, window, domErrors } = createFavourPage(FAVOUR_PATHS[0]);
+  const seenOffsets = [];
+  window.fetch = async (url) => {
+    seenOffsets.push(new URL(String(url)).searchParams.get("offset"));
+    const isFirstPage = seenOffsets.length === 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "ok",
+        result: {
+          links: [createCyRecord(isFirstPage ? "201" : "202", "page " + seenOffsets.length)],
+          has_next: isFirstPage ? "1" : "0",
+        },
+      }),
+    };
+  };
+  try {
+    const { document } = window;
+    window.eval(source);
+    await waitFor(() => document.readyState === "complete");
+    const { host } = await mountFavourSection(window, document);
+    const cards = await waitFor(() => {
+      const rendered = readCyCards(host);
+      return rendered.length >= 2 ? rendered : null;
+    });
+    assert.ok(cards, "a result.links payload must produce CY cards");
+    assert.ok(findCyCard(host, "201"), "the first page must render");
+    assert.ok(findCyCard(host, "202"), "has_next must request the second page");
+    assert.deepEqual(seenOffsets, ["0", "20"], "paging must advance by one page size");
+    assert.deepEqual(domErrors.map((error) => error.message), []);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("a placeholder heybox_id keeps the CY section visible with a login notice", async () => {
+  const { dom, window, domErrors } = createFavourPage(FAVOUR_PATHS[0]);
+  window.document.cookie = "heybox_id=None; path=/";
+  try {
+    const { document } = window;
+    window.eval(source);
+    await waitFor(() => document.readyState === "complete");
+    const host = await waitFor(() => document.getElementById("heybox-up-favour"));
+    assert.ok(host, "the CY section must mount without a usable login cookie");
+    const note = await waitFor(() => {
+      const node = host.shadowRoot.querySelector(".note");
+      return node && node.textContent.includes("未登录") ? node : null;
+    });
+    assert.ok(note, "an unusable cookie must show the login notice");
     assert.deepEqual(domErrors.map((error) => error.message), []);
   } finally {
     dom.window.close();
