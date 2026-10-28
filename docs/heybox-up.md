@@ -4,7 +4,7 @@
 
 面向小黑盒 Web 端的用户脚本（UserScript）：网页收藏列表不显示“插眼”（CY）条目，但主页收藏总数会把它们算进去。本脚本单独拉取插眼收藏，在收藏页把插眼条目补到收藏列表下方，按帖子去重。社区首页（`/app/bbs/home`）移除右栏热门社区等冗余模块，改为定宽卡片信息流，并支持在右侧预览帖子评论；帖子详情页（`/app/bbs/link/*`）默认进入全屏沉浸阅读，封面与标题上下分栏、正文连续滚动，原生评论收进侧栏，保留原生回复与点赞，并在评论区补充默认/时间/点赞/作者排序。右侧互动栏可直接点赞、收藏与发布 CY，评论区仍可按 `is_cy` 过滤插眼评论。顶部导航收敛为首页、社区、收藏、文章四个「SVG + 文本」入口；帖子页纵轴中心左右两侧提供 SVG 上一篇/下一篇箭头，切换走站内路由，不整页刷新。社区页（`/app/topic/link/*`）提供只在该社区内生效的帖子搜索；宽屏社区首页改为左频道、中信息流、右热度三栏工作台。
 
-- 版本：0.4.43
+- 版本：0.4.44
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://www.xiaoheihe.cn/*`、`https://xiaoheihe.cn/*`
@@ -88,7 +88,7 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 
 - 收藏页 https://xiaoheihe.cn/app/user/favour/content ：脚本把插眼条目挂在收藏列表（.user-favour__list）下方，按帖子 ID 去重后全部列出，不再对照页面已渲染的同 ID 帖子做过滤。站点先渲染页面骨架、后插入收藏列表时，区块先挂在 `#page-user-favour` 的内容区末尾，列表出现后再挪到它正下方，不会因为挂载顺序而整块缺失。区块使用 Shadow DOM，样式与页面隔离。
 - 收藏与文章页右栏：收藏页、文章管理页及文章详情页的右侧只保留二维码、小黑盒加速器、黑盒语音、黑盒工坊与备案信息等推广模块；脚本将这些右栏整体隐藏，并让主列表占满内容区。
-- 顶部导航：脚本接管 `.nav-links`，隐藏站点原有的七个文字按钮，改为首页、社区、收藏、文章四个入口，每项为内联 SVG 图标加文本。图标默认在悬停、键盘聚焦与激活时播放轻量动效（房子轻晃、气泡上浮、书签落位、纸张翻角），齿轮设置菜单里的“动态导航图标”可切回静态；系统开启“减少动态效果”时同样保持静态。
+- Top navigation: The script takes over `.nav-links`, replaces the original seven text links with four inline SVG links for Home, Community, Favorites, and Articles, and animates each icon on hover, keyboard focus, and press. The settings menu can disable icon motion, and the system reduced-motion preference keeps the icons static.
 - 导航状态：按 `location.pathname` 标记当前入口，社区包含 `/app/bbs/home` 与帖子详情；收藏页同时承载插眼收藏区块。视口 ≤940px 时只显示图标，保留 `aria-label` 与悬停提示。
 - 全站主题：导航栏右侧新增主题按钮和齿轮设置按钮。主题菜单只放六套预设：跟随系统、夜航（冷灰深色）、纯黑（OLED 黑底低圆角）、浅色（站点原色）、纸页（暖纸底、衬线标题、细边扁平卡片）、雾青（冷雾底、大圆角、柔和阴影）；齿轮菜单放“首页评论预览”“动态导航图标”“沉浸阅读”三个开关（后两者默认开启）、“正文行距”数字输入框（1.0–2.2 倍，步进 0.05，默认 1.7），以及“中栏宽度（占屏幕宽度）”的 40% / 48% / 56% / 64% / 72% 分段按钮和可自行输入 40–76 整数的百分比输入框：留空或填非法值恢复已存宽度，超出范围自动夹到上下限；菜单内容高于视口时自身滚动。两个菜单各自开关，打开一个会收起另一个，支持 Esc 与点击外部关闭；选中项立即生效并写入本机，当前项用强调色描边标出。
 - 深色覆盖：夜航与纯黑共用同一套深色规则，覆盖帖子页正文、原生评论区（排序标签、作者赞、时间、IP、楼中楼展开、嵌套回复块）、回复编辑器、加载动画、个人主页列表底色、消息提示，以及 Element Plus 对话框、抽屉、表格、分页、图片查看器与下拉浮层。站点用伪元素绘制页面底色与帖子分隔条（`html` 根元素、`#app > main > section`、`.hb-bbs-home__feed-splitline`、`.hb-bbs-home__splitline`、`main.list`、`.hb-cpt__moment-list-content`），这些颜色不随 CSS 变量走，需单独覆盖。登录表单保持浅色，避免第三方登录控件失去可读性。
@@ -305,6 +305,10 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 - 全站搜索页整栏隐藏右栏；隐藏与撑满规则依赖 `#page-bbs-list`、`.content > .list` 与 `.cpt-right-side.right` 结构，站点改版换容器后需同步选择器。
 
 ## 九、版本历史
+
+### v0.4.44
+
+- Fixed icons that played their animation on mount when their destination was the current page. Hover, keyboard focus, and press now trigger the motion, while the existing setting and system reduced-motion preference continue to keep icons static.
 
 ### v0.4.43
 
