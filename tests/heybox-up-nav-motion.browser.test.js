@@ -93,15 +93,15 @@ function connectCdp(url) {
 }
 
 function createPage() {
-  const links = iconNames.map((name) => "<a class=\"hbu-nav-link\" href=\"#" + name + "\"><svg viewBox=\"0 0 24 24\"><g class=\"hbu-ico-anim hbu-ico-" + name + "\"><path d=\"M3 3h18v18H3z\"></path></g></svg><span>" + name + "</span></a>").join("");
+  const links = iconNames.map((name) => "<a class=\"hbu-nav-link\" href=\"#" + name + "\"><span class=\"hbu-nav-icon hbu-ico-anim hbu-ico-" + name + "\"><svg viewBox=\"0 0 24 24\"><path d=\"M3 3h18v18H3z\"></path></svg></span><span>" + name + "</span></a>").join("");
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" + navCss + "</style><style>" +
-    "body { margin: 0; padding: 24px; } #heybox-up-nav { width: max-content; } .hbu-nav-link { height: 64px; } .hbu-nav-link svg { overflow: visible; }" +
-    "</style></head><body><nav id=\"heybox-up-nav\">" + links + "</nav><script>" +
+    "body { margin: 0; padding: 24px; } #heybox-up-nav { width: max-content; } .hbu-nav-link { height: 64px; } .nav svg * { animation: none !important; transform: none !important; }" +
+    "</style></head><body><div class=\"nav\"><nav id=\"heybox-up-nav\">" + links + "</nav></div><script>" +
     "window.animationEvents = []; for (const eventType of ['animationstart', 'animationend']) { document.addEventListener(eventType, (event) => { if (event.target.matches('.hbu-ico-anim')) window.animationEvents.push({ type: event.type, name: event.animationName, time: performance.now() }); }, true); }" +
     "document.addEventListener('click', (event) => event.preventDefault());</script></body></html>";
 }
 
-test("pressing each navigation link starts a fresh animation after hover completes", async (t) => {
+test("navigation icons visibly move on hover and press despite site SVG styles", async (t) => {
   const browserPath = await findBrowser();
   if (browserPath === null) {
     t.skip("Set HEYBOX_CHROME_PATH to a Chromium-based browser to run this browser-level check");
@@ -190,15 +190,35 @@ test("pressing each navigation link starts a fresh animation after hover complet
         returnByValue: true,
       });
       const { x, y } = boundsResult.result.value;
+      const initialTransformResult = await pageCdp.send("Runtime.evaluate", {
+        expression: "getComputedStyle(document.querySelector('.hbu-ico-" + iconName + "')).transform",
+        returnByValue: true,
+      });
+      const initialTransform = initialTransformResult.result.value;
       await pageCdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-      await delay(700);
+      const hoverAnimationStarted = await waitFor(async () => {
+        const result = await pageCdp.send("Runtime.evaluate", {
+          expression: "window.animationEvents.some((event) => event.type === 'animationstart' && event.name === 'hbu-nav-" + iconName + "')",
+          returnByValue: true,
+        });
+        return result.result.value;
+      }, 1000, iconName + " hover animation did not start");
+      assert.equal(hoverAnimationStarted, true, iconName + " hover animation should start");
+      const hoverTransformChanged = await waitFor(async () => {
+        const result = await pageCdp.send("Runtime.evaluate", {
+          expression: "getComputedStyle(document.querySelector('.hbu-ico-" + iconName + "')).transform !== '" + initialTransform + "'",
+          returnByValue: true,
+        });
+        return result.result.value;
+      }, 1000, iconName + " hover transform did not change");
+      assert.equal(hoverTransformChanged, true, iconName + " icon must visibly transform while hovered");
       const completedHoverResult = await waitFor(async () => {
         const result = await pageCdp.send("Runtime.evaluate", {
           expression: "window.animationEvents.some((event) => event.type === 'animationend' && event.name === 'hbu-nav-" + iconName + "')",
           returnByValue: true,
         });
         return result.result.value;
-      }, 1000, iconName + " hover animation did not finish before pressing");
+      }, 1200, iconName + " hover animation did not finish before pressing");
       assert.equal(completedHoverResult, true, iconName + " hover animation should finish before pressing");
       const eventCountResult = await pageCdp.send("Runtime.evaluate", { expression: "window.animationEvents.length", returnByValue: true });
       const priorEventCount = eventCountResult.result.value;
@@ -214,6 +234,43 @@ test("pressing each navigation link starts a fresh animation after hover complet
       await pageCdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0 });
       await pageCdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 2 });
     }
+
+    const preferenceBoundsResult = await pageCdp.send("Runtime.evaluate", {
+      expression: "(() => { const rect = document.querySelector('.hbu-ico-home').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; })()",
+      returnByValue: true,
+    });
+    const preferenceBounds = preferenceBoundsResult.result.value;
+    await pageCdp.send("Runtime.evaluate", { expression: "document.documentElement.classList.add('heybox-up-nav-static')" });
+    const staticEventCountResult = await pageCdp.send("Runtime.evaluate", { expression: "window.animationEvents.length", returnByValue: true });
+    await pageCdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: preferenceBounds.x, y: preferenceBounds.y });
+    await delay(100);
+    const staticMotionResult = await pageCdp.send("Runtime.evaluate", {
+      expression: "({ animation: getComputedStyle(document.querySelector('.hbu-ico-home')).animationName, transform: getComputedStyle(document.querySelector('.hbu-ico-home')).transform, eventCount: window.animationEvents.length })",
+      returnByValue: true,
+    });
+    assert.equal(staticMotionResult.result.value.animation, "none", "the static preference must suppress icon motion");
+    assert.equal(staticMotionResult.result.value.transform, "none", "the static preference must keep the icon transform still");
+    assert.equal(staticMotionResult.result.value.eventCount, staticEventCountResult.result.value, "the static preference must not start a new animation");
+    await pageCdp.send("Runtime.evaluate", { expression: "document.documentElement.classList.remove('heybox-up-nav-static')" });
+    await pageCdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    await pageCdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 2 });
+    const reducedEventCountResult = await pageCdp.send("Runtime.evaluate", { expression: "window.animationEvents.length", returnByValue: true });
+    await pageCdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: preferenceBounds.x, y: preferenceBounds.y });
+    await delay(100);
+    const reducedMotionResult = await pageCdp.send("Runtime.evaluate", {
+      expression: "({ animation: getComputedStyle(document.querySelector('.hbu-ico-home')).animationName, transform: getComputedStyle(document.querySelector('.hbu-ico-home')).transform, eventCount: window.animationEvents.length })",
+      returnByValue: true,
+    });
+    assert.equal(reducedMotionResult.result.value.animation, "none", "prefers-reduced-motion must suppress icon motion");
+    assert.equal(reducedMotionResult.result.value.transform, "none", "prefers-reduced-motion must keep the icon transform still");
+    assert.equal(reducedMotionResult.result.value.eventCount, reducedEventCountResult.result.value, "reduced motion must not start an animation");
+    await pageCdp.send("Emulation.setDeviceMetricsOverride", { width: 800, height: 720, deviceScaleFactor: 1, mobile: false });
+    const compactNavResult = await pageCdp.send("Runtime.evaluate", {
+      expression: "({ iconDisplay: getComputedStyle(document.querySelector('.hbu-ico-home')).display, labelDisplay: getComputedStyle(document.querySelector('.hbu-nav-link > span:not(.hbu-nav-icon)')).display })",
+      returnByValue: true,
+    });
+    assert.notEqual(compactNavResult.result.value.iconDisplay, "none", "compact navigation must keep icons visible");
+    assert.equal(compactNavResult.result.value.labelDisplay, "none", "compact navigation must hide text labels");
   } finally {
     pageCdp?.socket.close();
     if (browserCdp !== undefined) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.44
+// @version      0.4.45
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -2978,10 +2978,10 @@
   ];
 
   const NAV_ICONS = {
-    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-home"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></g></svg>',
-    community: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-community"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></g></svg>',
-    favour: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-favour"><path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"/></g></svg>',
-    article: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="hbu-ico-anim hbu-ico-article"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 16.5h6"/></g></svg>',
+    home: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-home" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></svg></span>',
+    community: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-community" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></svg></span>',
+    favour: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-favour" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"/></svg></span>',
+    article: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-article" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 16.5h6"/></svg></span>',
   };
 
   const NAV_CSS = `
@@ -3030,8 +3030,8 @@
       outline: 2px solid var(--heybox-up-accent, #6f8db3);
       outline-offset: -2px;
     }
-    .hbu-nav-link svg { width: 18px; height: 18px; flex: none; }
-    .hbu-nav-link .hbu-ico-anim { transform-box: fill-box; transform-origin: 50% 60%; }
+    .hbu-nav-icon { display: inline-flex; width: 18px; height: 18px; flex: none; align-items: center; justify-content: center; transform-origin: 50% 60%; will-change: transform; }
+    .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
     .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home { animation: hbu-nav-home .55s cubic-bezier(.3, .7, .3, 1); }
     .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community { animation: hbu-nav-community .55s cubic-bezier(.3, .7, .3, 1); }
     .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour { animation: hbu-nav-favour .55s cubic-bezier(.3, .7, .3, 1); }
@@ -3060,9 +3060,9 @@
       0%, 100% { transform: scale(1); }
       45% { transform: scale(.9); }
     }
-    :root.${NAV_STATIC_CLASS} .hbu-nav-link svg * { animation: none !important; }
+    :root.${NAV_STATIC_CLASS} .hbu-nav-icon { animation: none !important; }
     @media (prefers-reduced-motion: reduce) {
-      .hbu-nav-link svg * { animation: none !important; }
+      .hbu-nav-icon { animation: none !important; }
       .hbu-nav-link::after { transition: none; }
     }
     @media (max-width: 1180px) {
@@ -3070,7 +3070,7 @@
       .hbu-nav-link::after { left: 9px; right: 9px; }
     }
     @media (max-width: 940px) {
-      .hbu-nav-link span { display: none; }
+      .hbu-nav-link > span:not(.hbu-nav-icon) { display: none; }
       .hbu-nav-link { padding: 0 10px; }
     }
   `;

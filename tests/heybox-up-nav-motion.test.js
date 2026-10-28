@@ -27,8 +27,9 @@ test("navigation icons animate on pointer, keyboard, and press interactions", ()
 });
 
 test("navigation motion preference and reduced-motion support remain in place", () => {
-  assert.match(navCss, /NAV_STATIC_CLASS[^\n]*animation: none !important/);
+  assert.match(navCss, /NAV_STATIC_CLASS[^\n]*hbu-nav-icon[^\n]*animation: none !important/);
   assert.match(navCss, /prefers-reduced-motion: reduce[\s\S]*?animation: none !important/);
+  assert.match(navCss, /hbu-nav-icon[^\n]*will-change: transform/);
   assert.match(source, /localStore\.write\(NAV_MOTION_KEY, value \? "1" : "0"\)/);
   assert.match(source, /NAV_MOTION_EVENT[^\n]*applyNavMotionPreference/);
 });

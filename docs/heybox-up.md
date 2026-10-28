@@ -4,7 +4,7 @@
 
 面向小黑盒 Web 端的用户脚本（UserScript）：网页收藏列表不显示“插眼”（CY）条目，但主页收藏总数会把它们算进去。本脚本单独拉取插眼收藏，在收藏页把插眼条目补到收藏列表下方，按帖子去重。社区首页（`/app/bbs/home`）移除右栏热门社区等冗余模块，改为定宽卡片信息流，并支持在右侧预览帖子评论；帖子详情页（`/app/bbs/link/*`）默认进入全屏沉浸阅读，封面与标题上下分栏、正文连续滚动，原生评论收进侧栏，保留原生回复与点赞，并在评论区补充默认/时间/点赞/作者排序。右侧互动栏可直接点赞、收藏与发布 CY，评论区仍可按 `is_cy` 过滤插眼评论。顶部导航收敛为首页、社区、收藏、文章四个「SVG + 文本」入口；帖子页纵轴中心左右两侧提供 SVG 上一篇/下一篇箭头，切换走站内路由，不整页刷新。社区页（`/app/topic/link/*`）提供只在该社区内生效的帖子搜索；宽屏社区首页改为左频道、中信息流、右热度三栏工作台。
 
-- 版本：0.4.44
+- 版本：0.4.45
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://www.xiaoheihe.cn/*`、`https://xiaoheihe.cn/*`
@@ -305,6 +305,10 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 - 全站搜索页整栏隐藏右栏；隐藏与撑满规则依赖 `#page-bbs-list`、`.content > .list` 与 `.cpt-right-side.right` 结构，站点改版换容器后需同步选择器。
 
 ## 九、版本历史
+
+### v0.4.45
+
+- Fixed navigation icon motion by animating the HTML wrapper outside site-controlled SVG descendants. Hover, focus, and press now show visible transforms; static and reduced-motion settings remain respected, and compact layouts retain icons while hiding labels.
 
 ### v0.4.44
 
