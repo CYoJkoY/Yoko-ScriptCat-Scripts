@@ -5525,11 +5525,15 @@
           return;
         }
         const numericLimit = Number(rawValue);
-        if (!Number.isFinite(numericLimit)) {
+        if (
+          !Number.isInteger(numericLimit) ||
+          numericLimit < MESSAGE_LIMIT_MIN ||
+          numericLimit > MESSAGE_LIMIT_MAX
+        ) {
           messageLimitInput.value = String(state.messageLimit);
           return;
         }
-        state.messageLimit = normalizeMessageLimit(numericLimit);
+        state.messageLimit = numericLimit;
         messageLimitInput.value = String(state.messageLimit);
         saveCurrentConfig();
         updateHudDashboard();
