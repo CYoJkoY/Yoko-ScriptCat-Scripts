@@ -3032,10 +3032,11 @@
     }
     .hbu-nav-link svg { width: 18px; height: 18px; flex: none; }
     .hbu-nav-link .hbu-ico-anim { transform-box: fill-box; transform-origin: 50% 60%; }
-    .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home, .hbu-nav-link:active .hbu-ico-home { animation: hbu-nav-home .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community, .hbu-nav-link:active .hbu-ico-community { animation: hbu-nav-community .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour, .hbu-nav-link:active .hbu-ico-favour { animation: hbu-nav-favour .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article, .hbu-nav-link:active .hbu-ico-article { animation: hbu-nav-article .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home { animation: hbu-nav-home .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community { animation: hbu-nav-community .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour { animation: hbu-nav-favour .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article { animation: hbu-nav-article .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:active .hbu-ico-home, .hbu-nav-link:active .hbu-ico-community, .hbu-nav-link:active .hbu-ico-favour, .hbu-nav-link:active .hbu-ico-article { animation: hbu-nav-press .14s cubic-bezier(.3, .7, .3, 1); }
     @keyframes hbu-nav-home {
       0%, 100% { transform: translateY(0); }
       38% { transform: translateY(-1.8px); }
@@ -3054,6 +3055,10 @@
       0%, 100% { transform: rotate(0); }
       38% { transform: rotate(-4deg); }
       72% { transform: rotate(1.5deg); }
+    }
+    @keyframes hbu-nav-press {
+      0%, 100% { transform: scale(1); }
+      45% { transform: scale(.9); }
     }
     :root.${NAV_STATIC_CLASS} .hbu-nav-link svg * { animation: none !important; }
     @media (prefers-reduced-motion: reduce) {

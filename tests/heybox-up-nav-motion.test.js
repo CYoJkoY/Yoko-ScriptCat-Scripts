@@ -13,11 +13,16 @@ test("navigation icons animate on pointer, keyboard, and press interactions", ()
     const selector = new RegExp(
       "\\.hbu-nav-link:hover \\.hbu-ico-" + icon
         + "[^\\n]*:focus-visible \\.hbu-ico-" + icon
-        + "[^\\n]*:active \\.hbu-ico-" + icon
         + "[^\\n]*animation: hbu-nav-" + icon,
     );
     assert.match(navCss, selector, icon + " icon must animate for each input state");
+    assert.match(
+      navCss,
+      new RegExp("\\.hbu-nav-link:active \\.hbu-ico-" + icon + "[^\\n]*animation: hbu-nav-press"),
+      icon + " icon must use a distinct press animation",
+    );
   }
+  assert.match(navCss, /@keyframes hbu-nav-press/);
   assert.doesNotMatch(navCss, /\.hbu-nav-link\.is-active \.hbu-ico-/, "current page state must not consume the animation");
 });
 
