@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.15.9
+// @version      0.16.0
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -42,7 +42,10 @@
   const STYLE_ID = "ai-turbo-engine-styles";
   const CODE_COLLAPSE_HEIGHT = 300;
   const CODE_PREVIEW_HEIGHT = 200;
-  const LOAD_INDICATOR_FULL_TURNS = 60;
+  const DEFAULT_MESSAGE_LIMIT = 60;
+  const MESSAGE_LIMIT_MIN = 10;
+  const MESSAGE_LIMIT_MAX = 999;
+  const LOAD_WARNING_RATIO = 0.7;
   const LOAD_RING_RADIUS = 16.2;
   const LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
   const TURN_MARKER_ATTRIBUTES = new Set([
@@ -959,6 +962,7 @@
   const state = {
     pruneEnabled: true,
     keepTurns: 8,
+    messageLimit: DEFAULT_MESSAGE_LIMIT,
     collapseCode: true,
     virtualFileEnabled: true,
     rememberReasoning: true,
@@ -976,6 +980,12 @@
         const parsed = JSON.parse(raw);
         if (typeof parsed.keepTurns === "number" && !isNaN(parsed.keepTurns)) {
           state.keepTurns = Math.max(2, Math.min(50, parsed.keepTurns));
+        }
+        if (
+          typeof parsed.messageLimit === "number" &&
+          Number.isFinite(parsed.messageLimit)
+        ) {
+          state.messageLimit = normalizeMessageLimit(parsed.messageLimit);
         }
         if (typeof parsed.pruneEnabled === "boolean") {
           state.pruneEnabled = parsed.pruneEnabled;
@@ -997,6 +1007,7 @@
     try {
       const config = {
         keepTurns: state.keepTurns,
+        messageLimit: state.messageLimit,
         pruneEnabled: state.pruneEnabled,
         collapseCode: state.collapseCode,
         virtualFileEnabled: state.virtualFileEnabled,
@@ -1004,6 +1015,15 @@
       };
       localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
     } catch (_) {}
+  }
+
+  function normalizeMessageLimit(rawLimit) {
+    const numericLimit = Number(rawLimit);
+    if (!Number.isFinite(numericLimit)) return DEFAULT_MESSAGE_LIMIT;
+    return Math.min(
+      MESSAGE_LIMIT_MAX,
+      Math.max(MESSAGE_LIMIT_MIN, Math.round(numericLimit)),
+    );
   }
 
   const turnIndex = new Map();
@@ -5058,61 +5078,56 @@
     (document.head || document.documentElement).appendChild(styleElement);
   }
 
+  function resolveLoadTone(totalTurns, messageLimit) {
+    const loadRatio = messageLimit > 0 ? totalTurns / messageLimit : 0;
+    if (loadRatio >= 1) return "critical";
+    if (loadRatio >= LOAD_WARNING_RATIO) return "warning";
+    return "normal";
+  }
+
   function updateHudDashboard() {
     if (!hudStats) return;
     /* Rewriting identical text still invalidates style and paint. */
-    const hudSignature = `${state.totalTurns}|${state.hiddenCount}|${state.foldedCodeCount}|${activeVirtualFiles.length}`;
+    const hudSignature = `${state.totalTurns}|${state.hiddenCount}|${state.foldedCodeCount}|${activeVirtualFiles.length}|${state.messageLimit}`;
     if (hudStats.signature === hudSignature) return;
     hudStats.signature = hudSignature;
     hudStats.total.textContent = String(state.totalTurns);
     hudStats.hidden.textContent = String(state.hiddenCount);
     hudStats.folded.textContent = String(state.foldedCodeCount);
-    if (hudStats.pillTotal)
-      hudStats.pillTotal.textContent = String(state.totalTurns);
-    if (hudStats.pillHidden)
-      hudStats.pillHidden.textContent = String(state.hiddenCount);
-    if (hudStats.pillFolded)
-      hudStats.pillFolded.textContent = String(state.foldedCodeCount);
-    if (hudStats.pillVirtual)
-      hudStats.pillVirtual.textContent = String(activeVirtualFiles.length);
 
-    const loadRatioLabel = `${state.totalTurns}/${LOAD_INDICATOR_FULL_TURNS}`;
     const loadProgress = Math.min(
       1,
-      Math.max(0, state.totalTurns) / LOAD_INDICATOR_FULL_TURNS,
+      Math.max(0, state.totalTurns) / state.messageLimit,
     );
-    const loadColor =
-      loadProgress < 1 / 3
-        ? "#34d399"
-        : loadProgress < 2 / 3
-          ? "#facc15"
-          : "#ef4444";
+    const loadTone = resolveLoadTone(state.totalTurns, state.messageLimit);
+    const loadToneLabel =
+      loadTone === "critical"
+        ? "已达到提醒上限"
+        : loadTone === "warning"
+          ? "接近提醒上限"
+          : "负载正常";
 
-    if (hudStats.pillLoadLabel) {
-      hudStats.pillLoadLabel.textContent = loadRatioLabel;
-      hudStats.pillLoadLabel.style.fill = loadColor;
-      const labelFontSize =
-        loadRatioLabel.length >= 7
-          ? "7.4px"
-          : loadRatioLabel.length >= 6
-            ? "8.2px"
-            : "9.4px";
-      hudStats.pillLoadLabel.style.fontSize = labelFontSize;
+    if (hudStats.pillRoot) {
+      hudStats.pillRoot.dataset.loadTone = loadTone;
+      hudStats.pillRoot.title = `长对话负载 ${state.totalTurns}/${state.messageLimit}（${loadToneLabel}，仅按消息数估算） · 消息 ${state.totalTurns} · 已脱水 ${state.hiddenCount} · 代码折叠 ${state.foldedCodeCount} · 虚拟文件 ${activeVirtualFiles.length}；点击打开面板，拖动可移动`;
+      hudStats.pillRoot.setAttribute(
+        "aria-label",
+        `长对话负载 ${state.totalTurns}/${state.messageLimit}，${loadToneLabel}；消息 ${state.totalTurns}，已脱水 ${state.hiddenCount}，代码折叠 ${state.foldedCodeCount}，虚拟文件 ${activeVirtualFiles.length}；点击打开面板，拖动可移动`,
+      );
     }
-    hudStats.pillLoadProgress?.setAttribute("stroke", loadColor);
+    if (hudStats.totalStatusItem) {
+      hudStats.totalStatusItem.dataset.loadTone = loadTone;
+    }
+    if (hudStats.pillCount) {
+      hudStats.pillCount.textContent = String(state.totalTurns);
+    }
+    if (hudStats.pillLimit) {
+      hudStats.pillLimit.textContent = `/${state.messageLimit}`;
+    }
     hudStats.pillLoadProgress?.setAttribute(
       "stroke-dashoffset",
       String(LOAD_RING_CIRCUMFERENCE * (1 - loadProgress)),
     );
-    hudStats.pillLoadRing?.setAttribute(
-      "aria-label",
-      `长对话负载提示：${state.totalTurns}/${LOAD_INDICATOR_FULL_TURNS} 条消息；仅为消息数量启发式，不代表模型真实智力或上下文容量。`,
-    );
-
-    const pill = hudShadowRoot?.querySelector("#pill-trigger");
-    if (pill) {
-      pill.title = `长对话负载 ${state.totalTurns}/${LOAD_INDICATOR_FULL_TURNS}（仅按消息数估算） · 消息 ${state.totalTurns} · 已脱水 ${state.hiddenCount} · 代码折叠 ${state.foldedCodeCount} · 虚拟文件 ${activeVirtualFiles.length}；点击打开面板，拖动可移动`;
-    }
   }
 
   function togglePanel(forceState) {
@@ -5202,52 +5217,61 @@
       button, input { font: inherit; }
 
       .docked-pill {
+        --turbo-tone: #5eead4;
+        --turbo-tone-strong: #34d399;
+        --turbo-muted: #8ba39a;
+        --turbo-surface: rgba(12, 18, 20, 0.97);
+        --turbo-border: rgba(94, 234, 212, 0.3);
+        --turbo-track: rgba(148, 163, 184, 0.22);
+        --turbo-glow: rgba(16, 185, 129, 0.14);
         pointer-events: auto;
         position: fixed;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 36px;
-        max-width: min(390px, calc(100vw - 16px));
-        padding: 5px 10px;
-        border-radius: 999px;
-        background: rgba(13, 17, 19, 0.97);
-        border: 1px solid rgba(153, 166, 161, 0.26);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
-        color: #dce5e1;
+        display: grid;
+        width: 48px;
+        height: 48px;
+        padding: 0;
+        place-items: center;
+        border-radius: 15px;
+        background: var(--turbo-surface);
+        border: 1px solid var(--turbo-border);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+        color: var(--turbo-tone);
         font: 650 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         cursor: grab;
         user-select: none;
         touch-action: none;
-        white-space: nowrap;
+        transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
       }
-      .pill-brand { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-      .pill-load-ring { display: block; width: 38px; height: 38px; flex: 0 0 auto; overflow: visible; }
-      .pill-load-track { fill: none; stroke: rgba(153, 166, 161, 0.32); stroke-width: 2.4; }
-      .pill-load-progress { fill: none; stroke: #34d399; stroke-width: 2.4; stroke-linecap: round; transition: stroke-dashoffset 220ms cubic-bezier(0.16, 1, 0.3, 1), stroke 220ms ease; }
-      .pill-load-label { fill: #34d399; font: 850 9.4px/1 ui-monospace, SFMono-Regular, Consolas, monospace; text-anchor: middle; dominant-baseline: central; letter-spacing: -0.65px; pointer-events: none; }
-      .pill-metrics {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        padding-left: 8px;
-        border-left: 1px solid rgba(153, 166, 161, 0.22);
-        color: #9baaa3;
-        font: 600 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        min-width: 0;
+      .docked-pill[data-load-tone="warning"] {
+        --turbo-tone: #fbbf24;
+        --turbo-tone-strong: #f59e0b;
+        --turbo-muted: #c7a766;
+        --turbo-surface: rgba(38, 29, 10, 0.97);
+        --turbo-border: rgba(251, 191, 36, 0.52);
+        --turbo-track: rgba(251, 191, 36, 0.18);
+        --turbo-glow: rgba(245, 158, 11, 0.2);
       }
-      .pill-metric { display: inline-flex; align-items: baseline; gap: 3px; }
-      .pill-metric-label { color: #9aa9a1; font-size: 9px; }
-      .pill-metric-value { color: #74ddb1; font-size: 11px; font-weight: 800; }
-      @media (max-width: 440px) {
-        .docked-pill { gap: 6px; padding: 5px 8px; }
-        .pill-metrics { gap: 5px; padding-left: 6px; }
-        .pill-metric-label { font-size: 8px; }
+      .docked-pill[data-load-tone="critical"] {
+        --turbo-tone: #fb7185;
+        --turbo-tone-strong: #ef4444;
+        --turbo-muted: #c99a9f;
+        --turbo-surface: rgba(45, 13, 18, 0.97);
+        --turbo-border: rgba(251, 113, 133, 0.58);
+        --turbo-track: rgba(251, 113, 133, 0.2);
+        --turbo-glow: rgba(239, 68, 68, 0.24);
       }
+      .turbo-gauge { position: relative; display: grid; width: 40px; height: 40px; place-items: center; }
+      .pill-load-ring { position: absolute; inset: 0; display: block; width: 40px; height: 40px; overflow: visible; }
+      .pill-load-track { fill: none; stroke: var(--turbo-track); stroke-width: 2.4; }
+      .pill-load-progress { fill: none; stroke: var(--turbo-tone-strong); stroke-width: 2.4; stroke-linecap: round; transition: stroke-dashoffset 220ms cubic-bezier(0.16, 1, 0.3, 1), stroke 180ms ease; }
+      .turbo-readout { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1; pointer-events: none; }
+      .turbo-count { color: var(--turbo-tone); font-size: 11px; font-weight: 850; letter-spacing: -0.45px; font-variant-numeric: tabular-nums; }
+      .turbo-limit { color: var(--turbo-muted); font-size: 8px; font-weight: 700; letter-spacing: -0.3px; font-variant-numeric: tabular-nums; }
       .docked-pill:active { cursor: grabbing; }
       .docked-pill:hover {
-        color: #72d6ab;
-        border-color: rgba(101, 210, 164, 0.45);
+        border-color: var(--turbo-tone);
+        box-shadow: 0 10px 28px var(--turbo-glow), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+        transform: translateY(-1px) scale(1.02);
       }
 
       .modal-backdrop {
@@ -5309,6 +5333,10 @@
       .status-item { padding: 9px; border: 1px solid rgba(153, 166, 161, 0.11); border-radius: 9px; background: #101517; text-align: center; }
       .status-label { font-size: 9px; color: #64748b; display: block; }
       .status-value { font-size: 14px; font-weight: 700; color: #e8efeb; margin-top: 2px; font-variant-numeric: tabular-nums; }
+      .status-item[data-load-tone="warning"] { border-color: rgba(251, 191, 36, 0.32); background: rgba(251, 191, 36, 0.06); }
+      .status-item[data-load-tone="warning"] .status-value { color: #fbbf24; }
+      .status-item[data-load-tone="critical"] { border-color: rgba(251, 113, 133, 0.38); background: rgba(251, 113, 133, 0.07); }
+      .status-item[data-load-tone="critical"] .status-value { color: #fb7185; }
 
       .section { padding-top: 10px; border-top: 1px solid rgba(153, 166, 161, 0.1); }
       .section-title { font-size: 10px; font-weight: 700; color: #68746f; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -5318,6 +5346,10 @@
       .stepper button { width: 26px; height: 24px; border: 0; background: transparent; color: #94a3b8; cursor: pointer; }
       .stepper button:hover { background: rgba(101, 210, 164, 0.07); color: #72d6ab; }
       .stepper span { min-width: 28px; text-align: center; font-size: 11px; font-family: ui-monospace, monospace; }
+      .limit-control { display: inline-flex; align-items: center; gap: 5px; }
+      .limit-input { width: 54px; height: 24px; padding: 0 6px; border: 1px solid rgba(153, 166, 161, 0.15); border-radius: 7px; background: #0f1315; color: #e8efeb; font: 650 11px/1 ui-monospace, monospace; text-align: right; font-variant-numeric: tabular-nums; }
+      .limit-input:hover { border-color: rgba(101, 210, 164, 0.28); }
+      .limit-unit { color: #64748b; font-size: 10px; }
 
       .switch { position: relative; width: 34px; height: 20px; }
       .switch input { opacity: 0; width: 0; height: 0; }
@@ -5347,30 +5379,25 @@
       kbd { padding: 2px 4px; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 4px; color: #94a3b8; font-family: ui-monospace, monospace; }
 
       .hud-panel button:focus-visible,
-      .hud-panel input:focus-visible { outline: 2px solid rgba(101, 210, 164, 0.55); outline-offset: 2px; }
+      .hud-panel input:focus-visible,
+      .docked-pill:focus-visible { outline: 2px solid var(--turbo-tone, #65d2a4); outline-offset: 2px; }
 
       @media (prefers-reduced-motion: reduce) {
-        .modal-backdrop, .hud-panel, .pill-load-progress { transition: none !important; }
+        .modal-backdrop, .hud-panel, .docked-pill, .pill-load-progress { transition: none !important; }
       }
     `;
     hudShadowRoot.appendChild(styles);
 
-    const pillTotalVal = el("span", { className: "pill-metric-value" }, ["0"]);
-    const pillHiddenVal = el("span", { className: "pill-metric-value" }, ["0"]);
-    const pillFoldedVal = el("span", { className: "pill-metric-value" }, ["0"]);
-    const pillVirtualVal = el("span", { className: "pill-metric-value" }, [
-      "0",
+    const pillCountValue = el("strong", { className: "turbo-count" }, ["0"]);
+    const pillLimitValue = el("span", { className: "turbo-limit" }, [
+      `/${state.messageLimit}`,
     ]);
 
     const svgNamespace = "http://www.w3.org/2000/svg";
     const pillLoadRing = document.createElementNS(svgNamespace, "svg");
     pillLoadRing.setAttribute("class", "pill-load-ring");
     pillLoadRing.setAttribute("viewBox", "0 0 40 40");
-    pillLoadRing.setAttribute("role", "img");
-    pillLoadRing.setAttribute(
-      "aria-label",
-      "长对话负载提示：仅根据检测到的消息数量估算，不代表模型真实智力或上下文容量。",
-    );
+    pillLoadRing.setAttribute("aria-hidden", "true");
 
     const pillLoadTrack = document.createElementNS(svgNamespace, "circle");
     pillLoadTrack.setAttribute("class", "pill-load-track");
@@ -5393,14 +5420,7 @@
     );
     pillLoadProgress.setAttribute("transform", "rotate(-90 20 20)");
 
-    const pillLoadLabel = document.createElementNS(svgNamespace, "text");
-    pillLoadLabel.setAttribute("class", "pill-load-label");
-    pillLoadLabel.setAttribute("x", "20");
-    pillLoadLabel.setAttribute("y", "20");
-    pillLoadLabel.setAttribute("aria-hidden", "true");
-    pillLoadLabel.textContent = `0/${LOAD_INDICATOR_FULL_TURNS}`;
-
-    pillLoadRing.append(pillLoadTrack, pillLoadProgress, pillLoadLabel);
+    pillLoadRing.append(pillLoadTrack, pillLoadProgress);
 
     const pill = el(
       "button",
@@ -5408,35 +5428,17 @@
         className: "docked-pill",
         id: "pill-trigger",
         type: "button",
-        title:
-          "消息 0 · 已脱水 0 · 代码折叠 0 · 虚拟文件 0；点击打开面板，拖动可移动",
+        "data-load-tone": "normal",
+        title: `长对话负载 0/${state.messageLimit}（负载正常，仅按消息数估算） · 消息 0 · 已脱水 0 · 代码折叠 0 · 虚拟文件 0；点击打开面板，拖动可移动`,
+        "aria-label": `长对话负载 0/${state.messageLimit}，负载正常；消息 0，已脱水 0，代码折叠 0，虚拟文件 0；点击打开面板，拖动可移动`,
       },
       [
-        el("span", { className: "pill-brand" }, [
+        el("span", { className: "turbo-gauge", "aria-hidden": "true" }, [
           pillLoadRing,
-          el("span", {}, ["Turbo"]),
-        ]),
-        el("span", { className: "pill-metrics", "aria-label": "实时统计" }, [
-          el("span", { className: "pill-metric", title: "消息总数" }, [
-            el("span", { className: "pill-metric-label" }, ["消息"]),
-            pillTotalVal,
+          el("span", { className: "turbo-readout" }, [
+            pillCountValue,
+            pillLimitValue,
           ]),
-          el("span", { className: "pill-metric", title: "已脱水消息数" }, [
-            el("span", { className: "pill-metric-label" }, ["脱水"]),
-            pillHiddenVal,
-          ]),
-          el("span", { className: "pill-metric", title: "折叠代码块数" }, [
-            el("span", { className: "pill-metric-label" }, ["折叠"]),
-            pillFoldedVal,
-          ]),
-          el(
-            "span",
-            { className: "pill-metric", title: "当前待发送虚拟文件数" },
-            [
-              el("span", { className: "pill-metric-label" }, ["文件"]),
-              pillVirtualVal,
-            ],
-          ),
         ]),
       ],
     );
@@ -5457,11 +5459,13 @@
       ["0"],
     );
 
+    const totalStatusItem = el("div", { className: "status-item" }, [
+      el("span", { className: "status-label" }, ["消息总数"]),
+      totalVal,
+    ]);
+
     const statusStrip = el("div", { className: "status-strip" }, [
-      el("div", { className: "status-item" }, [
-        el("span", { className: "status-label" }, ["消息总数"]),
-        totalVal,
-      ]),
+      totalStatusItem,
       el("div", { className: "status-item" }, [
         el("span", { className: "status-label" }, ["已脱水"]),
         hiddenVal,
@@ -5503,6 +5507,34 @@
       },
       ["+"],
     );
+
+    const messageLimitInput = el("input", {
+      className: "limit-input",
+      id: "message-limit",
+      type: "number",
+      min: String(MESSAGE_LIMIT_MIN),
+      max: String(MESSAGE_LIMIT_MAX),
+      step: "1",
+      value: String(state.messageLimit),
+      title: `消息提醒上限，范围 ${MESSAGE_LIMIT_MIN} 至 ${MESSAGE_LIMIT_MAX}`,
+      "aria-label": "消息提醒上限",
+      onchange: () => {
+        const rawValue = messageLimitInput.value.trim();
+        if (rawValue === "") {
+          messageLimitInput.value = String(state.messageLimit);
+          return;
+        }
+        const numericLimit = Number(rawValue);
+        if (!Number.isFinite(numericLimit)) {
+          messageLimitInput.value = String(state.messageLimit);
+          return;
+        }
+        state.messageLimit = normalizeMessageLimit(numericLimit);
+        messageLimitInput.value = String(state.messageLimit);
+        saveCurrentConfig();
+        updateHudDashboard();
+      },
+    });
 
     const chkPrune = el("input", {
       type: "checkbox",
@@ -5594,6 +5626,13 @@
       el("div", { className: "control-row" }, [
         el("span", {}, ["活跃保留轮次"]),
         el("div", { className: "stepper" }, [stepDec, keepVal, stepInc]),
+      ]),
+      el("div", { className: "control-row" }, [
+        el("label", { htmlFor: "message-limit" }, ["消息提醒上限"]),
+        el("div", { className: "limit-control" }, [
+          messageLimitInput,
+          el("span", { className: "limit-unit" }, ["条"]),
+        ]),
       ]),
       el("div", { className: "control-row" }, [
         el("span", {}, ["安全视口脱水"]),
@@ -5711,13 +5750,11 @@
       total: totalVal,
       hidden: hiddenVal,
       folded: foldedVal,
-      pillTotal: pillTotalVal,
-      pillHidden: pillHiddenVal,
-      pillFolded: pillFoldedVal,
-      pillVirtual: pillVirtualVal,
-      pillLoadRing,
+      totalStatusItem,
+      pillRoot: pill,
+      pillCount: pillCountValue,
+      pillLimit: pillLimitValue,
       pillLoadProgress,
-      pillLoadLabel,
     };
     updateHudDashboard();
 
@@ -5727,8 +5764,8 @@
   function initPillDrag(pill) {
     if (!pill) return;
 
-    const pillWidth = pill.offsetWidth || 280;
-    const pillHeight = pill.offsetHeight || 36;
+    const pillWidth = pill.offsetWidth || 48;
+    const pillHeight = pill.offsetHeight || 48;
     const maxX = Math.max(8, window.innerWidth - pillWidth - 8);
     const maxY = Math.max(8, window.innerHeight - pillHeight - 8);
     let posX = maxX;
