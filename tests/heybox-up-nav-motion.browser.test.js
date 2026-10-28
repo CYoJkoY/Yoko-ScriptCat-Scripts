@@ -17,6 +17,17 @@ const navCss = source.slice(navCssStart + "const NAV_CSS = ".length + 1, navCssE
   .replaceAll(String.fromCharCode(36) + "{NAV_STATIC_CLASS}", "heybox-up-nav-static");
 
 const iconNames = ["home", "community", "favour", "article"];
+const navIconsStart = source.indexOf("const NAV_ICONS = {");
+const navIconsEnd = source.indexOf("\n  };", navIconsStart);
+assert.ok(navIconsStart >= 0 && navIconsEnd > navIconsStart, "navigation icons must exist");
+const navIconsSource = source.slice(navIconsStart, navIconsEnd);
+const productionNavIcons = Object.fromEntries(iconNames.map((name) => {
+  const match = new RegExp("\\b" + name + ": '([^']*)'").exec(navIconsSource);
+  assert.ok(match !== null, "production navigation icon must exist: " + name);
+  assert.match(match[1], /\bclass=\"[^\"]*hbu-nav-icon\b/);
+  assert.match(match[1], /\bclass=\"[^\"]*hbu-ico-anim\b/);
+  return [name, match[1]];
+}));
 const browserCandidates = [
   process.env.HEYBOX_CHROME_PATH,
   process.env.CHROME_PATH,
@@ -92,8 +103,13 @@ function connectCdp(url) {
   };
 }
 
+function getTransformMatrixExpression(selector) {
+  const selectorLiteral = JSON.stringify(selector);
+  return "(() => { const transform = getComputedStyle(document.querySelector(" + selectorLiteral + ")).transform; if (transform === 'none') return [1, 0, 0, 1, 0, 0]; const values = transform.slice(transform.indexOf('(') + 1, -1).split(',').map(Number); return values.length === 6 ? values : [values[0], values[1], values[4], values[5], values[12], values[13]]; })()";
+}
+
 function createPage() {
-  const links = iconNames.map((name) => "<a class=\"hbu-nav-link\" href=\"#" + name + "\"><span class=\"hbu-nav-icon hbu-ico-anim hbu-ico-" + name + "\"><svg viewBox=\"0 0 24 24\"><path d=\"M3 3h18v18H3z\"></path></svg></span><span>" + name + "</span></a>").join("");
+  const links = iconNames.map((name) => "<a class=\"hbu-nav-link\" href=\"#" + name + "\">" + productionNavIcons[name] + "<span>" + name + "</span></a>").join("");
   return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" + navCss + "</style><style>" +
     "body { margin: 0; padding: 24px; } #heybox-up-nav { width: max-content; } .hbu-nav-link { height: 64px; } .nav svg * { animation: none !important; transform: none !important; }" +
     "</style></head><body><div class=\"nav\"><nav id=\"heybox-up-nav\">" + links + "</nav></div><script>" +
@@ -184,6 +200,26 @@ test("navigation icons visibly move on hover and press despite site SVG styles",
       return result.result.value;
     }, 10000, "Regression page did not finish loading");
 
+    await pageCdp.send("Runtime.evaluate", { expression: "document.activeElement?.blur(); window.animationEvents = []" });
+    for (const iconName of iconNames) {
+      await pageCdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+      await pageCdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+      const focusResult = await pageCdp.send("Runtime.evaluate", {
+        expression: "document.activeElement === document.querySelector('.hbu-ico-" + iconName + "').closest('a')",
+        returnByValue: true,
+      });
+      assert.equal(focusResult.result.value, true, iconName + " should receive keyboard focus");
+      const focusAnimationStarted = await waitFor(async () => {
+        const result = await pageCdp.send("Runtime.evaluate", {
+          expression: "window.animationEvents.some((event) => event.type === 'animationstart' && event.name === 'hbu-nav-" + iconName + "')",
+          returnByValue: true,
+        });
+        return result.result.value;
+      }, 1000, iconName + " keyboard focus animation did not start");
+      assert.equal(focusAnimationStarted, true, iconName + " should animate on keyboard focus");
+    }
+    await pageCdp.send("Runtime.evaluate", { expression: "document.activeElement?.blur(); window.animationEvents = []" });
+
     for (const iconName of iconNames) {
       const boundsResult = await pageCdp.send("Runtime.evaluate", {
         expression: "(() => { const rect = document.querySelector('.hbu-ico-" + iconName + "').closest('a').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; })()",
@@ -191,7 +227,7 @@ test("navigation icons visibly move on hover and press despite site SVG styles",
       });
       const { x, y } = boundsResult.result.value;
       const initialTransformResult = await pageCdp.send("Runtime.evaluate", {
-        expression: "getComputedStyle(document.querySelector('.hbu-ico-" + iconName + "')).transform",
+        expression: getTransformMatrixExpression(".hbu-ico-" + iconName),
         returnByValue: true,
       });
       const initialTransform = initialTransformResult.result.value;
@@ -206,10 +242,12 @@ test("navigation icons visibly move on hover and press despite site SVG styles",
       assert.equal(hoverAnimationStarted, true, iconName + " hover animation should start");
       const hoverTransformChanged = await waitFor(async () => {
         const result = await pageCdp.send("Runtime.evaluate", {
-          expression: "getComputedStyle(document.querySelector('.hbu-ico-" + iconName + "')).transform !== '" + initialTransform + "'",
+          expression: getTransformMatrixExpression(".hbu-ico-" + iconName),
           returnByValue: true,
         });
-        return result.result.value;
+        const currentTransform = result.result.value;
+        if (!Array.isArray(currentTransform) || !Array.isArray(initialTransform) || currentTransform.length !== initialTransform.length) return false;
+        return currentTransform.some((value, index) => typeof value === "number" && Math.abs(value - initialTransform[index]) > 0.0001);
       }, 1000, iconName + " hover transform did not change");
       assert.equal(hoverTransformChanged, true, iconName + " icon must visibly transform while hovered");
       const completedHoverResult = await waitFor(async () => {
