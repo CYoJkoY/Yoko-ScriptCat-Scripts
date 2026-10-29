@@ -7627,7 +7627,11 @@
         syncActionStates();
         if (commentPanel !== null && !commentPanel.hidden && !commentState.loading) void loadReaderComments(1);
       } catch (error) {
-        if (status.isConnected) status.textContent = error instanceof Error ? error.message : "评论发布失败";
+        // The fallback panel survives article changes, so a stale failure must not paint
+        // its message into the composer of the article now being read.
+        if (articleId === targetId && readerGeneration === generation && status.isConnected) {
+          status.textContent = error instanceof Error ? error.message : "评论发布失败";
+        }
       } finally {
         // A stale request must not release the lock held by a newer article.
         if (articleId === targetId && readerGeneration === generation) {
