@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.45
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面完整显示、正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.46
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，缺省时用正文大图作封面并去掉空白占位，标题与底部提示避开阅读进度条；正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；侧栏顶部可直接发布文章主评论（is_cy: 0），支持 Ctrl/⌘+Enter 提交、字数统计、失败保留原文与错误提示，发布后同步评论数。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -835,7 +835,7 @@
       background-color: var(--heybox-up-subtle) !important;
       border-color: var(--heybox-up-border) !important;
     }
-    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.bbs-content__title, .bbs-content__content, .post__title, .post__content, .image-text__title, .image-text__content, .comment-item__content, .children-item__comment-content, .list-content__username, .comment-item__username, .hot-topic-item__name, .nav-item, .view-header__nav-item, .user-profile-wrapper .name, .bbs-info-item .value, .back-btn__text, .page-header__username, .link-user__username, .section-title__content, .content-tag-text, .slide-tab__tab-label, .slide-tab__tab-cnt, .info-box__username, .hb-editor, .message-list-item__title, .comment-message-item__username, .comment-message-item__text, .message-content-preview__reply-text, .message-content-preview__text, .creator-content-item__title, .editor__more-info-title, .creator-editor__form-label, .frame-top-title, .bbs-link-section-title-text, .user-favour__title) {
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.bbs-content__title, .bbs-content__content, .post__title, .post__content, .image-text__title, .image-text__content, .comment-item__content, .children-item__comment-content, .list-content__username, .comment-item__username, .hot-topic-item__name, .nav-item, .view-header__nav-item, .user-profile-wrapper .name, .bbs-info-item .value, .back-btn__text, .page-header__username, .link-user__username, .section-title__content, .content-tag-text, .slide-tab__tab-label, .slide-tab__tab-cnt, .info-box__username, .hb-editor, .message-list-item__title, .comment-message-item__username, .comment-message-item__text, .message-content-preview__reply-text, .message-content-preview__text, .creator-content-item__title, .editor__more-info-title, .creator-editor__form-label, .frame-top-title, .bbs-link-section-title-text, .user-favour__title, .game-name, .result-mini-app__item--name, .result-tool__content--name) {
       color: var(--heybox-up-text) !important;
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.list-content__time, .bbs-list-content__time, .post__time, .image-text__time, .comment-item__time, .creator-content-item__create_at, .creator-content-item__type, .creator-content-item__data-item, .message-list-item__time, .user-favour__empty, .scroll-list__no-more-desc, .page-header__meta, .list-content__meta) {
@@ -873,6 +873,10 @@
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] .search__hot-rank .hot-rank__list-item:hover {
       background-color: var(--heybox-up-subtle) !important;
+    }
+    /* Search results: the site paints matched terms in a fixed #004b96, unreadable on the themed surface. */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list em {
+      color: var(--heybox-up-accent) !important;
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.post__content, .image-text__content) :where(p, span, b, strong, em, i, li, h1, h2, h3, h4, h5, h6, blockquote, .text) {
       color: inherit !important;
@@ -2056,6 +2060,7 @@
       background: var(--heybox-up-surface, #fff) !important;
       font: 12px/1.4 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
     }
+    :host([data-reader-sheet="1"]) { padding-right: 58px !important; }
     .bar { display: flex; align-items: center; gap: 8px; }
     .group {
       display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px;
@@ -3032,33 +3037,38 @@
     }
     .hbu-nav-icon { display: inline-flex; width: 18px; height: 18px; flex: none; align-items: center; justify-content: center; transform-origin: 50% 60%; will-change: transform; }
     .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
-    .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home { animation: hbu-nav-home .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community { animation: hbu-nav-community .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour { animation: hbu-nav-favour .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article { animation: hbu-nav-article .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home { animation: hbu-nav-home .62s cubic-bezier(.22, .8, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community { animation: hbu-nav-community .62s cubic-bezier(.22, .8, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour { animation: hbu-nav-favour .62s cubic-bezier(.22, .8, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article { animation: hbu-nav-article .62s cubic-bezier(.22, .8, .3, 1); }
     .hbu-nav-link:active .hbu-ico-home, .hbu-nav-link:active .hbu-ico-community, .hbu-nav-link:active .hbu-ico-favour, .hbu-nav-link:active .hbu-ico-article { animation: hbu-nav-press .14s cubic-bezier(.3, .7, .3, 1); }
     @keyframes hbu-nav-home {
-      0%, 100% { transform: translateY(0); }
-      38% { transform: translateY(-1.8px); }
-      72% { transform: translateY(.8px); }
+      0%, 100% { transform: translateY(0) scale(1); }
+      30% { transform: translateY(-5.5px) scale(1.06); }
+      58% { transform: translateY(1.4px) scale(.99); }
+      78% { transform: translateY(-1.6px) scale(1.01); }
     }
     @keyframes hbu-nav-community {
-      0%, 100% { transform: translateY(0); }
-      40% { transform: translateY(-2px); }
-      76% { transform: translateY(.6px); }
+      0%, 100% { transform: translateY(0) scale(1); }
+      35% { transform: translateY(-5px) scale(1.07); }
+      66% { transform: translateY(1.2px) scale(.99); }
+      84% { transform: translateY(-1.2px) scale(1.01); }
     }
     @keyframes hbu-nav-favour {
-      0%, 100% { transform: scaleY(1); }
-      46% { transform: scaleY(.8) translateY(-1px); }
+      0%, 100% { transform: translateY(0) scale(1); }
+      32% { transform: translateY(1px) scale(.92); }
+      64% { transform: translateY(-5.5px) scale(1.05); }
+      84% { transform: translateY(-1px) scale(1); }
     }
     @keyframes hbu-nav-article {
-      0%, 100% { transform: rotate(0); }
-      38% { transform: rotate(-4deg); }
-      72% { transform: rotate(1.5deg); }
+      0%, 100% { transform: rotate(0) translateY(0) scale(1); }
+      30% { transform: rotate(-8deg) translateY(-3.5px) scale(1.03); }
+      62% { transform: rotate(3.5deg) translateY(-1px) scale(1); }
+      82% { transform: rotate(-1.5deg) translateY(0) scale(1); }
     }
     @keyframes hbu-nav-press {
       0%, 100% { transform: scale(1); }
-      45% { transform: scale(.9); }
+      45% { transform: scale(.86); }
     }
     :root.${NAV_STATIC_CLASS} .hbu-nav-icon { animation: none !important; }
     @media (prefers-reduced-motion: reduce) {
@@ -5721,7 +5731,7 @@
       inset: 0;
       background: linear-gradient(180deg, rgba(0, 0, 0, .52), transparent 24%);
     }
-    .hbu-reader-cover--empty { background: radial-gradient(80% 60% at 25% 15%, rgba(143, 176, 207, .35), transparent 70%), linear-gradient(150deg, #18222c, #070a0e); }
+    .hbu-reader-page[data-kind="hero"][data-cover="none"] { justify-content: center; }
     .hbu-reader-cover-nav {
       position: absolute;
       top: 50%;
@@ -5916,7 +5926,7 @@
     body.${READER_CLASS} #page-bbs-link .link-comment__comment-item { border-color: var(--hbu-reader-border) !important; }
     body.${READER_CLASS} .link-reply { border-color: var(--hbu-reader-border) !important; }
     body.${READER_CLASS} #page-bbs-link .link-comment .link-reply { flex: none; border-top: 1px solid var(--hbu-reader-border) !important; background: var(--hbu-reader-page) !important; }
-    .hbu-reader-sheet-close { position: absolute; top: 54px; right: 12px; z-index: 101; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
+    .hbu-reader-sheet-close { position: absolute; top: 12px; right: 12px; z-index: 101; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
     .hbu-reader-sheet-close svg { width: 17px; height: 17px; }
     .hbu-reader-sheet-status { margin: auto; padding: 28px 18px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
     .hbu-reader-sheet-status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
@@ -5953,6 +5963,36 @@
     .hbu-reader-comments-foot a { margin-left: auto; border-color: transparent; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font-weight: 650; }
     .hbu-reader-comments-foot button:disabled { opacity: .55; cursor: default; }
     .hbu-reader-comments-list[hidden], .hbu-reader-comments-status[hidden], .hbu-reader-comments-foot button[hidden] { display: none; }
+    .hbu-reader-composer {
+      display: flex;
+      flex: none;
+      flex-direction: column;
+      gap: 7px;
+      padding: 10px 16px 12px;
+      border-bottom: 1px solid var(--hbu-reader-border);
+      background: var(--hbu-reader-page);
+    }
+    .hbu-reader-composer-input {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 58px;
+      max-height: 132px;
+      padding: 8px 11px;
+      resize: none;
+      border: 1px solid var(--hbu-reader-border);
+      border-radius: 10px;
+      outline: none;
+      background: var(--hbu-reader-subtle);
+      color: var(--hbu-reader-ink);
+      font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    .hbu-reader-composer-input::placeholder { color: var(--hbu-reader-muted); }
+    .hbu-reader-composer-input:focus { border-color: var(--heybox-up-accent, #8fb0cf); }
+    .hbu-reader-composer-bar { display: flex; gap: 8px; align-items: center; }
+    .hbu-reader-composer-status { min-width: 0; flex: 1 1 auto; color: var(--hbu-reader-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+    .hbu-reader-composer-count { flex: none; color: var(--hbu-reader-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .hbu-reader-composer-submit { flex: none; min-height: 30px; padding: 0 13px; border: 1px solid transparent; border-radius: 8px; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+    .hbu-reader-composer-submit:disabled { opacity: .55; cursor: default; }
     .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4009; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
     body.${READER_COMMENT_CLASS} .${READER_BACKDROP_CLASS} { opacity: 1; pointer-events: auto; }
     :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link,
@@ -5962,7 +6002,7 @@
     body.${READER_COMMENT_CLASS} .layout-normal { z-index: auto !important; background: transparent !important; pointer-events: none; }
     body.${READER_COMMENT_CLASS} .hb-bbs-link__reply-target .link-reply__operation-box { display: none !important; }
     body.${READER_COMMENT_CLASS} .hb-bbs-link { visibility: hidden; }
-    body.${READER_COMMENT_CLASS} .hb-bbs-link .link-comment { visibility: visible; pointer-events: auto; }
+    body.${READER_COMMENT_CLASS} #page-bbs-link .link-comment { visibility: visible; pointer-events: auto; }
     .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: grid; place-items: center; padding: 24px; border: 0; background: rgba(2, 4, 7, .94); cursor: zoom-out; }
     .hbu-reader-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border-radius: 99px; background: rgba(5, 8, 11, .86); color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
@@ -6026,6 +6066,16 @@
     @media (prefers-reduced-motion: reduce) {
       .hbu-reader-scroll { scroll-behavior: auto; }
       #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
+    }
+    /* The reading progress bar is a fixed 46px overlay; keep hero and end content above it. */
+    .hbu-reader-page[data-kind="hero"]::after,
+    .hbu-reader-page[data-kind="end"]::after {
+      content: "";
+      display: block;
+      flex: none;
+      width: 100%;
+      height: 46px;
+      pointer-events: none;
     }
   `;
 
@@ -6681,12 +6731,16 @@
     let linkStatePromise = null;
     // CY publishes made in the current article; the first comment tree may predate them.
     let cyPublishedCount = 0;
+    // Normal comments published in the current article; the first tree page may predate them.
+    let articleCommentPublishedCount = 0;
     let actionBusy = false;
     let cyDialog = null;
     let cyTextarea = null;
     let cySubmit = null;
     let cyStatus = null;
     let cyBusy = false;
+    let articleCommentBusy = false;
+    const ARTICLE_COMMENT_MAX_LENGTH = 1000;
     let commentPanel = null;
     let commentPanelList = null;
     let commentPanelStatus = null;
@@ -6850,12 +6904,16 @@
       return folders;
     };
 
-    // A CY published while the first tree page is in flight is missing from that payload,
-    // so the resolved link state adds every publish that happened after the request started.
-    const addPublishedCy = (link, published) => {
-      if (published <= 0) return link;
-      link.commentCount = (Number(link.commentCount) || 0) + published;
-      link.cyCount = Math.max(0, Number(link.cyCount) || 0) + published;
+    // A CY or comment published while the first tree page is in flight is missing from
+    // that payload, so the resolved link state adds every publish after the request started.
+    const addPublishedActions = (link, publishedCy, publishedComments) => {
+      if (publishedCy > 0) {
+        link.commentCount = (Number(link.commentCount) || 0) + publishedCy;
+        link.cyCount = Math.max(0, Number(link.cyCount) || 0) + publishedCy;
+      }
+      if (publishedComments > 0) {
+        link.commentCount = (Number(link.commentCount) || 0) + publishedComments;
+      }
       return link;
     };
 
@@ -6866,13 +6924,15 @@
       const controller = new AbortController();
       linkStateController = controller;
       const publishedAtStart = cyPublishedCount;
+      const commentsAtStart = articleCommentPublishedCount;
       linkStatePromise = (async () => {
         try {
           const page = await fetchRailPage(targetId, 1, { signal: controller.signal });
           if (articleId !== targetId || linkStateController !== controller) return null;
           const publishedDuringRequest = cyPublishedCount - publishedAtStart;
-          linkState = addPublishedCy(page.link, publishedDuringRequest);
-          if (publishedDuringRequest > 0) clearRailPageCache(targetId);
+          const commentsDuringRequest = articleCommentPublishedCount - commentsAtStart;
+          linkState = addPublishedActions(page.link, publishedDuringRequest, commentsDuringRequest);
+          if (publishedDuringRequest > 0 || commentsDuringRequest > 0) clearRailPageCache(targetId);
           syncActionStates();
           return linkState;
         } catch (error) {
@@ -6922,9 +6982,15 @@
         syncActionStates();
         showToast(on ? "已取消点赞" : "已点赞");
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "点赞失败");
+        // A stale failure must not surface a toast for the article now being read.
+        if (articleId === targetId && readerGeneration === generation) {
+          showToast(error instanceof Error ? error.message : "点赞失败");
+        }
       } finally {
-        actionBusy = false;
+        // A stale request must not release the lock held by a newer article.
+        if (articleId === targetId && readerGeneration === generation) {
+          actionBusy = false;
+        }
       }
     };
 
@@ -6964,9 +7030,13 @@
         syncActionStates();
         showToast(on ? "已取消收藏" : "已收藏");
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "收藏失败");
+        if (articleId === targetId && readerGeneration === generation) {
+          showToast(error instanceof Error ? error.message : "收藏失败");
+        }
       } finally {
-        actionBusy = false;
+        if (articleId === targetId && readerGeneration === generation) {
+          actionBusy = false;
+        }
       }
     };
 
@@ -7233,7 +7303,7 @@
         cyPublishedCount += 1;
         clearRailPageCache(targetId);
         if (linkState !== null) {
-          addPublishedCy(linkState, 1);
+          addPublishedActions(linkState, 1, 0);
         } else {
           void loadLinkState();
         }
@@ -7241,12 +7311,19 @@
         closeCyDialog();
         syncActionStates();
       } catch (error) {
-        if (cyStatus !== null) cyStatus.textContent = error instanceof Error ? error.message : "CY 发布失败";
+        // The dialog is rebuilt per article, so a stale failure must not paint its
+        // message into the CY status area of the article now being read.
+        if (articleId === targetId && readerGeneration === generation && cyStatus !== null) {
+          cyStatus.textContent = error instanceof Error ? error.message : "CY 发布失败";
+        }
       } finally {
-        cyBusy = false;
-        if (cySubmit !== null) {
-          cySubmit.disabled = false;
-          cySubmit.textContent = "发布";
+        // A stale request must not release the lock held by a newer article.
+        if (articleId === targetId && readerGeneration === generation) {
+          cyBusy = false;
+          if (cySubmit !== null) {
+            cySubmit.disabled = false;
+            cySubmit.textContent = "发布";
+          }
         }
       }
     };
@@ -7295,6 +7372,12 @@
       submit.type = "button";
       submit.dataset.primary = "true";
       submit.textContent = "发布";
+      // Reopening the dialog while a publish is still in flight must not offer an
+      // enabled button that silently ignores clicks.
+      if (cyBusy) {
+        submit.disabled = true;
+        submit.textContent = "发布中…";
+      }
       submit.addEventListener("click", () => void submitCy());
       actions.append(cancel, submit);
       card.append(head, textarea, status, actions);
@@ -7499,9 +7582,155 @@
       }
     };
 
+    const readArticleComposers = () => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
+
+    const syncArticleComposers = () => {
+      for (const root of readArticleComposers()) {
+        const input = root.querySelector(".hbu-reader-composer-input");
+        const submit = root.querySelector(".hbu-reader-composer-submit");
+        if (!(input instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) continue;
+        submit.disabled = articleCommentBusy || input.value.trim() === "";
+        submit.textContent = articleCommentBusy ? "发布中…" : "发布";
+      }
+    };
+
+    const clearArticleComposers = () => {
+      for (const root of readArticleComposers()) {
+        const input = root.querySelector(".hbu-reader-composer-input");
+        const status = root.querySelector(".hbu-reader-composer-status");
+        const count = root.querySelector(".hbu-reader-composer-count");
+        if (input instanceof HTMLTextAreaElement) input.value = "";
+        if (status !== null) status.textContent = "";
+        if (count !== null) count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
+      }
+      syncArticleComposers();
+    };
+
+    const removeNativeArticleComposers = () => {
+      for (const node of Array.from(document.querySelectorAll("#page-bbs-link .link-comment [data-hbu-article-composer]"))) {
+        node.remove();
+      }
+    };
+
+    const submitArticleComment = async (input, status) => {
+      if (articleCommentBusy) return;
+      const text = input.value.trim();
+      if (text === "") {
+        status.textContent = "请输入评论内容";
+        input.focus({ preventScroll: true });
+        return;
+      }
+      if (getHeyboxId() === "") {
+        status.textContent = "请先登录小黑盒";
+        return;
+      }
+      const targetId = articleId;
+      const generation = readerGeneration;
+      articleCommentBusy = true;
+      syncArticleComposers();
+      status.textContent = "";
+      try {
+        await postReaderApi(COMMENT_CREATE_API_PATH, {
+          is_cy: 0,
+          link_id: targetId,
+          reply_id: "-1",
+          root_id: "-1",
+          text: text,
+        });
+        if (articleId !== targetId || readerGeneration !== generation) return;
+        clearArticleComposers();
+        showToast("评论已发布");
+        articleCommentPublishedCount += 1;
+        clearRailPageCache(targetId);
+        if (linkState !== null) {
+          linkState.commentCount = Math.max(0, Number(linkState.commentCount) || 0) + 1;
+        } else {
+          void loadLinkState();
+        }
+        syncActionStates();
+        if (commentPanel !== null && !commentPanel.hidden && !commentState.loading) void loadReaderComments(1);
+      } catch (error) {
+        // The fallback panel survives article changes, so a stale failure must not paint
+        // its message into the composer of the article now being read.
+        if (articleId === targetId && readerGeneration === generation && status.isConnected) {
+          status.textContent = error instanceof Error ? error.message : "评论发布失败";
+        }
+      } finally {
+        // A stale request must not release the lock held by a newer article.
+        if (articleId === targetId && readerGeneration === generation) {
+          articleCommentBusy = false;
+          syncArticleComposers();
+        }
+      }
+    };
+
+    const createArticleComposer = () => {
+      const root = document.createElement("div");
+      root.className = "hbu-reader-composer";
+      root.dataset.hbuArticleComposer = "";
+      const input = document.createElement("textarea");
+      input.className = "hbu-reader-composer-input";
+      input.maxLength = ARTICLE_COMMENT_MAX_LENGTH;
+      input.rows = 2;
+      input.placeholder = "评论这篇文章…";
+      input.setAttribute("aria-label", "评论内容");
+      const bar = document.createElement("div");
+      bar.className = "hbu-reader-composer-bar";
+      const status = document.createElement("div");
+      status.className = "hbu-reader-composer-status";
+      status.setAttribute("role", "status");
+      const count = document.createElement("span");
+      count.className = "hbu-reader-composer-count";
+      count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
+      const submit = document.createElement("button");
+      submit.type = "button";
+      submit.className = "hbu-reader-composer-submit";
+      submit.textContent = "发布";
+      submit.disabled = true;
+      input.addEventListener("input", () => {
+        count.textContent = input.value.length + "/" + ARTICLE_COMMENT_MAX_LENGTH;
+        submit.disabled = articleCommentBusy || input.value.trim() === "";
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return;
+        event.preventDefault();
+        if (!submit.disabled) void submitArticleComment(input, status);
+      });
+      submit.addEventListener("click", () => void submitArticleComment(input, status));
+      bar.append(status, count, submit);
+      root.append(input, bar);
+      return root;
+    };
+
+    const ensureNativeArticleComposer = (sheet) => {
+      if (sheet.querySelector("[data-hbu-article-composer]") !== null) return;
+      const composer = createArticleComposer();
+      const header = sheet.querySelector(".comment__comment-header");
+      if (header !== null) {
+        header.after(composer);
+        return;
+      }
+      const list = sheet.querySelector(".link-comment__list");
+      if (list !== null) {
+        sheet.insertBefore(composer, list);
+        return;
+      }
+      sheet.prepend(composer);
+    };
+
+    // The native sheet keeps the close button in its top-right corner; inset the sort bar so
+    // the CY toggle stays clickable instead of sitting under the floating button.
+    const markReaderSheetSort = (sheet) => {
+      sheet.querySelector("#" + COMMENT_SORT_HOST_ID)?.setAttribute("data-reader-sheet", "1");
+    };
+
+    const clearReaderSheetSort = () => {
+      document.querySelector("#page-bbs-link .link-comment #" + COMMENT_SORT_HOST_ID)?.removeAttribute("data-reader-sheet");
+    };
+
     const trapCommentPanelTab = (event) => {
       if (event.key !== "Tab" || commentPanel === null) return;
-      const items = Array.from(commentPanel.querySelectorAll("button, a[href]"))
+      const items = Array.from(commentPanel.querySelectorAll("button, a[href], textarea, input, [tabindex]:not([tabindex='-1'])"))
         .filter((node) => node.getBoundingClientRect().width > 0 && !node.hasAttribute("disabled"));
       if (items.length === 0) return;
       const first = items[0];
@@ -7550,6 +7779,7 @@
       close.setAttribute("aria-label", "关闭评论");
       close.innerHTML = READER_ICONS.close;
       head.append(heading, close);
+      const composer = createArticleComposer();
       const body = document.createElement("div");
       body.className = "hbu-reader-comments-body";
       const list = document.createElement("ol");
@@ -7569,7 +7799,7 @@
       openLink.target = "_blank";
       openLink.rel = "noopener noreferrer";
       foot.append(more, openLink);
-      sheet.append(head, body, foot);
+      sheet.append(head, composer, body, foot);
       panel.append(scrim, sheet);
       commentPanel = panel;
       commentPanelList = list;
@@ -7640,6 +7870,9 @@
       commentOpenToken += 1;
       commentLoadController?.abort();
       commentLoadController = null;
+      removeNativeArticleComposers();
+      articleCommentBusy = false;
+      clearArticleComposers();
       document.body.classList.remove(READER_COMMENT_CLASS);
       if (host !== null) host.inert = false;
       if (commentPanel !== null) {
@@ -7649,6 +7882,7 @@
       }
       commentState = createCommentState();
       clearSheetStatus();
+      clearReaderSheetSort();
     };
 
     document.addEventListener(HIDE_CY_EVENT, () => {
@@ -7664,6 +7898,8 @@
       clearSheetStatus();
       const sheet = document.querySelector("#page-bbs-link .link-comment");
       if (sheet === null) return;
+      ensureNativeArticleComposer(sheet);
+      markReaderSheetSort(sheet);
       if (sheet.querySelector("[data-comment-id]") !== null) return;
       const list = sheet.querySelector(".link-comment__list");
       let attempts = 0;
@@ -7689,6 +7925,7 @@
             status.remove();
             return;
           }
+          ensureNativeArticleComposer(sheet);
           if (sheet.querySelector("[data-comment-id]") !== null) {
             status.remove();
             return;
@@ -7716,6 +7953,7 @@
       commentOpenToken += 1;
       if (document.body.classList.contains(READER_COMMENT_CLASS)) {
         clearSheetStatus();
+        clearReaderSheetSort();
         document.body.classList.remove(READER_COMMENT_CLASS);
       }
       if (commentPanel !== null && !commentPanel.hidden) commentPanel.hidden = true;
@@ -7728,7 +7966,7 @@
       const sheet = document.querySelector("#page-bbs-link .link-comment");
       if (sheet === null) return;
       const items = Array.from(sheet.querySelectorAll("button, a[href], input, textarea, [tabindex]:not([tabindex='-1'])"))
-        .filter((node) => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== "hidden");
+        .filter((node) => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== "hidden" && !node.hasAttribute("disabled"));
       if (items.length === 0) return;
       const first = items[0];
       const last = items[items.length - 1];
@@ -7764,6 +8002,9 @@
     const getCommentsSheet = () => {
       const sheet = document.querySelector("#page-bbs-link .link-comment");
       if (sheet === null) return null;
+      // A sheet inside a display:none ancestor has no layout box; the custom panel keeps
+      // comments usable instead of opening an empty native drawer.
+      if (sheet.getClientRects().length === 0) return null;
       if (closeSheetButton === null) closeSheetButton = document.createElement("button");
       closeSheetButton.type = "button";
       closeSheetButton.className = "hbu-reader-sheet-close";
@@ -7775,6 +8016,8 @@
         sheet.addEventListener("keydown", trapSheetTab);
       }
       if (!sheet.contains(closeSheetButton)) sheet.prepend(closeSheetButton);
+      ensureNativeArticleComposer(sheet);
+      markReaderSheetSort(sheet);
       return sheet;
     };
 
@@ -8548,51 +8791,55 @@
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
       page.dataset.kind = "hero";
-      const cover = document.createElement("div");
-      cover.className = "hbu-reader-cover" + (data.covers.length === 0 ? " hbu-reader-cover--empty" : "");
-      if (data.covers.length > 0) {
+      const heroImage = typeof data.heroImage === "string" ? data.heroImage : "";
+      const sources = data.covers.length > 0 ? data.covers : (heroImage !== "" ? [heroImage] : []);
+      page.dataset.cover = data.covers.length > 0 ? "header" : (heroImage !== "" ? "body" : "none");
+      coverTotal = sources.length;
+      coverIndex = 0;
+      if (sources.length > 0) {
+        const cover = document.createElement("div");
+        cover.className = "hbu-reader-cover";
         const glow = document.createElement("div");
         glow.className = "hbu-reader-cover-glow";
-        glow.style.backgroundImage = 'url("' + data.covers[0].replace(/"/g, '\\"') + '")';
+        glow.style.backgroundImage = 'url("' + sources[0].replace(/"/g, '\\"') + '")';
         cover.append(glow);
-      }
-      coverTotal = data.covers.length;
-      coverIndex = 0;
-      data.covers.forEach((source, index) => {
-        const img = document.createElement("img");
-        img.src = source;
-        img.alt = index === 0 ? data.title : "封面 " + (index + 1);
-        img.dataset.active = String(index === 0);
-        if (index > 1) img.loading = "lazy";
-        img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
-        cover.append(img);
-      });
-      if (data.covers.length > 1) {
-        const prev = document.createElement("button");
-        prev.type = "button";
-        prev.className = "hbu-reader-cover-nav";
-        prev.dataset.side = "prev";
-        prev.setAttribute("aria-label", "上一张封面");
-        prev.innerHTML = READER_ICONS.previous;
-        prev.addEventListener("click", () => setCover(coverIndex - 1));
-        const next = document.createElement("button");
-        next.type = "button";
-        next.className = "hbu-reader-cover-nav";
-        next.dataset.side = "next";
-        next.setAttribute("aria-label", "下一张封面");
-        next.innerHTML = READER_ICONS.next;
-        next.addEventListener("click", () => setCover(coverIndex + 1));
-        const dots = document.createElement("div");
-        dots.className = "hbu-reader-cover-dots";
-        data.covers.forEach((source, index) => {
-          const dot = document.createElement("button");
-          dot.type = "button";
-          dot.setAttribute("aria-label", "封面 " + (index + 1));
-          dot.setAttribute("aria-current", String(index === 0));
-          dot.addEventListener("click", () => setCover(index));
-          dots.append(dot);
+        sources.forEach((source, index) => {
+          const img = document.createElement("img");
+          img.src = source;
+          img.alt = index === 0 ? data.title : "封面 " + (index + 1);
+          img.dataset.active = String(index === 0);
+          if (index > 1) img.loading = "lazy";
+          img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
+          cover.append(img);
         });
-        cover.append(prev, next, dots);
+        if (sources.length > 1) {
+          const prev = document.createElement("button");
+          prev.type = "button";
+          prev.className = "hbu-reader-cover-nav";
+          prev.dataset.side = "prev";
+          prev.setAttribute("aria-label", "上一张封面");
+          prev.innerHTML = READER_ICONS.previous;
+          prev.addEventListener("click", () => setCover(coverIndex - 1));
+          const next = document.createElement("button");
+          next.type = "button";
+          next.className = "hbu-reader-cover-nav";
+          next.dataset.side = "next";
+          next.setAttribute("aria-label", "下一张封面");
+          next.innerHTML = READER_ICONS.next;
+          next.addEventListener("click", () => setCover(coverIndex + 1));
+          const dots = document.createElement("div");
+          dots.className = "hbu-reader-cover-dots";
+          sources.forEach((source, index) => {
+            const dot = document.createElement("button");
+            dot.type = "button";
+            dot.setAttribute("aria-label", "封面 " + (index + 1));
+            dot.setAttribute("aria-current", String(index === 0));
+            dot.addEventListener("click", () => setCover(index));
+            dots.append(dot);
+          });
+          cover.append(prev, next, dots);
+        }
+        page.append(cover);
       }
       const caption = document.createElement("div");
       caption.className = "hbu-reader-caption";
@@ -8622,7 +8869,7 @@
       hint.textContent = "向下滑动阅读";
       byline.append(author, hint);
       caption.append(title, byline);
-      page.append(cover, caption);
+      page.append(caption);
       return page;
     };
 
@@ -8769,6 +9016,29 @@
       };
     };
 
+    // Header covers win over body images. When a post has no header cover, its most
+    // substantial body image makes a better hero than an empty gradient panel.
+    const readHeroImage = (body) => {
+      const candidates = [];
+      for (const [index, node] of Array.from(body.querySelectorAll("img")).entries()) {
+        if (node.closest(".comment, .link-comment, .com-award-table, .com-game-card, .link-user, [class*='avatar'], [class*='icon'], [class*='emoji'], .bbs-link__related-recommend") !== null) continue;
+        const source = (node.getAttribute("data-src") || node.getAttribute("data-original") || node.currentSrc || node.getAttribute("src") || "").trim();
+        if (source === "" || /^(?:data|blob):/i.test(source)) continue;
+        const naturalWidth = node.naturalWidth;
+        const naturalHeight = node.naturalHeight;
+        const rect = node.getBoundingClientRect();
+        const declaredWidth = Number(node.getAttribute("width")) || 0;
+        const declaredHeight = Number(node.getAttribute("height")) || 0;
+        const width = naturalWidth > 0 ? naturalWidth : (rect.width > 0 ? rect.width : declaredWidth);
+        const height = naturalHeight > 0 ? naturalHeight : (rect.height > 0 ? rect.height : declaredHeight);
+        if (width > 0 && width < 120) continue;
+        candidates.push({ source: source, area: width * height, loaded: naturalWidth > 0, index: index });
+      }
+      if (candidates.length === 0) return "";
+      candidates.sort((left, right) => Number(right.loaded) - Number(left.loaded) || right.area - left.area || left.index - right.index);
+      return candidates[0].source;
+    };
+
     const readData = (source) => {
       if (source === null) return null;
       const { pageRoot, article, body, titleNode } = source;
@@ -8805,6 +9075,7 @@
         topics: meta.topics,
         meta: meta,
         covers: covers,
+        heroImage: covers.length === 0 ? readHeroImage(body) : "",
         tags: tags,
         time: time,
         ip: ip,
@@ -8890,8 +9161,12 @@
       linkState = null;
       linkStatePromise = null;
       cyPublishedCount = 0;
+      articleCommentPublishedCount = 0;
       actionBusy = false;
       cyBusy = false;
+      removeNativeArticleComposers();
+      articleCommentBusy = false;
+      clearArticleComposers();
       cyDialog = null;
       cyTextarea = null;
       cySubmit = null;
@@ -9000,13 +9275,18 @@
       linkState = null;
       linkStatePromise = null;
       cyPublishedCount = 0;
+      articleCommentPublishedCount = 0;
       actionBusy = false;
       cyBusy = false;
       cyDialog = null;
       cyTextarea = null;
       cySubmit = null;
       cyStatus = null;
+      removeNativeArticleComposers();
+      articleCommentBusy = false;
+      clearArticleComposers();
       clearSheetStatus();
+      clearReaderSheetSort();
       document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
       commentOpenToken += 1;
       if (host !== null) host.inert = false;
