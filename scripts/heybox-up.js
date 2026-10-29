@@ -2060,6 +2060,7 @@
       background: var(--heybox-up-surface, #fff) !important;
       font: 12px/1.4 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
     }
+    :host([data-reader-sheet="1"]) { padding-right: 58px !important; }
     .bar { display: flex; align-items: center; gap: 8px; }
     .group {
       display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px;
@@ -5925,7 +5926,7 @@
     body.${READER_CLASS} #page-bbs-link .link-comment__comment-item { border-color: var(--hbu-reader-border) !important; }
     body.${READER_CLASS} .link-reply { border-color: var(--hbu-reader-border) !important; }
     body.${READER_CLASS} #page-bbs-link .link-comment .link-reply { flex: none; border-top: 1px solid var(--hbu-reader-border) !important; background: var(--hbu-reader-page) !important; }
-    .hbu-reader-sheet-close { position: absolute; top: 54px; right: 12px; z-index: 101; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
+    .hbu-reader-sheet-close { position: absolute; top: 12px; right: 12px; z-index: 101; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
     .hbu-reader-sheet-close svg { width: 17px; height: 17px; }
     .hbu-reader-sheet-status { margin: auto; padding: 28px 18px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
     .hbu-reader-sheet-status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
@@ -5962,6 +5963,36 @@
     .hbu-reader-comments-foot a { margin-left: auto; border-color: transparent; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font-weight: 650; }
     .hbu-reader-comments-foot button:disabled { opacity: .55; cursor: default; }
     .hbu-reader-comments-list[hidden], .hbu-reader-comments-status[hidden], .hbu-reader-comments-foot button[hidden] { display: none; }
+    .hbu-reader-composer {
+      display: flex;
+      flex: none;
+      flex-direction: column;
+      gap: 7px;
+      padding: 10px 16px 12px;
+      border-bottom: 1px solid var(--hbu-reader-border);
+      background: var(--hbu-reader-page);
+    }
+    .hbu-reader-composer-input {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 58px;
+      max-height: 132px;
+      padding: 8px 11px;
+      resize: none;
+      border: 1px solid var(--hbu-reader-border);
+      border-radius: 10px;
+      outline: none;
+      background: var(--hbu-reader-subtle);
+      color: var(--hbu-reader-ink);
+      font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    .hbu-reader-composer-input::placeholder { color: var(--hbu-reader-muted); }
+    .hbu-reader-composer-input:focus { border-color: var(--heybox-up-accent, #8fb0cf); }
+    .hbu-reader-composer-bar { display: flex; gap: 8px; align-items: center; }
+    .hbu-reader-composer-status { min-width: 0; flex: 1 1 auto; color: var(--hbu-reader-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+    .hbu-reader-composer-count { flex: none; color: var(--hbu-reader-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .hbu-reader-composer-submit { flex: none; min-height: 30px; padding: 0 13px; border: 1px solid transparent; border-radius: 8px; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+    .hbu-reader-composer-submit:disabled { opacity: .55; cursor: default; }
     .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4009; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
     body.${READER_COMMENT_CLASS} .${READER_BACKDROP_CLASS} { opacity: 1; pointer-events: auto; }
     :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link,
@@ -5971,7 +6002,7 @@
     body.${READER_COMMENT_CLASS} .layout-normal { z-index: auto !important; background: transparent !important; pointer-events: none; }
     body.${READER_COMMENT_CLASS} .hb-bbs-link__reply-target .link-reply__operation-box { display: none !important; }
     body.${READER_COMMENT_CLASS} .hb-bbs-link { visibility: hidden; }
-    body.${READER_COMMENT_CLASS} .hb-bbs-link .link-comment { visibility: visible; pointer-events: auto; }
+    body.${READER_COMMENT_CLASS} #page-bbs-link .link-comment { visibility: visible; pointer-events: auto; }
     .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: grid; place-items: center; padding: 24px; border: 0; background: rgba(2, 4, 7, .94); cursor: zoom-out; }
     .hbu-reader-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border-radius: 99px; background: rgba(5, 8, 11, .86); color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
@@ -6700,12 +6731,16 @@
     let linkStatePromise = null;
     // CY publishes made in the current article; the first comment tree may predate them.
     let cyPublishedCount = 0;
+    // Normal comments published in the current article; the first tree page may predate them.
+    let articleCommentPublishedCount = 0;
     let actionBusy = false;
     let cyDialog = null;
     let cyTextarea = null;
     let cySubmit = null;
     let cyStatus = null;
     let cyBusy = false;
+    let articleCommentBusy = false;
+    const ARTICLE_COMMENT_MAX_LENGTH = 1000;
     let commentPanel = null;
     let commentPanelList = null;
     let commentPanelStatus = null;
@@ -6869,12 +6904,16 @@
       return folders;
     };
 
-    // A CY published while the first tree page is in flight is missing from that payload,
-    // so the resolved link state adds every publish that happened after the request started.
-    const addPublishedCy = (link, published) => {
-      if (published <= 0) return link;
-      link.commentCount = (Number(link.commentCount) || 0) + published;
-      link.cyCount = Math.max(0, Number(link.cyCount) || 0) + published;
+    // A CY or comment published while the first tree page is in flight is missing from
+    // that payload, so the resolved link state adds every publish after the request started.
+    const addPublishedActions = (link, publishedCy, publishedComments) => {
+      if (publishedCy > 0) {
+        link.commentCount = (Number(link.commentCount) || 0) + publishedCy;
+        link.cyCount = Math.max(0, Number(link.cyCount) || 0) + publishedCy;
+      }
+      if (publishedComments > 0) {
+        link.commentCount = (Number(link.commentCount) || 0) + publishedComments;
+      }
       return link;
     };
 
@@ -6885,13 +6924,15 @@
       const controller = new AbortController();
       linkStateController = controller;
       const publishedAtStart = cyPublishedCount;
+      const commentsAtStart = articleCommentPublishedCount;
       linkStatePromise = (async () => {
         try {
           const page = await fetchRailPage(targetId, 1, { signal: controller.signal });
           if (articleId !== targetId || linkStateController !== controller) return null;
           const publishedDuringRequest = cyPublishedCount - publishedAtStart;
-          linkState = addPublishedCy(page.link, publishedDuringRequest);
-          if (publishedDuringRequest > 0) clearRailPageCache(targetId);
+          const commentsDuringRequest = articleCommentPublishedCount - commentsAtStart;
+          linkState = addPublishedActions(page.link, publishedDuringRequest, commentsDuringRequest);
+          if (publishedDuringRequest > 0 || commentsDuringRequest > 0) clearRailPageCache(targetId);
           syncActionStates();
           return linkState;
         } catch (error) {
@@ -7252,7 +7293,7 @@
         cyPublishedCount += 1;
         clearRailPageCache(targetId);
         if (linkState !== null) {
-          addPublishedCy(linkState, 1);
+          addPublishedActions(linkState, 1, 0);
         } else {
           void loadLinkState();
         }
@@ -7518,9 +7559,144 @@
       }
     };
 
+    const readArticleComposers = () => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
+
+    const syncArticleComposers = () => {
+      for (const root of readArticleComposers()) {
+        const input = root.querySelector(".hbu-reader-composer-input");
+        const submit = root.querySelector(".hbu-reader-composer-submit");
+        if (!(input instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) continue;
+        submit.disabled = articleCommentBusy || input.value.trim() === "";
+        submit.textContent = articleCommentBusy ? "发布中…" : "发布";
+      }
+    };
+
+    const clearArticleComposers = () => {
+      for (const root of readArticleComposers()) {
+        const input = root.querySelector(".hbu-reader-composer-input");
+        const status = root.querySelector(".hbu-reader-composer-status");
+        const count = root.querySelector(".hbu-reader-composer-count");
+        if (input instanceof HTMLTextAreaElement) input.value = "";
+        if (status !== null) status.textContent = "";
+        if (count !== null) count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
+      }
+      syncArticleComposers();
+    };
+
+    const removeNativeArticleComposers = () => {
+      for (const node of Array.from(document.querySelectorAll("#page-bbs-link .link-comment [data-hbu-article-composer]"))) {
+        node.remove();
+      }
+    };
+
+    const submitArticleComment = async (input, status) => {
+      if (articleCommentBusy) return;
+      const text = input.value.trim();
+      if (text === "") {
+        status.textContent = "请输入评论内容";
+        input.focus({ preventScroll: true });
+        return;
+      }
+      if (getHeyboxId() === "") {
+        status.textContent = "请先登录小黑盒";
+        return;
+      }
+      const targetId = articleId;
+      const generation = readerGeneration;
+      articleCommentBusy = true;
+      syncArticleComposers();
+      status.textContent = "";
+      try {
+        await postReaderApi(COMMENT_CREATE_API_PATH, {
+          is_cy: 0,
+          link_id: targetId,
+          reply_id: "-1",
+          root_id: "-1",
+          text: text,
+        });
+        if (articleId !== targetId || readerGeneration !== generation) return;
+        clearArticleComposers();
+        showToast("评论已发布");
+        articleCommentPublishedCount += 1;
+        clearRailPageCache(targetId);
+        if (linkState !== null) {
+          linkState.commentCount = Math.max(0, Number(linkState.commentCount) || 0) + 1;
+        } else {
+          void loadLinkState();
+        }
+        syncActionStates();
+        if (commentPanel !== null && !commentPanel.hidden && !commentState.loading) void loadReaderComments(1);
+      } catch (error) {
+        if (status.isConnected) status.textContent = error instanceof Error ? error.message : "评论发布失败";
+      } finally {
+        articleCommentBusy = false;
+        syncArticleComposers();
+      }
+    };
+
+    const createArticleComposer = () => {
+      const root = document.createElement("div");
+      root.className = "hbu-reader-composer";
+      root.dataset.hbuArticleComposer = "";
+      const input = document.createElement("textarea");
+      input.className = "hbu-reader-composer-input";
+      input.maxLength = ARTICLE_COMMENT_MAX_LENGTH;
+      input.rows = 2;
+      input.placeholder = "评论这篇文章…";
+      input.setAttribute("aria-label", "评论内容");
+      const bar = document.createElement("div");
+      bar.className = "hbu-reader-composer-bar";
+      const status = document.createElement("div");
+      status.className = "hbu-reader-composer-status";
+      status.setAttribute("role", "status");
+      const count = document.createElement("span");
+      count.className = "hbu-reader-composer-count";
+      count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
+      const submit = document.createElement("button");
+      submit.type = "button";
+      submit.className = "hbu-reader-composer-submit";
+      submit.textContent = "发布";
+      submit.disabled = true;
+      input.addEventListener("input", () => {
+        count.textContent = input.value.length + "/" + ARTICLE_COMMENT_MAX_LENGTH;
+        submit.disabled = articleCommentBusy || input.value.trim() === "";
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return;
+        event.preventDefault();
+        if (!submit.disabled) void submitArticleComment(input, status);
+      });
+      submit.addEventListener("click", () => void submitArticleComment(input, status));
+      bar.append(status, count, submit);
+      root.append(input, bar);
+      return root;
+    };
+
+    const ensureNativeArticleComposer = (sheet) => {
+      if (sheet.querySelector("[data-hbu-article-composer]") !== null) return;
+      const composer = createArticleComposer();
+      const header = sheet.querySelector(".comment__comment-header");
+      if (header !== null) {
+        header.after(composer);
+        return;
+      }
+      const list = sheet.querySelector(".link-comment__list");
+      if (list !== null) {
+        sheet.insertBefore(composer, list);
+        return;
+      }
+      sheet.prepend(composer);
+    };
+
+    // The native sheet keeps the close button in its top-right corner; inset the sort bar so
+    // the CY toggle stays clickable instead of sitting under the floating button.
+    const markReaderSheetSort = (sheet) => {
+      sheet.querySelector("#" + COMMENT_SORT_HOST_ID)?.setAttribute("data-reader-sheet", "1");
+    };
+
     const trapCommentPanelTab = (event) => {
       if (event.key !== "Tab" || commentPanel === null) return;
-      const items = Array.from(commentPanel.querySelectorAll("button, a[href]"))
+      const items = Array.from(commentPanel.querySelectorAll("button, a[href], textarea, input, [tabindex]:not([tabindex='-1'])"))
         .filter((node) => node.getBoundingClientRect().width > 0 && !node.hasAttribute("disabled"));
       if (items.length === 0) return;
       const first = items[0];
@@ -7569,6 +7745,7 @@
       close.setAttribute("aria-label", "关闭评论");
       close.innerHTML = READER_ICONS.close;
       head.append(heading, close);
+      const composer = createArticleComposer();
       const body = document.createElement("div");
       body.className = "hbu-reader-comments-body";
       const list = document.createElement("ol");
@@ -7588,7 +7765,7 @@
       openLink.target = "_blank";
       openLink.rel = "noopener noreferrer";
       foot.append(more, openLink);
-      sheet.append(head, body, foot);
+      sheet.append(head, composer, body, foot);
       panel.append(scrim, sheet);
       commentPanel = panel;
       commentPanelList = list;
@@ -7659,6 +7836,9 @@
       commentOpenToken += 1;
       commentLoadController?.abort();
       commentLoadController = null;
+      removeNativeArticleComposers();
+      articleCommentBusy = false;
+      clearArticleComposers();
       document.body.classList.remove(READER_COMMENT_CLASS);
       if (host !== null) host.inert = false;
       if (commentPanel !== null) {
@@ -7683,6 +7863,8 @@
       clearSheetStatus();
       const sheet = document.querySelector("#page-bbs-link .link-comment");
       if (sheet === null) return;
+      ensureNativeArticleComposer(sheet);
+      markReaderSheetSort(sheet);
       if (sheet.querySelector("[data-comment-id]") !== null) return;
       const list = sheet.querySelector(".link-comment__list");
       let attempts = 0;
@@ -7708,6 +7890,7 @@
             status.remove();
             return;
           }
+          ensureNativeArticleComposer(sheet);
           if (sheet.querySelector("[data-comment-id]") !== null) {
             status.remove();
             return;
@@ -7735,6 +7918,7 @@
       commentOpenToken += 1;
       if (document.body.classList.contains(READER_COMMENT_CLASS)) {
         clearSheetStatus();
+        document.querySelector("#page-bbs-link .link-comment #" + COMMENT_SORT_HOST_ID)?.removeAttribute("data-reader-sheet");
         document.body.classList.remove(READER_COMMENT_CLASS);
       }
       if (commentPanel !== null && !commentPanel.hidden) commentPanel.hidden = true;
@@ -7747,7 +7931,7 @@
       const sheet = document.querySelector("#page-bbs-link .link-comment");
       if (sheet === null) return;
       const items = Array.from(sheet.querySelectorAll("button, a[href], input, textarea, [tabindex]:not([tabindex='-1'])"))
-        .filter((node) => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== "hidden");
+        .filter((node) => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== "hidden" && !node.hasAttribute("disabled"));
       if (items.length === 0) return;
       const first = items[0];
       const last = items[items.length - 1];
@@ -7783,6 +7967,9 @@
     const getCommentsSheet = () => {
       const sheet = document.querySelector("#page-bbs-link .link-comment");
       if (sheet === null) return null;
+      // A sheet inside a display:none ancestor has no layout box; the custom panel keeps
+      // comments usable instead of opening an empty native drawer.
+      if (sheet.getClientRects().length === 0) return null;
       if (closeSheetButton === null) closeSheetButton = document.createElement("button");
       closeSheetButton.type = "button";
       closeSheetButton.className = "hbu-reader-sheet-close";
@@ -7794,6 +7981,8 @@
         sheet.addEventListener("keydown", trapSheetTab);
       }
       if (!sheet.contains(closeSheetButton)) sheet.prepend(closeSheetButton);
+      ensureNativeArticleComposer(sheet);
+      markReaderSheetSort(sheet);
       return sheet;
     };
 
@@ -8937,8 +9126,12 @@
       linkState = null;
       linkStatePromise = null;
       cyPublishedCount = 0;
+      articleCommentPublishedCount = 0;
       actionBusy = false;
       cyBusy = false;
+      removeNativeArticleComposers();
+      articleCommentBusy = false;
+      clearArticleComposers();
       cyDialog = null;
       cyTextarea = null;
       cySubmit = null;
@@ -9047,12 +9240,16 @@
       linkState = null;
       linkStatePromise = null;
       cyPublishedCount = 0;
+      articleCommentPublishedCount = 0;
       actionBusy = false;
       cyBusy = false;
       cyDialog = null;
       cyTextarea = null;
       cySubmit = null;
       cyStatus = null;
+      removeNativeArticleComposers();
+      articleCommentBusy = false;
+      clearArticleComposers();
       clearSheetStatus();
       document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
       commentOpenToken += 1;
