@@ -7694,6 +7694,10 @@
       sheet.querySelector("#" + COMMENT_SORT_HOST_ID)?.setAttribute("data-reader-sheet", "1");
     };
 
+    const clearReaderSheetSort = () => {
+      document.querySelector("#page-bbs-link .link-comment #" + COMMENT_SORT_HOST_ID)?.removeAttribute("data-reader-sheet");
+    };
+
     const trapCommentPanelTab = (event) => {
       if (event.key !== "Tab" || commentPanel === null) return;
       const items = Array.from(commentPanel.querySelectorAll("button, a[href], textarea, input, [tabindex]:not([tabindex='-1'])"))
@@ -7848,6 +7852,7 @@
       }
       commentState = createCommentState();
       clearSheetStatus();
+      clearReaderSheetSort();
     };
 
     document.addEventListener(HIDE_CY_EVENT, () => {
@@ -7918,7 +7923,7 @@
       commentOpenToken += 1;
       if (document.body.classList.contains(READER_COMMENT_CLASS)) {
         clearSheetStatus();
-        document.querySelector("#page-bbs-link .link-comment #" + COMMENT_SORT_HOST_ID)?.removeAttribute("data-reader-sheet");
+        clearReaderSheetSort();
         document.body.classList.remove(READER_COMMENT_CLASS);
       }
       if (commentPanel !== null && !commentPanel.hidden) commentPanel.hidden = true;
@@ -9251,6 +9256,7 @@
       articleCommentBusy = false;
       clearArticleComposers();
       clearSheetStatus();
+      clearReaderSheetSort();
       document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
       commentOpenToken += 1;
       if (host !== null) host.inert = false;
