@@ -6982,9 +6982,15 @@
         syncActionStates();
         showToast(on ? "已取消点赞" : "已点赞");
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "点赞失败");
+        // A stale failure must not surface a toast for the article now being read.
+        if (articleId === targetId && readerGeneration === generation) {
+          showToast(error instanceof Error ? error.message : "点赞失败");
+        }
       } finally {
-        actionBusy = false;
+        // A stale request must not release the lock held by a newer article.
+        if (articleId === targetId && readerGeneration === generation) {
+          actionBusy = false;
+        }
       }
     };
 
@@ -7024,9 +7030,13 @@
         syncActionStates();
         showToast(on ? "已取消收藏" : "已收藏");
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "收藏失败");
+        if (articleId === targetId && readerGeneration === generation) {
+          showToast(error instanceof Error ? error.message : "收藏失败");
+        }
       } finally {
-        actionBusy = false;
+        if (articleId === targetId && readerGeneration === generation) {
+          actionBusy = false;
+        }
       }
     };
 
