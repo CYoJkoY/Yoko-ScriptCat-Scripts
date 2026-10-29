@@ -878,6 +878,38 @@
     :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list em {
       color: var(--heybox-up-accent) !important;
     }
+    /* Search autocomplete opens in a body-level Element Plus popper; theme the popper
+       itself and every inner wrapper so suggestions never fall back to black on white. */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) {
+      border: 1px solid var(--heybox-up-border) !important;
+      background: var(--heybox-up-surface) !important;
+      color: var(--heybox-up-text) !important;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, .48) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) :is(.el-autocomplete-suggestion, .el-autocomplete-suggestion__wrap, .el-autocomplete-suggestion__list) {
+      background: transparent !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list li {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list li:hover,
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list li.highlighted,
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list li[aria-selected="true"] {
+      background: var(--heybox-up-subtle) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list .item-text {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list :is(em, b, strong) {
+      color: var(--heybox-up-accent) !important;
+      font-style: normal;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) :is(.el-popper__arrow, .popper__arrow)::before {
+      border-color: var(--heybox-up-border) !important;
+      background: var(--heybox-up-surface) !important;
+    }
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.post__content, .image-text__content) :where(p, span, b, strong, em, i, li, h1, h2, h3, h4, h5, h6, blockquote, .text) {
       color: inherit !important;
     }
