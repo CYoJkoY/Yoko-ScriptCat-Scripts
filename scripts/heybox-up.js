@@ -7301,12 +7301,19 @@
         closeCyDialog();
         syncActionStates();
       } catch (error) {
-        if (cyStatus !== null) cyStatus.textContent = error instanceof Error ? error.message : "CY 发布失败";
+        // The dialog is rebuilt per article, so a stale failure must not paint its
+        // message into the CY status area of the article now being read.
+        if (articleId === targetId && readerGeneration === generation && cyStatus !== null) {
+          cyStatus.textContent = error instanceof Error ? error.message : "CY 发布失败";
+        }
       } finally {
-        cyBusy = false;
-        if (cySubmit !== null) {
-          cySubmit.disabled = false;
-          cySubmit.textContent = "发布";
+        // A stale request must not release the lock held by a newer article.
+        if (articleId === targetId && readerGeneration === generation) {
+          cyBusy = false;
+          if (cySubmit !== null) {
+            cySubmit.disabled = false;
+            cySubmit.textContent = "发布";
+          }
         }
       }
     };
@@ -7355,6 +7362,12 @@
       submit.type = "button";
       submit.dataset.primary = "true";
       submit.textContent = "发布";
+      // Reopening the dialog while a publish is still in flight must not offer an
+      // enabled button that silently ignores clicks.
+      if (cyBusy) {
+        submit.disabled = true;
+        submit.textContent = "发布中…";
+      }
       submit.addEventListener("click", () => void submitCy());
       actions.append(cancel, submit);
       card.append(head, textarea, status, actions);
