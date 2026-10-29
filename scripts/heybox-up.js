@@ -5730,7 +5730,7 @@
       inset: 0;
       background: linear-gradient(180deg, rgba(0, 0, 0, .52), transparent 24%);
     }
-    .hbu-reader-cover--empty { background: radial-gradient(80% 60% at 25% 15%, rgba(143, 176, 207, .35), transparent 70%), linear-gradient(150deg, #18222c, #070a0e); }
+    .hbu-reader-page[data-kind="hero"][data-cover="none"] { justify-content: center; }
     .hbu-reader-cover-nav {
       position: absolute;
       top: 50%;
@@ -6035,6 +6035,16 @@
     @media (prefers-reduced-motion: reduce) {
       .hbu-reader-scroll { scroll-behavior: auto; }
       #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
+    }
+    /* The reading progress bar is a fixed 46px overlay; keep hero and end content above it. */
+    .hbu-reader-page[data-kind="hero"]::after,
+    .hbu-reader-page[data-kind="end"]::after {
+      content: "";
+      display: block;
+      flex: none;
+      width: 100%;
+      height: 46px;
+      pointer-events: none;
     }
   `;
 
@@ -8557,51 +8567,55 @@
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
       page.dataset.kind = "hero";
-      const cover = document.createElement("div");
-      cover.className = "hbu-reader-cover" + (data.covers.length === 0 ? " hbu-reader-cover--empty" : "");
-      if (data.covers.length > 0) {
+      const heroImage = typeof data.heroImage === "string" ? data.heroImage : "";
+      const sources = data.covers.length > 0 ? data.covers : (heroImage !== "" ? [heroImage] : []);
+      page.dataset.cover = data.covers.length > 0 ? "header" : (heroImage !== "" ? "body" : "none");
+      coverTotal = sources.length;
+      coverIndex = 0;
+      if (sources.length > 0) {
+        const cover = document.createElement("div");
+        cover.className = "hbu-reader-cover";
         const glow = document.createElement("div");
         glow.className = "hbu-reader-cover-glow";
-        glow.style.backgroundImage = 'url("' + data.covers[0].replace(/"/g, '\\"') + '")';
+        glow.style.backgroundImage = 'url("' + sources[0].replace(/"/g, '\\"') + '")';
         cover.append(glow);
-      }
-      coverTotal = data.covers.length;
-      coverIndex = 0;
-      data.covers.forEach((source, index) => {
-        const img = document.createElement("img");
-        img.src = source;
-        img.alt = index === 0 ? data.title : "封面 " + (index + 1);
-        img.dataset.active = String(index === 0);
-        if (index > 1) img.loading = "lazy";
-        img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
-        cover.append(img);
-      });
-      if (data.covers.length > 1) {
-        const prev = document.createElement("button");
-        prev.type = "button";
-        prev.className = "hbu-reader-cover-nav";
-        prev.dataset.side = "prev";
-        prev.setAttribute("aria-label", "上一张封面");
-        prev.innerHTML = READER_ICONS.previous;
-        prev.addEventListener("click", () => setCover(coverIndex - 1));
-        const next = document.createElement("button");
-        next.type = "button";
-        next.className = "hbu-reader-cover-nav";
-        next.dataset.side = "next";
-        next.setAttribute("aria-label", "下一张封面");
-        next.innerHTML = READER_ICONS.next;
-        next.addEventListener("click", () => setCover(coverIndex + 1));
-        const dots = document.createElement("div");
-        dots.className = "hbu-reader-cover-dots";
-        data.covers.forEach((source, index) => {
-          const dot = document.createElement("button");
-          dot.type = "button";
-          dot.setAttribute("aria-label", "封面 " + (index + 1));
-          dot.setAttribute("aria-current", String(index === 0));
-          dot.addEventListener("click", () => setCover(index));
-          dots.append(dot);
+        sources.forEach((source, index) => {
+          const img = document.createElement("img");
+          img.src = source;
+          img.alt = index === 0 ? data.title : "封面 " + (index + 1);
+          img.dataset.active = String(index === 0);
+          if (index > 1) img.loading = "lazy";
+          img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
+          cover.append(img);
         });
-        cover.append(prev, next, dots);
+        if (sources.length > 1) {
+          const prev = document.createElement("button");
+          prev.type = "button";
+          prev.className = "hbu-reader-cover-nav";
+          prev.dataset.side = "prev";
+          prev.setAttribute("aria-label", "上一张封面");
+          prev.innerHTML = READER_ICONS.previous;
+          prev.addEventListener("click", () => setCover(coverIndex - 1));
+          const next = document.createElement("button");
+          next.type = "button";
+          next.className = "hbu-reader-cover-nav";
+          next.dataset.side = "next";
+          next.setAttribute("aria-label", "下一张封面");
+          next.innerHTML = READER_ICONS.next;
+          next.addEventListener("click", () => setCover(coverIndex + 1));
+          const dots = document.createElement("div");
+          dots.className = "hbu-reader-cover-dots";
+          sources.forEach((source, index) => {
+            const dot = document.createElement("button");
+            dot.type = "button";
+            dot.setAttribute("aria-label", "封面 " + (index + 1));
+            dot.setAttribute("aria-current", String(index === 0));
+            dot.addEventListener("click", () => setCover(index));
+            dots.append(dot);
+          });
+          cover.append(prev, next, dots);
+        }
+        page.append(cover);
       }
       const caption = document.createElement("div");
       caption.className = "hbu-reader-caption";
@@ -8631,7 +8645,7 @@
       hint.textContent = "向下滑动阅读";
       byline.append(author, hint);
       caption.append(title, byline);
-      page.append(cover, caption);
+      page.append(caption);
       return page;
     };
 
@@ -8778,6 +8792,29 @@
       };
     };
 
+    // Header covers win over body images. When a post has no header cover, its most
+    // substantial body image makes a better hero than an empty gradient panel.
+    const readHeroImage = (body) => {
+      const candidates = [];
+      for (const [index, node] of Array.from(body.querySelectorAll("img")).entries()) {
+        if (node.closest(".comment, .link-comment, .com-award-table, .com-game-card, .link-user, [class*='avatar'], [class*='icon'], [class*='emoji'], .bbs-link__related-recommend") !== null) continue;
+        const source = (node.getAttribute("data-src") || node.getAttribute("data-original") || node.currentSrc || node.getAttribute("src") || "").trim();
+        if (source === "" || /^(?:data|blob):/i.test(source)) continue;
+        const naturalWidth = node.naturalWidth;
+        const naturalHeight = node.naturalHeight;
+        const rect = node.getBoundingClientRect();
+        const declaredWidth = Number(node.getAttribute("width")) || 0;
+        const declaredHeight = Number(node.getAttribute("height")) || 0;
+        const width = naturalWidth > 0 ? naturalWidth : (rect.width > 0 ? rect.width : declaredWidth);
+        const height = naturalHeight > 0 ? naturalHeight : (rect.height > 0 ? rect.height : declaredHeight);
+        if (width > 0 && width < 120) continue;
+        candidates.push({ source: source, area: width * height, loaded: naturalWidth > 0, index: index });
+      }
+      if (candidates.length === 0) return "";
+      candidates.sort((left, right) => Number(right.loaded) - Number(left.loaded) || right.area - left.area || left.index - right.index);
+      return candidates[0].source;
+    };
+
     const readData = (source) => {
       if (source === null) return null;
       const { pageRoot, article, body, titleNode } = source;
@@ -8814,6 +8851,7 @@
         topics: meta.topics,
         meta: meta,
         covers: covers,
+        heroImage: covers.length === 0 ? readHeroImage(body) : "",
         tags: tags,
         time: time,
         ip: ip,
