@@ -7629,8 +7629,11 @@
       } catch (error) {
         if (status.isConnected) status.textContent = error instanceof Error ? error.message : "评论发布失败";
       } finally {
-        articleCommentBusy = false;
-        syncArticleComposers();
+        // A stale request must not release the lock held by a newer article.
+        if (articleId === targetId && readerGeneration === generation) {
+          articleCommentBusy = false;
+          syncArticleComposers();
+        }
       }
     };
 
