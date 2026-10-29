@@ -3032,33 +3032,38 @@
     }
     .hbu-nav-icon { display: inline-flex; width: 18px; height: 18px; flex: none; align-items: center; justify-content: center; transform-origin: 50% 60%; will-change: transform; }
     .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
-    .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home { animation: hbu-nav-home .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community { animation: hbu-nav-community .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour { animation: hbu-nav-favour .55s cubic-bezier(.3, .7, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article { animation: hbu-nav-article .55s cubic-bezier(.3, .7, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home { animation: hbu-nav-home .62s cubic-bezier(.22, .8, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community { animation: hbu-nav-community .62s cubic-bezier(.22, .8, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour { animation: hbu-nav-favour .62s cubic-bezier(.22, .8, .3, 1); }
+    .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article { animation: hbu-nav-article .62s cubic-bezier(.22, .8, .3, 1); }
     .hbu-nav-link:active .hbu-ico-home, .hbu-nav-link:active .hbu-ico-community, .hbu-nav-link:active .hbu-ico-favour, .hbu-nav-link:active .hbu-ico-article { animation: hbu-nav-press .14s cubic-bezier(.3, .7, .3, 1); }
     @keyframes hbu-nav-home {
-      0%, 100% { transform: translateY(0); }
-      38% { transform: translateY(-1.8px); }
-      72% { transform: translateY(.8px); }
+      0%, 100% { transform: translateY(0) scale(1); }
+      30% { transform: translateY(-5.5px) scale(1.06); }
+      58% { transform: translateY(1.4px) scale(.99); }
+      78% { transform: translateY(-1.6px) scale(1.01); }
     }
     @keyframes hbu-nav-community {
-      0%, 100% { transform: translateY(0); }
-      40% { transform: translateY(-2px); }
-      76% { transform: translateY(.6px); }
+      0%, 100% { transform: translateY(0) scale(1); }
+      35% { transform: translateY(-5px) scale(1.07); }
+      66% { transform: translateY(1.2px) scale(.99); }
+      84% { transform: translateY(-1.2px) scale(1.01); }
     }
     @keyframes hbu-nav-favour {
-      0%, 100% { transform: scaleY(1); }
-      46% { transform: scaleY(.8) translateY(-1px); }
+      0%, 100% { transform: translateY(0) scale(1); }
+      32% { transform: translateY(1px) scale(.92); }
+      64% { transform: translateY(-5.5px) scale(1.05); }
+      84% { transform: translateY(-1px) scale(1); }
     }
     @keyframes hbu-nav-article {
-      0%, 100% { transform: rotate(0); }
-      38% { transform: rotate(-4deg); }
-      72% { transform: rotate(1.5deg); }
+      0%, 100% { transform: rotate(0) translateY(0) scale(1); }
+      30% { transform: rotate(-8deg) translateY(-3.5px) scale(1.03); }
+      62% { transform: rotate(3.5deg) translateY(-1px) scale(1); }
+      82% { transform: rotate(-1.5deg) translateY(0) scale(1); }
     }
     @keyframes hbu-nav-press {
       0%, 100% { transform: scale(1); }
-      45% { transform: scale(.9); }
+      45% { transform: scale(.86); }
     }
     :root.${NAV_STATIC_CLASS} .hbu-nav-icon { animation: none !important; }
     @media (prefers-reduced-motion: reduce) {
