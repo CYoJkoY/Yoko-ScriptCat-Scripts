@@ -89,8 +89,8 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 
 - 收藏页 https://xiaoheihe.cn/app/user/favour/content ：脚本把插眼条目挂在收藏列表（.user-favour__list）下方，按帖子 ID 去重后全部列出，不再对照页面已渲染的同 ID 帖子做过滤。站点先渲染页面骨架、后插入收藏列表时，区块先挂在 `#page-user-favour` 的内容区末尾，列表出现后再挪到它正下方，不会因为挂载顺序而整块缺失。区块使用 Shadow DOM，样式与页面隔离。
 - 收藏与文章页右栏：收藏页、文章管理页及文章详情页的右侧只保留二维码、小黑盒加速器、黑盒语音、黑盒工坊与备案信息等推广模块；脚本将这些右栏整体隐藏，并让主列表占满内容区。
-- Top navigation: The script takes over `.nav-links`, replaces the original seven text links with four inline SVG links for Home, Community, Favorites, and Articles, and animates each icon on hover, keyboard focus, and press. The settings menu can disable icon motion, and the system reduced-motion preference keeps the icons static.
-- 导航状态：按 `location.pathname` 标记当前入口，社区包含 `/app/bbs/home` 与帖子详情；收藏页同时承载插眼收藏区块。视口 ≤940px 时只显示图标，保留 `aria-label` 与悬停提示。图标悬停与键盘焦点使用 180ms 的位移与缩放过渡，通用入口上移 2px 并放大到 1.14 倍，文章入口额外旋转 -7°；按下时缩到 0.9 倍。动画只改图标自身的 `transform` 与颜色，不改变 18×18 的布局盒；关闭“动态导航图标”或系统启用减少动效时，变换、过渡与动画均移除。
+- Top navigation: The script takes over `.nav-links`, replaces the original seven text links with four inline SVG links for Home, Community, Favorites, and Articles, and animates each icon on hover, keyboard focus, and press. Hover motion is limited to devices matching `(hover: hover) and (pointer: fine)` so tapping a link on a touch screen does not leave the icon enlarged; keyboard focus and press feedback remain available. The settings menu can disable icon motion, and the system reduced-motion preference keeps the icons static.
+- 导航状态：按 `location.pathname` 标记当前入口，社区包含 `/app/bbs/home` 与帖子详情；收藏页同时承载插眼收藏区块。视口 ≤940px 时只显示图标，保留 `aria-label` 与悬停提示。图标悬停与键盘焦点使用 180ms 的位移与缩放过渡，通用入口上移 2px 并放大到 1.14 倍，文章入口额外旋转 -7°；按下时缩到 0.9 倍。悬停规则只在 `(hover: hover) and (pointer: fine)` 下生效，触屏点按后即使链接保留 `:hover`，图标也不会停留放大；键盘焦点与按压反馈在触屏上继续可用。动画只改图标自身的 `transform` 与颜色，不改变 18×18 的布局盒；关闭“动态导航图标”或系统启用减少动效时，变换、过渡与动画均移除。
 - 全站主题：导航栏右侧新增主题按钮和齿轮设置按钮。主题菜单只放六套预设：跟随系统、夜航（冷灰深色）、纯黑（OLED 黑底低圆角）、浅色（站点原色）、纸页（暖纸底、衬线标题、细边扁平卡片）、雾青（冷雾底、大圆角、柔和阴影）；齿轮菜单放“首页评论预览”“动态导航图标”“沉浸阅读”三个开关（后两者默认开启）、“正文行距”数字输入框（1.0–2.2 倍，步进 0.05，默认 1.7），以及“中栏宽度（占屏幕宽度）”的 40% / 48% / 56% / 64% / 72% 分段按钮和可自行输入 40–76 整数的百分比输入框：留空或填非法值恢复已存宽度，超出范围自动夹到上下限；菜单内容高于视口时自身滚动。两个菜单各自开关，打开一个会收起另一个，支持 Esc 与点击外部关闭；选中项立即生效并写入本机，当前项用强调色描边标出。
 - 深色覆盖：夜航与纯黑共用同一套深色规则，覆盖帖子页正文、原生评论区（排序标签、作者赞、时间、IP、楼中楼展开、嵌套回复块）、回复编辑器、加载动画、个人主页列表底色、消息提示，以及 Element Plus 对话框、抽屉、表格、分页、图片查看器与下拉浮层。站点用伪元素绘制页面底色与帖子分隔条（`html` 根元素、`#app > main > section`、`.hb-bbs-home__feed-splitline`、`.hb-bbs-home__splitline`、`main.list`、`.hb-cpt__moment-list-content`），这些颜色不随 CSS 变量走，需单独覆盖。登录表单保持浅色，避免第三方登录控件失去可读性。
 - 文章编辑器细节：深色主题下把“发布设置”上方 4px 浅色分隔带改为页面底色，标题栏、发布栏与工具栏的 1px 浅色分隔线改为主题描边；工具栏图标、更多组件菜单文字与分隔线同步提亮，避免深底深字和接近隐形的图标。
@@ -169,7 +169,7 @@ node --check dist/heybox-up.user.js
 
 签名用真实被服务端接受的样本 `(time=1792587363, nonce=2B3C207C9CF9AF2779DEE63C509DA4E8, path=/bbs/app/profile/bbs/comment/list)` 复核，得到 `hkey=VX2Y254`；服务端接受该签名，时间错误时返回 `系统时间不正确`。
 
-v0.4.47 的 10 组 DOM 用例在仓库外的 `E:\Temp\hbu-inspect` 用 `playwright-core` 驱动本机 Edge 执行，命令依次为 `node smoke-panel.js`、`node inspect-reader.js`、`node verify-race.js`、`node verify-actions.js`、`node verify-regressions.js`、`node verify-nav.js`、`node verify-search-contrast.js`、`node verify-media.js`、`node verify-login.js` 与 `node verify-pending.js`，全部通过；评论加载失败后的键盘重试另以 `node verify-retry-keyboard.js` 覆盖，从评论输入框按 Tab 可到达“重试”按钮，回车后重新请求并恢复列表。v0.4.48 的导航动效与搜索对比度回归用同一目录下的 `node verify-105.js` 复核，逐项断言悬停、焦点、按压、静态与减少动效状态，以及六套主题下建议面板的颜色和尺寸。这些脚本与依赖不进入仓库。仓库现在提供 `package.json`、`tests/` 与 CI 工作流：共享层用例用 `pnpm test` 运行，类型检查用 `pnpm typecheck`，构建产物由 `pnpm build` 生成并可用 `node --check` 复核。
+v0.4.47 的 10 组 DOM 用例在仓库外的 `E:\Temp\hbu-inspect` 用 `playwright-core` 驱动本机 Edge 执行，命令依次为 `node smoke-panel.js`、`node inspect-reader.js`、`node verify-race.js`、`node verify-actions.js`、`node verify-regressions.js`、`node verify-nav.js`、`node verify-search-contrast.js`、`node verify-media.js`、`node verify-login.js` 与 `node verify-pending.js`，全部通过；评论加载失败后的键盘重试另以 `node verify-retry-keyboard.js` 覆盖，从评论输入框按 Tab 可到达“重试”按钮，回车后重新请求并恢复列表。v0.4.48 的导航动效与搜索对比度回归用同一目录下的 `node verify-105.js` 复核，逐项断言悬停、焦点、按压、静态与减少动效状态，以及六套主题下建议面板的颜色和尺寸；触屏点按后的残留悬停另用 `node verify-105-touch.js` 在 390×844、`hasTouch` 环境下复测。这些脚本与依赖不进入仓库。仓库现在提供 `package.json`、`tests/` 与 CI 工作流：导航与搜索建议的样式状态契约固化在 `tests/heybox-up-style-contract.test.ts`，共享层与样式用例统一用 `pnpm test` 运行，类型检查用 `pnpm typecheck`，构建产物由 `pnpm build` 生成并可用 `node --check` 复核。
 
 社区内搜索用无头 Edge（CDP）验证：1440×900、900×800 与 390×844（内容宽 390px）下，面板均挂在 `.topic-link__main` 内筛选行的实际父节点 `.topic-link__panel`，且紧挨筛选行之前；390px 下社区胶囊实算为 `display: none`。提交“显卡”后请求带 `topic_id=18745`、`q`、`search_type=link`、`limit=30` 与 `hkey`，渲染 10 条结果，原生筛选行与信息流同时隐藏；焦点在站点导航时按 Esc 不关闭面板，焦点回到输入框后按 Esc 关闭并把焦点交还输入框。接口每页再夹 10 条 `space` 占位时，“加载更多”仍以 `offset=10`、`offset=20` 正常追加，结果从 10 条增至 30 条。夜航下搜索栏底色 `rgb(23, 29, 36)`、结果标题 `rgb(220, 229, 239)`；浅色下分别为 `rgb(255, 255, 255)` 与 `rgb(20, 25, 30)`。
 
@@ -195,7 +195,7 @@ v0.4.30 在 1440×900 与 390×844 复核写请求与回退抽屉：mock 点赞�
 
 搜索建议面板用 1440×900 夜航主题验证：历史搜索胶囊底色 `rgb(30, 38, 48)`、文字 `rgb(220, 229, 239)`，悬停底色为 `rgb(23, 29, 36)`；搜索发现标题与热榜标签为 `rgb(180, 192, 206)`，热榜条目为 `rgb(220, 229, 239)`，条目悬停底色为 `rgb(30, 38, 48)`。v0.4.47 补充 Element Plus 自动完成浮层：popper 底色 `rgb(23, 29, 36)`、主文字 `rgb(220, 229, 239)`、关键词匹配片段 `rgb(143, 176, 207)`，输入“显卡”后下拉项不再出现浅底浅字。v0.4.48 在真实搜索页输入“原”复核站点自有建议列表：夜航面板 `rgb(23, 29, 36)`，名称 `rgb(220, 229, 239)`（13.329:1），匹配片段 `rgb(143, 176, 207)`（7.497:1），描述示例 5.413:1；纯黑面板 `rgb(8, 9, 11)`，名称 `rgb(230, 235, 242)`（16.628:1），匹配片段 10.62:1，描述示例 7.899:1。Tab 可到达建议行，`:focus-visible` 为真，夜航与纯黑焦点底色分别为 `rgb(30, 38, 48)` 与 `rgb(16, 18, 22)`，并带 2px 实线轮廓；建议面板在五套测试主题下保持 1032×656，浅色、纸页与雾青仍为白底与 `rgb(20, 25, 30)` 名称色。
 
-导航栏用 1440×900 夜航主题验证：首页、社区、收藏悬停时图标为 `scale(1.14)`、上移 2px，文章入口为 `scale(1.1)`、上移约 2px 并旋转 -7°；四个入口按压缩放均为 0.9，文章按压时旋转回 0。真实 Tab 可到达导航链接，`:focus-visible` 为真，图标同步上移缩放，链接显示 2px `rgb(143, 176, 207)` 轮廓。悬停期间图标布局盒恒为 18×18，链接 77×64、导航 314×64 均无位移；点击首页从 `/creator/content_management/home` 到 `/` 后导航宿主仍在，页面无脚本错误。静态偏好下根元素带 `heybox-up-nav-static`，减少动效环境下图标 `transform`、`transition` 与 `animation` 均为 `none`。
+导航栏用 1440×900 夜航主题验证：首页、社区、收藏悬停时图标为 `scale(1.14)`、上移 2px，文章入口为 `scale(1.1)`、上移约 2px 并旋转 -7°；四个入口按压缩放均为 0.9，文章按压时旋转回 0。真实 Tab 可到达导航链接，`:focus-visible` 为真，图标同步上移缩放，链接显示 2px `rgb(143, 176, 207)` 轮廓。悬停期间图标布局盒恒为 18×18，链接 77×64、导航 314×64 均无位移；点击首页从 `/creator/content_management/home` 到 `/` 后导航宿主仍在，页面无脚本错误。静态偏好下根元素带 `heybox-up-nav-static`，减少动效环境下图标 `transform`、`transition` 与 `animation` 均为 `none`。390×844 触屏环境点按社区链接后链接仍处于 `:hover`，但图标 `transform` 为 `none`，布局盒保持 18×18，没有残留放大。
 
 排序用合成用例验证：改写点赞数 1/9/4 与相对时间 3天前/5分钟前/1小时前 后，点赞与时间两种模式都按期望重排（order 为 2/0/1，纵坐标随之变化），切回默认清空 order；删除工具栏后 MutationObserver 在下一帧重建，选中模式与顺序保持。
 
@@ -317,8 +317,10 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 ### v0.4.48
 
 - 修复顶部导航图标悬停只有链接变色、图标不动的问题：导航改由 CSS 状态过渡驱动悬停、键盘焦点与按下反馈，通用入口上移 2px 并放大到 1.14 倍，文章入口旋转 -7°；移除运行时 WAAPI 帧动画与其绑定、取消逻辑，保留 `heybox-up.navMotion.v1`、默认开启、齿轮设置与原有导航路由。
+- 悬停动效限定在 `(hover: hover) and (pointer: fine)` 设备：390×844 触屏点按社区入口后链接仍处于 `:hover`，但图标 `transform` 为 `none`，不再残留 1.14 倍放大；键盘焦点与按下缩放在触屏上继续生效。
 - 修复全站搜索页输入关键词后建议文字与背景对比度过低的问题：仅覆盖站点自有建议列表的容器、行、内容、名称、描述、图标、匹配片段与选中/焦点状态，夜航与纯黑主题下的名称对比度分别为 13.329:1 与 16.628:1，匹配片段分别为 7.497:1 与 10.62:1；浅色、纸页与雾青主题不变。
 - 静态偏好与 `prefers-reduced-motion` 同时清除图标变换、过渡与动画；建议行可用 Tab 聚焦，焦点保留 2px 可见轮廓。
+- 导航悬停媒体查询、焦点与按压可达性、静态与减少动效清零、18×18 图标盒、搜索建议深色作用域与主题令牌新增 `tests/heybox-up-style-contract.test.ts` 样式契约用例，随 `pnpm test` 在 jsdom 下执行。
 - `@version` 与本文版本号更新为 0.4.48；补充导航动效机制、搜索建议覆盖范围与实测数据。
 
 ### v0.4.47
