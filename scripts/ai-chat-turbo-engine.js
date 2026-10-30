@@ -1159,6 +1159,7 @@
   let historyPatched = false;
   let routeWatcherBound = false;
   let viewportListenersBound = false;
+  let loadListenerBound = false;
 
   function el(tag, attrs = {}, children = []) {
     const elem = document.createElement(tag);
@@ -7234,13 +7235,16 @@
 
     resumePendingHandoffPrompt();
 
-    window.addEventListener("load", () => {
-      if (isEngineDormant()) return;
-      fullTurnSyncRequested = true;
-      codeScanRequested = true;
-      ensureHUDMounted();
-      requestUpdate();
-    });
+    if (!loadListenerBound) {
+      loadListenerBound = true;
+      window.addEventListener("load", () => {
+        if (isEngineDormant()) return;
+        fullTurnSyncRequested = true;
+        codeScanRequested = true;
+        ensureHUDMounted();
+        requestUpdate();
+      });
+    }
 
     [250, 800, 2000].forEach((delay) => {
       window.setTimeout(() => {
