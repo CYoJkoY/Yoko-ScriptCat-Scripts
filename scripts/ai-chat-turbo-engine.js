@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.16.0
+// @version      0.16.1
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/scripts/ai-chat-turbo-engine.js
@@ -904,6 +904,92 @@
     );
   }
 
+  // Login, account chooser, and OAuth callback routes are not chat pages.
+  // Only path segments are inspected; query params such as next or redirect
+  // are ignored so normal chat links keep working.
+  const AUTH_ROUTE_SEGMENTS = new Set([
+    "auth",
+    "auth0",
+    "authorize",
+    "authorization",
+    "oauth",
+    "oauth2",
+    "openid",
+    "sso",
+    "saml",
+    "login",
+    "log-in",
+    "signin",
+    "sign-in",
+    "sign_in",
+    "signup",
+    "sign-up",
+    "sign_up",
+    "register",
+    "registration",
+    "callback",
+    "magic-link",
+    "magiclink",
+    "verify",
+    "verification",
+    "mfa",
+    "2fa",
+    "otp",
+    "account",
+    "accounts",
+    "account-chooser",
+    "choose-account",
+    "switch-account",
+    "challenge",
+    "captcha",
+    "consent",
+    "redirect",
+    "recover",
+    "recovery",
+    "reset-password",
+    "forgot-password",
+    "password",
+  ]);
+  const AUTH_HOSTNAME_PREFIXES = [
+    "auth.",
+    "auth0.",
+    "login.",
+    "signin.",
+    "accounts.",
+    "sso.",
+  ];
+
+  // Whether the engine is live in this document. SPA navigation to an auth
+  // route sets it back to false until the chat route returns.
+  let engineActive = false;
+
+  function isAuthOrRedirectRoute(locationLike) {
+    const source = locationLike || window.location;
+    if (!source) return false;
+
+    const hostname = String(source.hostname || "").toLowerCase();
+    if (
+      AUTH_HOSTNAME_PREFIXES.some((prefix) => hostname.startsWith(prefix))
+    ) {
+      return true;
+    }
+
+    const pathname = String(source.pathname || "").toLowerCase();
+    if (!pathname) return false;
+
+    return pathname
+      .split("/")
+      .filter(Boolean)
+      .some((segment) =>
+        AUTH_ROUTE_SEGMENTS.has(segment.replace(/\.(?:html?|php|aspx?)$/, "")),
+      );
+  }
+
+  /** Dormant on auth and redirect routes: no UI, no listeners, no input writes. */
+  function isEngineDormant() {
+    return !engineActive || isAuthOrRedirectRoute();
+  }
+
   function detectPlatform() {
     const hostname = window.location.hostname.toLowerCase();
     const pathname = window.location.pathname;
@@ -1068,6 +1154,10 @@
   let activeTurnSelectorGroup = null;
   const renderedCheckCache = new Map();
   let selfMutationDepth = 0;
+  let globalListenersBound = false;
+  let historyPatched = false;
+  let routeWatcherBound = false;
+  let viewportListenersBound = false;
 
   function el(tag, attrs = {}, children = []) {
     const elem = document.createElement(tag);
@@ -2956,7 +3046,9 @@
   }
 
   function stopVirtualFileTrayTracking() {
-    stopVirtualFileTraySyncLoop();
+    stopVirtualFileTrayTracking();
+    window.clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
 
     if (virtualFileTrayResizeObserver) {
       virtualFileTrayResizeObserver.disconnect();
@@ -3447,6 +3539,7 @@
   }
 
   function handlePasteIntercept(event) {
+    if (isEngineDormant()) return;
     if (!state.virtualFileEnabled) return;
 
     const target = event.target;
@@ -3592,6 +3685,13 @@
     const timer = setInterval(() => {
       attempts++;
 
+      if (isEngineDormant()) {
+        clearInterval(timer);
+        isSubmitting = false;
+        cleanupAndResume(onComplete, false);
+        return;
+      }
+
       // 第一轮：只接受可用的发送按钮
       const sendBtn = findSendControl(inputElement);
       if (sendBtn) {
@@ -3637,6 +3737,7 @@
   }
 
   function handleSendIntercept(event) {
+    if (isEngineDormant()) return;
     if (
       !state.virtualFileEnabled ||
       !activeVirtualFiles.length ||
@@ -4465,6 +4566,7 @@
 
   /** 用户点了页面上的推理控件就记下当前状态 */
   function handleReasoningClick(event) {
+    if (isEngineDormant()) return;
     if (!state.rememberReasoning || applyingReasoning) return;
     const target = event.target;
     if (!(target instanceof Element) || isInsideTurboUI(target)) return;
@@ -4499,6 +4601,7 @@
 
   // 点击被脱水的空白占位区即恢复该轮渲染，单向不回退
   function handleDehydratedClick(event) {
+    if (isEngineDormant()) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
     const turnElement = target.closest(".ai-turbo-dehydrated");
@@ -4580,6 +4683,10 @@
   }
 
   function applyReasoningMemory() {
+    if (isEngineDormant()) {
+      reasoningRestoreDone = true;
+      return;
+    }
     const saved = readReasoningRecord();
     if (!saved || !saved.mode) {
       reasoningRestoreDone = true;
@@ -4633,6 +4740,7 @@
     window.clearInterval(reasoningRestoreTimer);
     reasoningRestoreDone = false;
     reasoningRestoreAttempts = 0;
+    if (isEngineDormant()) return;
     if (!state.rememberReasoning) return;
     if (!readReasoningRecord()) return;
     reasoningRestoreTimer = window.setInterval(() => {
@@ -4645,7 +4753,12 @@
   }
 
   function injectEngineStyles() {
-    if (document.getElementById(STYLE_ID)) return;
+    // The host may rebuild <head> during account switching, which drops the
+    // style node with it. Reuse a live node, otherwise restore one so the HUD
+    // never stays on screen without the engine stylesheet.
+    const existingStyle = document.getElementById(STYLE_ID);
+    if (existingStyle?.isConnected) return;
+    existingStyle?.remove();
 
     const styleElement = document.createElement("style");
     styleElement.id = STYLE_ID;
@@ -5196,6 +5309,7 @@
   }
 
   function buildHUD() {
+    if (isEngineDormant()) return;
     if (hudRootElement?.isConnected) return;
 
     const mountTarget = document.body || document.documentElement;
@@ -6239,6 +6353,7 @@
   }
 
   function resumePendingHandoffPrompt() {
+    if (isEngineDormant()) return;
     let attempts = 0;
     const timer = window.setInterval(() => {
       let pending = null;
@@ -6462,6 +6577,7 @@
    *    （生成指令或恢复指令）复制到剪贴板，方便手动继续。
    */
   function startOneClickHandoff() {
+    if (isEngineDormant()) return;
     if (isSubmitting) return;
 
     // 已有现成交接包：直接进入恢复流程
@@ -6519,6 +6635,10 @@
     const TIMEOUT_MS = 180000; // 3 分钟
 
     const timer = window.setInterval(() => {
+      if (isEngineDormant()) {
+        window.clearInterval(timer);
+        return;
+      }
       // 避免在助手消息尚未出现（旧回答仍是最新）时误判为已生成
       if (getTurns().length <= baselineTurns) {
         if (Date.now() - startedAt > TIMEOUT_MS) {
@@ -6552,6 +6672,7 @@
   }
 
   function proceedOneClickHandoff(result) {
+    if (isEngineDormant()) return;
     const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
     const newChatControl = findNewChatControl();
 
@@ -6589,6 +6710,7 @@
   }
 
   function prepareNewConversationFromYaml() {
+    if (isEngineDormant()) return;
     const result = extractLatestHandoffText();
     if (!result) {
       window.alert(
@@ -6809,6 +6931,8 @@
     lastUpdateTime = performance.now();
     renderedCheckCache.clear();
 
+    if (isEngineDormant()) return;
+
     if (selfMutationDepth > 0) {
       requestUpdate();
       return;
@@ -6879,6 +7003,8 @@
   }
 
   function ensureHUDMounted() {
+    if (isEngineDormant()) return;
+    injectEngineStyles();
     if (!hudRootElement?.isConnected) {
       buildHUD();
     } else if (
@@ -6890,12 +7016,15 @@
   }
 
   function patchHistoryForSpaNavigation() {
+    if (historyPatched) return;
+    historyPatched = true;
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
 
     history.pushState = function (...args) {
       const result = originalPushState.apply(this, args);
       window.setTimeout(() => {
+        if (syncEngineActivation()) return;
         invalidateActiveTurnSelectorGroup();
         fullTurnSyncRequested = true;
         codeScanRequested = true;
@@ -6908,6 +7037,7 @@
     history.replaceState = function (...args) {
       const result = originalReplaceState.apply(this, args);
       window.setTimeout(() => {
+        if (syncEngineActivation()) return;
         invalidateActiveTurnSelectorGroup();
         fullTurnSyncRequested = true;
         codeScanRequested = true;
@@ -6917,6 +7047,7 @@
     };
 
     window.addEventListener("popstate", () => {
+      if (syncEngineActivation()) return;
       invalidateActiveTurnSelectorGroup();
       fullTurnSyncRequested = true;
       codeScanRequested = true;
@@ -6925,10 +7056,77 @@
     });
   }
 
+  /** Remove every engine artifact and inline style from the host page. */
+  function teardownEngine() {
+    engineActive = false;
+    window.clearInterval(reasoningRestoreTimer);
+    reasoningRestoreTimer = 0;
+
+    observer?.disconnect();
+    codeResizeObserver?.disconnect();
+    if (scheduleTimer) {
+      window.cancelAnimationFrame(scheduleTimer);
+      window.clearTimeout(scheduleTimer);
+      scheduleTimer = null;
+    }
+    stopVirtualFileTraySyncLoop();
+
+    for (const codeElement of Array.from(codeState.keys())) {
+      unmountCodeControls(codeElement);
+    }
+
+    withSelfMutation(() => {
+      document
+        .querySelectorAll(".ai-turbo-chat-capsule, .ai-turbo-chat-user-prompt")
+        .forEach((node) => node.remove());
+      document.querySelectorAll(".ai-turbo-chat-folded-target").forEach((node) => {
+        node.classList.remove("ai-turbo-chat-folded-target");
+        node.style.removeProperty("display");
+        node.style.removeProperty("max-height");
+        node.style.removeProperty("overflow");
+        node.style.removeProperty("contain");
+      });
+      document.querySelectorAll(".ai-turbo-dehydrated").forEach((node) => {
+        node.classList.remove("ai-turbo-dehydrated");
+        node.style.removeProperty("--turbo-cached-h");
+      });
+    });
+
+    document.getElementById(HUD_ID)?.remove();
+    document.getElementById(STYLE_ID)?.remove();
+    document.getElementById("ai-turbo-vf-tray")?.remove();
+    document.getElementById("ai-turbo-vf-preview-modal")?.remove();
+
+    hudRootElement = null;
+    hudShadowRoot = null;
+    hudStats = null;
+    handoffStatusNode = null;
+    reasoningStatusNode = null;
+    searchInput = null;
+    searchResultsBox = null;
+    state.hudOpen = false;
+  }
+
+  /**
+   * Align engine state with the current route.
+   * Returns true on an auth or redirect route so callers stop page work.
+   */
+  function syncEngineActivation() {
+    if (isAuthOrRedirectRoute()) {
+      if (engineActive) teardownEngine();
+      return true;
+    }
+    if (!engineActive) boot();
+    return false;
+  }
+
   function bindGlobalListeners() {
+    if (globalListenersBound) return;
+    globalListenersBound = true;
     window.addEventListener(
       "keydown",
       (event) => {
+        if (isEngineDormant()) return;
         if (event.key === "Escape") {
           const previewModal = document.getElementById(
             "ai-turbo-vf-preview-modal",
@@ -6971,6 +7169,13 @@
   }
 
   function boot() {
+    if (engineActive) return;
+    // Account switching passes through login and callback routes. Booting the
+    // HUD, listeners, and polling there competes with the auth flow and can
+    // leave the engine UI on a redirect stub that has no site styles yet.
+    if (isAuthOrRedirectRoute()) return;
+    engineActive = true;
+
     loadSavedConfig();
     injectEngineStyles();
     buildHUD();
@@ -6981,24 +7186,27 @@
     scheduleReasoningRestore();
     renderReasoningStatus();
 
-    window.addEventListener("resize", scheduleVirtualFileTrayPosition, {
-      passive: true,
-    });
+    if (!viewportListenersBound) {
+      viewportListenersBound = true;
+      window.addEventListener("resize", scheduleVirtualFileTrayPosition, {
+        passive: true,
+      });
 
-    window.addEventListener("scroll", scheduleVirtualFileTrayPosition, {
-      passive: true,
-      capture: true,
-    });
+      window.addEventListener("scroll", scheduleVirtualFileTrayPosition, {
+        passive: true,
+        capture: true,
+      });
 
-    window.visualViewport?.addEventListener(
-      "resize",
-      scheduleVirtualFileTrayPosition,
-    );
+      window.visualViewport?.addEventListener(
+        "resize",
+        scheduleVirtualFileTrayPosition,
+      );
 
-    window.visualViewport?.addEventListener(
-      "scroll",
-      scheduleVirtualFileTrayPosition,
-    );
+      window.visualViewport?.addEventListener(
+        "scroll",
+        scheduleVirtualFileTrayPosition,
+      );
+    }
 
     fullTurnSyncRequested = true;
     codeScanRequested = true;
@@ -7007,6 +7215,7 @@
     resumePendingHandoffPrompt();
 
     window.addEventListener("load", () => {
+      if (isEngineDormant()) return;
       fullTurnSyncRequested = true;
       codeScanRequested = true;
       ensureHUDMounted();
@@ -7015,15 +7224,40 @@
 
     [250, 800, 2000].forEach((delay) => {
       window.setTimeout(() => {
+        if (isEngineDormant()) return;
         ensureHUDMounted();
         requestUpdate();
       }, delay);
     });
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot, { once: true });
-  } else {
+  /**
+   * On login and callback routes keep only a route check: no UI, no DOM
+   * writes, and start the engine once the page returns to a chat route.
+   */
+  function watchForChatRoute() {
+    patchHistoryForSpaNavigation();
+    if (routeWatcherBound) return;
+    routeWatcherBound = true;
+    const resumeWhenChatRoute = () => {
+      if (isAuthOrRedirectRoute()) return;
+      boot();
+    };
+    window.addEventListener("popstate", resumeWhenChatRoute);
+    window.addEventListener("hashchange", resumeWhenChatRoute);
+  }
+
+  function startEngine() {
+    if (isAuthOrRedirectRoute()) {
+      watchForChatRoute();
+      return;
+    }
     boot();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startEngine, { once: true });
+  } else {
+    startEngine();
   }
 })();
