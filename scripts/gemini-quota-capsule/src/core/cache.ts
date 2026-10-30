@@ -16,6 +16,7 @@ import { getAccountPrefix } from "./account";
 import { sanitizeMetric } from "./quota";
 import { quotaState, requestUiUpdate } from "./state";
 import { toEpochMs } from "./time";
+import { localStore } from "../storage/browser";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -71,17 +72,14 @@ export function commitOfficialQuota(
   if (!fromCache) quotaState.lastError = "";
 
   if (saveStorage) {
-    try {
-      const payload: CachePayload = {
-        timestamp: quotaState.lastSyncTime,
-        source: sourceTag,
-        fiveHour: quotaState.fiveHour,
-        weekly: quotaState.weekly,
-      };
-      localStorage.setItem(officialCacheKey(), JSON.stringify(payload));
-    } catch {
-      // Ignore storage failures.
-    }
+    const payload: CachePayload = {
+      timestamp: quotaState.lastSyncTime,
+      source: sourceTag,
+      fiveHour: quotaState.fiveHour,
+      weekly: quotaState.weekly,
+    };
+    // Storage failures leave the in-session quota untouched.
+    localStore.writeJson(officialCacheKey(), payload);
   }
 
   requestUiUpdate();
@@ -90,8 +88,8 @@ export function commitOfficialQuota(
 
 export function restoreCachedOfficialQuota(): void {
   try {
-    const raw = localStorage.getItem(officialCacheKey());
-    if (!raw) return;
+    const raw = localStore.read(officialCacheKey());
+    if (raw === null || raw === "") return;
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return;
 

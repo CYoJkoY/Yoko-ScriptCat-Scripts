@@ -16,6 +16,10 @@ import type {
   OrnamentKind,
   ProgressMode,
 } from "./types";
+import {
+  getBrowserStorage,
+  type StorageFailure,
+} from "../../../shared/storage/keyValue";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -83,16 +87,20 @@ export function normalizeConfig(parsed: unknown): CapsuleConfig {
   };
 }
 
-function readStoredConfig(): string | null {
-  try {
-    return localStorage.getItem(STORAGE_KEY_CFG);
-  } catch {
-    return null;
-  }
-}
+/**
+ * Reads stay silent when the page blocks storage. Writes keep the original
+ * console warning, which the adapter raises with the underlying error.
+ */
+const configStore = getBrowserStorage("localStorage", {
+  cache: false,
+  onError: (failure: StorageFailure) => {
+    if (failure.operation === "read" || failure.operation === "parse") return;
+    console.warn("[Gemini Quota] 保存配置失败:", failure.error);
+  },
+});
 
 export function loadConfig(): CapsuleConfig {
-  const raw = readStoredConfig();
+  const raw = configStore.read(STORAGE_KEY_CFG);
   if (!raw) return normalizeConfig(null);
   try {
     return normalizeConfig(JSON.parse(raw));
@@ -102,13 +110,9 @@ export function loadConfig(): CapsuleConfig {
 }
 
 export function saveConfig(cfg: CapsuleConfig): boolean {
-  try {
-    localStorage.setItem(STORAGE_KEY_CFG, JSON.stringify(cfg));
-    return true;
-  } catch (err) {
-    console.warn("[Gemini Quota] 保存配置失败:", err);
-    return false;
-  }
+  // The adapter reports a blocked area or an unserializable payload through the
+  // same warning, and returns false in both cases.
+  return configStore.writeJson(STORAGE_KEY_CFG, cfg);
 }
 
 export const config: CapsuleConfig = loadConfig();

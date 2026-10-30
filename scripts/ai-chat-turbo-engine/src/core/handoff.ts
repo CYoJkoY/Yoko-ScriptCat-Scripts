@@ -11,6 +11,7 @@ import type { ComposerUtils } from "./composer";
 import { reportRecoverableError } from "./diagnostics";
 import type { SendInterceptUtils } from "./send";
 import { isObjectRecord } from "../storage/reasoning-memory";
+import { createReportedStorage } from "../storage/reported";
 import { isReasoningElement } from "./text";
 import type { createTurnUtils } from "./turns";
 
@@ -52,6 +53,35 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
 
   let handoffStatusNode: HTMLElement | null = null;
   let handoffResumeTimer: ReturnType<typeof setInterval> | null = null;
+  let rejectedHandoffWrite: unknown = null;
+
+  /**
+   * Pending handoff payloads keep the released diagnostics for reads, while a
+   * rejected write still falls back to copying the prompt to the clipboard.
+   */
+  const handoffStore = createReportedStorage("sessionStorage", (failure) => {
+    if (failure.operation === "remove") {
+      // The released timer surfaced a throwing removeItem as an uncaught
+      // error; keep it visible through the diagnostics channel instead.
+      reportRecoverableError("clear pending handoff", failure.error);
+      return;
+    }
+    if (failure.operation === "read" || failure.operation === "parse") {
+      reportRecoverableError("read pending handoff", failure.error);
+      return;
+    }
+    rejectedHandoffWrite = failure.error;
+  });
+
+  function persistPendingHandoff(restoreText: string, sourceTurns: number): boolean {
+    rejectedHandoffWrite = null;
+    return handoffStore.writeJson(HANDOFF_STORAGE_KEY, {
+      text: restoreText,
+      createdAt: Date.now(),
+      sourceUrl: window.location.href,
+      sourceTurns,
+    });
+  }
 
   function attachStatusNode(node: HTMLElement | null): void {
     handoffStatusNode = node;
@@ -384,9 +414,9 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
       }
       let pending: unknown = null;
       try {
-        pending = JSON.parse(
-          sessionStorage.getItem(HANDOFF_STORAGE_KEY) || "null",
-        );
+        // An absent key and an empty value both mean "no pending handoff".
+        const raw = handoffStore.read(HANDOFF_STORAGE_KEY);
+        pending = JSON.parse(raw === null || raw === "" ? "null" : raw);
       } catch (error: unknown) {
         reportRecoverableError("read pending handoff", error);
       }
@@ -410,7 +440,7 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
       const createdAt =
         typeof pendingCreatedAt === "number" ? pendingCreatedAt : 0;
       if (Date.now() - createdAt > 5 * 60 * 1000) {
-        sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+        handoffStore.remove(HANDOFF_STORAGE_KEY);
         window.clearInterval(timer);
         return;
       }
@@ -445,14 +475,14 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
             input.focus();
             setHandoffStatus("恢复指令已填入新对话；检查 YAML 后手动发送。");
           }
-          sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+          handoffStore.remove(HANDOFF_STORAGE_KEY);
           window.clearInterval(timer);
           return;
         }
       }
 
       if (attempts >= 120) {
-        sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+        handoffStore.remove(HANDOFF_STORAGE_KEY);
         window.clearInterval(timer);
         navigator.clipboard
           .writeText(pendingText)
@@ -613,18 +643,8 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
       return;
     }
 
-    try {
-      sessionStorage.setItem(
-        HANDOFF_STORAGE_KEY,
-        JSON.stringify({
-          text: restoreText,
-          createdAt: Date.now(),
-          sourceUrl: window.location.href,
-          sourceTurns: getTurns().length,
-        }),
-      );
-    } catch (error: unknown) {
-      console.warn("[AI Turbo] Failed to persist handoff state", error);
+    if (!persistPendingHandoff(restoreText, getTurns().length)) {
+      console.warn("[AI Turbo] Failed to persist handoff state", rejectedHandoffWrite);
       copyHandoffFallback(
         restoreText,
         "无法暂存恢复状态，恢复指令已复制到剪贴板。",
@@ -671,18 +691,8 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
       return;
     }
 
-    try {
-      sessionStorage.setItem(
-        HANDOFF_STORAGE_KEY,
-        JSON.stringify({
-          text: restoreText,
-          createdAt: Date.now(),
-          sourceUrl: window.location.href,
-          sourceTurns: getTurns().length,
-        }),
-      );
-    } catch (error: unknown) {
-      console.warn("[AI Turbo] Failed to persist handoff state", error);
+    if (!persistPendingHandoff(restoreText, getTurns().length)) {
+      console.warn("[AI Turbo] Failed to persist handoff state", rejectedHandoffWrite);
       navigator.clipboard
         .writeText(restoreText)
         .then(() => {

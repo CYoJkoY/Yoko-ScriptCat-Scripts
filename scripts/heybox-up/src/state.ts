@@ -8,83 +8,26 @@ import {
   READER_LINE_HEIGHT_STEP,
   STORAGE_KEYS,
 } from "./config";
+import {
+  getBrowserStorage,
+  type StringStorageAdapter,
+} from "../../../shared/storage/keyValue";
 
 /**
- * Silent storage adapters and typed HeyBox Up preferences.
+ * Typed HeyBox Up preferences over the shared silent storage adapter.
  *
  * The released script never surfaced storage failures to the page, so the
- * adapters keep a session memory cache and return a fallback instead of
- * logging. Every key, default, and normalisation rule matches version 0.4.47.
+ * adapters pass a no-op reporter: the shared layer keeps a session memory
+ * cache and returns a fallback instead of logging. Every key, default, and
+ * normalisation rule matches version 0.4.47.
  */
 
-export interface StorageAccess {
-  read(key: string): string | null;
-  write(key: string, value: string): boolean;
-  readJson(key: string, fallback: unknown): unknown;
-  writeJson(key: string, value: unknown): boolean;
-}
+export type StorageAccess = StringStorageAdapter;
 
-type StorageName = "localStorage" | "sessionStorage";
+const silent = { onError: (): void => undefined };
 
-function isStorage(value: unknown): value is Storage {
-  if (typeof value !== "object" || value === null) return false;
-  return "getItem" in value && "setItem" in value && "removeItem" in value;
-}
-
-/**
- * Wraps one browser storage area. A failed write still updates the in-memory
- * map so the current page sees the value it just chose.
- */
-export function createStorageAccess(name: StorageName): StorageAccess {
-  const memory = new Map<string, string>();
-  const read = (key: string): string | null => {
-    const cached = memory.get(key);
-    if (cached !== undefined) return cached;
-    try {
-      // Reading the area itself throws when the page blocks persistence, so the
-      // lookup stays inside the guard and reports "no stored value" instead.
-      const storage: unknown = name === "localStorage" ? window.localStorage : window.sessionStorage;
-      if (!isStorage(storage)) return null;
-      const value = storage.getItem(key);
-      if (value !== null) memory.set(key, value);
-      return value;
-    } catch {
-      // Private modes and sandboxed frames reject reads; treat as empty.
-      return null;
-    }
-  };
-  const write = (key: string, value: string): boolean => {
-    memory.set(key, value);
-    try {
-      const storage: unknown = name === "localStorage" ? window.localStorage : window.sessionStorage;
-      if (!isStorage(storage)) return false;
-      storage.setItem(key, value);
-      return true;
-    } catch {
-      // Quota and privacy errors keep the in-memory value only.
-      return false;
-    }
-  };
-  return {
-    read,
-    write,
-    readJson: (key: string, fallback: unknown): unknown => {
-      const raw = read(key);
-      if (raw === null) return fallback;
-      try {
-        // JSON.parse returns any; re-stating the result as unknown keeps it untyped.
-        return JSON.parse(raw) as unknown;
-      } catch {
-        // Corrupt cache entries must not break the page.
-        return fallback;
-      }
-    },
-    writeJson: (key: string, value: unknown): boolean => write(key, JSON.stringify(value)),
-  };
-}
-
-export const localStore: StorageAccess = createStorageAccess("localStorage");
-export const sessionStore: StorageAccess = createStorageAccess("sessionStorage");
+export const localStore: StorageAccess = getBrowserStorage("localStorage", silent);
+export const sessionStore: StorageAccess = getBrowserStorage("sessionStorage", silent);
 
 export const HIDE_CY_EVENT = "heybox-up:hide-cy";
 export const COMMENT_PREVIEW_EVENT = "heybox-up:comment-preview";

@@ -1329,7 +1329,115 @@ ${CODE_FENCE}`;
     };
   }
 
+  // shared/storage/keyValue.ts
+  var DEFAULT_MESSAGES = {
+    read: "[shared/storage] read failed",
+    write: "[shared/storage] write failed",
+    remove: "[shared/storage] remove failed",
+    parse: "[shared/storage] invalid JSON"
+  };
+  function reportFailure(options, operation, error) {
+    if (options.onError !== void 0) {
+      options.onError({ operation, error });
+      return;
+    }
+    console.error(DEFAULT_MESSAGES[operation], error);
+  }
+  function createStringStorage(storage, options = {}) {
+    const memory = /* @__PURE__ */ new Map();
+    const useCache = options.cache !== false;
+    const read = (key) => {
+      if (useCache) {
+        const cached = memory.get(key);
+        if (cached !== void 0) return cached;
+      }
+      try {
+        const value = storage.getItem(key);
+        if (useCache && value !== null) memory.set(key, value);
+        return value;
+      } catch (error) {
+        reportFailure(options, "read", error);
+        return null;
+      }
+    };
+    const write = (key, value) => {
+      if (useCache) memory.set(key, value);
+      try {
+        storage.setItem(key, value);
+        return true;
+      } catch (error) {
+        reportFailure(options, "write", error);
+        return false;
+      }
+    };
+    const remove = (key) => {
+      if (useCache) memory.delete(key);
+      try {
+        storage.removeItem(key);
+        return true;
+      } catch (error) {
+        reportFailure(options, "remove", error);
+        return false;
+      }
+    };
+    return {
+      read,
+      write,
+      readJson: (key, fallback) => {
+        const raw = read(key);
+        if (raw === null) return fallback;
+        try {
+          return JSON.parse(raw);
+        } catch (error) {
+          reportFailure(options, "parse", error);
+          return fallback;
+        }
+      },
+      writeJson: (key, value) => {
+        let serialized;
+        try {
+          serialized = JSON.stringify(value);
+        } catch (error) {
+          reportFailure(options, "write", error);
+          return false;
+        }
+        return write(key, serialized);
+      },
+      remove
+    };
+  }
+  function isStorageArea(value) {
+    if (typeof value !== "object" || value === null) return false;
+    return "getItem" in value && "setItem" in value && "removeItem" in value;
+  }
+  function resolveArea(kind) {
+    const area = kind === "localStorage" ? window.localStorage : window.sessionStorage;
+    if (!isStorageArea(area)) {
+      throw new Error(kind + " is unavailable in this frame");
+    }
+    return area;
+  }
+  function getBrowserStorage(kind, options = {}) {
+    return createStringStorage(
+      {
+        getItem: (key) => resolveArea(kind).getItem(key),
+        setItem: (key, value) => resolveArea(kind).setItem(key, value),
+        removeItem: (key) => resolveArea(kind).removeItem(key)
+      },
+      options
+    );
+  }
+
+  // scripts/ai-chat-turbo-engine/src/storage/reported.ts
+  function createReportedStorage(kind, report) {
+    return getBrowserStorage(kind, { cache: false, onError: report });
+  }
+
   // scripts/ai-chat-turbo-engine/src/state.ts
+  var configStore = createReportedStorage("localStorage", (failure) => {
+    const scope = failure.operation === "write" || failure.operation === "remove" ? "save engine config" : "load saved engine config";
+    reportRecoverableError(scope, failure.error);
+  });
   function createEngineState() {
     return {
       pruneEnabled: true,
@@ -1358,8 +1466,8 @@ ${CODE_FENCE}`;
   }
   function loadSavedConfig(state) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY_CONFIG);
-      if (!raw) return;
+      const raw = configStore.read(STORAGE_KEY_CONFIG);
+      if (raw === null || raw === "") return;
       const parsed = JSON.parse(raw);
       if (!isSavedConfig(parsed)) return;
       if (typeof parsed.keepTurns === "number" && !isNaN(parsed.keepTurns)) {
@@ -1394,7 +1502,7 @@ ${CODE_FENCE}`;
         virtualFileEnabled: state.virtualFileEnabled,
         rememberReasoning: state.rememberReasoning
       };
-      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
+      configStore.write(STORAGE_KEY_CONFIG, JSON.stringify(config));
     } catch (error) {
       reportRecoverableError("save engine config", error);
     }
@@ -1974,6 +2082,10 @@ ${CODE_FENCE}`;
   }
 
   // scripts/ai-chat-turbo-engine/src/storage/reasoning-memory.ts
+  var memoryStore = createReportedStorage("localStorage", (failure) => {
+    const scope = failure.operation === "write" || failure.operation === "remove" ? "save reasoning memory" : "load reasoning memory";
+    reportRecoverableError(scope, failure.error);
+  });
   function isObjectRecord(value) {
     return typeof value === "object" && value !== null;
   }
@@ -2006,9 +2118,8 @@ ${CODE_FENCE}`;
   }
   function loadReasoningMemory() {
     try {
-      const parsed = JSON.parse(
-        localStorage.getItem(STORAGE_KEY_REASONING) || "{}"
-      );
+      const raw = memoryStore.read(STORAGE_KEY_REASONING);
+      const parsed = raw === null || raw === "" ? {} : JSON.parse(raw);
       if (!isObjectRecord(parsed)) return {};
       const memory = {};
       for (const [scope, entry] of Object.entries(parsed)) {
@@ -2022,11 +2133,7 @@ ${CODE_FENCE}`;
     }
   }
   function saveReasoningMemory(memory) {
-    try {
-      localStorage.setItem(STORAGE_KEY_REASONING, JSON.stringify(memory));
-    } catch (error) {
-      reportRecoverableError("save reasoning memory", error);
-    }
+    memoryStore.writeJson(STORAGE_KEY_REASONING, memory);
   }
   function reasoningScope() {
     const account = location.pathname.match(/^\/u\/(\d+)(?:\/|$)/);
@@ -3396,6 +3503,27 @@ ${CODE_FENCE}`;
     const isSubmitting = deps.isSubmitting;
     let handoffStatusNode = null;
     let handoffResumeTimer = null;
+    let rejectedHandoffWrite = null;
+    const handoffStore = createReportedStorage("sessionStorage", (failure) => {
+      if (failure.operation === "remove") {
+        reportRecoverableError("clear pending handoff", failure.error);
+        return;
+      }
+      if (failure.operation === "read" || failure.operation === "parse") {
+        reportRecoverableError("read pending handoff", failure.error);
+        return;
+      }
+      rejectedHandoffWrite = failure.error;
+    });
+    function persistPendingHandoff(restoreText, sourceTurns) {
+      rejectedHandoffWrite = null;
+      return handoffStore.writeJson(HANDOFF_STORAGE_KEY, {
+        text: restoreText,
+        createdAt: Date.now(),
+        sourceUrl: window.location.href,
+        sourceTurns
+      });
+    }
     function attachStatusNode(node) {
       handoffStatusNode = node;
     }
@@ -3669,9 +3797,8 @@ ${contentText}`);
         }
         let pending = null;
         try {
-          pending = JSON.parse(
-            sessionStorage.getItem(HANDOFF_STORAGE_KEY) || "null"
-          );
+          const raw = handoffStore.read(HANDOFF_STORAGE_KEY);
+          pending = JSON.parse(raw === null || raw === "" ? "null" : raw);
         } catch (error) {
           reportRecoverableError("read pending handoff", error);
         }
@@ -3689,7 +3816,7 @@ ${contentText}`);
         }
         const createdAt = typeof pendingCreatedAt === "number" ? pendingCreatedAt : 0;
         if (Date.now() - createdAt > 5 * 60 * 1e3) {
-          sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+          handoffStore.remove(HANDOFF_STORAGE_KEY);
           window.clearInterval(timer);
           return;
         }
@@ -3717,13 +3844,13 @@ ${contentText}`);
               input.focus();
               setHandoffStatus("恢复指令已填入新对话；检查 YAML 后手动发送。");
             }
-            sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+            handoffStore.remove(HANDOFF_STORAGE_KEY);
             window.clearInterval(timer);
             return;
           }
         }
         if (attempts >= 120) {
-          sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+          handoffStore.remove(HANDOFF_STORAGE_KEY);
           window.clearInterval(timer);
           navigator.clipboard.writeText(pendingText).then(() => {
             setHandoffStatus("未识别到新对话输入框，恢复指令已复制到剪贴板。");
@@ -3850,18 +3977,8 @@ ${contentText}`);
         );
         return;
       }
-      try {
-        sessionStorage.setItem(
-          HANDOFF_STORAGE_KEY,
-          JSON.stringify({
-            text: restoreText,
-            createdAt: Date.now(),
-            sourceUrl: window.location.href,
-            sourceTurns: getTurns().length
-          })
-        );
-      } catch (error) {
-        console.warn("[AI Turbo] Failed to persist handoff state", error);
+      if (!persistPendingHandoff(restoreText, getTurns().length)) {
+        console.warn("[AI Turbo] Failed to persist handoff state", rejectedHandoffWrite);
         copyHandoffFallback(
           restoreText,
           "无法暂存恢复状态，恢复指令已复制到剪贴板。",
@@ -3898,18 +4015,8 @@ ${contentText}`);
         });
         return;
       }
-      try {
-        sessionStorage.setItem(
-          HANDOFF_STORAGE_KEY,
-          JSON.stringify({
-            text: restoreText,
-            createdAt: Date.now(),
-            sourceUrl: window.location.href,
-            sourceTurns: getTurns().length
-          })
-        );
-      } catch (error) {
-        console.warn("[AI Turbo] Failed to persist handoff state", error);
+      if (!persistPendingHandoff(restoreText, getTurns().length)) {
+        console.warn("[AI Turbo] Failed to persist handoff state", rejectedHandoffWrite);
         navigator.clipboard.writeText(restoreText).then(() => {
           window.alert(
             "无法暂存跨页面恢复状态，已复制完整恢复指令，请手动打开新对话并粘贴。"
@@ -3941,6 +4048,15 @@ ${contentText}`);
   }
 
   // scripts/ai-chat-turbo-engine/src/ui/hud.ts
+  var positionStore = createReportedStorage("localStorage", (failure) => {
+    const scope = failure.operation === "write" || failure.operation === "remove" ? "save pill position" : "restore pill position";
+    reportRecoverableError(scope, failure.error);
+  });
+  function isPillPosition(value) {
+    if (typeof value !== "object" || value === null) return false;
+    if (!("x" in value) || !("y" in value)) return false;
+    return typeof value.x === "number" && typeof value.y === "number";
+  }
   function createHudUtils(deps) {
     const {
       el,
@@ -4602,8 +4718,9 @@ ${contentText}`);
       let posX = maxX;
       let posY = maxY;
       try {
-        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY_POS) || "null");
-        if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
+        const raw = positionStore.read(STORAGE_KEY_POS);
+        const saved = JSON.parse(raw === null || raw === "" ? "null" : raw);
+        if (isPillPosition(saved)) {
           posX = Math.min(maxX, Math.max(8, saved.x));
           posY = Math.min(maxY, Math.max(8, saved.y));
         }
@@ -4643,15 +4760,8 @@ ${contentText}`);
           togglePanel(true);
           return;
         }
-        try {
-          const rect = pill.getBoundingClientRect();
-          localStorage.setItem(
-            STORAGE_KEY_POS,
-            JSON.stringify({ x: rect.left, y: rect.top })
-          );
-        } catch (error) {
-          reportRecoverableError("save pill position", error);
-        }
+        const rect = pill.getBoundingClientRect();
+        positionStore.writeJson(STORAGE_KEY_POS, { x: rect.left, y: rect.top });
       };
       pill.addEventListener("pointerdown", (e) => {
         if (e.button !== 0) return;

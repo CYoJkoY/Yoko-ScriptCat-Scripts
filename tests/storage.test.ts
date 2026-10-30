@@ -21,6 +21,9 @@ describe("createStringStorage", () => {
       setItem: () => {
         throw new Error("quota");
       },
+      removeItem: () => {
+        throw new Error("quota");
+      },
     };
     const storage = createStringStorage(throwing);
     expect(storage.write("key", "value")).toBe(false);
@@ -32,6 +35,35 @@ describe("createStringStorage", () => {
     const storage = createStringStorage(createMemoryStorage());
     expect(storage.writeJson("config", { a: 1, b: [true] })).toBe(true);
     expect(storage.readJson("config", null)).toEqual({ a: 1, b: [true] });
+  });
+
+  it("drops the cached value when a key is removed", () => {
+    const backing = createMemoryStorage();
+    const storage = createStringStorage(backing);
+    storage.write("token", "abc");
+    expect(storage.remove("token")).toBe(true);
+    expect(storage.read("token")).toBeNull();
+    expect(backing.getItem("token")).toBeNull();
+  });
+
+  it("routes failures through the injected reporter", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failures: string[] = [];
+    const storage = createStringStorage(
+      {
+        getItem: () => {
+          throw new Error("blocked");
+        },
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      },
+      { onError: (failure) => failures.push(failure.operation) },
+    );
+    expect(storage.read("key")).toBeNull();
+    storage.write("bad", "{");
+    expect(storage.readJson("bad", null)).toBeNull();
+    expect(failures).toEqual(["read", "parse"]);
+    expect(log).not.toHaveBeenCalled();
   });
 });
 

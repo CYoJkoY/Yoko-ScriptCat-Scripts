@@ -16,6 +16,15 @@ import type { ReasoningUtils } from "../core/reasoning";
 import type { HandoffUtils } from "../core/handoff";
 import { reportRecoverableError } from "../core/diagnostics";
 import type { EngineState } from "../state";
+import { createReportedStorage } from "../storage/reported";
+
+const positionStore = createReportedStorage("localStorage", (failure) => {
+  const scope =
+    failure.operation === "write" || failure.operation === "remove"
+      ? "save pill position"
+      : "restore pill position";
+  reportRecoverableError(scope, failure.error);
+});
 
 interface HudRefs {
   total: HTMLElement;
@@ -48,6 +57,18 @@ export interface HudDeps {
   activeFileCount: () => number;
   clearFiles: () => void;
   injectStyles: () => void;
+}
+
+interface PillPosition {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Guard the persisted drag position so a malformed payload keeps the default. */
+function isPillPosition(value: unknown): value is PillPosition {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("x" in value) || !("y" in value)) return false;
+  return typeof value.x === "number" && typeof value.y === "number";
 }
 
 export interface HudUtils {
@@ -792,8 +813,10 @@ function initPillDrag(pill: HTMLElement): void {
   let posY = maxY;
 
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY_POS) || "null");
-    if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
+    // An absent key and an empty value both mean "never dragged".
+    const raw = positionStore.read(STORAGE_KEY_POS);
+    const saved: unknown = JSON.parse(raw === null || raw === "" ? "null" : raw);
+    if (isPillPosition(saved)) {
       posX = Math.min(maxX, Math.max(8, saved.x));
       posY = Math.min(maxY, Math.max(8, saved.y));
     }
@@ -844,15 +867,8 @@ function initPillDrag(pill: HTMLElement): void {
       return;
     }
 
-    try {
-      const rect = pill.getBoundingClientRect();
-      localStorage.setItem(
-        STORAGE_KEY_POS,
-        JSON.stringify({ x: rect.left, y: rect.top }),
-      );
-    } catch (error: unknown) {
-      reportRecoverableError("save pill position", error);
-    }
+    const rect = pill.getBoundingClientRect();
+    positionStore.writeJson(STORAGE_KEY_POS, { x: rect.left, y: rect.top });
   };
 
   pill.addEventListener("pointerdown", (e: PointerEvent) => {

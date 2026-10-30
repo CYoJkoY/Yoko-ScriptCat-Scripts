@@ -938,6 +938,111 @@
     };
   }
 
+  // shared/storage/keyValue.ts
+  var DEFAULT_MESSAGES = {
+    read: "[shared/storage] read failed",
+    write: "[shared/storage] write failed",
+    remove: "[shared/storage] remove failed",
+    parse: "[shared/storage] invalid JSON"
+  };
+  function reportFailure(options, operation, error) {
+    if (options.onError !== void 0) {
+      options.onError({ operation, error });
+      return;
+    }
+    console.error(DEFAULT_MESSAGES[operation], error);
+  }
+  function createStringStorage(storage, options = {}) {
+    const memory = /* @__PURE__ */ new Map();
+    const useCache = options.cache !== false;
+    const read = (key) => {
+      if (useCache) {
+        const cached = memory.get(key);
+        if (cached !== void 0) return cached;
+      }
+      try {
+        const value = storage.getItem(key);
+        if (useCache && value !== null) memory.set(key, value);
+        return value;
+      } catch (error) {
+        reportFailure(options, "read", error);
+        return null;
+      }
+    };
+    const write = (key, value) => {
+      if (useCache) memory.set(key, value);
+      try {
+        storage.setItem(key, value);
+        return true;
+      } catch (error) {
+        reportFailure(options, "write", error);
+        return false;
+      }
+    };
+    const remove = (key) => {
+      if (useCache) memory.delete(key);
+      try {
+        storage.removeItem(key);
+        return true;
+      } catch (error) {
+        reportFailure(options, "remove", error);
+        return false;
+      }
+    };
+    return {
+      read,
+      write,
+      readJson: (key, fallback) => {
+        const raw = read(key);
+        if (raw === null) return fallback;
+        try {
+          return JSON.parse(raw);
+        } catch (error) {
+          reportFailure(options, "parse", error);
+          return fallback;
+        }
+      },
+      writeJson: (key, value) => {
+        let serialized;
+        try {
+          serialized = JSON.stringify(value);
+        } catch (error) {
+          reportFailure(options, "write", error);
+          return false;
+        }
+        return write(key, serialized);
+      },
+      remove
+    };
+  }
+  function isStorageArea(value) {
+    if (typeof value !== "object" || value === null) return false;
+    return "getItem" in value && "setItem" in value && "removeItem" in value;
+  }
+  function resolveArea(kind) {
+    const area = kind === "localStorage" ? window.localStorage : window.sessionStorage;
+    if (!isStorageArea(area)) {
+      throw new Error(kind + " is unavailable in this frame");
+    }
+    return area;
+  }
+  function getBrowserStorage(kind, options = {}) {
+    return createStringStorage(
+      {
+        getItem: (key) => resolveArea(kind).getItem(key),
+        setItem: (key, value) => resolveArea(kind).setItem(key, value),
+        removeItem: (key) => resolveArea(kind).removeItem(key)
+      },
+      options
+    );
+  }
+  function getSilentBrowserStorage(kind) {
+    return getBrowserStorage(kind, { cache: false, onError: () => void 0 });
+  }
+
+  // scripts/gemini-quota-capsule/src/storage/browser.ts
+  var localStore = getSilentBrowserStorage("localStorage");
+
   // scripts/gemini-quota-capsule/src/core/cache.ts
   function isRecord3(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -971,24 +1076,21 @@
     quotaState.lastSyncTime = extracted.timestamp || nowMs;
     if (!fromCache) quotaState.lastError = "";
     if (saveStorage) {
-      try {
-        const payload = {
-          timestamp: quotaState.lastSyncTime,
-          source: sourceTag,
-          fiveHour: quotaState.fiveHour,
-          weekly: quotaState.weekly
-        };
-        localStorage.setItem(officialCacheKey(), JSON.stringify(payload));
-      } catch {
-      }
+      const payload = {
+        timestamp: quotaState.lastSyncTime,
+        source: sourceTag,
+        fiveHour: quotaState.fiveHour,
+        weekly: quotaState.weekly
+      };
+      localStore.writeJson(officialCacheKey(), payload);
     }
     requestUiUpdate();
     return true;
   }
   function restoreCachedOfficialQuota() {
     try {
-      const raw = localStorage.getItem(officialCacheKey());
-      if (!raw) return;
+      const raw = localStore.read(officialCacheKey());
+      if (raw === null || raw === "") return;
       const parsed = JSON.parse(raw);
       if (!isRecord3(parsed)) return;
       const hasLiveData = quotaState.source !== "cache" && (quotaState.fiveHour.pct !== null || quotaState.weekly.pct !== null);
@@ -2037,10 +2139,7 @@
           reason: reason || "官方 /usage 页面未返回可解析的用量文本"
         };
       }
-      try {
-        localStorage.setItem(STORAGE_KEY_SYNC_BRIDGE, JSON.stringify(payload));
-      } catch {
-      }
+      localStore.writeJson(STORAGE_KEY_SYNC_BRIDGE, payload);
       try {
         history.replaceState(
           null,
@@ -2200,13 +2299,10 @@
       };
       const readBridge = () => {
         if (settled) return;
-        try {
-          const payload = readSyncBridgePayload(
-            localStorage.getItem(STORAGE_KEY_SYNC_BRIDGE)
-          );
-          if (payload && payload.nonce === nonce) finish(payload);
-        } catch {
-        }
+        const payload = readSyncBridgePayload(
+          localStore.read(STORAGE_KEY_SYNC_BRIDGE)
+        );
+        if (payload && payload.nonce === nonce) finish(payload);
       };
       const helperHandle = {
         nonce,
@@ -2603,15 +2699,15 @@
       debug: source["debug"] === true
     };
   }
-  function readStoredConfig() {
-    try {
-      return localStorage.getItem(STORAGE_KEY_CFG);
-    } catch {
-      return null;
+  var configStore = getBrowserStorage("localStorage", {
+    cache: false,
+    onError: (failure) => {
+      if (failure.operation === "read" || failure.operation === "parse") return;
+      console.warn("[Gemini Quota] 保存配置失败:", failure.error);
     }
-  }
+  });
   function loadConfig() {
-    const raw = readStoredConfig();
+    const raw = configStore.read(STORAGE_KEY_CFG);
     if (!raw) return normalizeConfig(null);
     try {
       return normalizeConfig(JSON.parse(raw));
@@ -2620,13 +2716,7 @@
     }
   }
   function saveConfig(cfg) {
-    try {
-      localStorage.setItem(STORAGE_KEY_CFG, JSON.stringify(cfg));
-      return true;
-    } catch (err) {
-      console.warn("[Gemini Quota] 保存配置失败:", err);
-      return false;
-    }
+    return configStore.writeJson(STORAGE_KEY_CFG, cfg);
   }
   var config = loadConfig();
 

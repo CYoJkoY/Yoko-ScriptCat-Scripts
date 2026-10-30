@@ -306,34 +306,54 @@
     }
   }
 
-  // scripts/heybox-up/src/state.ts
-  function isStorage(value) {
-    if (typeof value !== "object" || value === null) return false;
-    return "getItem" in value && "setItem" in value && "removeItem" in value;
+  // shared/storage/keyValue.ts
+  var DEFAULT_MESSAGES = {
+    read: "[shared/storage] read failed",
+    write: "[shared/storage] write failed",
+    remove: "[shared/storage] remove failed",
+    parse: "[shared/storage] invalid JSON"
+  };
+  function reportFailure(options, operation, error) {
+    if (options.onError !== void 0) {
+      options.onError({ operation, error });
+      return;
+    }
+    console.error(DEFAULT_MESSAGES[operation], error);
   }
-  function createStorageAccess(name) {
+  function createStringStorage(storage, options = {}) {
     const memory = /* @__PURE__ */ new Map();
+    const useCache = options.cache !== false;
     const read = (key) => {
-      const cached = memory.get(key);
-      if (cached !== void 0) return cached;
+      if (useCache) {
+        const cached = memory.get(key);
+        if (cached !== void 0) return cached;
+      }
       try {
-        const storage = name === "localStorage" ? window.localStorage : window.sessionStorage;
-        if (!isStorage(storage)) return null;
         const value = storage.getItem(key);
-        if (value !== null) memory.set(key, value);
+        if (useCache && value !== null) memory.set(key, value);
         return value;
-      } catch {
+      } catch (error) {
+        reportFailure(options, "read", error);
         return null;
       }
     };
     const write = (key, value) => {
-      memory.set(key, value);
+      if (useCache) memory.set(key, value);
       try {
-        const storage = name === "localStorage" ? window.localStorage : window.sessionStorage;
-        if (!isStorage(storage)) return false;
         storage.setItem(key, value);
         return true;
-      } catch {
+      } catch (error) {
+        reportFailure(options, "write", error);
+        return false;
+      }
+    };
+    const remove = (key) => {
+      if (useCache) memory.delete(key);
+      try {
+        storage.removeItem(key);
+        return true;
+      } catch (error) {
+        reportFailure(options, "remove", error);
         return false;
       }
     };
@@ -345,15 +365,50 @@
         if (raw === null) return fallback;
         try {
           return JSON.parse(raw);
-        } catch {
+        } catch (error) {
+          reportFailure(options, "parse", error);
           return fallback;
         }
       },
-      writeJson: (key, value) => write(key, JSON.stringify(value))
+      writeJson: (key, value) => {
+        let serialized;
+        try {
+          serialized = JSON.stringify(value);
+        } catch (error) {
+          reportFailure(options, "write", error);
+          return false;
+        }
+        return write(key, serialized);
+      },
+      remove
     };
   }
-  var localStore = createStorageAccess("localStorage");
-  var sessionStore = createStorageAccess("sessionStorage");
+  function isStorageArea(value) {
+    if (typeof value !== "object" || value === null) return false;
+    return "getItem" in value && "setItem" in value && "removeItem" in value;
+  }
+  function resolveArea(kind) {
+    const area = kind === "localStorage" ? window.localStorage : window.sessionStorage;
+    if (!isStorageArea(area)) {
+      throw new Error(kind + " is unavailable in this frame");
+    }
+    return area;
+  }
+  function getBrowserStorage(kind, options = {}) {
+    return createStringStorage(
+      {
+        getItem: (key) => resolveArea(kind).getItem(key),
+        setItem: (key, value) => resolveArea(kind).setItem(key, value),
+        removeItem: (key) => resolveArea(kind).removeItem(key)
+      },
+      options
+    );
+  }
+
+  // scripts/heybox-up/src/state.ts
+  var silent = { onError: () => void 0 };
+  var localStore = getBrowserStorage("localStorage", silent);
+  var sessionStore = getBrowserStorage("sessionStorage", silent);
   var HIDE_CY_EVENT = "heybox-up:hide-cy";
   var COMMENT_PREVIEW_EVENT = "heybox-up:comment-preview";
   var NAV_MOTION_EVENT = "heybox-up:nav-motion";

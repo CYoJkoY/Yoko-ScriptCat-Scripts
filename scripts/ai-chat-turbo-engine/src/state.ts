@@ -5,7 +5,20 @@ import {
   STORAGE_KEY_CONFIG,
 } from "./config";
 import { reportRecoverableError } from "./core/diagnostics";
+import { createReportedStorage } from "./storage/reported";
 import type { TurnRecord } from "./core/turns";
+
+/**
+ * Reads and writes keep the released diagnostics: one message per failed
+ * settings load or save, routed through the shared adapter.
+ */
+const configStore = createReportedStorage("localStorage", (failure) => {
+  const scope =
+    failure.operation === "write" || failure.operation === "remove"
+      ? "save engine config"
+      : "load saved engine config";
+  reportRecoverableError(scope, failure.error);
+});
 
 /** Mutable engine state shared by the HUD, turn pruning, and code folding. */
 export interface EngineState {
@@ -64,8 +77,8 @@ function isSavedConfig(value: unknown): value is SavedEngineConfig {
 /** Read the stored settings; malformed payloads keep every default. */
 export function loadSavedConfig(state: EngineState): void {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_CONFIG);
-    if (!raw) return;
+    const raw = configStore.read(STORAGE_KEY_CONFIG);
+    if (raw === null || raw === "") return;
     const parsed: unknown = JSON.parse(raw);
     if (!isSavedConfig(parsed)) return;
     if (typeof parsed.keepTurns === "number" && !isNaN(parsed.keepTurns)) {
@@ -104,7 +117,7 @@ export function saveCurrentConfig(state: EngineState): void {
       virtualFileEnabled: state.virtualFileEnabled,
       rememberReasoning: state.rememberReasoning,
     };
-    localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
+    configStore.write(STORAGE_KEY_CONFIG, JSON.stringify(config));
   } catch (error: unknown) {
     reportRecoverableError("save engine config", error);
   }

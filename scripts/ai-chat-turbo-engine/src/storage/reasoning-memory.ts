@@ -1,5 +1,14 @@
 import { STORAGE_KEY_REASONING } from "../config";
 import { reportRecoverableError } from "../core/diagnostics";
+import { createReportedStorage } from "./reported";
+
+const memoryStore = createReportedStorage("localStorage", (failure) => {
+  const scope =
+    failure.operation === "write" || failure.operation === "remove"
+      ? "save reasoning memory"
+      : "load reasoning memory";
+  reportRecoverableError(scope, failure.error);
+});
 
 export interface ReasoningRecord {
   mode: "choice" | "toggle";
@@ -53,9 +62,11 @@ function toReasoningRecord(value: unknown): ReasoningRecord | null {
 
 export function loadReasoningMemory(): ReasoningMemory {
   try {
-    const parsed: unknown = JSON.parse(
-      localStorage.getItem(STORAGE_KEY_REASONING) || "{}",
-    );
+    const raw = memoryStore.read(STORAGE_KEY_REASONING);
+    // The released script treated a missing or empty value as an empty memory.
+    const parsed: unknown = raw === null || raw === ""
+      ? {}
+      : JSON.parse(raw);
     if (!isObjectRecord(parsed)) return {};
     const memory: ReasoningMemory = {};
     for (const [scope, entry] of Object.entries(parsed)) {
@@ -70,11 +81,7 @@ export function loadReasoningMemory(): ReasoningMemory {
 }
 
 export function saveReasoningMemory(memory: ReasoningMemory): void {
-  try {
-    localStorage.setItem(STORAGE_KEY_REASONING, JSON.stringify(memory));
-  } catch (error: unknown) {
-    reportRecoverableError("save reasoning memory", error);
-  }
+  memoryStore.writeJson(STORAGE_KEY_REASONING, memory);
 }
 
 /** Gemini account slots (/u/0, /u/1, ...) keep independent reasoning memories. */

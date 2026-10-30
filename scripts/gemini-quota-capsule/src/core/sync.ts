@@ -28,6 +28,7 @@ import { shortenUrl } from "./diagnostics";
 import { origFetch } from "./orig";
 import { parseHtmlDocument, parseUsageDocument } from "./parsing";
 import { replayCapturedQuotaRpc, requestOfficialUsageRpc, usageSyncDiag } from "./rpc";
+import { localStore } from "../storage/browser";
 import { setSyncTrigger } from "./runtime";
 import { quotaState, requestUiUpdate, usageParseDiag } from "./state";
 
@@ -155,11 +156,8 @@ export function runUsageHelperSync(nonce: string): void {
       };
     }
 
-    try {
-      localStorage.setItem(STORAGE_KEY_SYNC_BRIDGE, JSON.stringify(payload));
-    } catch {
-      // The official cache write is kept even when storage is unavailable.
-    }
+    // The official cache write is kept even when storage is unavailable.
+    localStore.writeJson(STORAGE_KEY_SYNC_BRIDGE, payload);
     try {
       history.replaceState(
         null,
@@ -358,14 +356,10 @@ export function requestUsageHelperSync(
 
     const readBridge = (): void => {
       if (settled) return;
-      try {
-        const payload = readSyncBridgePayload(
-          localStorage.getItem(STORAGE_KEY_SYNC_BRIDGE),
-        );
-        if (payload && payload.nonce === nonce) finish(payload);
-      } catch {
-        // Storage read failures are ignored.
-      }
+      const payload = readSyncBridgePayload(
+        localStore.read(STORAGE_KEY_SYNC_BRIDGE),
+      );
+      if (payload && payload.nonce === nonce) finish(payload);
     };
 
     const helperHandle: PendingUsageHelper = {
