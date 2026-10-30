@@ -2440,43 +2440,6 @@
     { id: "favour", label: "收藏", href: "/app/user/favour/content" },
     { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" }
   ];
-  var NAV_MOTION_FRAMES = {
-    home: [
-      { transform: "translateY(0) scale(1)", offset: 0 },
-      { transform: "translateY(-5.5px) scale(1.06)", offset: 0.3 },
-      { transform: "translateY(1.4px) scale(0.99)", offset: 0.58 },
-      { transform: "translateY(-1.6px) scale(1.01)", offset: 0.78 },
-      { transform: "translateY(0) scale(1)", offset: 1 }
-    ],
-    community: [
-      { transform: "translateY(0) scale(1)", offset: 0 },
-      { transform: "translateY(-5px) scale(1.07)", offset: 0.35 },
-      { transform: "translateY(1.2px) scale(0.99)", offset: 0.66 },
-      { transform: "translateY(-1.2px) scale(1.01)", offset: 0.84 },
-      { transform: "translateY(0) scale(1)", offset: 1 }
-    ],
-    favour: [
-      { transform: "translateY(0) scale(1)", offset: 0 },
-      { transform: "translateY(1px) scale(0.92)", offset: 0.32 },
-      { transform: "translateY(-5.5px) scale(1.05)", offset: 0.64 },
-      { transform: "translateY(-1px) scale(1)", offset: 0.84 },
-      { transform: "translateY(0) scale(1)", offset: 1 }
-    ],
-    article: [
-      { transform: "rotate(0) translateY(0) scale(1)", offset: 0 },
-      { transform: "rotate(-8deg) translateY(-3.5px) scale(1.03)", offset: 0.3 },
-      { transform: "rotate(3.5deg) translateY(-1px) scale(1)", offset: 0.62 },
-      { transform: "rotate(-1.5deg) translateY(0) scale(1)", offset: 0.82 },
-      { transform: "rotate(0) translateY(0) scale(1)", offset: 1 }
-    ]
-  };
-  var NAV_PRESS_FRAMES = [
-    { transform: "scale(1)", offset: 0 },
-    { transform: "scale(0.86)", offset: 0.45 },
-    { transform: "scale(1)", offset: 1 }
-  ];
-  var navMotionAnimations = /* @__PURE__ */ new WeakMap();
-  var navMotionBoundHosts = /* @__PURE__ */ new WeakSet();
   var NAV_ICONS = {
     home: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-home" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></svg></span>',
     community: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-community" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></svg></span>',
@@ -2529,11 +2492,41 @@
     outline: 2px solid var(--heybox-up-accent, #6f8db3);
     outline-offset: -2px;
   }
-  .hbu-nav-icon { display: inline-flex; width: 18px; height: 18px; flex: none; align-items: center; justify-content: center; transform-origin: 50% 60%; will-change: transform; }
+  .hbu-nav-icon {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    transform-origin: 50% 60%;
+    transition:
+      transform .18s cubic-bezier(.22, .8, .3, 1),
+      color .18s ease;
+  }
   .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
-  :root.${NAV_STATIC_CLASS} .hbu-nav-icon { animation: none !important; }
+  .hbu-nav-link:hover .hbu-nav-icon,
+  .hbu-nav-link:focus-visible .hbu-nav-icon {
+    color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
+    transform: translateY(-2px) scale(1.14);
+  }
+  .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon,
+  .hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon {
+    transform: rotate(-7deg) translateY(-2px) scale(1.1);
+  }
+  .hbu-nav-link:active .hbu-nav-icon { transform: translateY(0) scale(.9); transition-duration: .08s; }
+  .hbu-nav-link[data-nav="article"]:active .hbu-nav-icon { transform: translateY(0) rotate(0) scale(.9); }
+  :root.${NAV_STATIC_CLASS} .hbu-nav-icon {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
+  }
   @media (prefers-reduced-motion: reduce) {
-    .hbu-nav-icon { animation: none !important; }
+    .hbu-nav-icon {
+      animation: none !important;
+      transform: none !important;
+      transition: none !important;
+    }
     .hbu-nav-link::after { transition: none; }
   }
   @media (max-width: 1180px) {
@@ -2547,51 +2540,6 @@
 `;
   function applyNavMotionPreference(value) {
     document.documentElement.classList.toggle(NAV_STATIC_CLASS, value === false);
-    if (!value) stopNavIconMotion();
-  }
-  function playNavIconMotion(icon, frames, duration, easing) {
-    if (!(icon instanceof HTMLElement)) return;
-    if (!readNavMotionPreference() || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    navMotionAnimations.get(icon)?.cancel();
-    const animation = icon.animate(frames, { duration, easing, fill: "none" });
-    navMotionAnimations.set(icon, animation);
-    animation.addEventListener("finish", () => {
-      if (navMotionAnimations.get(icon) === animation) navMotionAnimations.delete(icon);
-    }, { once: true });
-  }
-  function playNavLinkMotion(link) {
-    const name = link.getAttribute("data-nav") || "";
-    const frames = NAV_MOTION_FRAMES[name];
-    if (frames === void 0) return;
-    playNavIconMotion(link.querySelector(".hbu-nav-icon"), frames, 620, "cubic-bezier(.22, .8, .3, 1)");
-  }
-  function bindNavMotion(host) {
-    if (navMotionBoundHosts.has(host)) return;
-    navMotionBoundHosts.add(host);
-    host.addEventListener("pointerover", (event) => {
-      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
-      if (link === null || !host.contains(link)) return;
-      const from = event.relatedTarget;
-      if (from instanceof Node && link.contains(from)) return;
-      playNavLinkMotion(link);
-    });
-    host.addEventListener("focusin", (event) => {
-      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
-      if (link !== null && host.contains(link)) playNavLinkMotion(link);
-    });
-    host.addEventListener("pointerdown", (event) => {
-      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
-      if (link !== null && host.contains(link)) playNavIconMotion(link.querySelector(".hbu-nav-icon"), NAV_PRESS_FRAMES, 140, "cubic-bezier(.3, .7, .3, 1)");
-    });
-  }
-  function stopNavIconMotion() {
-    for (const icon of Array.from(document.querySelectorAll("#" + NAV_ID + " .hbu-nav-icon"))) {
-      if (!(icon instanceof HTMLElement)) continue;
-      const animation = navMotionAnimations.get(icon);
-      if (animation === void 0) continue;
-      animation.cancel();
-      navMotionAnimations.delete(icon);
-    }
   }
   function ensureNavStyle() {
     ensureStyleElement(NAV_STYLE_ID, NAV_CSS);
@@ -2711,7 +2659,6 @@
       ).join("");
       host.addEventListener("click", handleNavClick);
     }
-    bindNavMotion(host);
     if (host.parentNode !== links || links.firstElementChild !== host) links.prepend(host);
     syncNavActive();
   }
