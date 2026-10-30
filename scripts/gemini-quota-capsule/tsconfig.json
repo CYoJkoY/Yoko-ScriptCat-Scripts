@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": [
+    "meta.ts",
+    "src/**/*.ts",
+    "../../shared/**/*.ts"
+  ]
+}
