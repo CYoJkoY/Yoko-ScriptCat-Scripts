@@ -9,7 +9,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ci-build-${{ github.workflow }}-${{ github.ref }}
@@ -20,11 +20,14 @@ jobs:
     name: Verify affected userscripts
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    if: "!contains(github.event.head_commit.message || '', '[skip ci]')"
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -111,8 +114,32 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Fail when a committed bundle is stale
-        if: steps.plan.outputs.has_targets == 'true'
+      - name: Commit rebuilt bundles to main
+        if: |
+          steps.plan.outputs.has_targets == 'true' &&
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- dist; then
+            echo "dist/ is already up to date."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist
+          git commit -m "chore: rebuild userscripts [skip ci]"
+          for i in 1 2 3; do
+            if git push; then break; fi
+            echo "push failed, rebasing and retrying ($i/3)..."
+            git pull --rebase origin main
+          done
+
+      - name: Fail when a committed bundle is stale (PR only)
+        if: |
+          steps.plan.outputs.has_targets == 'true' &&
+          github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -130,4 +157,3 @@ jobs:
           path: dist/*.user.js
           if-no-files-found: error
           retention-days: 7
-
