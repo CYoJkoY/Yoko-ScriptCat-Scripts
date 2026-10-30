@@ -32,7 +32,7 @@ dist/                       Generated userscripts committed for CDN installs
 
 ## Requirements
 
-Node.js 22.12 or newer and pnpm 12. Both are pinned in `package.json`; dependencies are locked in `pnpm-lock.yaml`.
+Node.js 22.22.2 or newer (also 24.15+) and pnpm 12.16.1. Both are pinned in `package.json`; dependencies are locked in `pnpm-lock.yaml`. jsdom 30 requires Node 22.22.2 or newer, so earlier 22.x releases cannot run the test suite.
 
 ## Commands
 
