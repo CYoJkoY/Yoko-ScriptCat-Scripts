@@ -163,12 +163,13 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 验证以语法检查和真实登录态页面上的无头 Edge（CDP）DOM 断言为主，不依赖仓库内的辅助脚本：
 
 ```powershell
-node --check scripts/heybox-up.js
+pnpm build -- --target heybox-up
+node --check dist/heybox-up.user.js
 ```
 
 签名用真实被服务端接受的样本 `(time=1792587363, nonce=2B3C207C9CF9AF2779DEE63C509DA4E8, path=/bbs/app/profile/bbs/comment/list)` 复核，得到 `hkey=VX2Y254`；服务端接受该签名，时间错误时返回 `系统时间不正确`。
 
-v0.4.47 的 10 组 DOM 用例在仓库外的 `E:\Temp\hbu-inspect` 用 `playwright-core` 驱动本机 Edge 执行，命令依次为 `node smoke-panel.js`、`node inspect-reader.js`、`node verify-race.js`、`node verify-actions.js`、`node verify-regressions.js`、`node verify-nav.js`、`node verify-search-contrast.js`、`node verify-media.js`、`node verify-login.js` 与 `node verify-pending.js`，全部通过；评论加载失败后的键盘重试另以 `node verify-retry-keyboard.js` 覆盖，从评论输入框按 Tab 可到达“重试”按钮，回车后重新请求并恢复列表。这些脚本与依赖不进入仓库。仓库当前没有 `package.json`、`tests/` 或 CI 工作流，因此不存在可执行的 `npm ci` / `npm test`。
+v0.4.47 的 10 组 DOM 用例在仓库外的 `E:\Temp\hbu-inspect` 用 `playwright-core` 驱动本机 Edge 执行，命令依次为 `node smoke-panel.js`、`node inspect-reader.js`、`node verify-race.js`、`node verify-actions.js`、`node verify-regressions.js`、`node verify-nav.js`、`node verify-search-contrast.js`、`node verify-media.js`、`node verify-login.js` 与 `node verify-pending.js`，全部通过；评论加载失败后的键盘重试另以 `node verify-retry-keyboard.js` 覆盖，从评论输入框按 Tab 可到达“重试”按钮，回车后重新请求并恢复列表。这些脚本与依赖不进入仓库。仓库现在提供 `package.json`、`tests/` 与 CI 工作流：共享层用例用 `pnpm test` 运行，类型检查用 `pnpm typecheck`，构建产物由 `pnpm build` 生成并可用 `node --check` 复核。
 
 社区内搜索用无头 Edge（CDP）验证：1440×900、900×800 与 390×844（内容宽 390px）下，面板均挂在 `.topic-link__main` 内筛选行的实际父节点 `.topic-link__panel`，且紧挨筛选行之前；390px 下社区胶囊实算为 `display: none`。提交“显卡”后请求带 `topic_id=18745`、`q`、`search_type=link`、`limit=30` 与 `hkey`，渲染 10 条结果，原生筛选行与信息流同时隐藏；焦点在站点导航时按 Esc 不关闭面板，焦点回到输入框后按 Esc 关闭并把焦点交还输入框。接口每页再夹 10 条 `space` 占位时，“加载更多”仍以 `offset=10`、`offset=20` 正常追加，结果从 10 条增至 30 条。夜航下搜索栏底色 `rgb(23, 29, 36)`、结果标题 `rgb(220, 229, 239)`；浅色下分别为 `rgb(255, 255, 255)` 与 `rgb(20, 25, 30)`。
 
@@ -216,7 +217,7 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 
 ## 七、运行时架构
 
-- 单一页面运行时：脚本仍以单个 `scripts/heybox-up.js` 分发，但内部按签名、存储、请求、样式、页面调度、主题、评论预览、沉浸阅读与路由工具分区；不引入框架，也不在运行时加载外部模块。
+- 单一页面运行时：脚本仍以单个 `dist/heybox-up.user.js` 分发，源码在 `scripts/heybox-up/` 内按签名、存储、请求、样式、页面调度、主题、评论预览、沉浸阅读与路由工具分模块，由 esbuild 打包成一个自包含文件；不引入框架，也不在运行时加载外部模块。
 - 路由感知调度：所有页面同步任务共用一个 `MutationObserver`，每个任务声明适用路由与 DOM 区域。路由切换时强制执行一轮清理，平时只有相关区域变化才唤醒对应任务，避免文章页的观察器为首页或收藏页重复工作。
 - 显式请求生命周期：所有 JSON 请求共用 15 秒超时封装；评论预览、阅读器评论、链接状态、社区搜索与收藏夹列表分别持有 `AbortController`。切换帖子、社区、预览或离开路由时取消旧请求，并把过期响应丢弃。
 - 有界缓存：评论树按 `linkId + accountId + page` 缓存，最多 24 页、2 分钟失效；发布文章主评论或 CY 后只清除对应帖子的缓存。收藏列表仍按用户隔离并使用 10 分钟缓存。
