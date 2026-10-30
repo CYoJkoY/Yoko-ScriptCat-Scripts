@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.46
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，缺省时用正文大图作封面并去掉空白占位，标题与底部提示避开阅读进度条；正文连续滚动，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置，评论区收进可关闭侧栏，保留原生回复、排序与默认/时间/点赞/作者模式，并按 is_cy 标记屏蔽插眼评论；侧栏顶部可直接发布文章主评论（is_cy: 0），支持 Ctrl/⌘+Enter 提交、字数统计、失败保留原文与错误提示，发布后同步评论数。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.47
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可直接发布文章主评论（is_cy: 0），支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试，并按 is_cy 标记屏蔽插眼评论。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -311,7 +311,9 @@
   const EMBEDDED_MEDIA_ATTRIBUTES = [...EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, "width", "height", "hidden", "style"];
   // Site layout toggles often land on an ancestor class or visibility attribute, which hides an embed indirectly.
   const ARTICLE_LAYOUT_OBSERVED_SELECTOR = "#page-bbs-link";
-  const PAGE_SYNC_ATTRIBUTE_FILTER = [...EMBEDDED_MEDIA_ATTRIBUTES, "class"];
+  // Lazy image URLs and video posters are written after first paint and must
+  // invalidate the reader signature when they arrive.
+  const PAGE_SYNC_ATTRIBUTE_FILTER = [...EMBEDDED_MEDIA_ATTRIBUTES, "class", "data-src", "data-original", "poster"];
   let pageSyncTimer = 0;
   let pageSyncLastRun = 0;
   let pageSyncRoute = readPageRoute();
@@ -877,6 +879,38 @@
     /* Search results: the site paints matched terms in a fixed #004b96, unreadable on the themed surface. */
     :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list em {
       color: var(--heybox-up-accent) !important;
+    }
+    /* Search autocomplete opens in a body-level Element Plus popper; theme the popper
+       itself and every inner wrapper so suggestions never fall back to black on white. */
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) {
+      border: 1px solid var(--heybox-up-border) !important;
+      background: var(--heybox-up-surface) !important;
+      color: var(--heybox-up-text) !important;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, .48) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) :is(.el-autocomplete-suggestion, .el-autocomplete-suggestion__wrap, .el-autocomplete-suggestion__list) {
+      background: transparent !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list li {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list li:hover,
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list li.highlighted,
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list li[aria-selected="true"] {
+      background: var(--heybox-up-subtle) !important;
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list .item-text {
+      color: var(--heybox-up-text) !important;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) .el-autocomplete-suggestion__list :is(em, b, strong) {
+      color: var(--heybox-up-accent) !important;
+      font-style: normal;
+    }
+    :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) :is(.el-popper__arrow, .popper__arrow)::before {
+      border-color: var(--heybox-up-border) !important;
+      background: var(--heybox-up-surface) !important;
     }
     :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.post__content, .image-text__content) :where(p, span, b, strong, em, i, li, h1, h2, h3, h4, h5, h6, blockquote, .text) {
       color: inherit !important;
@@ -2060,7 +2094,6 @@
       background: var(--heybox-up-surface, #fff) !important;
       font: 12px/1.4 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
     }
-    :host([data-reader-sheet="1"]) { padding-right: 58px !important; }
     .bar { display: flex; align-items: center; gap: 8px; }
     .group {
       display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px;
@@ -2982,6 +3015,47 @@
     { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" },
   ];
 
+  const NAV_MOTION_FRAMES = {
+    home: [
+      { transform: "translateY(0) scale(1)", offset: 0 },
+      { transform: "translateY(-5.5px) scale(1.06)", offset: 0.3 },
+      { transform: "translateY(1.4px) scale(0.99)", offset: 0.58 },
+      { transform: "translateY(-1.6px) scale(1.01)", offset: 0.78 },
+      { transform: "translateY(0) scale(1)", offset: 1 },
+    ],
+    community: [
+      { transform: "translateY(0) scale(1)", offset: 0 },
+      { transform: "translateY(-5px) scale(1.07)", offset: 0.35 },
+      { transform: "translateY(1.2px) scale(0.99)", offset: 0.66 },
+      { transform: "translateY(-1.2px) scale(1.01)", offset: 0.84 },
+      { transform: "translateY(0) scale(1)", offset: 1 },
+    ],
+    favour: [
+      { transform: "translateY(0) scale(1)", offset: 0 },
+      { transform: "translateY(1px) scale(0.92)", offset: 0.32 },
+      { transform: "translateY(-5.5px) scale(1.05)", offset: 0.64 },
+      { transform: "translateY(-1px) scale(1)", offset: 0.84 },
+      { transform: "translateY(0) scale(1)", offset: 1 },
+    ],
+    article: [
+      { transform: "rotate(0) translateY(0) scale(1)", offset: 0 },
+      { transform: "rotate(-8deg) translateY(-3.5px) scale(1.03)", offset: 0.3 },
+      { transform: "rotate(3.5deg) translateY(-1px) scale(1)", offset: 0.62 },
+      { transform: "rotate(-1.5deg) translateY(0) scale(1)", offset: 0.82 },
+      { transform: "rotate(0) translateY(0) scale(1)", offset: 1 },
+    ],
+  };
+
+  const NAV_PRESS_FRAMES = [
+    { transform: "scale(1)", offset: 0 },
+    { transform: "scale(0.86)", offset: 0.45 },
+    { transform: "scale(1)", offset: 1 },
+  ];
+
+  const navMotionAnimations = new WeakMap();
+  const navMotionBoundLinks = new WeakSet();
+  const navMotionBoundHosts = new WeakSet();
+
   const NAV_ICONS = {
     home: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-home" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></svg></span>',
     community: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-community" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></svg></span>',
@@ -3037,39 +3111,6 @@
     }
     .hbu-nav-icon { display: inline-flex; width: 18px; height: 18px; flex: none; align-items: center; justify-content: center; transform-origin: 50% 60%; will-change: transform; }
     .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
-    .hbu-nav-link:hover .hbu-ico-home, .hbu-nav-link:focus-visible .hbu-ico-home { animation: hbu-nav-home .62s cubic-bezier(.22, .8, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-community, .hbu-nav-link:focus-visible .hbu-ico-community { animation: hbu-nav-community .62s cubic-bezier(.22, .8, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-favour, .hbu-nav-link:focus-visible .hbu-ico-favour { animation: hbu-nav-favour .62s cubic-bezier(.22, .8, .3, 1); }
-    .hbu-nav-link:hover .hbu-ico-article, .hbu-nav-link:focus-visible .hbu-ico-article { animation: hbu-nav-article .62s cubic-bezier(.22, .8, .3, 1); }
-    .hbu-nav-link:active .hbu-ico-home, .hbu-nav-link:active .hbu-ico-community, .hbu-nav-link:active .hbu-ico-favour, .hbu-nav-link:active .hbu-ico-article { animation: hbu-nav-press .14s cubic-bezier(.3, .7, .3, 1); }
-    @keyframes hbu-nav-home {
-      0%, 100% { transform: translateY(0) scale(1); }
-      30% { transform: translateY(-5.5px) scale(1.06); }
-      58% { transform: translateY(1.4px) scale(.99); }
-      78% { transform: translateY(-1.6px) scale(1.01); }
-    }
-    @keyframes hbu-nav-community {
-      0%, 100% { transform: translateY(0) scale(1); }
-      35% { transform: translateY(-5px) scale(1.07); }
-      66% { transform: translateY(1.2px) scale(.99); }
-      84% { transform: translateY(-1.2px) scale(1.01); }
-    }
-    @keyframes hbu-nav-favour {
-      0%, 100% { transform: translateY(0) scale(1); }
-      32% { transform: translateY(1px) scale(.92); }
-      64% { transform: translateY(-5.5px) scale(1.05); }
-      84% { transform: translateY(-1px) scale(1); }
-    }
-    @keyframes hbu-nav-article {
-      0%, 100% { transform: rotate(0) translateY(0) scale(1); }
-      30% { transform: rotate(-8deg) translateY(-3.5px) scale(1.03); }
-      62% { transform: rotate(3.5deg) translateY(-1px) scale(1); }
-      82% { transform: rotate(-1.5deg) translateY(0) scale(1); }
-    }
-    @keyframes hbu-nav-press {
-      0%, 100% { transform: scale(1); }
-      45% { transform: scale(.86); }
-    }
     :root.${NAV_STATIC_CLASS} .hbu-nav-icon { animation: none !important; }
     @media (prefers-reduced-motion: reduce) {
       .hbu-nav-icon { animation: none !important; }
@@ -3087,6 +3128,56 @@
 
   function applyNavMotionPreference(value) {
     document.documentElement.classList.toggle(NAV_STATIC_CLASS, value === false);
+    if (!value) stopNavIconMotion();
+  }
+
+  // CSS :hover keyframes are unreliable when a browser or extension suppresses
+  // animations. Drive the icon directly so hover and keyboard focus always play.
+  function playNavIconMotion(icon, frames, duration, easing) {
+    if (!(icon instanceof HTMLElement)) return;
+    if (!readNavMotionPreference() || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    navMotionAnimations.get(icon)?.cancel();
+    const animation = icon.animate(frames, { duration: duration, easing: easing, fill: "none" });
+    navMotionAnimations.set(icon, animation);
+    animation.addEventListener("finish", () => {
+      if (navMotionAnimations.get(icon) === animation) navMotionAnimations.delete(icon);
+    }, { once: true });
+  }
+
+  function playNavLinkMotion(link) {
+    const name = link.getAttribute("data-nav") || "";
+    const frames = NAV_MOTION_FRAMES[name];
+    if (frames === undefined) return;
+    playNavIconMotion(link.querySelector(".hbu-nav-icon"), frames, 620, "cubic-bezier(.22, .8, .3, 1)");
+  }
+
+  function bindNavMotion(host) {
+    if (navMotionBoundHosts.has(host)) return;
+    navMotionBoundHosts.add(host);
+    host.addEventListener("pointerover", (event) => {
+      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
+      if (link === null || !host.contains(link)) return;
+      const from = event.relatedTarget;
+      if (from instanceof Node && link.contains(from)) return;
+      playNavLinkMotion(link);
+    });
+    host.addEventListener("focusin", (event) => {
+      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
+      if (link !== null && host.contains(link)) playNavLinkMotion(link);
+    });
+    host.addEventListener("pointerdown", (event) => {
+      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
+      if (link !== null && host.contains(link)) playNavIconMotion(link.querySelector(".hbu-nav-icon"), NAV_PRESS_FRAMES, 140, "cubic-bezier(.3, .7, .3, 1)");
+    });
+  }
+
+  function stopNavIconMotion() {
+    for (const icon of Array.from(document.querySelectorAll("#" + NAV_ID + " .hbu-nav-icon"))) {
+      const animation = navMotionAnimations.get(icon);
+      if (animation === undefined) continue;
+      animation.cancel();
+      navMotionAnimations.delete(icon);
+    }
   }
 
   function ensureNavStyle() {
@@ -3211,6 +3302,7 @@
       ).join("");
       host.addEventListener("click", handleNavClick);
     }
+    bindNavMotion(host);
     if (host.parentNode !== links || links.firstElementChild !== host) links.prepend(host);
     syncNavActive();
   }
@@ -4169,11 +4261,11 @@
   }
   // ==comment-rnd:end==
 
-  function buildLinkCommentUrl(linkId, page, signed) {
-    const base = signed === false ? { heybox_id: getHeyboxId(), os_type: "web", app: "heybox", client_type: "web", version: "999.0.4", web_version: "2.5", x_client_type: "web", x_app: "heybox_website", x_os_type: "Windows", device_info: "Chrome" } : createApiParams(COMMENT_TREE_API_PATH);
+  function buildLinkCommentUrl(linkId, page, signed, accountId = getHeyboxId()) {
+    const base = signed === false ? { heybox_id: accountId, os_type: "web", app: "heybox", client_type: "web", version: "999.0.4", web_version: "2.5", x_client_type: "web", x_app: "heybox_website", x_os_type: "Windows", device_info: "Chrome" } : createApiParams(COMMENT_TREE_API_PATH);
     const query = new URLSearchParams({
       ...base,
-      heybox_id: getHeyboxId(),
+      heybox_id: accountId,
       link_id: String(linkId),
       is_first: page === 1 ? "1" : "0",
       page: String(page),
@@ -4340,8 +4432,8 @@
   const RAIL_PAGE_CACHE_MAX = 24;
   const railPageCache = new Map();
 
-  function readRailPageCache(linkId, page) {
-    const key = linkId + ":" + page;
+  function readRailPageCache(linkId, page, accountId = "") {
+    const key = linkId + ":" + accountId + ":" + page;
     const cached = railPageCache.get(key);
     if (cached === undefined) return null;
     if (Date.now() - cached.savedAt > RAIL_PAGE_CACHE_TTL_MS) {
@@ -4359,8 +4451,8 @@
     };
   }
 
-  function writeRailPageCache(linkId, page, data) {
-    const key = linkId + ":" + page;
+  function writeRailPageCache(linkId, page, accountId, data) {
+    const key = linkId + ":" + accountId + ":" + page;
     railPageCache.delete(key);
     railPageCache.set(key, { savedAt: Date.now(), data: data });
     while (railPageCache.size > RAIL_PAGE_CACHE_MAX) {
@@ -4407,14 +4499,15 @@
   }
 
   async function fetchRailPage(linkId, page, options = {}) {
-    const cached = readRailPageCache(linkId, page);
+    const accountId = typeof options.accountId === "string" ? options.accountId : getHeyboxId();
+    const cached = readRailPageCache(linkId, page, accountId);
     if (cached !== null) return cached;
     const signal = options.signal;
     const wait = Math.max(0, 700 - (Date.now() - lastRailRequestAt));
     await waitForDelay(wait, signal);
     lastRailRequestAt = Date.now();
     const request = async (signed) => {
-      const response = await fetchWithTimeout(buildLinkCommentUrl(linkId, page, signed), {
+      const response = await fetchWithTimeout(buildLinkCommentUrl(linkId, page, signed, accountId), {
         credentials: "include",
         cache: "no-store",
         headers: { accept: "application/json" },
@@ -4454,7 +4547,7 @@
       },
       groups,
     };
-    writeRailPageCache(linkId, page, normalized);
+    writeRailPageCache(linkId, page, accountId, normalized);
     return { ...normalized, link: { ...normalized.link } };
   }
 
@@ -5435,10 +5528,16 @@
   const READER_ID = "heybox-up-reader";
   const READER_STYLE_ID = "heybox-up-reader-style";
   const READER_CLASS = "heybox-up-reader";
-  const READER_COMMENT_CLASS = "heybox-up-reader-comments";
-  const READER_BACKDROP_CLASS = "heybox-up-reader-backdrop";
+  const READER_SOURCE_ROOT_SELECTOR = ":is(.hb-bbs-image-text, .hb-bbs-post, .hb-bbs__video)";
+  const READER_SOURCE_BODY_SELECTOR = ".image-text__content, .post__content, .bbs-video__content-wrapper";
+  const READER_SOURCE_TITLE_SELECTOR = ".section-title__content, .post__title, .image-text__title";
+  const READER_SOURCE_HEADER_SELECTOR = ".image-text__header-image img, .post__header-image img";
+  const READER_SOURCE_VIDEO_SELECTOR = ".bbs-video__video-container video, video.bbs-video__video-box, .hb-bbs__video video";
+  const READER_MEDIA_EXCLUDE_SELECTOR = ".comment, .link-comment, .com-award-table, .com-game-card, .bbs-link__related-recommend, .bbs-video__user, .bbs-video__tags, .link-user, [class*='avatar'], [class*='icon'], [class*='emoji']";
   const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
   const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
+  // Give the site router enough time to mount a post before offering manual recovery.
+  const READER_PENDING_NOTICE_MS = 9000;
 
   const READER_ICONS = {
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
@@ -5512,22 +5611,10 @@
     body.heybox-up-reader .hb-bbs-link__header {
       display: none !important;
     }
-    body.heybox-up-reader .hb-bbs-link__reply-target {
-      display: block !important;
-      position: fixed !important;
-      left: auto !important;
-      right: 0;
-      bottom: 0;
-      z-index: 4031;
-      width: min(440px, 100vw) !important;
-      padding: 0 !important;
-      background: var(--hbu-reader-page);
-      border-top: 1px solid var(--hbu-reader-border);
-      transform: translateY(102%);
-      transition: transform .28s cubic-bezier(.3, .8, .3, 1);
-      visibility: hidden;
-    }
-    body.${READER_COMMENT_CLASS} .hb-bbs-link__reply-target { transform: translateY(0); visibility: visible; }
+    /* The custom panel is the only comment surface in the reader; the native drawer
+       and its reply box stay in the DOM but never paint. */
+    body.heybox-up-reader #page-bbs-link .link-comment,
+    body.heybox-up-reader .hb-bbs-link__reply-target { display: none !important; }
     body.heybox-up-reader #page-bbs-link {
       position: fixed !important;
       inset: 0 !important;
@@ -5555,7 +5642,8 @@
       box-shadow: none !important;
     }
     body.heybox-up-reader .hb-bbs-image-text,
-    body.heybox-up-reader .hb-bbs-post { display: none !important; }
+    body.heybox-up-reader .hb-bbs-post,
+    body.heybox-up-reader .hb-bbs__video { display: none !important; }
     body.heybox-up-reader .cpt-right-side.right { display: none !important; }
     /* The reader sits at 4001, so lift the site confirmation dialog above it. */
     body.heybox-up-reader .alert-container-wrapper .hb-cpt__alert-wrapper { z-index: 4100 !important; }
@@ -5584,7 +5672,8 @@
     .hbu-reader-scroll {
       position: relative;
       width: calc(100% - 80px);
-      height: 100%;
+      /* The progress bar owns its own 46px band; scrolling content never paints under it. */
+      height: calc(100% - 46px);
       overflow-x: hidden;
       overflow-y: auto;
       margin-inline: auto;
@@ -5607,8 +5696,8 @@
        统一的 .72em 节奏，跨页处也只保留一次段间距，避免 64px 的叠加空隙。 */
     .hbu-reader-page[data-kind="text"] { padding: 0 60px; }
     .hbu-reader-page[data-kind="heading"] { padding: 56px 60px 28px; }
-    .hbu-reader-page[data-kind="hero"] { min-height: 100dvh; padding: 0; }
-    .hbu-reader-page[data-kind="end"] { min-height: 100dvh; }
+    .hbu-reader-page[data-kind="hero"] { min-height: calc(100dvh - 46px); padding: 0; }
+    .hbu-reader-page[data-kind="end"] { min-height: calc(100dvh - 46px); }
     .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
       width: min(34em, 100%);
@@ -5680,8 +5769,35 @@
     .hbu-reader-rich blockquote :is(p, .text) {
       color: var(--hbu-reader-ink-2) !important;
     }
-    .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 32px 20px; background: #05070a; }
-    .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: 32px 20px; background: #05070a; }
+    /* Media pages keep their own breathing room above the dedicated progress band. */
+    .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 32px 20px 64px; background: #05070a; }
+    .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: 32px 20px 64px; background: #05070a; }
+    .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: 32px 20px 64px; background: #05070a; }
+    .hbu-reader-page[data-kind="notice"] { justify-content: center; padding: 32px 24px 72px; background: var(--hbu-reader-page); }
+    .hbu-reader-notice {
+      width: min(520px, 100%);
+      padding: 22px;
+      border: 1px solid var(--hbu-reader-border);
+      border-radius: 16px;
+      background: var(--hbu-reader-subtle);
+      color: var(--hbu-reader-ink);
+      text-align: center;
+    }
+    .hbu-reader-notice h2 { margin: 0 0 8px; font-size: 17px; line-height: 1.4; }
+    .hbu-reader-notice p { margin: 0; color: var(--hbu-reader-muted); font-size: 13px; line-height: 1.6; }
+    .hbu-reader-notice a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      margin-top: 14px;
+      padding: 0 14px;
+      border-radius: 9px;
+      background: var(--heybox-up-accent, #8fb0cf);
+      color: #061018;
+      font-size: 12px;
+      font-weight: 650;
+      text-decoration: none;
+    }
     .hbu-reader-embed {
       width: min(100%, 960px);
       margin: auto;
@@ -5704,11 +5820,22 @@
       cursor: zoom-in;
       box-shadow: 0 18px 50px rgba(0, 0, 0, .35);
     }
+    .hbu-reader-video {
+      display: block;
+      width: min(100%, 1120px);
+      max-height: calc(100dvh - 150px);
+      margin: auto;
+      aspect-ratio: 16 / 9;
+      border-radius: 12px;
+      background: #000;
+      object-fit: contain;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .35);
+    }
     .hbu-reader-page[data-kind="hero"] {
       padding: 0;
       justify-content: flex-start;
       align-items: stretch;
-      min-height: 100dvh;
+      min-height: calc(100dvh - 46px);
       background: var(--hbu-reader-page);
       color: var(--hbu-reader-ink);
     }
@@ -5895,41 +6022,6 @@
     .hbu-reader-progress-bar i { display: block; width: 0; height: 100%; background: #fff; transition: width .2s linear; }
     .hbu-reader-hint { color: rgba(255, 255, 255, .72); white-space: nowrap; }
     body.${READER_CLASS} #${PAGER_ID} { display: none !important; }
-    body.${READER_CLASS} #page-bbs-link .link-comment {
-      position: fixed !important;
-      top: 0 !important;
-      right: 0 !important;
-      bottom: 0 !important;
-      z-index: 4030;
-      display: flex !important;
-      flex-direction: column;
-      width: min(440px, 100vw) !important;
-      height: 100% !important;
-      height: 100dvh !important;
-      max-height: none !important;
-      margin: 0 !important;
-      border: 0 !important;
-      border-left: 1px solid var(--hbu-reader-border) !important;
-      border-radius: 0 !important;
-      background: var(--hbu-reader-page) !important;
-      color: var(--hbu-reader-ink) !important;
-      box-shadow: -24px 0 60px rgba(0, 0, 0, .34);
-      transform: translateX(102%);
-      transition: transform .28s cubic-bezier(.3, .8, .3, 1);
-      overscroll-behavior: contain;
-      visibility: hidden;
-    }
-    body.${READER_COMMENT_CLASS} #page-bbs-link .link-comment { transform: translateX(0); visibility: visible; }
-    body.${READER_CLASS} #page-bbs-link .link-comment .comment__comment-header { flex: none; padding-right: 52px; padding-top: 12px; background: var(--hbu-reader-page) !important; }
-    body.${READER_CLASS} #page-bbs-link .link-comment__list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-    body.${READER_COMMENT_CLASS} #page-bbs-link .link-comment__list { padding-bottom: 74px; }
-    body.${READER_CLASS} #page-bbs-link .link-comment__comment-item { border-color: var(--hbu-reader-border) !important; }
-    body.${READER_CLASS} .link-reply { border-color: var(--hbu-reader-border) !important; }
-    body.${READER_CLASS} #page-bbs-link .link-comment .link-reply { flex: none; border-top: 1px solid var(--hbu-reader-border) !important; background: var(--hbu-reader-page) !important; }
-    .hbu-reader-sheet-close { position: absolute; top: 12px; right: 12px; z-index: 101; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); cursor: pointer; }
-    .hbu-reader-sheet-close svg { width: 17px; height: 17px; }
-    .hbu-reader-sheet-status { margin: auto; padding: 28px 18px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
-    .hbu-reader-sheet-status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
     .hbu-reader-comments-panel { position: fixed; inset: 0; z-index: 4065; display: flex; justify-content: flex-end; }
     .hbu-reader-comments-panel[hidden] { display: none; }
     .hbu-reader-comments-scrim { position: absolute; inset: 0; background: rgba(2, 4, 7, .56); }
@@ -5956,13 +6048,14 @@
     .hbu-reader-comments-quote b { color: var(--hbu-reader-muted); font-weight: 600; }
     .hbu-reader-comments-text .hbu-reader-comments-emoji, .hbu-reader-comments-quote .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
     .hbu-reader-comments-text img, .hbu-reader-comments-quote img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
-    .hbu-reader-comments-status { padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
-    .hbu-reader-comments-status[data-retry="true"] { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+    .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
+    .hbu-reader-comments-status-retry { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 16px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+    .hbu-reader-comments-status-retry:hover { border-color: var(--heybox-up-accent, #8fb0cf); }
     .hbu-reader-comments-foot { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--hbu-reader-border); }
     .hbu-reader-comments-foot button, .hbu-reader-comments-foot a { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 14px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-decoration: none; cursor: pointer; }
     .hbu-reader-comments-foot a { margin-left: auto; border-color: transparent; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font-weight: 650; }
     .hbu-reader-comments-foot button:disabled { opacity: .55; cursor: default; }
-    .hbu-reader-comments-list[hidden], .hbu-reader-comments-status[hidden], .hbu-reader-comments-foot button[hidden] { display: none; }
+    .hbu-reader-comments-list[hidden], .hbu-reader-comments-status[hidden], .hbu-reader-comments-status [hidden], .hbu-reader-comments-foot button[hidden] { display: none; }
     .hbu-reader-composer {
       display: flex;
       flex: none;
@@ -5989,26 +6082,45 @@
     .hbu-reader-composer-input::placeholder { color: var(--hbu-reader-muted); }
     .hbu-reader-composer-input:focus { border-color: var(--heybox-up-accent, #8fb0cf); }
     .hbu-reader-composer-bar { display: flex; gap: 8px; align-items: center; }
+    .hbu-reader-composer-emoji-toggle { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid var(--hbu-reader-border); border-radius: 8px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
+    .hbu-reader-composer-emoji-toggle[aria-expanded="true"] { border-color: var(--heybox-up-accent, #8fb0cf); color: var(--hbu-reader-ink); }
+    .hbu-reader-composer-emoji { max-height: 196px; padding: 8px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--hbu-reader-border); border-radius: 10px; background: var(--hbu-reader-subtle); }
+    .hbu-reader-composer-emoji[hidden] { display: none; }
+    .hbu-reader-composer-emoji-grid { display: grid; grid-template-columns: repeat(6, 26px); gap: 6px; justify-content: center; }
+    .hbu-reader-composer-emoji-grid button { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+    .hbu-reader-composer-emoji-grid button:hover, .hbu-reader-composer-emoji-grid button:focus-visible { background: var(--hbu-reader-page); }
+    .hbu-reader-composer-emoji-grid span { display: block; width: 22px; height: 22px; background-repeat: no-repeat; }
     .hbu-reader-composer-status { min-width: 0; flex: 1 1 auto; color: var(--hbu-reader-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
     .hbu-reader-composer-count { flex: none; color: var(--hbu-reader-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
     .hbu-reader-composer-submit { flex: none; min-height: 30px; padding: 0 13px; border: 1px solid transparent; border-radius: 8px; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
     .hbu-reader-composer-submit:disabled { opacity: .55; cursor: default; }
-    .${READER_BACKDROP_CLASS} { position: fixed; inset: 0; z-index: 4009; background: rgba(2, 4, 7, .56); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
-    body.${READER_COMMENT_CLASS} .${READER_BACKDROP_CLASS} { opacity: 1; pointer-events: auto; }
-    :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link,
-    :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link .layout-normal,
-    :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link .content,
-    :root body.${READER_CLASS}.${READER_COMMENT_CLASS} #page-bbs-link .list { z-index: 4010 !important; background: transparent !important; background-color: transparent !important; pointer-events: none; }
-    body.${READER_COMMENT_CLASS} .layout-normal { z-index: auto !important; background: transparent !important; pointer-events: none; }
-    body.${READER_COMMENT_CLASS} .hb-bbs-link__reply-target .link-reply__operation-box { display: none !important; }
-    body.${READER_COMMENT_CLASS} .hb-bbs-link { visibility: hidden; }
-    body.${READER_COMMENT_CLASS} #page-bbs-link .link-comment { visibility: visible; pointer-events: auto; }
     .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: grid; place-items: center; padding: 24px; border: 0; background: rgba(2, 4, 7, .94); cursor: zoom-out; }
     .hbu-reader-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border-radius: 99px; background: rgba(5, 8, 11, .86); color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
     .hbu-reader-toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
     .hbu-reader-toast--fixed { position: fixed; bottom: 58px; z-index: 4060; }
-    .hbu-reader-pending { display: grid; height: 100%; place-items: center; color: var(--hbu-reader-muted); font-size: 13px; letter-spacing: .04em; }
+    .hbu-reader-pending { display: grid; height: 100%; place-items: center; padding: 24px; color: var(--hbu-reader-muted); font-size: 13px; letter-spacing: .04em; }
+    .hbu-reader-pending-card { display: flex; flex-direction: column; gap: 12px; align-items: center; text-align: center; }
+    .hbu-reader-pending-text { margin: 0; }
+    .hbu-reader-pending-actions { display: flex; gap: 8px; align-items: center; }
+    .hbu-reader-pending-actions[hidden] { display: none; }
+    .hbu-reader-pending-actions button {
+      min-height: 34px;
+      padding: 0 14px;
+      border: 1px solid var(--hbu-reader-border);
+      border-radius: 9px;
+      background: var(--hbu-reader-page);
+      color: var(--hbu-reader-ink);
+      font: inherit;
+      letter-spacing: 0;
+      cursor: pointer;
+    }
+    .hbu-reader-pending-actions button[data-retry] {
+      border-color: transparent;
+      background: var(--heybox-up-accent, #8fb0cf);
+      color: #061018;
+      font-weight: 650;
+    }
     @media (max-width: 900px) {
       #${READER_ID} { width: 100%; }
       .hbu-reader-scroll { width: 100%; }
@@ -6023,8 +6135,9 @@
       .hbu-reader-page[data-kind="hero"] { padding: 0; }
       .hbu-reader-page[data-kind="text"] { padding: 0 64px 0 24px; }
       .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
-      .hbu-reader-page[data-kind="media"] { padding: 20px 16px; }
-      .hbu-reader-page[data-kind="embed"] { padding: 20px 16px; }
+      .hbu-reader-page[data-kind="media"] { padding: 20px 16px 62px; }
+      .hbu-reader-page[data-kind="embed"] { padding: 20px 16px 62px; }
+      .hbu-reader-page[data-kind="video"] { padding: 20px 16px 62px; }
       .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
       .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
       .hbu-reader-rich { font-size: 17px; }
@@ -6058,7 +6171,7 @@
       .hbu-reader-page { padding-top: 72px; padding-bottom: 76px; }
       .hbu-reader-page[data-kind="hero"] { padding: 0; }
       .hbu-reader-page[data-kind="text"] { padding-top: 0; padding-bottom: 0; }
-      .hbu-reader-caption { padding: 14px 64px 22px 24px; }
+      .hbu-reader-caption { padding: 14px 64px 58px 24px; }
       .hbu-reader-rail { bottom: 70px; gap: 7px; }
       .hbu-reader-action { width: 38px; min-height: 38px; }
       .hbu-reader-action-count { display: none; }
@@ -6067,16 +6180,7 @@
       .hbu-reader-scroll { scroll-behavior: auto; }
       #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
     }
-    /* The reading progress bar is a fixed 46px overlay; keep hero and end content above it. */
-    .hbu-reader-page[data-kind="hero"]::after,
-    .hbu-reader-page[data-kind="end"]::after {
-      content: "";
-      display: block;
-      flex: none;
-      width: 100%;
-      height: 46px;
-      pointer-events: none;
-    }
+    /* The progress bar is now a sibling band, not an overlay on a page. */
   `;
 
   const PAGER_ICONS = {
@@ -6180,7 +6284,7 @@
       if (name !== "" && !topics.includes(name)) topics.push(name);
     }
     const heading = normalizeFeedText(title, FEED_TITLE_MAX)
-      || normalizeFeedText(scope.querySelector(".section-title__content, .post__title, .image-text__title")?.textContent ?? "", FEED_TITLE_MAX);
+      || normalizeFeedText(scope.querySelector(READER_SOURCE_TITLE_SELECTOR)?.textContent ?? "", FEED_TITLE_MAX);
     return { title: heading, authorId: authorId, author: author, topicIds: topicIds, topics: topics };
   }
 
@@ -6691,10 +6795,7 @@
   function watchReader(navigation) {
     if (!document.body) return;
     let host = null;
-    let backdrop = null;
     let lightbox = null;
-    let closeSheetButton = null;
-    let sheetStatusTimer = 0;
     let favourPanel = null;
     let favourButton = null;
     let spacingPanel = null;
@@ -6734,6 +6835,7 @@
     // Normal comments published in the current article; the first tree page may predate them.
     let articleCommentPublishedCount = 0;
     let actionBusy = false;
+    let favourMenuBusy = false;
     let cyDialog = null;
     let cyTextarea = null;
     let cySubmit = null;
@@ -6741,18 +6843,24 @@
     let cyBusy = false;
     let articleCommentBusy = false;
     const ARTICLE_COMMENT_MAX_LENGTH = 1000;
+    const articleComposerEmojiClosers = new WeakMap();
     let commentPanel = null;
     let commentPanelList = null;
     let commentPanelStatus = null;
+    let commentPanelStatusText = null;
+    let commentPanelRetry = null;
     let commentPanelMeta = null;
     let commentPanelMore = null;
     let commentPanelClose = null;
-    let commentOpenToken = 0;
     let commentState = createCommentState();
     let readerPendingAdvanceSourceId = "";
     let readerPendingAdvanceRevision = -1;
     let readerAdvanceLocked = false;
     let readerAdvanceLockToken = 0;
+    let readerPendingCard = null;
+    let readerPendingTimer = 0;
+    let readerPendingArticleId = "";
+    let readerPendingGeneration = -1;
 
     function createCommentState() {
       return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loaded: false, seq: 0 };
@@ -6834,13 +6942,16 @@
       if (nativeActionBox !== null && nativeActionBox.isConnected) return nativeActionBox;
       const article = sourceCache?.article?.isConnected === true
         ? sourceCache.article
-        : document.querySelector("#page-bbs-link .hb-bbs-image-text, #page-bbs-link .hb-bbs-post");
+        : document.querySelector("#page-bbs-link " + READER_SOURCE_ROOT_SELECTOR);
       if (article !== nativeActionArticle) {
         nativeActionArticle = article;
         nativeActionBox = null;
         nativeFavourButton = null;
       }
-      nativeActionBox = Array.from(article?.querySelectorAll(".link-reply__operation-box") || [])
+      // Video posts keep their article action box outside .hb-bbs__video, so scope the
+      // lookup to the page instead of the media root. Comment rows are excluded below.
+      const actionScope = article?.closest("#page-bbs-link") || document.querySelector("#page-bbs-link");
+      nativeActionBox = Array.from(actionScope?.querySelectorAll(".link-reply__operation-box") || [])
         .find((box) => box.closest("[data-comment-id]") === null) || null;
       return nativeActionBox;
     };
@@ -6849,7 +6960,11 @@
 
     const nativeFavour = () => {
       if (nativeFavourButton !== null && nativeFavourButton.isConnected) return nativeFavourButton;
-      nativeFavourButton = document.querySelector("#page-bbs-link .hb-cpt__favour-btn");
+      const scoped = articleActionBox()?.querySelector(".hb-cpt__favour-btn") || null;
+      nativeFavourButton = scoped instanceof HTMLButtonElement
+        ? scoped
+        : Array.from(document.querySelectorAll("#page-bbs-link .hb-cpt__favour-btn"))
+          .find((node) => node.closest("[data-comment-id]") === null) || null;
       return nativeFavourButton;
     };
 
@@ -6866,12 +6981,15 @@
       return String(count);
     };
 
-    const postReaderApi = async (path, body) => {
+    // The site can keep a valid session while the heybox_id cookie is still missing, so
+    // every write takes the resolved account ID instead of reading the cookie directly.
+    const postReaderApi = async (path, body, accountId) => {
+      if (typeof accountId !== "string" || accountId === "") throw new Error("请先登录小黑盒");
       const params = createApiParams(path);
       if (path === COMMENT_CREATE_API_PATH) {
         params._rnd = await createCommentRnd(params.nonce, params._time);
       }
-      const query = new URLSearchParams({ ...params, heybox_id: getHeyboxId(), target: "heybox_app" });
+      const query = new URLSearchParams({ ...params, heybox_id: accountId, target: "heybox_app" });
       const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
         method: "POST",
         credentials: "include",
@@ -6886,10 +7004,10 @@
       return data.result;
     };
 
-    const fetchFavourFolders = async (signal) => {
-      if (getHeyboxId() === "") throw new Error("请先登录小黑盒");
+    const fetchFavourFolders = async (signal, accountId) => {
+      if (typeof accountId !== "string" || accountId === "") throw new Error("请先登录小黑盒");
       const path = "/bbs/app/profile/fav/folders";
-      const query = new URLSearchParams({ ...createApiParams(path), heybox_id: getHeyboxId(), target: "heybox_app" });
+      const query = new URLSearchParams({ ...createApiParams(path), heybox_id: accountId, target: "heybox_app" });
       const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
         credentials: "include",
         cache: "no-store",
@@ -6917,17 +7035,20 @@
       return link;
     };
 
-    const loadLinkState = async () => {
+    // Anonymous reads stay available while the account ID is being restored; the resolved
+    // ID is only used to keep per-account caches apart.
+    const loadLinkState = async (accountId) => {
       if (articleId === "") return null;
       if (linkStatePromise !== null) return linkStatePromise;
       const targetId = articleId;
+      const resolved = typeof accountId === "string" ? accountId : "";
       const controller = new AbortController();
       linkStateController = controller;
       const publishedAtStart = cyPublishedCount;
       const commentsAtStart = articleCommentPublishedCount;
       linkStatePromise = (async () => {
         try {
-          const page = await fetchRailPage(targetId, 1, { signal: controller.signal });
+          const page = await fetchRailPage(targetId, 1, { signal: controller.signal, accountId: resolved });
           if (articleId !== targetId || linkStateController !== controller) return null;
           const publishedDuringRequest = cyPublishedCount - publishedAtStart;
           const commentsDuringRequest = articleCommentPublishedCount - commentsAtStart;
@@ -6949,23 +7070,22 @@
 
     const toggleLike = async () => {
       if (actionBusy || articleId === "") return;
-      if (getHeyboxId() === "") {
-        showToast("请先登录小黑盒");
-        return;
-      }
       actionBusy = true;
       const targetId = articleId;
       const generation = readerGeneration;
       try {
+        const accountId = await resolveHeyboxId();
+        if (articleId !== targetId || readerGeneration !== generation) return;
+        if (accountId === "") throw new Error("请先登录小黑盒");
         const counts = readCounts();
-        const current = linkState === null ? await loadLinkState() : linkState;
+        const current = linkState === null ? await loadLinkState(accountId) : linkState;
         if (articleId !== targetId || readerGeneration !== generation) return;
         const on = current !== null && current.isAward;
         const base = current === null ? parseCompactCount(counts.like) : current.awardCount;
         await postReaderApi("/bbs/app/profile/award/link", {
           link_id: targetId,
           award_type: on ? 0 : 1,
-        });
+        }, accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
         linkState = {
           ...(current || {
@@ -7000,19 +7120,20 @@
       const targetId = articleId;
       const generation = readerGeneration;
       try {
+        const userId = await resolveHeyboxId();
+        if (articleId !== targetId || readerGeneration !== generation) return;
+        if (userId === "") throw new Error("请先登录小黑盒");
         const counts = readCounts();
-        const current = linkState === null ? await loadLinkState() : linkState;
+        const current = linkState === null ? await loadLinkState(userId) : linkState;
         if (articleId !== targetId || readerGeneration !== generation) return;
         const on = current !== null && current.isFavour;
         const base = current === null ? parseCompactCount(counts.favour) : current.favourCount;
-        const userId = getHeyboxId();
-        if (userId === "") throw new Error("请先登录小黑盒");
         await postReaderApi("/bbs/app/link/favour", {
           favour_type: on ? 2 : 1,
           link_id: targetId,
           userid: userId,
           folder_id: on ? "" : String(folderId || ""),
-        });
+        }, userId);
         if (articleId !== targetId || readerGeneration !== generation) return;
         linkState = {
           ...(current || {
@@ -7197,6 +7318,7 @@
     };
 
     const openFavourMenu = async (rail, button) => {
+      if (favourMenuBusy) return;
       if (favourPanel !== null && !favourPanel.hidden) {
         closeFavourMenu();
         return;
@@ -7204,16 +7326,27 @@
       closeSpacingMenu();
       const targetId = articleId;
       const generation = readerGeneration;
-      if (linkState === null) await loadLinkState();
-      if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
-      if (linkState !== null && linkState.isFavour) {
-        void toggleFavour();
-        return;
+      favourMenuBusy = true;
+      try {
+        const accountId = await resolveHeyboxId();
+        if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
+        if (linkState === null) await loadLinkState(accountId);
+        if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
+        if (linkState !== null && linkState.isFavour) {
+          void toggleFavour();
+          return;
+        }
+        if (accountId === "") {
+          showToast("请先登录小黑盒");
+          return;
+        }
+        await showFavourPanel(rail, button, accountId);
+      } finally {
+        favourMenuBusy = false;
       }
-      if (getHeyboxId() === "") {
-        showToast("请先登录小黑盒");
-        return;
-      }
+    };
+
+    const showFavourPanel = async (rail, button, accountId) => {
       if (favourPanel === null) {
         favourPanel = document.createElement("div");
         favourPanel.className = "hbu-reader-favour-menu";
@@ -7232,7 +7365,7 @@
       const controller = new AbortController();
       favourLoadController = controller;
       try {
-        const folders = await fetchFavourFolders(controller.signal);
+        const folders = await fetchFavourFolders(controller.signal, accountId);
         if (favourPanel === null || favourLoadController !== controller) return;
         favourLoadController = null;
         if (folders.length === 0) {
@@ -7272,7 +7405,7 @@
       cyTextarea = null;
       cySubmit = null;
       cyStatus = null;
-      if (host !== null && !document.body.classList.contains(READER_COMMENT_CLASS)) {
+      if (host !== null && !isCommentPanelOpen()) {
         host.querySelector('[data-action="cy"]')?.focus({ preventScroll: true });
       }
     };
@@ -7292,20 +7425,23 @@
       const targetId = articleId;
       const generation = readerGeneration;
       try {
+        const accountId = await resolveHeyboxId();
+        if (articleId !== targetId || readerGeneration !== generation) return;
+        if (accountId === "") throw new Error("请先登录小黑盒");
         await postReaderApi(COMMENT_CREATE_API_PATH, {
           is_cy: 1,
           link_id: targetId,
           reply_id: "-1",
           root_id: "-1",
           text: text,
-        });
+        }, accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
         cyPublishedCount += 1;
         clearRailPageCache(targetId);
         if (linkState !== null) {
           addPublishedActions(linkState, 1, 0);
         } else {
-          void loadLinkState();
+          void loadLinkState(accountId);
         }
         showToast("CY 已发布");
         closeCyDialog();
@@ -7513,23 +7649,28 @@
       if (commentPanelStatus !== null) {
         if (commentState.error !== "") {
           commentPanelStatus.hidden = false;
-          commentPanelStatus.dataset.retry = "true";
-          commentPanelStatus.textContent = commentState.error + "，点击重试";
+          if (commentPanelStatusText !== null) commentPanelStatusText.textContent = commentState.error;
+          if (commentPanelRetry !== null) {
+            commentPanelRetry.hidden = false;
+            commentPanelRetry.disabled = commentState.loading;
+          }
         } else if (commentState.loading && commentState.items.length === 0) {
           commentPanelStatus.hidden = false;
-          commentPanelStatus.dataset.retry = "false";
-          commentPanelStatus.textContent = "正在加载评论…";
+          if (commentPanelStatusText !== null) commentPanelStatusText.textContent = "正在加载评论…";
+          if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
         } else if (!commentState.loaded) {
           commentPanelStatus.hidden = false;
-          commentPanelStatus.dataset.retry = "false";
-          commentPanelStatus.textContent = "正在准备评论…";
+          if (commentPanelStatusText !== null) commentPanelStatusText.textContent = "正在准备评论…";
+          if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
         } else if (visible.length === 0) {
           commentPanelStatus.hidden = false;
-          commentPanelStatus.dataset.retry = "false";
-          commentPanelStatus.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+          if (commentPanelStatusText !== null) {
+            commentPanelStatusText.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+          }
+          if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
         } else {
           commentPanelStatus.hidden = true;
-          commentPanelStatus.dataset.retry = "false";
+          if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
         }
       }
       if (commentPanelMore !== null) {
@@ -7542,6 +7683,7 @@
     const loadReaderComments = async (page) => {
       if (commentState.loading) return;
       const seq = ++commentState.seq;
+      const targetId = articleId;
       commentLoadController?.abort();
       const controller = new AbortController();
       commentLoadController = controller;
@@ -7556,7 +7698,9 @@
       }
       renderReaderComments();
       try {
-        const data = await fetchRailPage(articleId, page, { signal: controller.signal });
+        const accountId = await resolveHeyboxId(controller.signal);
+        if (seq !== commentState.seq || commentLoadController !== controller) return;
+        const data = await fetchRailPage(targetId, page, { signal: controller.signal, accountId: accountId });
         if (seq !== commentState.seq || commentLoadController !== controller) return;
         const seen = new Set(commentState.items.map((item) => item.id));
         const fresh = data.items.filter((item) => item.id === "" || !seen.has(item.id));
@@ -7565,7 +7709,12 @@
         commentState.total = data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
         commentState.hasMore = data.items.length >= RAIL_PAGE_SIZE;
         commentState.loaded = true;
-        if (linkState !== null && data.total > 0) linkState.commentCount = data.total;
+        // The tree endpoint can lag behind a successful publish. Keep the freshly
+        // incremented count visible while still accepting a larger server total.
+        if (linkState !== null && Number.isFinite(data.total) && data.total > 0) {
+          const current = Number(linkState.commentCount);
+          linkState.commentCount = Math.max(Number.isFinite(current) ? current : 0, data.total);
+        }
         syncActionStates();
       } catch (error) {
         if (isAbortError(error)) return;
@@ -7596,6 +7745,7 @@
 
     const clearArticleComposers = () => {
       for (const root of readArticleComposers()) {
+        articleComposerEmojiClosers.get(root)?.();
         const input = root.querySelector(".hbu-reader-composer-input");
         const status = root.querySelector(".hbu-reader-composer-status");
         const count = root.querySelector(".hbu-reader-composer-count");
@@ -7606,12 +7756,6 @@
       syncArticleComposers();
     };
 
-    const removeNativeArticleComposers = () => {
-      for (const node of Array.from(document.querySelectorAll("#page-bbs-link .link-comment [data-hbu-article-composer]"))) {
-        node.remove();
-      }
-    };
-
     const submitArticleComment = async (input, status) => {
       if (articleCommentBusy) return;
       const text = input.value.trim();
@@ -7620,23 +7764,22 @@
         input.focus({ preventScroll: true });
         return;
       }
-      if (getHeyboxId() === "") {
-        status.textContent = "请先登录小黑盒";
-        return;
-      }
       const targetId = articleId;
       const generation = readerGeneration;
       articleCommentBusy = true;
       syncArticleComposers();
       status.textContent = "";
       try {
+        const accountId = await resolveHeyboxId();
+        if (articleId !== targetId || readerGeneration !== generation) return;
+        if (accountId === "") throw new Error("请先登录小黑盒");
         await postReaderApi(COMMENT_CREATE_API_PATH, {
           is_cy: 0,
           link_id: targetId,
           reply_id: "-1",
           root_id: "-1",
           text: text,
-        });
+        }, accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
         clearArticleComposers();
         showToast("评论已发布");
@@ -7645,7 +7788,7 @@
         if (linkState !== null) {
           linkState.commentCount = Math.max(0, Number(linkState.commentCount) || 0) + 1;
         } else {
-          void loadLinkState();
+          void loadLinkState(accountId);
         }
         syncActionStates();
         if (commentPanel !== null && !commentPanel.hidden && !commentState.loading) void loadReaderComments(1);
@@ -7662,6 +7805,107 @@
           syncArticleComposers();
         }
       }
+    };
+
+    const createComposerEmojiPicker = (input, status, toggle, panel) => {
+      const grid = document.createElement("div");
+      grid.className = "hbu-reader-composer-emoji-grid";
+      let isOpen = false;
+      let outsideBound = false;
+      const detachOutside = () => {
+        if (!outsideBound) return;
+        document.removeEventListener("pointerdown", onOutsidePointer, true);
+        outsideBound = false;
+      };
+      const close = (restoreFocus) => {
+        if (!isOpen) return;
+        isOpen = false;
+        panel.hidden = true;
+        toggle.setAttribute("aria-expanded", "false");
+        detachOutside();
+        if (restoreFocus === true && toggle.isConnected) toggle.focus({ preventScroll: true });
+      };
+      const onOutsidePointer = (event) => {
+        const target = event.target;
+        if (target instanceof Node && (panel.contains(target) || toggle.contains(target))) return;
+        close(false);
+      };
+      const focusAt = (index) => {
+        if (buttons.length === 0) return;
+        buttons[Math.min(buttons.length - 1, Math.max(0, index))].focus({ preventScroll: true });
+      };
+      const insert = (name) => {
+        const token = "[cube_" + name + "]";
+        const original = input.value;
+        const start = input.selectionStart ?? original.length;
+        const end = input.selectionEnd ?? start;
+        if (original.length - (end - start) + token.length > ARTICLE_COMMENT_MAX_LENGTH) {
+          input.setSelectionRange(start, end);
+          status.textContent = "评论最多 " + ARTICLE_COMMENT_MAX_LENGTH + " 字，无法插入表情";
+          return;
+        }
+        status.textContent = "";
+        input.setRangeText(token, start, end, "end");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus({ preventScroll: true });
+      };
+      const open = () => {
+        if (isOpen) return;
+        isOpen = true;
+        panel.hidden = false;
+        toggle.setAttribute("aria-expanded", "true");
+        document.addEventListener("pointerdown", onOutsidePointer, true);
+        outsideBound = true;
+        focusAt(0);
+      };
+      const buttons = RAIL_EMOJI_NAMES.map((name, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("aria-label", name);
+        button.title = name;
+        const glyph = document.createElement("span");
+        const scale = 22 / RAIL_EMOJI_CELL;
+        glyph.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
+        glyph.style.backgroundSize = 102 * scale + "px " + 306 * scale + "px";
+        glyph.style.backgroundPosition = "-" + (index % 6) * 22 + "px -" + Math.floor(index / 6) * 22 + "px";
+        button.append(glyph);
+        button.addEventListener("click", () => insert(name));
+        grid.append(button);
+        return button;
+      });
+      panel.append(grid);
+      panel.addEventListener("keydown", (event) => {
+        const index = buttons.indexOf(document.activeElement);
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          close(true);
+          return;
+        }
+        if (event.key === "Home") {
+          event.preventDefault();
+          focusAt(0);
+          return;
+        }
+        if (event.key === "End") {
+          event.preventDefault();
+          focusAt(buttons.length - 1);
+          return;
+        }
+        const delta = event.key === "ArrowLeft" ? -1
+          : event.key === "ArrowRight" ? 1
+            : event.key === "ArrowUp" ? -6
+              : event.key === "ArrowDown" ? 6
+                : 0;
+        if (delta === 0) return;
+        event.preventDefault();
+        focusAt((index < 0 ? 0 : index) + delta);
+      });
+      toggle.addEventListener("click", () => {
+        if (isOpen) close(true);
+        else open();
+      });
+      return { close: close };
     };
 
     const createArticleComposer = () => {
@@ -7687,6 +7931,24 @@
       submit.className = "hbu-reader-composer-submit";
       submit.textContent = "发布";
       submit.disabled = true;
+      const emojiToggle = document.createElement("button");
+      emojiToggle.type = "button";
+      emojiToggle.className = "hbu-reader-composer-emoji-toggle";
+      emojiToggle.textContent = "表情";
+      emojiToggle.setAttribute("aria-label", "插入表情");
+      emojiToggle.setAttribute("aria-expanded", "false");
+      const emojiPanel = document.createElement("div");
+      emojiPanel.className = "hbu-reader-composer-emoji";
+      emojiPanel.hidden = true;
+      emojiPanel.setAttribute("role", "group");
+      emojiPanel.setAttribute("aria-label", "表情列表");
+      const emojiPicker = createComposerEmojiPicker(input, status, emojiToggle, emojiPanel);
+      root.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || emojiPanel.hidden) return;
+        event.preventDefault();
+        event.stopPropagation();
+        emojiPicker.close(true);
+      }, true);
       input.addEventListener("input", () => {
         count.textContent = input.value.length + "/" + ARTICLE_COMMENT_MAX_LENGTH;
         submit.disabled = articleCommentBusy || input.value.trim() === "";
@@ -7697,35 +7959,10 @@
         if (!submit.disabled) void submitArticleComment(input, status);
       });
       submit.addEventListener("click", () => void submitArticleComment(input, status));
-      bar.append(status, count, submit);
-      root.append(input, bar);
+      bar.append(emojiToggle, status, count, submit);
+      root.append(input, emojiPanel, bar);
+      articleComposerEmojiClosers.set(root, () => emojiPicker.close(false));
       return root;
-    };
-
-    const ensureNativeArticleComposer = (sheet) => {
-      if (sheet.querySelector("[data-hbu-article-composer]") !== null) return;
-      const composer = createArticleComposer();
-      const header = sheet.querySelector(".comment__comment-header");
-      if (header !== null) {
-        header.after(composer);
-        return;
-      }
-      const list = sheet.querySelector(".link-comment__list");
-      if (list !== null) {
-        sheet.insertBefore(composer, list);
-        return;
-      }
-      sheet.prepend(composer);
-    };
-
-    // The native sheet keeps the close button in its top-right corner; inset the sort bar so
-    // the CY toggle stays clickable instead of sitting under the floating button.
-    const markReaderSheetSort = (sheet) => {
-      sheet.querySelector("#" + COMMENT_SORT_HOST_ID)?.setAttribute("data-reader-sheet", "1");
-    };
-
-    const clearReaderSheetSort = () => {
-      document.querySelector("#page-bbs-link .link-comment #" + COMMENT_SORT_HOST_ID)?.removeAttribute("data-reader-sheet");
     };
 
     const trapCommentPanelTab = (event) => {
@@ -7750,6 +7987,8 @@
         commentPanel = null;
         commentPanelList = null;
         commentPanelStatus = null;
+        commentPanelStatusText = null;
+        commentPanelRetry = null;
         commentPanelMeta = null;
         commentPanelMore = null;
         commentPanelClose = null;
@@ -7786,7 +8025,17 @@
       list.className = "hbu-reader-comments-list";
       const status = document.createElement("div");
       status.className = "hbu-reader-comments-status";
-      status.setAttribute("role", "status");
+      status.setAttribute("role", "group");
+      status.setAttribute("aria-label", "评论加载状态");
+      const statusText = document.createElement("div");
+      statusText.setAttribute("role", "status");
+      statusText.setAttribute("aria-live", "polite");
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "hbu-reader-comments-status-retry";
+      retry.textContent = "重试";
+      retry.hidden = true;
+      status.append(statusText, retry);
       body.append(list, status);
       const foot = document.createElement("div");
       foot.className = "hbu-reader-comments-foot";
@@ -7804,6 +8053,8 @@
       commentPanel = panel;
       commentPanelList = list;
       commentPanelStatus = status;
+      commentPanelStatusText = statusText;
+      commentPanelRetry = retry;
       commentPanelMeta = meta;
       commentPanelMore = more;
       commentPanelClose = close;
@@ -7812,8 +8063,9 @@
       more.addEventListener("click", () => {
         if (!commentState.loading) void loadReaderComments(commentState.page + 1);
       });
-      status.addEventListener("click", () => {
-        if (status.dataset.retry !== "true" || commentState.loading) return;
+      retry.addEventListener("click", () => {
+        if (commentState.loading) return;
+        commentPanelClose?.focus({ preventScroll: true });
         void loadReaderComments(commentState.page > 0 ? commentState.page + 1 : 1);
       });
       sheet.addEventListener("keydown", trapCommentPanelTab);
@@ -7821,8 +8073,16 @@
       return panel;
     };
 
-    const openFallbackComments = () => {
+    const isCommentPanelOpen = () => commentPanel !== null && !commentPanel.hidden;
+
+    const openComments = () => {
       if (host === null) return;
+      closeFavourMenu();
+      closeCyDialog();
+      if (isCommentPanelOpen()) {
+        closeComments();
+        return;
+      }
       const panel = ensureCommentPanel();
       panel.hidden = false;
       host.inert = true;
@@ -7831,49 +8091,11 @@
       if (!commentState.loaded && !commentState.loading) void loadReaderComments(1);
     };
 
-    const openNativeComments = (sheet) => {
-      if (commentPanel !== null) commentPanel.hidden = true;
-      document.body.classList.add(READER_COMMENT_CLASS);
-      host.inert = true;
-      closeSheetButton?.focus({ preventScroll: true });
-      watchSheetComments();
-    };
-
-    const openComments = async () => {
-      if (host === null) return;
-      closeFavourMenu();
-      closeCyDialog();
-      if (document.body.classList.contains(READER_COMMENT_CLASS) || (commentPanel !== null && !commentPanel.hidden)) {
-        closeComments();
-        return;
-      }
-      const token = ++commentOpenToken;
-      const sheet = getCommentsSheet();
-      if (sheet !== null) {
-        openNativeComments(sheet);
-        return;
-      }
-      showToast("正在加载评论…");
-      const deadline = Date.now() + 1400;
-      while (Date.now() < deadline && token === commentOpenToken) {
-        await new Promise((resolve) => window.setTimeout(resolve, 100));
-        const late = getCommentsSheet();
-        if (late !== null) {
-          openNativeComments(late);
-          return;
-        }
-      }
-      if (token === commentOpenToken) openFallbackComments();
-    };
-
     const resetReaderComments = () => {
-      commentOpenToken += 1;
       commentLoadController?.abort();
       commentLoadController = null;
-      removeNativeArticleComposers();
       articleCommentBusy = false;
       clearArticleComposers();
-      document.body.classList.remove(READER_COMMENT_CLASS);
       if (host !== null) host.inert = false;
       if (commentPanel !== null) {
         commentPanel.hidden = true;
@@ -7881,102 +8103,17 @@
         if (link !== null) link.href = LINK_HREF_PREFIX + articleId;
       }
       commentState = createCommentState();
-      clearSheetStatus();
-      clearReaderSheetSort();
     };
 
     document.addEventListener(HIDE_CY_EVENT, () => {
       if (commentPanel !== null && !commentPanel.hidden) renderReaderComments();
     });
 
-    const clearSheetStatus = () => {
-      window.clearTimeout(sheetStatusTimer);
-      document.querySelectorAll(".hbu-reader-sheet-status").forEach((node) => node.remove());
-    };
-
-    const watchSheetComments = () => {
-      clearSheetStatus();
-      const sheet = document.querySelector("#page-bbs-link .link-comment");
-      if (sheet === null) return;
-      ensureNativeArticleComposer(sheet);
-      markReaderSheetSort(sheet);
-      if (sheet.querySelector("[data-comment-id]") !== null) return;
-      const list = sheet.querySelector(".link-comment__list");
-      let attempts = 0;
-      const status = document.createElement("div");
-      status.className = "hbu-reader-sheet-status";
-      status.textContent = "正在加载评论…";
-      sheet.append(status);
-      const retry = () => {
-        status.classList.remove("retry");
-        status.textContent = "正在加载评论…";
-        attempts = 0;
-        if (list instanceof HTMLElement) {
-          list.scrollTop += 1;
-          list.dispatchEvent(new Event("scroll"));
-        }
-        window.dispatchEvent(new Event("resize"));
-        scheduleSheetCheck();
-      };
-      const scheduleSheetCheck = () => {
-        window.clearTimeout(sheetStatusTimer);
-        sheetStatusTimer = window.setTimeout(() => {
-          if (!document.body.classList.contains(READER_COMMENT_CLASS)) {
-            status.remove();
-            return;
-          }
-          ensureNativeArticleComposer(sheet);
-          if (sheet.querySelector("[data-comment-id]") !== null) {
-            status.remove();
-            return;
-          }
-          attempts += 1;
-          if (attempts < 8) {
-            scheduleSheetCheck();
-            return;
-          }
-          if (sheet.querySelector(".hb-cpt__empty, [class*='empty']") !== null) {
-            status.remove();
-            return;
-          }
-          status.textContent = "评论加载较慢，点击重试";
-          status.classList.add("retry");
-        }, 400);
-      };
-      status.addEventListener("click", () => {
-        if (status.classList.contains("retry")) retry();
-      });
-      scheduleSheetCheck();
-    };
-
     const closeComments = () => {
-      commentOpenToken += 1;
-      if (document.body.classList.contains(READER_COMMENT_CLASS)) {
-        clearSheetStatus();
-        clearReaderSheetSort();
-        document.body.classList.remove(READER_COMMENT_CLASS);
-      }
-      if (commentPanel !== null && !commentPanel.hidden) commentPanel.hidden = true;
+      if (commentPanel === null || commentPanel.hidden) return;
+      commentPanel.hidden = true;
       if (host !== null) host.inert = false;
       host?.querySelector('[data-action="comment"]')?.focus({ preventScroll: true });
-    };
-
-    const trapSheetTab = (event) => {
-      if (event.key !== "Tab") return;
-      const sheet = document.querySelector("#page-bbs-link .link-comment");
-      if (sheet === null) return;
-      const items = Array.from(sheet.querySelectorAll("button, a[href], input, textarea, [tabindex]:not([tabindex='-1'])"))
-        .filter((node) => node.getBoundingClientRect().width > 0 && getComputedStyle(node).visibility !== "hidden" && !node.hasAttribute("disabled"));
-      if (items.length === 0) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (event.shiftKey && (document.activeElement === first || !sheet.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
     };
 
     const openLightbox = (source) => {
@@ -7997,28 +8134,6 @@
       const img = lightbox.querySelector("img");
       if (img !== null) img.src = source;
       lightbox.focus({ preventScroll: true });
-    };
-
-    const getCommentsSheet = () => {
-      const sheet = document.querySelector("#page-bbs-link .link-comment");
-      if (sheet === null) return null;
-      // A sheet inside a display:none ancestor has no layout box; the custom panel keeps
-      // comments usable instead of opening an empty native drawer.
-      if (sheet.getClientRects().length === 0) return null;
-      if (closeSheetButton === null) closeSheetButton = document.createElement("button");
-      closeSheetButton.type = "button";
-      closeSheetButton.className = "hbu-reader-sheet-close";
-      closeSheetButton.setAttribute("aria-label", "关闭评论");
-      closeSheetButton.innerHTML = READER_ICONS.close;
-      closeSheetButton.onclick = closeComments;
-      if (sheet.dataset.hbuTabTrap !== "1") {
-        sheet.dataset.hbuTabTrap = "1";
-        sheet.addEventListener("keydown", trapSheetTab);
-      }
-      if (!sheet.contains(closeSheetButton)) sheet.prepend(closeSheetButton);
-      ensureNativeArticleComposer(sheet);
-      markReaderSheetSort(sheet);
-      return sheet;
     };
 
     const scrollToPage = (index) => {
@@ -8075,7 +8190,7 @@
       const sources = Array.from(host.querySelectorAll(".hbu-reader-cover img"));
       const glow = host.querySelector(".hbu-reader-cover-glow");
       if (glow !== null && sources[coverIndex] !== undefined) {
-        glow.style.backgroundImage = 'url("' + (sources[coverIndex].getAttribute("src") || "").replace(/"/g, '\\"') + '")';
+        glow.style.backgroundImage = 'url("' + readImageSource(sources[coverIndex]).replace(/"/g, '\\"') + '")';
       }
       for (const [index, node] of sources.entries()) {
         node.dataset.active = String(index === coverIndex);
@@ -8110,9 +8225,11 @@
         if ((link.getAttribute("href") || "").startsWith("#")) link.addEventListener("click", (event) => event.preventDefault());
       }
       for (const image of clone.querySelectorAll("img")) {
+        const source = readImageSource(image);
+        if (source !== "") image.src = source;
         image.loading = "lazy";
         image.decoding = "async";
-        image.addEventListener("click", () => openLightbox(image.currentSrc || image.src));
+        image.addEventListener("click", () => openLightbox(readImageSource(image)));
       }
     };
 
@@ -8139,7 +8256,7 @@
     };
     const hasHiddenDisplayAncestor = (node) => {
       let current = node;
-      while (current !== null && !current.matches(".hb-bbs-image-text, .hb-bbs-post")) {
+      while (current !== null && !current.matches(READER_SOURCE_ROOT_SELECTOR)) {
         if (window.getComputedStyle(current).display === "none") return true;
         current = current.parentElement;
       }
@@ -8210,6 +8327,93 @@
       };
       collect(root);
       return items;
+    };
+
+    // Site images can keep their real URL in data-src/data-original while src is a
+    // placeholder. One reader here keeps body pages, the hero, and signatures aligned.
+    const readImageSource = (node) => {
+      if (!(node instanceof HTMLImageElement)) return "";
+      for (const name of ["data-src", "data-original"]) {
+        const value = (node.getAttribute(name) || "").trim();
+        if (value !== "" && !/^(?:data|blob):/i.test(value)) return value;
+      }
+      for (const value of [node.currentSrc, node.getAttribute("src") || ""]) {
+        const source = value.trim();
+        if (source !== "" && !/^(?:data|blob):/i.test(source)) return source;
+      }
+      return "";
+    };
+
+    const readVideoSource = (node) => {
+      if (!(node instanceof HTMLVideoElement)) return "";
+      const values = [
+        ...Array.from(node.querySelectorAll("source")).map((source) => source.getAttribute("src") || ""),
+        node.getAttribute("src") || "",
+        node.currentSrc,
+      ];
+      for (const raw of values) {
+        const source = raw.trim();
+        if (source === "" || /^(?:javascript|data):/i.test(source)) continue;
+        return source;
+      }
+      return "";
+    };
+
+    const readPosterSource = (node) => {
+      if (!(node instanceof HTMLVideoElement)) return "";
+      const poster = (node.getAttribute("poster") || "").trim();
+      return poster !== "" && !/^(?:data|blob):/i.test(poster) ? poster : "";
+    };
+
+    const readHeaderImages = (pageRoot) => {
+      const seen = new Set();
+      const sources = [];
+      if (!(pageRoot instanceof Element)) return sources;
+      for (const node of Array.from(pageRoot.querySelectorAll(READER_SOURCE_HEADER_SELECTOR))) {
+        const source = readImageSource(node);
+        if (source === "" || seen.has(source)) continue;
+        seen.add(source);
+        sources.push(source);
+      }
+      return sources;
+    };
+
+    const readOrderedImageSources = (scope) => {
+      if (!(scope instanceof Element)) return [];
+      const seen = new Set();
+      const sources = [];
+      for (const node of Array.from(scope.querySelectorAll("img"))) {
+        if (node.closest(READER_MEDIA_EXCLUDE_SELECTOR) !== null) continue;
+        const source = readImageSource(node);
+        if (source === "" || seen.has(source)) continue;
+        seen.add(source);
+        sources.push(source);
+      }
+      return sources;
+    };
+
+    const readBodyImages = (article, body) => {
+      const scope = body || article;
+      if (!(scope instanceof Element)) return [];
+      const seen = new Set();
+      const candidates = [];
+      for (const [index, node] of Array.from(scope.querySelectorAll("img")).entries()) {
+        if (node.closest(READER_MEDIA_EXCLUDE_SELECTOR) !== null) continue;
+        const source = readImageSource(node);
+        if (source === "" || seen.has(source)) continue;
+        seen.add(source);
+        const naturalWidth = node.naturalWidth;
+        const naturalHeight = node.naturalHeight;
+        const rect = node.getBoundingClientRect();
+        const declaredWidth = Number(node.getAttribute("width")) || 0;
+        const declaredHeight = Number(node.getAttribute("height")) || 0;
+        const width = naturalWidth > 0 ? naturalWidth : (rect.width > 0 ? rect.width : declaredWidth);
+        const height = naturalHeight > 0 ? naturalHeight : (rect.height > 0 ? rect.height : declaredHeight);
+        if (width > 0 && width < 120) continue;
+        candidates.push({ source, area: width * height, loaded: naturalWidth > 0, index });
+      }
+      candidates.sort((left, right) => Number(right.loaded) - Number(left.loaded) || right.area - left.area || left.index - right.index);
+      return candidates.map((item) => item.source);
     };
 
     const readPositiveDimension = (raw, pattern) => {
@@ -8412,6 +8616,62 @@
       target.append(page);
     };
 
+    const addNoticePage = (target, heading, message) => {
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "notice";
+      const card = document.createElement("div");
+      card.className = "hbu-reader-notice";
+      const title = document.createElement("h2");
+      title.textContent = heading;
+      const copy = document.createElement("p");
+      copy.textContent = message;
+      const action = document.createElement("a");
+      action.href = LINK_HREF_PREFIX + articleId;
+      action.textContent = "查看原帖";
+      const capturedArticleId = articleId;
+      action.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (articleId !== capturedArticleId) return;
+        dismissedArticleId = capturedArticleId;
+        teardown();
+        showToast("已退出沉浸阅读，可在设置中重新开启");
+      });
+      card.append(title, copy, action);
+      page.append(card);
+      target.append(page);
+    };
+
+    // A standalone video post owns a dedicated page with native controls; video.js is never
+    // bootstrapped here because the reader page is a detached surface the player cannot bind to.
+    const addVideoPage = (target, item) => {
+      const page = document.createElement("section");
+      page.className = "hbu-reader-page";
+      page.dataset.kind = "video";
+      const video = document.createElement("video");
+      video.className = "hbu-reader-video";
+      video.controls = true;
+      video.autoplay = false;
+      video.playsInline = true;
+      video.preload = "metadata";
+      video.setAttribute("aria-label", "原帖视频");
+      if (item.poster !== "") video.poster = item.poster;
+      video.src = item.source;
+      page.append(video);
+      target.append(page);
+      suspendNativeEmbed(item.node);
+    };
+
+    const addVideoPostPages = (target, data) => {
+      if (!data.isVideoPost) return;
+      const usable = data.videos.filter((item) => item.source !== "");
+      if (usable.length === 0) {
+        addNoticePage(target, "视频暂时无法加载", "原帖还没有给出可播放的视频地址，可以刷新页面重试，或回到原帖播放。");
+        return;
+      }
+      for (const item of usable) addVideoPage(target, item);
+    };
+
     const addHeadingPage = (target, text) => {
       const value = text.replace(/\s+/g, " ").trim();
       if (value === "") return;
@@ -8443,6 +8703,7 @@
     };
 
     const buildPages = (target, body) => {
+      if (!(target instanceof DocumentFragment) || !(body instanceof Element)) return;
       const lines = [];
       const flush = () => {
         if (lines.length === 0) return;
@@ -8520,24 +8781,29 @@
 
     const readEmbedStyleValue = (node, name) => node instanceof HTMLElement ? node.style[name] || "" : "";
 
-    const readEmbedSignature = (body) => Array.from(body.querySelectorAll(".iframe, iframe, video, audio, embed, object"))
-      .map((node) => [
-        node.tagName.toLowerCase(),
-        node.classList.contains("iframe") ? "wrapper" : "",
-        readEmbedStyleValue(node, "width"),
-        readEmbedStyleValue(node, "height"),
-        readEmbedStyleValue(node, "visibility"),
-        readEmbedStyleValue(node, "display"),
-        node.getAttribute("width") || "",
-        node.getAttribute("height") || "",
-        node.getAttribute("src") || "",
-        node.getAttribute("srcdoc") || "",
-        node.getAttribute("data") || "",
-        readEmbedSourceSrcs(node),
-        node.hasAttribute("hidden") ? "hidden" : "",
-        isUnavailableEmbed(node) ? "hidden" : "visible",
-      ].join("~"))
-      .join("|");
+    const readEmbedSignature = (root) => {
+      if (!(root instanceof Element)) return "";
+      return Array.from(root.querySelectorAll(".iframe, iframe, video, audio, embed, object"))
+        .map((node) => [
+          node.tagName.toLowerCase(),
+          node.classList.contains("iframe") ? "wrapper" : "",
+          readEmbedStyleValue(node, "width"),
+          readEmbedStyleValue(node, "height"),
+          readEmbedStyleValue(node, "visibility"),
+          readEmbedStyleValue(node, "display"),
+          node.getAttribute("width") || "",
+          node.getAttribute("height") || "",
+          node.getAttribute("src") || "",
+          node instanceof HTMLMediaElement ? node.currentSrc : "",
+          node.getAttribute("poster") || "",
+          node.getAttribute("srcdoc") || "",
+          node.getAttribute("data") || "",
+          readEmbedSourceSrcs(node),
+          node.hasAttribute("hidden") ? "hidden" : "",
+          isUnavailableEmbed(node) ? "hidden" : "visible",
+        ].join("~"))
+        .join("|");
+    };
 
     const flushReaderRatio = () => {
       if (ratioSaveTimer !== 0) {
@@ -8787,60 +9053,121 @@
       return rail;
     };
 
+    const createHeroCover = (page, data, sources, kind) => {
+      const cover = document.createElement("div");
+      cover.className = "hbu-reader-cover";
+      const glow = document.createElement("div");
+      glow.className = "hbu-reader-cover-glow";
+      const capturedArticleId = articleId;
+      const capturedGeneration = readerGeneration;
+      const images = [];
+      const dropFailedCover = (failed) => {
+        // Error and zero-size load events can arrive before the cover is inserted.
+        // Article identity and reader generation are sufficient stale-event guards.
+        if (host === null || !host.isConnected) return;
+        if (articleId !== capturedArticleId || readerGeneration !== capturedGeneration) return;
+        const index = images.indexOf(failed);
+        if (index === -1) return;
+        images.splice(index, 1);
+        failed.remove();
+        // Removing an earlier slide shifts every later index, so the pointer must move
+        // with the array before it is clamped to the new bounds.
+        if (index < coverIndex) coverIndex -= 1;
+        coverTotal = images.length;
+        coverIndex = Math.min(Math.max(0, coverIndex), Math.max(0, coverTotal - 1));
+        if (coverTotal === 0) {
+          cover.remove();
+          // A broken header image group falls back to the largest body image before
+          // the hero drops its media area entirely.
+          if (kind === "header" && data.heroImage !== "") {
+            createHeroCover(page, data, [data.heroImage], "body");
+            return;
+          }
+          page.dataset.cover = "none";
+          coverIndex = 0;
+          return;
+        }
+        page.dataset.cover = kind;
+        const nav = cover.querySelectorAll(".hbu-reader-cover-nav");
+        for (const node of nav) node.hidden = coverTotal < 2;
+        const dots = cover.querySelector(".hbu-reader-cover-dots");
+        if (dots !== null) dots.remove();
+        if (coverTotal > 1) {
+          const row = document.createElement("div");
+          row.className = "hbu-reader-cover-dots";
+          images.forEach((image, dotIndex) => {
+            const dot = document.createElement("button");
+            dot.type = "button";
+            dot.setAttribute("aria-label", "封面 " + (dotIndex + 1));
+            dot.setAttribute("aria-current", String(dotIndex === coverIndex));
+            dot.addEventListener("click", () => setCover(dotIndex));
+            row.append(dot);
+          });
+          cover.append(row);
+        }
+        setCover(coverIndex);
+      };
+      cover.append(glow);
+      sources.forEach((source, index) => {
+        const img = document.createElement("img");
+        img.alt = index === 0 ? data.title : "封面 " + (index + 1);
+        img.dataset.active = String(index === 0);
+        if (index > 1) img.loading = "lazy";
+        img.addEventListener("error", () => dropFailedCover(img), { once: true });
+        img.addEventListener("load", () => {
+          if (img.naturalWidth > 0 && img.naturalHeight > 0) return;
+          dropFailedCover(img);
+        }, { once: true });
+        img.addEventListener("click", () => openLightbox(readImageSource(img)));
+        cover.append(img);
+        images.push(img);
+        img.src = source;
+      });
+      page.dataset.cover = kind;
+      coverTotal = images.length;
+      coverIndex = 0;
+      if (images.length > 0) glow.style.backgroundImage = 'url("' + sources[0].replace(/"/g, '\\"') + '")';
+      if (images.length > 1) {
+        const prev = document.createElement("button");
+        prev.type = "button";
+        prev.className = "hbu-reader-cover-nav";
+        prev.dataset.side = "prev";
+        prev.setAttribute("aria-label", "上一张封面");
+        prev.innerHTML = READER_ICONS.previous;
+        prev.addEventListener("click", () => setCover(coverIndex - 1));
+        const next = document.createElement("button");
+        next.type = "button";
+        next.className = "hbu-reader-cover-nav";
+        next.dataset.side = "next";
+        next.setAttribute("aria-label", "下一张封面");
+        next.innerHTML = READER_ICONS.next;
+        next.addEventListener("click", () => setCover(coverIndex + 1));
+        const dots = document.createElement("div");
+        dots.className = "hbu-reader-cover-dots";
+        sources.forEach((source, index) => {
+          const dot = document.createElement("button");
+          dot.type = "button";
+          dot.setAttribute("aria-label", "封面 " + (index + 1));
+          dot.setAttribute("aria-current", String(index === 0));
+          dot.addEventListener("click", () => setCover(index));
+          dots.append(dot);
+        });
+        cover.append(prev, next, dots);
+      }
+      // Prepending keeps a late body-image fallback above the caption it already rendered after.
+      page.prepend(cover);
+    };
+
     const createHero = (data) => {
       const page = document.createElement("section");
       page.className = "hbu-reader-page";
       page.dataset.kind = "hero";
-      const heroImage = typeof data.heroImage === "string" ? data.heroImage : "";
-      const sources = data.covers.length > 0 ? data.covers : (heroImage !== "" ? [heroImage] : []);
-      page.dataset.cover = data.covers.length > 0 ? "header" : (heroImage !== "" ? "body" : "none");
-      coverTotal = sources.length;
-      coverIndex = 0;
-      if (sources.length > 0) {
-        const cover = document.createElement("div");
-        cover.className = "hbu-reader-cover";
-        const glow = document.createElement("div");
-        glow.className = "hbu-reader-cover-glow";
-        glow.style.backgroundImage = 'url("' + sources[0].replace(/"/g, '\\"') + '")';
-        cover.append(glow);
-        sources.forEach((source, index) => {
-          const img = document.createElement("img");
-          img.src = source;
-          img.alt = index === 0 ? data.title : "封面 " + (index + 1);
-          img.dataset.active = String(index === 0);
-          if (index > 1) img.loading = "lazy";
-          img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
-          cover.append(img);
-        });
-        if (sources.length > 1) {
-          const prev = document.createElement("button");
-          prev.type = "button";
-          prev.className = "hbu-reader-cover-nav";
-          prev.dataset.side = "prev";
-          prev.setAttribute("aria-label", "上一张封面");
-          prev.innerHTML = READER_ICONS.previous;
-          prev.addEventListener("click", () => setCover(coverIndex - 1));
-          const next = document.createElement("button");
-          next.type = "button";
-          next.className = "hbu-reader-cover-nav";
-          next.dataset.side = "next";
-          next.setAttribute("aria-label", "下一张封面");
-          next.innerHTML = READER_ICONS.next;
-          next.addEventListener("click", () => setCover(coverIndex + 1));
-          const dots = document.createElement("div");
-          dots.className = "hbu-reader-cover-dots";
-          sources.forEach((source, index) => {
-            const dot = document.createElement("button");
-            dot.type = "button";
-            dot.setAttribute("aria-label", "封面 " + (index + 1));
-            dot.setAttribute("aria-current", String(index === 0));
-            dot.addEventListener("click", () => setCover(index));
-            dots.append(dot);
-          });
-          cover.append(prev, next, dots);
-        }
-        page.append(cover);
-      }
+      const heroes = data.covers.length > 0
+        ? data.covers
+        : (data.heroImage !== "" ? [data.heroImage] : []);
+      const kind = data.covers.length > 0 ? "header" : "body";
+      if (heroes.length > 0) createHeroCover(page, data, heroes, kind);
+      else page.dataset.cover = "none";
       const caption = document.createElement("div");
       caption.className = "hbu-reader-caption";
       if (data.tags.length > 0 || data.time !== "") {
@@ -8983,28 +9310,38 @@
     const readSource = () => {
       let pageRoot;
       let article;
-      let body;
-      let titleNode;
       const cached = sourceCache;
-      if (cached !== null && cached.articleId === articleId && cached.pageRoot.isConnected
-        && cached.article.isConnected && cached.body.isConnected
-        && cached.titleNode !== null && cached.titleNode.isConnected) {
+      if (cached !== null && cached.articleId === articleId
+        && cached.pageRoot.isConnected && cached.article.isConnected) {
         pageRoot = cached.pageRoot;
         article = cached.article;
-        body = cached.body;
-        titleNode = cached.titleNode;
       } else {
         pageRoot = document.querySelector("#page-bbs-link");
-        article = pageRoot?.querySelector(".hb-bbs-image-text, .hb-bbs-post");
-        body = article?.querySelector(".image-text__content, .post__content");
-        titleNode = article?.querySelector(".section-title__content, .post__title, .image-text__title");
-        if (!pageRoot || !article || !body) {
+        article = pageRoot?.querySelector(READER_SOURCE_ROOT_SELECTOR) || null;
+        if (!(pageRoot instanceof Element) || !(article instanceof Element)) {
           sourceCache = null;
           return null;
         }
-        sourceCache = { articleId: articleId, pageRoot: pageRoot, article: article, body: body, titleNode: titleNode };
+        sourceCache = { articleId: articleId, pageRoot: pageRoot, article: article };
       }
-      const covers = pageRoot.querySelectorAll(".image-text__header-image img, .post__header-image img");
+      // A video post can have no body or title node at all; those absences are valid
+      // states, so only the page root and article root are required for a cached read.
+      const body = article.querySelector(READER_SOURCE_BODY_SELECTOR) || null;
+      const titleNode = article.querySelector(READER_SOURCE_TITLE_SELECTOR) || null;
+      const covers = readHeaderImages(pageRoot);
+      const bodyImages = readOrderedImageSources(body || article);
+      // Only a dedicated video post owns the page media area. A video embedded in a
+      // normal article stays an embed page, matching the native reading order.
+      const isVideoPost = article.classList.contains("hb-bbs__video");
+      const videoNodes = isVideoPost
+        ? Array.from(article.querySelectorAll(READER_SOURCE_VIDEO_SELECTOR))
+        : [];
+      const videos = videoNodes.map((node) => ({
+        node: node,
+        source: readVideoSource(node),
+        poster: readPosterSource(node),
+      }));
+      const videoMissing = isVideoPost && videos.every((item) => item.source === "");
       const tags = pageRoot.querySelectorAll(".link-tags__tag-item");
       const related = pageRoot.querySelectorAll(".bbs-link__related-recommend a[href*='/app/bbs/link/'], .related-recommend__container a[href*='/app/bbs/link/']");
       return {
@@ -9012,18 +9349,36 @@
         article,
         body,
         titleNode,
-        signature: [articleId, titleNode?.textContent?.length || 0, body.childNodes.length, (body.textContent || "").length, covers.length, tags.length, related.length, readEmbedSignature(body)].join(":"),
+        covers,
+        bodyImages,
+        videos,
+        videoMissing,
+        isVideoPost,
+        signature: [
+          articleId,
+          isVideoPost ? "video" : "post",
+          titleNode?.textContent?.length || 0,
+          body?.childNodes.length || 0,
+          (body?.textContent || "").length,
+          covers.join(","),
+          bodyImages.join(","),
+          videos.map((item) => item.source + "~" + item.poster).join(","),
+          tags.length,
+          related.length,
+          readEmbedSignature(pageRoot),
+        ].join(":"),
       };
     };
 
     // Header covers win over body images. When a post has no header cover, its most
     // substantial body image makes a better hero than an empty gradient panel.
     const readHeroImage = (body) => {
+      if (!(body instanceof Element)) return "";
       const candidates = [];
       for (const [index, node] of Array.from(body.querySelectorAll("img")).entries()) {
-        if (node.closest(".comment, .link-comment, .com-award-table, .com-game-card, .link-user, [class*='avatar'], [class*='icon'], [class*='emoji'], .bbs-link__related-recommend") !== null) continue;
-        const source = (node.getAttribute("data-src") || node.getAttribute("data-original") || node.currentSrc || node.getAttribute("src") || "").trim();
-        if (source === "" || /^(?:data|blob):/i.test(source)) continue;
+        if (node.closest(READER_MEDIA_EXCLUDE_SELECTOR) !== null) continue;
+        const source = readImageSource(node);
+        if (source === "") continue;
         const naturalWidth = node.naturalWidth;
         const naturalHeight = node.naturalHeight;
         const rect = node.getBoundingClientRect();
@@ -9041,13 +9396,10 @@
 
     const readData = (source) => {
       if (source === null) return null;
-      const { pageRoot, article, body, titleNode } = source;
+      const { pageRoot, article, body, titleNode, covers, videos, videoMissing, isVideoPost } = source;
       const authorNode = pageRoot.querySelector(".link-user__username, .page-header__username");
       const authorLink = pageRoot.querySelector(".link-user__user-wrapper, .page-header__user-wrapper");
       const avatarNode = authorLink?.querySelector("img") || pageRoot.querySelector(".page-header__user-wrapper img");
-      const covers = Array.from(pageRoot.querySelectorAll(".image-text__header-image img, .post__header-image img"))
-        .map((node) => node.currentSrc || node.src)
-        .filter((source, index, list) => source !== "" && list.indexOf(source) === index);
       const tags = Array.from(pageRoot.querySelectorAll(".link-tags__tag-item"))
         .map((node) => (node.textContent || "").trim())
         .filter((value) => value !== "");
@@ -9075,7 +9427,12 @@
         topics: meta.topics,
         meta: meta,
         covers: covers,
-        heroImage: covers.length === 0 ? readHeroImage(body) : "",
+        // Keep a body fallback even when header images exist, so a header image that
+        // fails to load can hand the hero over to the largest body image.
+        heroImage: readHeroImage(body),
+        videos: videos,
+        videoMissing: videoMissing,
+        isVideoPost: isVideoPost,
         tags: tags,
         time: time,
         ip: ip,
@@ -9092,8 +9449,8 @@
     };
 
     const openLinkedComments = () => {
-      if (document.body.classList.contains(READER_COMMENT_CLASS) || /comment/i.test(location.hash)) {
-        requestAnimationFrame(() => void openComments());
+      if (/comment/i.test(location.hash)) {
+        requestAnimationFrame(() => openComments());
       }
     };
 
@@ -9147,6 +9504,7 @@
       scrollRaf = 0;
       flushReaderRatio();
       resetReaderComments();
+      clearPendingReader();
       host.textContent = "";
       progressScroll = null;
       progressCurrent = null;
@@ -9164,7 +9522,6 @@
       articleCommentPublishedCount = 0;
       actionBusy = false;
       cyBusy = false;
-      removeNativeArticleComposers();
       articleCommentBusy = false;
       clearArticleComposers();
       cyDialog = null;
@@ -9187,7 +9544,8 @@
       bindSwipe(scroll);
       scroll.append(createHero(data));
       const pages = document.createDocumentFragment();
-      buildPages(pages, data.body);
+      addVideoPostPages(pages, data);
+      if (data.body instanceof Element) buildPages(pages, data.body);
       refreshReaderSignature();
       scroll.append(pages);
       scroll.append(createEndPage(data));
@@ -9239,18 +9597,91 @@
       syncReaderEndActions();
     };
 
+    const clearPendingTimer = () => {
+      if (readerPendingTimer !== 0) {
+        window.clearTimeout(readerPendingTimer);
+        readerPendingTimer = 0;
+      }
+    };
+
+    const clearPendingReader = () => {
+      clearPendingTimer();
+      readerPendingCard?.remove();
+      readerPendingCard = null;
+      readerPendingArticleId = "";
+      readerPendingGeneration = -1;
+    };
+
+    // A rejected router transition or a captcha-gated API can leave the article page empty.
+    // The pending card stays passive for a few seconds, then offers retry and a native exit.
     const showPending = () => {
       ensureShell();
-      if (host === null || host.childElementCount > 0) return;
+      if (host === null) return;
+      // A pending card replaces the rendered reader, so the previous signature
+      // must not short-circuit the next successful sync.
+      signature = "";
+      if (readerPendingCard !== null) {
+        if (readerPendingArticleId === articleId && readerPendingGeneration === readerGeneration) return;
+        clearPendingReader();
+      }
+      host.textContent = "";
       const pending = document.createElement("div");
       pending.className = "hbu-reader-pending";
-      pending.textContent = "正在加载文章…";
+      const card = document.createElement("div");
+      card.className = "hbu-reader-pending-card";
+      const message = document.createElement("p");
+      message.className = "hbu-reader-pending-text";
+      message.textContent = "正在加载文章…";
+      const actions = document.createElement("div");
+      actions.className = "hbu-reader-pending-actions";
+      actions.hidden = true;
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.dataset.retry = "";
+      retry.textContent = "重试";
+      const original = document.createElement("button");
+      original.type = "button";
+      original.dataset.original = "";
+      original.textContent = "查看原帖";
+      actions.append(retry, original);
+      card.append(message, actions);
+      pending.append(card);
       host.append(pending);
+      readerPendingCard = pending;
+      readerPendingArticleId = articleId;
+      readerPendingGeneration = readerGeneration;
+      const capturedArticleId = articleId;
+      const capturedGeneration = readerGeneration;
+      retry.addEventListener("click", () => {
+        if (host === null || !host.isConnected) return;
+        if (articleId !== capturedArticleId || readerGeneration !== capturedGeneration) return;
+        clearPendingReader();
+        sourceCache = null;
+        signature = "";
+        sync();
+      });
+      original.addEventListener("click", () => {
+        if (host === null || !host.isConnected) return;
+        if (articleId !== capturedArticleId || readerGeneration !== capturedGeneration) return;
+        clearPendingReader();
+        dismissedArticleId = capturedArticleId;
+        teardown();
+        showToast("已退出沉浸阅读，可在设置中重新开启");
+      });
+      readerPendingTimer = window.setTimeout(() => {
+        readerPendingTimer = 0;
+        if (host === null || !host.isConnected) return;
+        if (articleId !== capturedArticleId || readerGeneration !== capturedGeneration) return;
+        if (!pending.isConnected) return;
+        message.textContent = "这篇帖子加载得有点慢，可能是网络中断或站点校验未通过。";
+        actions.hidden = false;
+      }, READER_PENDING_NOTICE_MS);
     };
 
     const teardown = () => {
       restoreSuspendedEmbeds();
       readerGeneration += 1;
+      clearPendingReader();
       clearPendingReaderAdvance();
       readerAdvanceLocked = false;
       readerAdvanceLockToken += 1;
@@ -9282,24 +9713,20 @@
       cyTextarea = null;
       cySubmit = null;
       cyStatus = null;
-      removeNativeArticleComposers();
       articleCommentBusy = false;
       clearArticleComposers();
-      clearSheetStatus();
-      clearReaderSheetSort();
-      document.body.classList.remove(READER_CLASS, READER_COMMENT_CLASS);
-      commentOpenToken += 1;
+      document.body.classList.remove(READER_CLASS);
       if (host !== null) host.inert = false;
       commentPanel?.remove();
       commentPanel = null;
       commentPanelList = null;
       commentPanelStatus = null;
+      commentPanelStatusText = null;
+      commentPanelRetry = null;
       commentPanelMeta = null;
       commentPanelMore = null;
       commentPanelClose = null;
       commentState = createCommentState();
-      closeSheetButton?.remove();
-      closeSheetButton = null;
       favourPanel = null;
       favourButton = null;
       spacingPanel = null;
@@ -9307,8 +9734,6 @@
       spacingInput = null;
       host?.remove();
       host = null;
-      backdrop?.remove();
-      backdrop = null;
       lightbox?.remove();
       lightbox = null;
       signature = "";
@@ -9325,12 +9750,6 @@
         host.setAttribute("role", "region");
         host.setAttribute("aria-label", "沉浸阅读");
         document.body.append(host);
-      }
-      if (backdrop === null) {
-        backdrop = document.createElement("div");
-        backdrop.className = READER_BACKDROP_CLASS;
-        backdrop.addEventListener("click", closeComments);
-        document.body.append(backdrop);
       }
     };
 
@@ -9363,7 +9782,6 @@
         nativeFavourButton = null;
       }
       articleId = nextArticleId;
-      if (document.body.classList.contains(READER_COMMENT_CLASS) && document.querySelector("#page-bbs-link .link-comment") === null) closeComments();
       const source = readSource();
       if (source === null) {
         showPending();
@@ -9428,7 +9846,7 @@
         } else if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
           closeFavourMenu();
-        } else if (document.body.classList.contains(READER_COMMENT_CLASS) || (commentPanel !== null && !commentPanel.hidden)) {
+        } else if (isCommentPanelOpen()) {
           event.preventDefault();
           closeComments();
         } else if (lightbox !== null) {
@@ -9445,6 +9863,9 @@
         return;
       }
       if (isSiteAlertOpen() || eventHitsTypingTarget(event)) return;
+      // The comment dialog owns its keyboard surface. Let Space activate its buttons
+      // and let arrows or PageUp/PageDown scroll the comment list instead of the reader.
+      if (isCommentPanelOpen() && commentPanel !== null && commentPanel.contains(event.target)) return;
       if (event.key === "[") {
         event.preventDefault();
         const prev = navigation.readStatus().prev;
@@ -9485,8 +9906,8 @@
         scrollToPage(pageCount - 1);
       } else if (event.key === "c" || event.key === "C") {
         event.preventDefault();
-        if (document.body.classList.contains(READER_COMMENT_CLASS) || (commentPanel !== null && !commentPanel.hidden)) closeComments();
-        else void openComments();
+        if (isCommentPanelOpen()) closeComments();
+        else openComments();
       } else if (event.key === "r" || event.key === "R") {
         event.preventDefault();
         closeCurrentReader();
