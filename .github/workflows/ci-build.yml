@@ -1,0 +1,133 @@
+name: CI Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify affected userscripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve the verification plan
+        id: plan
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          base_sha=""
+          if [[ "$EVENT_NAME" == "pull_request" && -n "$PR_BASE_SHA" ]]; then
+            base_sha="$PR_BASE_SHA"
+          elif [[ -n "$PUSH_BEFORE_SHA" && "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            base_sha="$PUSH_BEFORE_SHA"
+          fi
+          if [[ -z "$base_sha" ]] || ! git cat-file -e "$base_sha^{commit}" 2>/dev/null; then
+            echo "Base commit unavailable: verifying every workspace."
+            pnpm exec tsx tools/ci-targets.ts --all
+            exit 0
+          fi
+          git diff --name-only --diff-filter=ACDMRTUXB "$base_sha...HEAD" > changed-paths.txt
+          cat changed-paths.txt
+          pnpm exec tsx tools/ci-targets.ts --changed-file changed-paths.txt
+
+      - name: Report the verification plan
+        env:
+          MODE: ${{ steps.plan.outputs.mode }}
+          TARGET_LIST: ${{ steps.plan.outputs.target_list }}
+          REASON: ${{ steps.plan.outputs.reason }}
+        run: |
+          echo "mode=$MODE"
+          echo "targets=$TARGET_LIST"
+          echo "reason=$REASON"
+
+      - name: Typecheck shared tooling
+        if: steps.plan.outputs.mode == 'full'
+        run: pnpm exec tsc --noEmit -p tsconfig.json
+
+      - name: Typecheck affected workspaces
+        if: steps.plan.outputs.has_targets == 'true'
+        shell: bash
+        env:
+          TARGET_LIST: ${{ steps.plan.outputs.target_list }}
+        run: |
+          set -euo pipefail
+          for target in $TARGET_LIST; do
+            echo "::group::tsc --noEmit scripts/$target"
+            pnpm exec tsc --noEmit -p "scripts/$target/tsconfig.json"
+            echo "::endgroup::"
+          done
+
+      - name: Unit tests
+        if: steps.plan.outputs.mode == 'full'
+        run: pnpm exec vitest run
+
+      - name: Build affected bundles
+        if: steps.plan.outputs.has_targets == 'true'
+        shell: bash
+        env:
+          TARGET_LIST: ${{ steps.plan.outputs.target_list }}
+        run: |
+          set -euo pipefail
+          for target in $TARGET_LIST; do
+            echo "::group::build $target"
+            pnpm exec tsx tools/build.ts --target="$target"
+            node --check "dist/$target.user.js"
+            pnpm exec tsx tools/verify-bundles.ts "dist/$target.user.js"
+            echo "::endgroup::"
+          done
+
+      - name: Fail when a committed bundle is stale
+        if: steps.plan.outputs.has_targets == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- dist; then
+            echo "dist/ differs from a fresh build. Run 'pnpm build' and commit the result." >&2
+            git diff --stat -- dist >&2
+            exit 1
+          fi
+
+      - name: Upload built userscripts
+        if: steps.plan.outputs.has_targets == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: userscripts
+          path: dist/*.user.js
+          if-no-files-found: error
+          retention-days: 7
+

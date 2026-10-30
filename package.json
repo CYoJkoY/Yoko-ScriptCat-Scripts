@@ -1,0 +1,26 @@
+{
+  "name": "yoko-scriptcat-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "tsx tools/build.ts",
+    "watch": "tsx tools/build.ts --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p scripts/ai-chat-turbo-engine/tsconfig.json && tsc --noEmit -p scripts/gemini-quota-capsule/tsconfig.json && tsc --noEmit -p scripts/heybox-up/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "esbuild": "0.27.1",
+    "jsdom": "30.1.3",
+    "tsx": "4.21.0",
+    "typescript": "7.0.2",
+    "vitest": "4.0.18"
+  }
+}
