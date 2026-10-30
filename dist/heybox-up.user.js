@@ -2505,14 +2505,23 @@
       color .18s ease;
   }
   .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
-  .hbu-nav-link:hover .hbu-nav-icon,
   .hbu-nav-link:focus-visible .hbu-nav-icon {
     color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
     transform: translateY(-2px) scale(1.14);
   }
-  .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon,
   .hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon {
     transform: rotate(-7deg) translateY(-2px) scale(1.1);
+  }
+  /* Touch browsers keep :hover on the tapped link, which would leave the icon enlarged.
+     Gate hover-only motion to devices that can hover with a precise pointer. */
+  @media (hover: hover) and (pointer: fine) {
+    .hbu-nav-link:hover .hbu-nav-icon {
+      color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
+      transform: translateY(-2px) scale(1.14);
+    }
+    .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon {
+      transform: rotate(-7deg) translateY(-2px) scale(1.1);
+    }
   }
   .hbu-nav-link:active .hbu-nav-icon { transform: translateY(0) scale(.9); transition-duration: .08s; }
   .hbu-nav-link[data-nav="article"]:active .hbu-nav-icon { transform: translateY(0) rotate(0) scale(.9); }
