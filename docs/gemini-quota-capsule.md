@@ -212,11 +212,11 @@ __gqc.setDebug(true)   // 打开调试日志
 
 ## 九、回归验证
 
-仓库内有 `tests/gemini-quota-capsule-parser.test.js`：用 `node:vm` 把脚本跑在最小伪 DOM 上，覆盖重置时间解析、`parseOfficialUsageText` 的 5H / 7D 分流与「已用 → 剩余」换算、多账号候选地址顺序，以及后台同步桥的 nonce 与 payload 校验。旧版 `tests/gemini-quota-capsule.test.mjs` 已在 5579b8d 移除，解析器回归由该文件承载。当前验证方式：
+仓库内不再保留脚本级的伪 DOM 解析用例，回归以根目录的统一命令与 `__gqc._test` 语义自测为准。共享层由 `tests/` 下的 Vitest 用例覆盖构建器、元数据渲染、存储包装与定时器工具；Gemini 专属的解析、时间计算与同步桥校验仍挂在 `_test` 命名空间下，可由页面控制台直接调用。当前验证方式：
 
-1. 语法检查：`node --check scripts/gemini-quota-capsule.js`
-2. 解析器回归：`node tests/gemini-quota-capsule-parser.test.js`
-3. 布局回归：`node tests/gemini-quota-capsule-layout.test.cjs` —— 用 Playwright 在空白页注入脚本（把入口 `bootstrap()` 换成 `createDOM()`），穷举 6 种装饰 × 8 种进度 × 3 组用量（0 / 42 / 100），断言胶囊宽度在所有组合下完全一致、两段槽位恒为 24px、装饰与进度节点在数值不变时保持复用。另覆盖两段进度独立选择、320 / 375 / 768px 窗口、每种进度连续 1000 次更新的节点复用与用量变化重绘、双柱独立比例、键盘轮换与重载恢复、旧配置迁移、图片格式与体积校验、SVG 清洗、组件 CSS 的应用 / 拒绝 / 清除 / 刷新后恢复、CSS 变量无需 `!important` 的覆盖、写入失败回滚、减少动态效果及未知 / 用尽 / 到期 / 同步中状态。缺少 Playwright 时失败，防止未执行却误报通过；本机运行需 `$env:GQC_PLAYWRIGHT_MODULE='<playwright 模块目录>'`，浏览器通道可用 `$env:GQC_BROWSER_CHANNEL` 指定，默认先试 `msedge` 再试随包 Chromium。静默同步链路另覆盖五种形态：RPC 正常、RPC 503 时由静默 GET 与隐藏 iframe 兜底、两者都失败时手动后台页、无账号前缀的 /app 直取裸 /usage，以及本地 HTTP 服务产生的真实 302（/u/1/usage → /u/2/usage）跨账号拦截（断言不写状态与缓存）；均断言不产生可见标签页、不改变当前地址，探测成功时不再创建 iframe。
+1. 语法检查：`node --check dist/gemini-quota-capsule.user.js`
+2. 解析器回归：在页面控制台调用 `__gqc._test`，或运行 `pnpm test` 检查共享层用例
+3. 布局回归（历史记录：原 `tests/gemini-quota-capsule-layout.test.cjs` 已随仓库重构移除，以下为当时的 Playwright 验证环境）—— 用 Playwright 在空白页注入脚本（把入口 `bootstrap()` 换成 `createDOM()`），穷举 6 种装饰 × 8 种进度 × 3 组用量（0 / 42 / 100），断言胶囊宽度在所有组合下完全一致、两段槽位恒为 24px、装饰与进度节点在数值不变时保持复用。另覆盖两段进度独立选择、320 / 375 / 768px 窗口、每种进度连续 1000 次更新的节点复用与用量变化重绘、双柱独立比例、键盘轮换与重载恢复、旧配置迁移、图片格式与体积校验、SVG 清洗、组件 CSS 的应用 / 拒绝 / 清除 / 刷新后恢复、CSS 变量无需 `!important` 的覆盖、写入失败回滚、减少动态效果及未知 / 用尽 / 到期 / 同步中状态。缺少 Playwright 时失败，防止未执行却误报通过；本机运行需 `$env:GQC_PLAYWRIGHT_MODULE='<playwright 模块目录>'`，浏览器通道可用 `$env:GQC_BROWSER_CHANNEL` 指定，默认先试 `msedge` 再试随包 Chromium。静默同步链路另覆盖五种形态：RPC 正常、RPC 503 时由静默 GET 与隐藏 iframe 兜底、两者都失败时手动后台页、无账号前缀的 /app 直取裸 /usage，以及本地 HTTP 服务产生的真实 302（/u/1/usage → /u/2/usage）跨账号拦截（断言不写状态与缓存）；均断言不产生可见标签页、不改变当前地址，探测成功时不再创建 iframe。
 4. 语义自测：在页面控制台用 `__gqc._test` 直接调用纯函数，例如
 
 ```js

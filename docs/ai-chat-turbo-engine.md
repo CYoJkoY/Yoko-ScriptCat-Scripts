@@ -52,7 +52,7 @@
 前置条件：Chrome / Edge / Firefox / Safari + 任一用户脚本管理器（Tampermonkey、Violentmonkey、Greasemonkey）。
 
 1. 安装用户脚本管理器（ScriptCat 推荐）。
-2. 点击安装入口直接安装（推荐，可自动更新）：[AI Chat Turbo Engine](https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/scripts/ai-chat-turbo-engine.js)。
+2. 点击安装入口直接安装（推荐，可自动更新）：[AI Chat Turbo Engine](https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/dist/ai-chat-turbo-engine.user.js)。
 3. 或在管理器中新建脚本、粘贴脚本完整内容后保存。
 4. 打开受支持的对话页面，右下角出现紧凑的 `Turbo` 负载仪表即表示生效。
 
