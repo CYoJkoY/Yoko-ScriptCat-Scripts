@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.47
+// @version      0.4.48
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可直接发布文章主评论（is_cy: 0），支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试，并按 is_cy 标记屏蔽插眼评论。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -2440,43 +2440,6 @@
     { id: "favour", label: "收藏", href: "/app/user/favour/content" },
     { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" }
   ];
-  var NAV_MOTION_FRAMES = {
-    home: [
-      { transform: "translateY(0) scale(1)", offset: 0 },
-      { transform: "translateY(-5.5px) scale(1.06)", offset: 0.3 },
-      { transform: "translateY(1.4px) scale(0.99)", offset: 0.58 },
-      { transform: "translateY(-1.6px) scale(1.01)", offset: 0.78 },
-      { transform: "translateY(0) scale(1)", offset: 1 }
-    ],
-    community: [
-      { transform: "translateY(0) scale(1)", offset: 0 },
-      { transform: "translateY(-5px) scale(1.07)", offset: 0.35 },
-      { transform: "translateY(1.2px) scale(0.99)", offset: 0.66 },
-      { transform: "translateY(-1.2px) scale(1.01)", offset: 0.84 },
-      { transform: "translateY(0) scale(1)", offset: 1 }
-    ],
-    favour: [
-      { transform: "translateY(0) scale(1)", offset: 0 },
-      { transform: "translateY(1px) scale(0.92)", offset: 0.32 },
-      { transform: "translateY(-5.5px) scale(1.05)", offset: 0.64 },
-      { transform: "translateY(-1px) scale(1)", offset: 0.84 },
-      { transform: "translateY(0) scale(1)", offset: 1 }
-    ],
-    article: [
-      { transform: "rotate(0) translateY(0) scale(1)", offset: 0 },
-      { transform: "rotate(-8deg) translateY(-3.5px) scale(1.03)", offset: 0.3 },
-      { transform: "rotate(3.5deg) translateY(-1px) scale(1)", offset: 0.62 },
-      { transform: "rotate(-1.5deg) translateY(0) scale(1)", offset: 0.82 },
-      { transform: "rotate(0) translateY(0) scale(1)", offset: 1 }
-    ]
-  };
-  var NAV_PRESS_FRAMES = [
-    { transform: "scale(1)", offset: 0 },
-    { transform: "scale(0.86)", offset: 0.45 },
-    { transform: "scale(1)", offset: 1 }
-  ];
-  var navMotionAnimations = /* @__PURE__ */ new WeakMap();
-  var navMotionBoundHosts = /* @__PURE__ */ new WeakSet();
   var NAV_ICONS = {
     home: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-home" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></svg></span>',
     community: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-community" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></svg></span>',
@@ -2529,11 +2492,50 @@
     outline: 2px solid var(--heybox-up-accent, #6f8db3);
     outline-offset: -2px;
   }
-  .hbu-nav-icon { display: inline-flex; width: 18px; height: 18px; flex: none; align-items: center; justify-content: center; transform-origin: 50% 60%; will-change: transform; }
+  .hbu-nav-icon {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    transform-origin: 50% 60%;
+    transition:
+      transform .18s cubic-bezier(.22, .8, .3, 1),
+      color .18s ease;
+  }
   .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
-  :root.${NAV_STATIC_CLASS} .hbu-nav-icon { animation: none !important; }
+  .hbu-nav-link:focus-visible .hbu-nav-icon {
+    color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
+    transform: translateY(-2px) scale(1.14);
+  }
+  .hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon {
+    transform: rotate(-7deg) translateY(-2px) scale(1.1);
+  }
+  /* Touch browsers keep :hover on the tapped link, which would leave the icon enlarged.
+     Gate hover-only motion to devices that can hover with a precise pointer. */
+  @media (hover: hover) and (pointer: fine) {
+    .hbu-nav-link:hover .hbu-nav-icon {
+      color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
+      transform: translateY(-2px) scale(1.14);
+    }
+    .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon {
+      transform: rotate(-7deg) translateY(-2px) scale(1.1);
+    }
+  }
+  .hbu-nav-link:active .hbu-nav-icon { transform: translateY(0) scale(.9); transition-duration: .08s; }
+  .hbu-nav-link[data-nav="article"]:active .hbu-nav-icon { transform: translateY(0) rotate(0) scale(.9); }
+  :root.${NAV_STATIC_CLASS} .hbu-nav-icon {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
+  }
   @media (prefers-reduced-motion: reduce) {
-    .hbu-nav-icon { animation: none !important; }
+    .hbu-nav-icon {
+      animation: none !important;
+      transform: none !important;
+      transition: none !important;
+    }
     .hbu-nav-link::after { transition: none; }
   }
   @media (max-width: 1180px) {
@@ -2547,51 +2549,6 @@
 `;
   function applyNavMotionPreference(value) {
     document.documentElement.classList.toggle(NAV_STATIC_CLASS, value === false);
-    if (!value) stopNavIconMotion();
-  }
-  function playNavIconMotion(icon, frames, duration, easing) {
-    if (!(icon instanceof HTMLElement)) return;
-    if (!readNavMotionPreference() || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    navMotionAnimations.get(icon)?.cancel();
-    const animation = icon.animate(frames, { duration, easing, fill: "none" });
-    navMotionAnimations.set(icon, animation);
-    animation.addEventListener("finish", () => {
-      if (navMotionAnimations.get(icon) === animation) navMotionAnimations.delete(icon);
-    }, { once: true });
-  }
-  function playNavLinkMotion(link) {
-    const name = link.getAttribute("data-nav") || "";
-    const frames = NAV_MOTION_FRAMES[name];
-    if (frames === void 0) return;
-    playNavIconMotion(link.querySelector(".hbu-nav-icon"), frames, 620, "cubic-bezier(.22, .8, .3, 1)");
-  }
-  function bindNavMotion(host) {
-    if (navMotionBoundHosts.has(host)) return;
-    navMotionBoundHosts.add(host);
-    host.addEventListener("pointerover", (event) => {
-      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
-      if (link === null || !host.contains(link)) return;
-      const from = event.relatedTarget;
-      if (from instanceof Node && link.contains(from)) return;
-      playNavLinkMotion(link);
-    });
-    host.addEventListener("focusin", (event) => {
-      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
-      if (link !== null && host.contains(link)) playNavLinkMotion(link);
-    });
-    host.addEventListener("pointerdown", (event) => {
-      const link = event.target instanceof Element ? event.target.closest(".hbu-nav-link") : null;
-      if (link !== null && host.contains(link)) playNavIconMotion(link.querySelector(".hbu-nav-icon"), NAV_PRESS_FRAMES, 140, "cubic-bezier(.3, .7, .3, 1)");
-    });
-  }
-  function stopNavIconMotion() {
-    for (const icon of Array.from(document.querySelectorAll("#" + NAV_ID + " .hbu-nav-icon"))) {
-      if (!(icon instanceof HTMLElement)) continue;
-      const animation = navMotionAnimations.get(icon);
-      if (animation === void 0) continue;
-      animation.cancel();
-      navMotionAnimations.delete(icon);
-    }
   }
   function ensureNavStyle() {
     ensureStyleElement(NAV_STYLE_ID, NAV_CSS);
@@ -2711,7 +2668,6 @@
       ).join("");
       host.addEventListener("click", handleNavClick);
     }
-    bindNavMotion(host);
     if (host.parentNode !== links || links.firstElementChild !== host) links.prepend(host);
     syncNavActive();
   }
@@ -5035,6 +4991,40 @@
   :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search-input-popper, .el-autocomplete__popper) :is(.el-popper__arrow, .popper__arrow)::before {
     border-color: var(--heybox-up-border) !important;
     background: var(--heybox-up-surface) !important;
+  }
+  /* The 2026 search box renders its own suggestion list instead of the Element Plus popper.
+     Names are hard-coded to #14191e while the panel inherits the themed surface, so every
+     row, wrapper, and matched fragment needs an explicit readable color. */
+  :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search__pull-list .search__suggestion, .search__pull-list .suggestion__item) {
+    background-color: transparent !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list :is(.suggestion__item-content, .suggestion__item-name) {
+    background-color: transparent !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item-desc {
+    color: var(--heybox-up-muted) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item-icon {
+    color: var(--heybox-up-text-2) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list :is(.suggestion__item:hover, .suggestion__item:focus-visible, .suggestion__item.active, .suggestion__item.is-active, .suggestion__item.selected, .suggestion__item.highlighted) {
+    background-color: var(--heybox-up-subtle) !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item:focus-visible {
+    outline: 2px solid var(--heybox-up-accent) !important;
+    outline-offset: -2px;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item[aria-selected="true"] {
+    background-color: var(--heybox-up-subtle) !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item :is(em, b, strong, mark) {
+    background-color: transparent !important;
+    color: var(--heybox-up-accent) !important;
+    font-style: normal;
   }
   :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.post__content, .image-text__content) :where(p, span, b, strong, em, i, li, h1, h2, h3, h4, h5, h6, blockquote, .text) {
     color: inherit !important;

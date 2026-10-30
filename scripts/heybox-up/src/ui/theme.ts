@@ -424,6 +424,40 @@ export const THEME_CSS = `
     border-color: var(--heybox-up-border) !important;
     background: var(--heybox-up-surface) !important;
   }
+  /* The 2026 search box renders its own suggestion list instead of the Element Plus popper.
+     Names are hard-coded to #14191e while the panel inherits the themed surface, so every
+     row, wrapper, and matched fragment needs an explicit readable color. */
+  :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.search__pull-list .search__suggestion, .search__pull-list .suggestion__item) {
+    background-color: transparent !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list :is(.suggestion__item-content, .suggestion__item-name) {
+    background-color: transparent !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item-desc {
+    color: var(--heybox-up-muted) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item-icon {
+    color: var(--heybox-up-text-2) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list :is(.suggestion__item:hover, .suggestion__item:focus-visible, .suggestion__item.active, .suggestion__item.is-active, .suggestion__item.selected, .suggestion__item.highlighted) {
+    background-color: var(--heybox-up-subtle) !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item:focus-visible {
+    outline: 2px solid var(--heybox-up-accent) !important;
+    outline-offset: -2px;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item[aria-selected="true"] {
+    background-color: var(--heybox-up-subtle) !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] .search__pull-list .suggestion__item :is(em, b, strong, mark) {
+    background-color: transparent !important;
+    color: var(--heybox-up-accent) !important;
+    font-style: normal;
+  }
   :root.heybox-up-theme[data-heybox-up-dark="true"] :is(.post__content, .image-text__content) :where(p, span, b, strong, em, i, li, h1, h2, h3, h4, h5, h6, blockquote, .text) {
     color: inherit !important;
   }
