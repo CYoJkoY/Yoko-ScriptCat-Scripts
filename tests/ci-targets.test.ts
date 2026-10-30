@@ -56,9 +56,21 @@ describe("planVerification", () => {
     expect(plan.targets).toEqual([]);
   });
 
+  it("verifies a workspace whose committed bundle changed on its own", () => {
+    const plan = planVerification(["dist/heybox-up.user.js"], discovered);
+    expect(plan.mode).toBe("targeted");
+    expect(plan.targets).toEqual(["heybox-up"]);
+  });
+
+  it("rejects a bundle that has no matching workspace", () => {
+    expect(() => planVerification(["dist/orphan.user.js"], discovered)).toThrow(
+      /dist\/orphan\.user\.js has a discoverable workspace/,
+    );
+  });
+
   it("fails loudly when a script directory disappears or is misnamed", () => {
     expect(() => planVerification(["scripts/removed-script/src/index.ts"], discovered)).toThrow(
-      /scripts\/removed-script is not a discoverable workspace/,
+      /scripts\/removed-script nor dist\/removed-script\.user\.js has a discoverable workspace/,
     );
   });
 });

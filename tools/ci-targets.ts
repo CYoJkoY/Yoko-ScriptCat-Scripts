@@ -25,6 +25,7 @@ const GLOBAL_FILES: readonly string[] = [
 ];
 
 const SCRIPT_PATH = /^scripts\/([^/]+)\//;
+const DIST_PATH = /^dist\/([^/]+)\.user\.js$/;
 
 /** Normalize a repository-relative path so Windows and POSIX diffs compare equally. */
 export function normalizeChangedPath(rawPath: string): string {
@@ -46,6 +47,17 @@ export function parseChangedPaths(contents: string): string[] {
 function isGlobalChange(changedPath: string): boolean {
   if (GLOBAL_FILES.includes(changedPath)) return true;
   return GLOBAL_DIRECTORIES.some((directory) => changedPath.startsWith(directory));
+}
+
+/** Map a changed path to the workspace that owns it, or null when it owns none. */
+function ownerOfPath(changedPath: string): string | null {
+  const scriptMatch = SCRIPT_PATH.exec(changedPath);
+  if (scriptMatch !== null) return scriptMatch[1] ?? null;
+  // A committed bundle can be edited by hand or left stale; verify the workspace
+  // that produced it so the regeneration check always runs.
+  const distMatch = DIST_PATH.exec(changedPath);
+  if (distMatch !== null) return distMatch[1] ?? null;
+  return null;
 }
 
 function sortNames(names: Iterable<string>): string[] {
@@ -70,14 +82,12 @@ export function planVerification(
       globalChange ??= changedPath;
       continue;
     }
-    const match = SCRIPT_PATH.exec(changedPath);
-    if (match === null) continue;
-    const name = match[1];
-    if (name === undefined) continue;
+    const name = ownerOfPath(changedPath);
+    if (name === null) continue;
     if (!known.has(name)) {
       throw new Error(
         "Changed path \"" + changedPath + "\" belongs to script \"" + name +
-          "\", but scripts/" + name + " is not a discoverable workspace",
+          "\", but neither scripts/" + name + " nor dist/" + name + ".user.js has a discoverable workspace",
       );
     }
     affected.add(name);
@@ -169,10 +179,8 @@ async function main(): Promise<void> {
   // entries have no code left to check, so drop them instead of reporting an
   // undiscoverable workspace; a broken workspace that still exists still fails.
   const livePaths = changedPaths.filter((changedPath) => {
-    const match = SCRIPT_PATH.exec(changedPath);
-    if (match === null) return true;
-    const name = match[1];
-    if (name === undefined || discoveredNames.includes(name)) return true;
+    const name = ownerOfPath(changedPath);
+    if (name === null || discoveredNames.includes(name)) return true;
     return existsSync(path.join(rootDirectory, "scripts", name));
   });
   const removed = changedPaths.length - livePaths.length;
@@ -195,9 +203,8 @@ function removedWorkspaceNames(
 ): string[] {
   const names = new Set<string>();
   for (const changedPath of changedPaths) {
-    const match = SCRIPT_PATH.exec(changedPath);
-    const name = match?.[1];
-    if (name === undefined || discoveredNames.includes(name)) continue;
+    const name = ownerOfPath(changedPath);
+    if (name === null || discoveredNames.includes(name)) continue;
     names.add(name);
   }
   return [...names];
