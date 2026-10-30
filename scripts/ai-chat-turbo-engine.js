@@ -1142,6 +1142,7 @@
   const COMPOSER_VISUAL_GAP = 48;
   const COMPOSER_VISUAL_MAX_DEPTH = 5;
   let searchDebounceTimer = null;
+  let handoffResumeTimer = null;
   let observer = null;
   let codeResizeObserver = null;
   let scheduleTimer = null;
@@ -3046,9 +3047,7 @@
   }
 
   function stopVirtualFileTrayTracking() {
-    stopVirtualFileTrayTracking();
-    window.clearTimeout(searchDebounceTimer);
-    searchDebounceTimer = null;
+    stopVirtualFileTraySyncLoop();
 
     if (virtualFileTrayResizeObserver) {
       virtualFileTrayResizeObserver.disconnect();
@@ -3730,6 +3729,10 @@
 
   function cleanupAndResume(onComplete, status) {
     window.setTimeout(() => {
+      if (isEngineDormant()) {
+        if (onComplete) onComplete(status);
+        return;
+      }
       observeDom();
       observeCodeLayout();
       if (onComplete) onComplete(status);
@@ -6354,8 +6357,15 @@
 
   function resumePendingHandoffPrompt() {
     if (isEngineDormant()) return;
+    window.clearInterval(handoffResumeTimer);
+    handoffResumeTimer = null;
     let attempts = 0;
     const timer = window.setInterval(() => {
+      if (isEngineDormant()) {
+        window.clearInterval(timer);
+        if (handoffResumeTimer === timer) handoffResumeTimer = null;
+        return;
+      }
       let pending = null;
       try {
         pending = JSON.parse(
@@ -6427,6 +6437,7 @@
           });
       }
     }, 250);
+    handoffResumeTimer = timer;
   }
 
   function startHandoffGeneration() {
@@ -6464,6 +6475,7 @@
 
     // ★ 关键改造：插入后验证平台是否过滤了关键标记
     window.setTimeout(() => {
+      if (isEngineDormant()) return;
       const actual = getComposerText(input);
       const mustSurvive = [
         PLAIN_HANDOFF_START,
@@ -6525,6 +6537,10 @@
     let attempts = 0;
     const timer = window.setInterval(() => {
       attempts++;
+      if (isEngineDormant()) {
+        window.clearInterval(timer);
+        return;
+      }
       const currentTurns = getTurns().length;
 
       if (currentTurns > baselineTurns) {
@@ -7061,6 +7077,10 @@
     engineActive = false;
     window.clearInterval(reasoningRestoreTimer);
     reasoningRestoreTimer = 0;
+    window.clearInterval(handoffResumeTimer);
+    handoffResumeTimer = null;
+    window.clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
 
     observer?.disconnect();
     codeResizeObserver?.disconnect();
