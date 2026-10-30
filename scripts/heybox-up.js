@@ -6048,13 +6048,14 @@
     .hbu-reader-comments-quote b { color: var(--hbu-reader-muted); font-weight: 600; }
     .hbu-reader-comments-text .hbu-reader-comments-emoji, .hbu-reader-comments-quote .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
     .hbu-reader-comments-text img, .hbu-reader-comments-quote img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
-    .hbu-reader-comments-status { padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
-    .hbu-reader-comments-status[data-retry="true"] { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+    .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
+    .hbu-reader-comments-status-retry { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 16px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+    .hbu-reader-comments-status-retry:hover { border-color: var(--heybox-up-accent, #8fb0cf); }
     .hbu-reader-comments-foot { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--hbu-reader-border); }
     .hbu-reader-comments-foot button, .hbu-reader-comments-foot a { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 14px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-decoration: none; cursor: pointer; }
     .hbu-reader-comments-foot a { margin-left: auto; border-color: transparent; background: var(--heybox-up-accent, #8fb0cf); color: #061018; font-weight: 650; }
     .hbu-reader-comments-foot button:disabled { opacity: .55; cursor: default; }
-    .hbu-reader-comments-list[hidden], .hbu-reader-comments-status[hidden], .hbu-reader-comments-foot button[hidden] { display: none; }
+    .hbu-reader-comments-list[hidden], .hbu-reader-comments-status[hidden], .hbu-reader-comments-status [hidden], .hbu-reader-comments-foot button[hidden] { display: none; }
     .hbu-reader-composer {
       display: flex;
       flex: none;
@@ -6846,6 +6847,8 @@
     let commentPanel = null;
     let commentPanelList = null;
     let commentPanelStatus = null;
+    let commentPanelStatusText = null;
+    let commentPanelRetry = null;
     let commentPanelMeta = null;
     let commentPanelMore = null;
     let commentPanelClose = null;
@@ -7646,23 +7649,28 @@
       if (commentPanelStatus !== null) {
         if (commentState.error !== "") {
           commentPanelStatus.hidden = false;
-          commentPanelStatus.dataset.retry = "true";
-          commentPanelStatus.textContent = commentState.error + "，点击重试";
+          if (commentPanelStatusText !== null) commentPanelStatusText.textContent = commentState.error;
+          if (commentPanelRetry !== null) {
+            commentPanelRetry.hidden = false;
+            commentPanelRetry.disabled = commentState.loading;
+          }
         } else if (commentState.loading && commentState.items.length === 0) {
           commentPanelStatus.hidden = false;
-          commentPanelStatus.dataset.retry = "false";
-          commentPanelStatus.textContent = "正在加载评论…";
+          if (commentPanelStatusText !== null) commentPanelStatusText.textContent = "正在加载评论…";
+          if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
         } else if (!commentState.loaded) {
           commentPanelStatus.hidden = false;
-          commentPanelStatus.dataset.retry = "false";
-          commentPanelStatus.textContent = "正在准备评论…";
+          if (commentPanelStatusText !== null) commentPanelStatusText.textContent = "正在准备评论…";
+          if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
         } else if (visible.length === 0) {
           commentPanelStatus.hidden = false;
-          commentPanelStatus.dataset.retry = "false";
-          commentPanelStatus.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+          if (commentPanelStatusText !== null) {
+            commentPanelStatusText.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+          }
+          if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
         } else {
           commentPanelStatus.hidden = true;
-          commentPanelStatus.dataset.retry = "false";
+          if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
         }
       }
       if (commentPanelMore !== null) {
@@ -7979,6 +7987,8 @@
         commentPanel = null;
         commentPanelList = null;
         commentPanelStatus = null;
+        commentPanelStatusText = null;
+        commentPanelRetry = null;
         commentPanelMeta = null;
         commentPanelMore = null;
         commentPanelClose = null;
@@ -8015,7 +8025,17 @@
       list.className = "hbu-reader-comments-list";
       const status = document.createElement("div");
       status.className = "hbu-reader-comments-status";
-      status.setAttribute("role", "status");
+      status.setAttribute("role", "group");
+      status.setAttribute("aria-label", "评论加载状态");
+      const statusText = document.createElement("div");
+      statusText.setAttribute("role", "status");
+      statusText.setAttribute("aria-live", "polite");
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "hbu-reader-comments-status-retry";
+      retry.textContent = "重试";
+      retry.hidden = true;
+      status.append(statusText, retry);
       body.append(list, status);
       const foot = document.createElement("div");
       foot.className = "hbu-reader-comments-foot";
@@ -8033,6 +8053,8 @@
       commentPanel = panel;
       commentPanelList = list;
       commentPanelStatus = status;
+      commentPanelStatusText = statusText;
+      commentPanelRetry = retry;
       commentPanelMeta = meta;
       commentPanelMore = more;
       commentPanelClose = close;
@@ -8041,8 +8063,9 @@
       more.addEventListener("click", () => {
         if (!commentState.loading) void loadReaderComments(commentState.page + 1);
       });
-      status.addEventListener("click", () => {
-        if (status.dataset.retry !== "true" || commentState.loading) return;
+      retry.addEventListener("click", () => {
+        if (commentState.loading) return;
+        commentPanelClose?.focus({ preventScroll: true });
         void loadReaderComments(commentState.page > 0 ? commentState.page + 1 : 1);
       });
       sheet.addEventListener("keydown", trapCommentPanelTab);
@@ -9698,6 +9721,8 @@
       commentPanel = null;
       commentPanelList = null;
       commentPanelStatus = null;
+      commentPanelStatusText = null;
+      commentPanelRetry = null;
       commentPanelMeta = null;
       commentPanelMore = null;
       commentPanelClose = null;
@@ -9838,6 +9863,9 @@
         return;
       }
       if (isSiteAlertOpen() || eventHitsTypingTarget(event)) return;
+      // The comment dialog owns its keyboard surface. Let Space activate its buttons
+      // and let arrows or PageUp/PageDown scroll the comment list instead of the reader.
+      if (isCommentPanelOpen() && commentPanel !== null && commentPanel.contains(event.target)) return;
       if (event.key === "[") {
         event.preventDefault();
         const prev = navigation.readStatus().prev;

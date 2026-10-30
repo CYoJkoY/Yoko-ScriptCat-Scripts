@@ -102,7 +102,7 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 - 评论面板：沉浸阅读使用脚本自建面板，宽 `min(440px, 100vw)`，从右侧滑出；打开时背景铺半透明遮罩，焦点移到关闭按钮，阅读区 `inert`，关闭后焦点回到评论按钮，`Tab` 在面板内循环。面板顶部是文章主评论输入框（表情、字数、提交锁、失败重试），下面是按 20 条分页的评论列表，显示头像、昵称、时间、正文与 cube 表情，按 `is_cy` 屏蔽插眼评论，底部“加载更多”继续拉取。沉浸阅读期间站点原生评论区与回复框隐藏，DOM 不搬动。
 - 阅读互动：点赞与收藏直接调用站点写接口，按钮状态与计数来自评论树 `result.link`；未收藏时弹出收藏夹列表，已收藏时再次点击直接取消；CY 按钮下方常驻显示当前帖子的 CY 数量（无 CY 时显示 0，计数来自评论树第一页的 `is_cy` 评论），点击打开 520px 输入卡，提交后以 `is_cy=1` 发布，并同时上升评论数与 CY 数量；关注按钮转发站点原生关注按钮，请求结束后重新同步状态，已关注时再点一次走站点的取消关注确认对话框；确认框改用主题底色并抬到阅读舞台之上，Esc 先关确认框再关阅读器；未登录统一提示「请先登录小黑盒」。
 - 分享：顶部与右侧分享按钮先调用系统分享面板，不可用时复制 `https://www.xiaoheihe.cn/app/bbs/link/<id>` 并显示“链接已复制”，不再代理隐藏的原生分享按钮。
-- 面板加载提示：打开时先显示“正在加载评论…”，请求失败时保留已加载内容并显示可点击重试的提示；评论出现后提示自动移除，避免打开后面对空白面板。
+- 面板加载提示：打开时先显示“正在加载评论…”，请求失败时保留已加载内容，并在状态文本旁显示可通过鼠标或键盘操作的重试按钮；评论出现后提示自动移除，避免打开后面对空白面板。
 - 退出与记忆：顶部关闭按钮、`R` 与 `Esc` 只关闭当前文章的阅读器，并提示已退出；齿轮菜单的“沉浸阅读”开关才修改持久偏好。两种关闭都立即恢复站点原生双栏与外部翻页器，进入其他帖子仍按全局偏好自动开启。阅读位置按帖子写入 `sessionStorage`，返回同一帖时回到原页。
 - 加载占位：帖子数据尚未渲染时先显示“正在加载文章…”，拿到正文后再替换，不会先露出被隐藏的原生页面空白。
 - 关闭沉浸阅读后的排版：正文与评论各成一张卡片，中间留 24px。正文卡内边距 28px 32px，标题 25px/1.42/700，正文 16px、行距跟随“正文行距”偏好（默认 1.7 倍），段落限宽 46em、下间距 .72em；引用块用 3px 左边线并保持 1.8 行高，标题、段落与图片间距单独收紧。右栏评论 424px，sticky 吸顶，最大高度 `calc(100vh - 112px)`，楼层内边距 14px 16px、正文 14px/1.7。
@@ -168,7 +168,7 @@ node --check scripts/heybox-up.js
 
 签名用真实被服务端接受的样本 `(time=1792587363, nonce=2B3C207C9CF9AF2779DEE63C509DA4E8, path=/bbs/app/profile/bbs/comment/list)` 复核，得到 `hkey=VX2Y254`；服务端接受该签名，时间错误时返回 `系统时间不正确`。
 
-v0.4.47 的 10 组 DOM 用例在仓库外的 `E:\Temp\hbu-inspect` 用 `playwright-core` 驱动本机 Edge 执行，命令依次为 `node smoke-panel.js`、`node inspect-reader.js`、`node verify-race.js`、`node verify-actions.js`、`node verify-regressions.js`、`node verify-nav.js`、`node verify-search-contrast.js`、`node verify-media.js`、`node verify-login.js` 与 `node verify-pending.js`，全部通过；这些脚本与依赖不进入仓库。仓库当前没有 `package.json`、`tests/` 或 CI 工作流，因此不存在可执行的 `npm ci` / `npm test`。
+v0.4.47 的 10 组 DOM 用例在仓库外的 `E:\Temp\hbu-inspect` 用 `playwright-core` 驱动本机 Edge 执行，命令依次为 `node smoke-panel.js`、`node inspect-reader.js`、`node verify-race.js`、`node verify-actions.js`、`node verify-regressions.js`、`node verify-nav.js`、`node verify-search-contrast.js`、`node verify-media.js`、`node verify-login.js` 与 `node verify-pending.js`，全部通过；评论加载失败后的键盘重试另以 `node verify-retry-keyboard.js` 覆盖，从评论输入框按 Tab 可到达“重试”按钮，回车后重新请求并恢复列表。这些脚本与依赖不进入仓库。仓库当前没有 `package.json`、`tests/` 或 CI 工作流，因此不存在可执行的 `npm ci` / `npm test`。
 
 社区内搜索用无头 Edge（CDP）验证：1440×900、900×800 与 390×844（内容宽 390px）下，面板均挂在 `.topic-link__main` 内筛选行的实际父节点 `.topic-link__panel`，且紧挨筛选行之前；390px 下社区胶囊实算为 `display: none`。提交“显卡”后请求带 `topic_id=18745`、`q`、`search_type=link`、`limit=30` 与 `hkey`，渲染 10 条结果，原生筛选行与信息流同时隐藏；焦点在站点导航时按 Esc 不关闭面板，焦点回到输入框后按 Esc 关闭并把焦点交还输入框。接口每页再夹 10 条 `space` 占位时，“加载更多”仍以 `offset=10`、`offset=20` 正常追加，结果从 10 条增至 30 条。夜航下搜索栏底色 `rgb(23, 29, 36)`、结果标题 `rgb(220, 229, 239)`；浅色下分别为 `rgb(255, 255, 255)` 与 `rgb(20, 25, 30)`。
 
@@ -314,6 +314,7 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 ### v0.4.47
 
 - 沉浸模式评论改为脚本自建面板，隐藏站点原生评论区与回复框；支持文章主评论、cube 表情、提交锁、失败重试与加载更多。
+- 评论加载失败时把重试入口改为真实按钮，键盘可聚焦并通过 Enter 或 Space 重新加载；状态文本继续作为 `role="status"` 播报。
 - 修复已登录但仍提示登录的问题：写请求统一使用逐层恢复后的账号 ID，不再只读 Cookie。
 - 修复全站搜索建议文字与背景对比度过低，补齐 Element Plus 浮层的深色表面、文字、匹配片段与悬停色。
 - 头图加载失败时回退正文最大图，无可用图片时取消封面；进度条独占 46px 底栏，滚动区为其让出高度。
