@@ -110,6 +110,7 @@ export const REASONING_SELECTOR = [
 ].join(", ");
 
 export const STORAGE_KEY_REASONING = "ai_turbo_reasoning_memory";
+export const STORAGE_KEY_TOOL_MEMORY = "ai_turbo_tool_memory";
 export const REASONING_CONTROL_PATTERN =
   /深度思考|深度推理|思考|推理|思维链|thinking|reasoning|think harder|effort|智商|extended thinking/i;
 export const REASONING_CONTROL_SELECTOR = [
@@ -133,6 +134,54 @@ export const CHOICE_OPTION_SELECTOR =
 // 只带单选语义的项：普通菜单项不算，避免把“工具菜单”当成强度选择
 export const CHOICE_RADIO_SELECTOR =
   "[aria-checked], [aria-selected], [role='menuitemradio'], [role='radio']";
+
+// Yuanbao composer "add tools" entry. It carries aria-expanded like the
+// reasoning pickers, so the reasoning recorder must exclude it explicitly.
+export const TOOL_TRIGGER_SELECTOR =
+  '[data-new-input-control="add-tools-trigger"]';
+export const TOOL_TRIGGER_CONTAINER_SELECTOR =
+  '[data-new-input-control="add-tools"]';
+export const TOOL_POPUP_SELECTOR = [
+  "[role='menu']",
+  "[role='listbox']",
+  "[role='dialog']",
+  "[role='radiogroup']",
+  "[data-radix-popper-content-wrapper]",
+  "[data-floating-ui-portal]",
+].join(", ");
+export const TOOL_ROW_SELECTOR = [
+  "[role='menuitemcheckbox']",
+  "[role='menuitemradio']",
+  "[role='checkbox']",
+  "[role='option']",
+  "[aria-checked]",
+  "[aria-pressed]",
+  "[aria-selected]",
+  "[data-state='checked']",
+  "[data-state='unchecked']",
+  "button",
+].join(", ");
+
+/** Rows that expose a switch state on the row itself. */
+export const TOOL_TOGGLE_ROW_SELECTOR = [
+  "[role='menuitemcheckbox']",
+  "[role='menuitemradio']",
+  "[role='checkbox']",
+  "[role='option']",
+  "[aria-checked]",
+  "[aria-pressed]",
+  "[aria-selected]",
+  "[data-state='checked']",
+  "[data-state='unchecked']",
+].join(", ");
+
+export function isToolControlElement(node: unknown): boolean {
+  if (!(node instanceof Element)) return false;
+  return Boolean(
+    node.closest(TOOL_TRIGGER_SELECTOR) ||
+      node.closest(TOOL_TRIGGER_CONTAINER_SELECTOR),
+  );
+}
 
 export const BLOCK_TEXT_TAGS = new Set([
   "ADDRESS",

@@ -28,6 +28,7 @@ export interface EngineState {
   collapseCode: boolean;
   virtualFileEnabled: boolean;
   rememberReasoning: boolean;
+  rememberTools: boolean;
   hudOpen: boolean;
   totalTurns: number;
   hiddenCount: number;
@@ -43,6 +44,7 @@ interface SavedEngineConfig {
   collapseCode: boolean;
   virtualFileEnabled: boolean;
   rememberReasoning: boolean;
+  rememberTools: boolean;
 }
 
 export function createEngineState(): EngineState {
@@ -53,6 +55,7 @@ export function createEngineState(): EngineState {
     collapseCode: true,
     virtualFileEnabled: true,
     rememberReasoning: true,
+    rememberTools: true,
     hudOpen: false,
     totalTurns: 0,
     hiddenCount: 0,
@@ -102,6 +105,9 @@ export function loadSavedConfig(state: EngineState): void {
     if (typeof parsed.rememberReasoning === "boolean") {
       state.rememberReasoning = parsed.rememberReasoning;
     }
+    if (typeof parsed.rememberTools === "boolean") {
+      state.rememberTools = parsed.rememberTools;
+    }
   } catch (error: unknown) {
     reportRecoverableError("load saved engine config", error);
   }
@@ -116,6 +122,7 @@ export function saveCurrentConfig(state: EngineState): void {
       collapseCode: state.collapseCode,
       virtualFileEnabled: state.virtualFileEnabled,
       rememberReasoning: state.rememberReasoning,
+      rememberTools: state.rememberTools,
     };
     configStore.write(STORAGE_KEY_CONFIG, JSON.stringify(config));
   } catch (error: unknown) {

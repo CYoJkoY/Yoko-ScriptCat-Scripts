@@ -4,8 +4,11 @@ import {
   REASONING_CONTROL_PATTERN,
   REASONING_CONTROL_SELECTOR,
   REASONING_MENU_SELECTOR,
+  isToolControlElement,
 } from "../config";
 import { isEngineDormant } from "./auth";
+import { reportRecoverableError } from "./diagnostics";
+import type { ToolPopupScope } from "./tool-scope";
 import type { ElementFactory } from "../ui/code-blocks";
 import type { EngineState } from "../state";
 import {
@@ -26,6 +29,7 @@ export interface ReasoningChoiceInfo {
 export interface ReasoningDeps {
   el: ElementFactory;
   state: EngineState;
+  toolScope: ToolPopupScope;
   withSelfMutation: <T>(task: () => T) => T;
   triggerSendButton: (control: HTMLElement) => boolean;
   requestUpdate: () => void;
@@ -47,6 +51,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
   const {
     el,
     state,
+    toolScope,
     withSelfMutation,
     triggerSendButton,
     requestUpdate,
@@ -59,6 +64,11 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
   let reasoningRestoreAttempts = 0;
   let reasoningRestoreDone = false;
   let applyingReasoning = false;
+  let restoreToken = 0;
+  const correctedToggleAttempts = new Set<string>();
+  const choiceRestoreAttempts = new Map<string, number>();
+  let conversationKey = `${location.origin}${location.pathname}`;
+  let reasoningSettleTimer = 0;
   // 最近点开的控件：弹层里的选项点击时用来把“哪个控件的哪个选项”配对
   let reasoningMenuTrigger: HTMLElement | null = null;
   let reasoningMenuTriggerAt = 0;
@@ -83,19 +93,53 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     return raw.replace(/\s+/g, " ").trim().slice(0, 60);
   }
 
-  function controlOnState(control: HTMLElement): boolean | null {
+  function hasPopupSemantics(control: HTMLElement): boolean {
+    if (control.hasAttribute("aria-expanded")) return true;
+    const popup = control.getAttribute("aria-haspopup");
+    if (popup !== null && popup !== "false") return true;
+    if (control.hasAttribute("gemmenutrigger")) return true;
+    if (control.hasAttribute("cdkoverlayorigin")) return true;
+    if (control.matches("[data-radix-menu-trigger], .mat-mdc-menu-trigger")) {
+      return true;
+    }
+    return false;
+  }
+
+  function explicitToggleState(control: HTMLElement): boolean | null {
     if (control instanceof HTMLInputElement) {
+      if (control.type !== "checkbox" && control.type !== "radio") return null;
       return control.checked === true;
     }
-    const input = control.querySelector('input[type="checkbox"]');
+    const input = control.querySelector(
+      'input[type="checkbox"], input[type="radio"]',
+    );
     if (input instanceof HTMLInputElement) return input.checked === true;
     const pressed = control.getAttribute("aria-pressed");
-    if (pressed !== null) return pressed === "true";
+    if (pressed === "true" || pressed === "false") return pressed === "true";
     const checked = control.getAttribute("aria-checked");
-    if (checked !== null) return checked === "true";
+    if (checked === "true" || checked === "false") return checked === "true";
     const dataState = control.getAttribute("data-state");
-    if (dataState)
-      return /^(on|open|checked|active|selected|true)$/i.test(dataState);
+    if (dataState === "on" || dataState === "checked" || dataState === "active") {
+      return true;
+    }
+    if (dataState === "off" || dataState === "unchecked" || dataState === "inactive") {
+      return false;
+    }
+    return null;
+  }
+
+  function controlOnState(control: HTMLElement): boolean | null {
+    const explicit = explicitToggleState(control);
+    if (explicit !== null) return explicit;
+    // Radix style menus expose open/closed on the trigger; that is popup
+    // state, not the on/off value of the control.
+    if (hasPopupSemantics(control)) return null;
+    const dataState = control.getAttribute("data-state");
+    if (dataState !== null && dataState !== "") {
+      // Only values with toggle semantics count; open/closed would otherwise
+      // read as a permanent "off" and trigger a correction click.
+      return /^(selected|true)$/i.test(dataState) ? true : null;
+    }
     const cls = control.className;
     if (/(^|[\s_-])(active|selected|checked|is-on)([\s_-]|$)/i.test(cls))
       return true;
@@ -110,6 +154,65 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       control.getAttribute("aria-label") ||
       "";
     return String(raw).replace(/\s+/g, " ").trim().slice(0, 60);
+  }
+
+  function toggleAttemptKey(control: HTMLElement, desired: boolean): string {
+    const identity =
+      controlKey(control) || controlLabel(control) || "reasoning-toggle";
+    return `${conversationKey}|${identity}|${desired ? "on" : "off"}`;
+  }
+
+  function choiceAttemptKey(control: HTMLElement, saved: ReasoningRecord): string {
+    const path = Array.isArray(saved.path) ? saved.path.join(">") : "";
+    return `${conversationKey}|${controlKey(control)}|${saved.option || ""}|${path}`;
+  }
+
+  function syncConversationScope(): void {
+    const nextKey = `${location.origin}${location.pathname}`;
+    if (nextKey === conversationKey) return;
+    conversationKey = nextKey;
+    correctedToggleAttempts.clear();
+    choiceRestoreAttempts.clear();
+  }
+
+  function clickControlOnce(control: HTMLElement): boolean {
+    try {
+      control.click();
+      return true;
+    } catch (error: unknown) {
+      reportRecoverableError("restore reasoning control", error);
+      return false;
+    }
+  }
+
+  function beginRestore(): number {
+    restoreToken += 1;
+    applyingReasoning = false;
+    return restoreToken;
+  }
+
+  function restoreIsStale(token: number): boolean {
+    return token !== restoreToken;
+  }
+
+  function settleToggleCorrection(
+    control: HTMLElement,
+    desired: boolean,
+    token: number,
+  ): void {
+    let attempts = 0;
+    const check = (): void => {
+      reasoningSettleTimer = 0;
+      if (restoreIsStale(token)) return;
+      attempts += 1;
+      const current = controlOnState(control);
+      if (current === desired || attempts >= 8 || !control.isConnected) {
+        applyingReasoning = false;
+        return;
+      }
+      reasoningSettleTimer = window.setTimeout(check, 100);
+    };
+    check();
   }
 
   function isDropdownTrigger(control: Element): boolean {
@@ -384,7 +487,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     const menus = Array.from(
       document.querySelectorAll<HTMLElement>(REASONING_MENU_SELECTOR),
     ).filter((node) => {
-      if (isInsideTurboUI(node)) return false;
+      if (isInsideTurboUI(node) || toolScope.isInside(node)) return false;
       const rect = node.getBoundingClientRect();
       return rect.width >= 1 && rect.height >= 1;
     });
@@ -428,6 +531,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     saved: ReasoningRecord,
     control: HTMLElement,
     onSettled: (ok: boolean, conclusive: boolean) => void,
+    token: number,
   ): void {
     const path = (Array.isArray(saved.path) ? saved.path : [])
       .map((part) => String(part).trim())
@@ -444,6 +548,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     const finish = (ok: boolean, conclusive?: boolean): void => {
       if (settled) return;
       settled = true;
+      if (restoreIsStale(token)) return;
       const info = ok ? choiceRowInfo(lastRow) : null;
       window.setTimeout(closeOpenPopup, 100);
       if (info) {
@@ -461,7 +566,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       done: (submenu: HTMLElement | null) => void,
       attempt: number,
     ): void => {
-      if (settled) return;
+      if (settled || restoreIsStale(token)) return;
       const sub = submenuForParent(parent);
       if (sub) {
         done(sub);
@@ -480,7 +585,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       done: (row: HTMLElement) => void,
       fail: (conclusive: boolean) => void,
     ): void => {
-      if (settled) return;
+      if (settled || restoreIsStale(token)) return;
       if (!menu) {
         fail(false);
         return;
@@ -515,7 +620,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       done: (menu: HTMLElement) => void,
       attempt: number,
     ): void => {
-      if (settled) return;
+      if (settled || restoreIsStale(token)) return;
       const root = popupRootFor(control);
       if (root && nodeVisible(root)) {
         done(root);
@@ -539,6 +644,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     const verifySelection = (): void => {
       window.setTimeout(() => {
         if (settled) return;
+        if (restoreIsStale(token)) return;
         closeOpenPopup();
         window.setTimeout(() => {
           if (settled) return;
@@ -588,6 +694,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     saved: ReasoningRecord,
     control: HTMLElement,
     onSettled: (ok: boolean, conclusive: boolean) => void,
+    restoreId: number,
   ): void {
     const tokens = choiceTokens(saved);
     if (!tokens.length) {
@@ -600,6 +707,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     const finish = (ok: boolean, conclusive?: boolean): void => {
       if (settled) return;
       settled = true;
+      if (restoreIsStale(restoreId)) return;
       const info = ok ? choiceRowInfo(lastRow) : null;
       window.setTimeout(closeOpenPopup, 100);
       if (info) {
@@ -611,7 +719,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       onSettled(ok, conclusive === true);
     };
     const step = (attempt: number): void => {
-      if (settled) return;
+      if (settled || restoreIsStale(restoreId)) return;
       const token = tokens[index];
       const root = popupRootFor(control);
       const hit = findRowIn(root, token) || findRowInOpenMenus(token);
@@ -631,7 +739,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
         triggerSendButton(interactiveTarget(parent));
         // 子菜单点开才渲染，等它出现再找（最多约 1.4s）
         const lookInSub = (deep: number): void => {
-          if (settled) return;
+          if (settled || restoreIsStale(restoreId)) return;
           const sub = document.getElementById(parent.getAttribute("aria-controls") || "");
           const row =
             findRowIn(sub, token) ||
@@ -698,6 +806,10 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
           if (startedAt && saved.ts && saved.ts >= startedAt) return;
           if (saved.option === labelNow) return;
         }
+        // A toggle that only changes its own text opens no menu. Recording it
+        // as a choice makes the next restore click it forever.
+        const root = popupRootFor(control);
+        if (!hasVisibleMenu() && !(root && nodeVisible(root))) return;
         writeReasoningRecord({
           mode: "choice",
           key: controlKey(control),
@@ -728,6 +840,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
   }
 
   function pairOptionClick(target: Element): boolean {
+    if (isToolControlElement(target) || toolScope.isInside(target)) return false;
     const row = choiceRowForTarget(target);
     if (!row) return false;
     const trigger = reasoningMenuTrigger;
@@ -769,6 +882,9 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     if (!state.rememberReasoning || applyingReasoning) return;
     const target = event.target;
     if (!(target instanceof Element) || isInsideTurboUI(target)) return;
+    // Yuanbao's add-tool entry is a popup trigger with no reasoning keyword;
+    // its rows must never overwrite the reasoning record either.
+    if (isToolControlElement(target) || toolScope.isInside(target)) return;
     if (pairOptionClick(target)) return;
     // 弹层里的项不单独记：它的效果会体现在控件的文案上
     if (target.closest(REASONING_MENU_SELECTOR)) return;
@@ -795,6 +911,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       }, 0);
     }
 
+    if (keywordMatch && explicitToggleState(control) !== null) return;
     observeControlChoice(control, labelBefore, startedAt);
   }
 
@@ -854,7 +971,13 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
   function findRememberedControl(saved: ReasoningRecord): HTMLElement | null {
     const visible = Array.from(
       document.querySelectorAll<HTMLElement>(REASONING_CONTROL_SELECTOR),
-    ).filter((node) => !isInsideTurboUI(node) && nodeVisible(node));
+    ).filter(
+      (node) =>
+        !isInsideTurboUI(node) &&
+        !toolScope.isInside(node) &&
+        !isToolControlElement(node) &&
+        nodeVisible(node),
+    );
     if (saved.key) {
       const byKey = visible.find((node) => controlKey(node) === saved.key);
       if (byKey) return byKey;
@@ -880,6 +1003,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
   }
 
   function applyReasoningMemory(): void {
+    syncConversationScope();
     if (isEngineDormant()) {
       reasoningRestoreDone = true;
       return;
@@ -912,12 +1036,23 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
         reasoningRestoreDone = true;
         return;
       }
+      const attemptKey = choiceAttemptKey(control, saved);
+      const attempts = choiceRestoreAttempts.get(attemptKey) ?? 0;
+      if (attempts >= 2) {
+        // A record that cannot be applied twice will not start working on the
+        // next poll; keep the menu closed instead of flashing it forever.
+        reasoningRestoreDone = true;
+        return;
+      }
+      choiceRestoreAttempts.set(attemptKey, attempts + 1);
+      const token = beginRestore();
       // Retry only transient failures; an unavailable saved option cannot appear later.
       const restore = Array.isArray(saved.path) ? restorePathChoice : restoreChoice;
       restore(saved, control, (ok: boolean, conclusive: boolean): void => {
         // Retrying a record whose target row is missing only makes the menu flash open forever.
         reasoningRestoreDone = ok || conclusive === true;
-      });
+        if (attempts + 1 >= 2) reasoningRestoreDone = true;
+      }, token);
       return;
     }
 
@@ -925,20 +1060,31 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     if (saved.mode !== "toggle") return;
     const now = controlOnState(control);
     if (now === null || now === (saved.on === true)) return;
+    const desired = saved.on === true;
+    const attemptKey = toggleAttemptKey(control, desired);
+    if (correctedToggleAttempts.has(attemptKey)) return;
+    correctedToggleAttempts.add(attemptKey);
+    const token = beginRestore();
     applyingReasoning = true;
-    triggerSendButton(control);
-    window.setTimeout(() => {
+    if (!clickControlOnce(control)) {
       applyingReasoning = false;
-    }, 500);
+      return;
+    }
+    settleToggleCorrection(control, desired, token);
   }
 
   function clearReasoningRestoreTimer(): void {
     window.clearInterval(reasoningRestoreTimer);
     reasoningRestoreTimer = 0;
+    window.clearTimeout(reasoningSettleTimer);
+    reasoningSettleTimer = 0;
+    restoreToken += 1;
+    applyingReasoning = false;
   }
 
   function scheduleReasoningRestore(): void {
     clearReasoningRestoreTimer();
+    syncConversationScope();
     reasoningRestoreDone = false;
     reasoningRestoreAttempts = 0;
     if (isEngineDormant()) return;
