@@ -3416,7 +3416,6 @@ ${CODE_FENCE}`;
         }
         return;
       }
-      if (target.closest(TOOL_TRIGGER_CONTAINER_SELECTOR)) return;
     }
     function finishRestore(token, status) {
       if (token !== restoreToken) return;

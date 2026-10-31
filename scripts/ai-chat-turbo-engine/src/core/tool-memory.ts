@@ -328,7 +328,6 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
       }
       return;
     }
-    if (target.closest(TOOL_TRIGGER_CONTAINER_SELECTOR)) return;
   }
 
   function finishRestore(token: number, status: string): void {
