@@ -67,6 +67,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
   let restoreToken = 0;
   const correctedToggleAttempts = new Set<string>();
   const choiceRestoreAttempts = new Map<string, number>();
+  const popupCloseTimers: number[] = [];
   let conversationKey = `${location.origin}${location.pathname}`;
   let reasoningSettleTimer = 0;
   // 最近点开的控件：弹层里的选项点击时用来把“哪个控件的哪个选项”配对
@@ -226,7 +227,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     return /^(open|选择|打开).{0,20}(picker|menu|mode|model)/i.test(label.trim());
   }
 
-  function closeOpenPopup(): void {
+  function dispatchEscape(): void {
     const esc = new KeyboardEvent("keydown", {
       key: "Escape",
       code: "Escape",
@@ -236,6 +237,34 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     });
     if (document.activeElement) document.activeElement.dispatchEvent(esc);
     document.dispatchEvent(esc);
+  }
+
+  function closeOpenPopup(control: HTMLElement | null = null): void {
+    dispatchEscape();
+    // Yuanbao's thinking-mode switcher is a hover popup and has no Escape
+    // handler. Its trigger owns aria-expanded, so click the trigger when the
+    // panel is still open after the key event.
+    const trigger = control ?? reasoningMenuTrigger;
+    if (!trigger || !trigger.isConnected) return;
+    const settle = (remaining: number): void => {
+      if (!trigger.isConnected) return;
+      if (trigger.getAttribute("aria-expanded") !== "true") return;
+      if (!clickControlOnce(trigger)) return;
+      if (remaining <= 1) return;
+      const timer = window.setTimeout(() => {
+        const index = popupCloseTimers.indexOf(timer);
+        if (index >= 0) popupCloseTimers.splice(index, 1);
+        settle(remaining - 1);
+      }, 160);
+      popupCloseTimers.push(timer);
+    };
+    // React may commit aria-expanded only after the Escape dispatch returns.
+    const timer = window.setTimeout(() => {
+      const index = popupCloseTimers.indexOf(timer);
+      if (index >= 0) popupCloseTimers.splice(index, 1);
+      settle(3);
+    }, 120);
+    popupCloseTimers.push(timer);
   }
 
   function popupRootFor(control: Element): HTMLElement | null {
@@ -550,7 +579,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       settled = true;
       if (restoreIsStale(token)) return;
       const info = ok ? choiceRowInfo(lastRow) : null;
-      window.setTimeout(closeOpenPopup, 100);
+      window.setTimeout(() => closeOpenPopup(control), 100);
       if (info) {
         window.setTimeout(() => {
           if (control.isConnected) upgradeChoiceRecord(saved, control, info);
@@ -645,7 +674,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       window.setTimeout(() => {
         if (settled) return;
         if (restoreIsStale(token)) return;
-        closeOpenPopup();
+        closeOpenPopup(control);
         window.setTimeout(() => {
           if (settled) return;
           openRoot((menu) => {
@@ -709,7 +738,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       settled = true;
       if (restoreIsStale(restoreId)) return;
       const info = ok ? choiceRowInfo(lastRow) : null;
-      window.setTimeout(closeOpenPopup, 100);
+      window.setTimeout(() => closeOpenPopup(control), 100);
       if (info) {
         window.setTimeout(() => {
           if (control.isConnected) upgradeChoiceRecord(saved, control, info);
@@ -752,7 +781,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
             return;
           }
           if (deep >= 6) {
-            closeOpenPopup();
+            closeOpenPopup(control);
             finish(false, true);
             return;
           }
@@ -765,7 +794,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       if (attempt >= 8) {
         // 没找到就关掉菜单，不留一个弹层挡着用户
         const menuWasOpen = hasVisibleMenu();
-        closeOpenPopup();
+        closeOpenPopup(control);
         finish(false, menuWasOpen);
         return;
       }
@@ -778,7 +807,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
         return;
       }
       // 下一层要重新展开弹层；先关掉，避免停在中间状态
-      closeOpenPopup();
+      closeOpenPopup(control);
       window.setTimeout(() => {
         triggerSendButton(interactiveTarget(control));
         window.setTimeout(() => step(0), 350);
@@ -1078,6 +1107,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     reasoningRestoreTimer = 0;
     window.clearTimeout(reasoningSettleTimer);
     reasoningSettleTimer = 0;
+    for (const timer of popupCloseTimers.splice(0)) window.clearTimeout(timer);
     restoreToken += 1;
     applyingReasoning = false;
   }

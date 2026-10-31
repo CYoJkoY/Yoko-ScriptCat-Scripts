@@ -155,7 +155,7 @@ export function initializeEngine(): void {
   const toolMemory = createToolMemoryUtils({
     el,
     state,
-    toolScope,
+    triggerSendButton: (control) => composer.triggerSendButton(control),
   });
 
   const virtualFiles: VirtualFileUtils = createVirtualFileUtils({
