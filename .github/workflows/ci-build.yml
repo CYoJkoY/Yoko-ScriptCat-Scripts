@@ -113,32 +113,6 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Commit and push rebuilt bundles
-        if: |
-          steps.plan.outputs.has_targets == 'true' &&
-          github.event_name == 'push' &&
-          github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # 强制暂存 dist 目录（支持将 dist 列入 .gitignore）
-          git add -f dist/
-          if git diff --staged --quiet; then
-            echo "dist/ is already up to date, skipping commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: rebuild userscripts [skip ci]"
-          for i in 1 2 3; do
-            if git push origin HEAD:main; then
-              echo "Successfully pushed updated bundles."
-              break
-            fi
-            echo "Push failed, rebasing and retrying ($i/3)..."
-            git pull --rebase origin main
-          done
-
       - name: Upload built userscripts
         if: steps.plan.outputs.has_targets == 'true'
         uses: actions/upload-artifact@v4
@@ -147,3 +121,51 @@ jobs:
           path: dist/*.user.js
           if-no-files-found: error
           retention-days: 7
+
+      - name: Deploy rebuilt bundles to release branch root
+        if: |
+          steps.plan.outputs.has_targets == 'true' &&
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 1. 暂存构建好的产物并清空工作区，为切换分支做准备
+          TEMP_DIR=$(mktemp -d)
+          cp -r dist/* "$TEMP_DIR/"
+          git reset --hard HEAD
+          git clean -fd
+
+          # 2. 检出 release 分支（不存在时初始化 orphan 分支）
+          if git ls-remote --exit-code --heads origin release >/dev/null 2>&1; then
+            git fetch origin release
+            git checkout -B release origin/release
+          else
+            echo "Release branch not found. Initializing orphan branch."
+            git checkout --orphan release
+            git rm -rf . 2>/dev/null || true
+          fi
+
+          # 3. 将产物直接放置到 release 分支根目录
+          cp -r "$TEMP_DIR"/* .
+          git add -A
+
+          # 4. 无实质变动则直接跳过
+          if git diff --staged --quiet; then
+            echo "Release branch root is already up to date, skipping commit."
+            exit 0
+          fi
+
+          # 5. 提交并推送到 release 分支
+          git commit -m "chore(release): update userscripts from ${{ github.sha }} [skip ci]"
+          for i in 1 2 3; do
+            if git push origin release; then
+              echo "Successfully pushed to release branch."
+              break
+            fi
+            echo "Push failed, pulling and retrying ($i/3)..."
+            git pull --rebase origin release
+          done
