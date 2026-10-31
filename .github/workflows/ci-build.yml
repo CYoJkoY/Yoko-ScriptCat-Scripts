@@ -133,13 +133,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # 1. 暂存构建好的产物并清空工作区，为切换分支做准备
+          # 1. 备份构建出的脚本文件并清理 Git 跟踪工作区
           TEMP_DIR=$(mktemp -d)
           cp -r dist/* "$TEMP_DIR/"
           git reset --hard HEAD
           git clean -fd
 
-          # 2. 检出 release 分支（不存在时初始化 orphan 分支）
+          # 2. 检出 release 分支
           if git ls-remote --exit-code --heads origin release >/dev/null 2>&1; then
             git fetch origin release
             git checkout -B release origin/release
@@ -149,17 +149,29 @@ jobs:
             git rm -rf . 2>/dev/null || true
           fi
 
-          # 3. 将产物直接放置到 release 分支根目录
-          cp -r "$TEMP_DIR"/* .
-          git add -A
+          # 3. 第一道防线：为 release 分支写入专有 .gitignore，彻底忽略依赖与缓存
+          printf "node_modules/\n.pnpm-store/\n*.log\n" > .gitignore
+          git add .gitignore
 
-          # 4. 无实质变动则直接跳过
+          # 4. 第二道防线：拷贝产物并只精确暂存 .user.js（及可选的 .meta.js）
+          cp -r "$TEMP_DIR"/* .
+          git add -f *.user.js
+          if compgen -G "*.meta.js" > /dev/null; then
+            git add -f *.meta.js
+          fi
+
+          # 5. 若已误提过 node_modules，从暂存区与索引中直接抹除
+          if git ls-files --error-unmatch node_modules >/dev/null 2>&1; then
+            git rm -r --cached node_modules
+          fi
+
+          # 6. 无实质变动则直接跳过
           if git diff --staged --quiet; then
             echo "Release branch root is already up to date, skipping commit."
             exit 0
           fi
 
-          # 5. 提交并推送到 release 分支
+          # 7. 提交并推送到 release 分支
           git commit -m "chore(release): update userscripts from ${{ github.sha }} [skip ci]"
           for i in 1 2 3; do
             if git push origin release; then
