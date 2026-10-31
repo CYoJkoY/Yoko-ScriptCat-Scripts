@@ -27,12 +27,75 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" },
 ];
 
-export const NAV_ICONS: Record<string, string> = {
-  home: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-home" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></svg></span>',
-  community: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-community" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></svg></span>',
-  favour: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-favour" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"/></svg></span>',
-  article: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-article" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 16.5h6"/></svg></span>',
+interface NavGlyph {
+  readonly paths: readonly string[];
+  readonly circles?: readonly string[];
+}
+
+const NAV_GLYPHS: Readonly<Record<string, NavGlyph>> = {
+  home: {
+    paths: ["M4 11.2 12 4l8 7.2", "M6.6 9.8V20h10.8V9.8", "M10.2 20v-5.2h3.6V20"],
+  },
+  community: {
+    paths: ["M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"],
+    circles: [
+      'cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"',
+      'cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"',
+      'cx="16" cy="12" r=".9" fill="currentColor" stroke="none"',
+    ],
+  },
+  favour: {
+    paths: ["M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"],
+  },
+  article: {
+    paths: ["M6 3h8l4 4v14H6z", "M14 3v5h5", "M9 13h6", "M9 16.5h6"],
+  },
 };
+
+const NAV_SVG_OPEN =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">';
+
+/**
+ * Static icons carry no motion hooks at all. Dynamic icons mark each stroked
+ * path with pathLength="1" so the hover/focus draw animation can run from a
+ * fully hidden stroke to a fully painted one.
+ */
+export function navIconMarkup(id: string, animated: boolean): string {
+  const glyph = NAV_GLYPHS[id];
+  if (glyph === undefined) return "";
+  const paths = glyph.paths.map((d) =>
+    animated
+      ? '<path d="' + d + '" pathLength="1" class="hbu-ico-stroke"/>'
+      : '<path d="' + d + '"/>'
+  ).join("");
+  const circles = (glyph.circles ?? []).map((attrs) => "<circle " + attrs + "/>").join("");
+  const variant = animated ? " hbu-ico-anim" : "";
+  return (
+    '<span class="hbu-nav-icon' + variant + " hbu-ico-" + id + '" aria-hidden="true">' +
+    NAV_SVG_OPEN + paths + circles + "</svg></span>"
+  );
+}
+
+function buildNavIconMap(animated: boolean): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const id of Object.keys(NAV_GLYPHS)) map[id] = navIconMarkup(id, animated);
+  return map;
+}
+
+export const NAV_STATIC_ICONS: Record<string, string> = buildNavIconMap(false);
+
+export const NAV_DYNAMIC_ICONS: Record<string, string> = buildNavIconMap(true);
+
+/** Backwards-compatible alias for the animated set. */
+export const NAV_ICONS: Record<string, string> = NAV_DYNAMIC_ICONS;
+
+export function hasNavGlyph(id: string): boolean {
+  return Object.prototype.hasOwnProperty.call(NAV_GLYPHS, id);
+}
+
+export function navIconMarkupFor(id: string): string {
+  return navIconMarkup(id, !document.documentElement.classList.contains(NAV_STATIC_CLASS));
+}
 
 export const NAV_CSS = `
   .nav-links > .nav-link { display: none !important; }
@@ -93,36 +156,60 @@ export const NAV_CSS = `
       color .18s ease;
   }
   .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
-  .hbu-nav-link:focus-visible .hbu-nav-icon {
+  .hbu-nav-link:focus-visible .hbu-nav-icon.hbu-ico-anim {
     color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
     transform: translateY(-2px) scale(1.14);
   }
-  .hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon {
+  .hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon.hbu-ico-anim {
     transform: rotate(-7deg) translateY(-2px) scale(1.1);
+  }
+  .hbu-ico-anim path.hbu-ico-stroke {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+  @keyframes hbu-nav-ico-draw {
+    from { stroke-dashoffset: 1; }
+    to { stroke-dashoffset: 0; }
+  }
+  .hbu-nav-link:focus-visible .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke,
+  .hbu-nav-link:active .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke {
+    animation: hbu-nav-ico-draw .52s cubic-bezier(.4, 0, .2, 1) both;
   }
   /* Touch browsers keep :hover on the tapped link, which would leave the icon enlarged.
      Gate hover-only motion to devices that can hover with a precise pointer. */
   @media (hover: hover) and (pointer: fine) {
-    .hbu-nav-link:hover .hbu-nav-icon {
+    .hbu-nav-link:hover .hbu-nav-icon.hbu-ico-anim {
       color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
       transform: translateY(-2px) scale(1.14);
     }
-    .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon {
+    .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon.hbu-ico-anim {
       transform: rotate(-7deg) translateY(-2px) scale(1.1);
     }
+    .hbu-nav-link:hover .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke {
+      animation: hbu-nav-ico-draw .52s cubic-bezier(.4, 0, .2, 1) both;
+    }
   }
-  .hbu-nav-link:active .hbu-nav-icon { transform: translateY(0) scale(.9); transition-duration: .08s; }
-  .hbu-nav-link[data-nav="article"]:active .hbu-nav-icon { transform: translateY(0) rotate(0) scale(.9); }
+  .hbu-nav-link:active .hbu-nav-icon.hbu-ico-anim { transform: translateY(0) scale(.9); transition-duration: .08s; }
+  .hbu-nav-link[data-nav="article"]:active .hbu-nav-icon.hbu-ico-anim { transform: translateY(0) rotate(0) scale(.9); }
   :root.${NAV_STATIC_CLASS} .hbu-nav-icon {
     animation: none !important;
     transform: none !important;
     transition: none !important;
   }
+  :root.${NAV_STATIC_CLASS} .hbu-nav-icon path {
+    stroke-dasharray: none !important;
+    stroke-dashoffset: 0 !important;
+  }
   @media (prefers-reduced-motion: reduce) {
-    .hbu-nav-icon {
+    .hbu-nav-icon,
+    .hbu-nav-icon path {
       animation: none !important;
       transform: none !important;
       transition: none !important;
+    }
+    .hbu-nav-icon path {
+      stroke-dasharray: none !important;
+      stroke-dashoffset: 0 !important;
     }
     .hbu-nav-link::after { transition: none; }
   }
@@ -138,6 +225,31 @@ export const NAV_CSS = `
 
 export function applyNavMotionPreference(value: boolean): void {
   document.documentElement.classList.toggle(NAV_STATIC_CLASS, value === false);
+  syncNavIconVariant(value === true);
+}
+
+/**
+ * Swaps each navigable icon for the matching static or animated markup. The
+ * anchor keeps its attributes, label and listeners; only the icon subtree and
+ * any focus held inside it move to the replacement.
+ */
+export function syncNavIconVariant(animated: boolean): void {
+  for (const link of Array.from(document.querySelectorAll<HTMLAnchorElement>("a[data-nav], a[data-route]"))) {
+    const id = link.dataset["nav"] || link.dataset["route"] || "";
+    if (!hasNavGlyph(id)) continue;
+    const icon = link.querySelector(".hbu-nav-icon");
+    if (icon === null) continue;
+    if (icon.classList.contains("hbu-ico-anim") === animated) continue;
+    const markup = navIconMarkup(id, animated);
+    if (markup === "") continue;
+    const template = document.createElement("template");
+    template.innerHTML = markup;
+    const next = template.content.firstElementChild;
+    if (!(next instanceof HTMLElement)) continue;
+    const heldFocus = icon.contains(document.activeElement);
+    icon.replaceWith(next);
+    if (heldFocus) link.focus({ preventScroll: true });
+  }
 }
 
 export function ensureNavStyle(): void {
@@ -259,6 +371,7 @@ export function mountTopNav(): void {
   if (!document.body) return;
   const current = document.getElementById(NAV_ID);
   if (current?.parentElement?.classList.contains("nav-links") && current.parentElement.firstElementChild === current) {
+    syncNavIconVariant(!document.documentElement.classList.contains(NAV_STATIC_CLASS));
     syncNavActive();
     return;
   }
@@ -271,12 +384,14 @@ export function mountTopNav(): void {
     host.id = NAV_ID;
     host.setAttribute("role", "navigation");
     host.setAttribute("aria-label", "站内导航");
+    const animated = !document.documentElement.classList.contains(NAV_STATIC_CLASS);
     host.innerHTML = NAV_ITEMS.map((item) =>
-      '<a class="hbu-nav-link" data-nav="' + item.id + '" href="' + item.href + '" aria-label="' + item.label + '" title="' + item.label + '">' + NAV_ICONS[item.id] + "<span>" + item.label + "</span></a>"
+      '<a class="hbu-nav-link" data-nav="' + item.id + '" href="' + item.href + '" aria-label="' + item.label + '" title="' + item.label + '">' + navIconMarkup(item.id, animated) + "<span>" + item.label + "</span></a>"
     ).join("");
     host.addEventListener("click", handleNavClick);
   }
   if (host.parentNode !== links || links.firstElementChild !== host) links.prepend(host);
+  syncNavIconVariant(!document.documentElement.classList.contains(NAV_STATIC_CLASS));
   syncNavActive();
 }
 

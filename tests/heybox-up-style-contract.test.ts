@@ -39,6 +39,10 @@ function navHoverRules(rules: RuleRecord[]): RuleRecord[] {
   return rules.filter((rule) => rule.selector.includes(":hover") && rule.selector.includes(".hbu-nav-icon"));
 }
 
+function rulesInMedia(rules: RuleRecord[], media: string, selector: string): RuleRecord | undefined {
+  return rules.find((rule) => rule.media === media && rule.selector === selector);
+}
+
 beforeAll(async () => {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -64,31 +68,41 @@ beforeAll(async () => {
 describe("navigation motion contract", () => {
   it("limits hover motion to devices that report a fine pointer", () => {
     const hovered = navHoverRules(collectRules(NAV_CSS));
-    expect(hovered).toHaveLength(2);
+    expect(hovered).toHaveLength(3);
     for (const rule of hovered) expect(rule.media).toBe(HOVER_MEDIA);
-    expect(hovered.map((rule) => rule.selector)).toEqual([
-      ".hbu-nav-link:hover .hbu-nav-icon",
-      '.hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon',
+    expect(hovered.slice(0, 2).map((rule) => rule.selector)).toEqual([
+      ".hbu-nav-link:hover .hbu-nav-icon.hbu-ico-anim",
+      '.hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon.hbu-ico-anim',
     ]);
-    expect(hovered.map((rule) => rule.style.transform)).toEqual([
+    expect(hovered.slice(0, 2).map((rule) => rule.style.transform)).toEqual([
       "translateY(-2px) scale(1.14)",
       "rotate(-7deg) translateY(-2px) scale(1.1)",
     ]);
+    const draw = rulesInMedia(collectRules(NAV_CSS), HOVER_MEDIA, ".hbu-nav-link:hover .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke");
+    expect(draw?.style.getPropertyValue("animation")).toBe("hbu-nav-ico-draw .52s cubic-bezier(.4, 0, .2, 1) both");
   });
 
   it("keeps focus and press feedback outside the hover gate", () => {
     const rules = collectRules(NAV_CSS);
     const focus = rules.filter((rule) => rule.selector.includes(":focus-visible") && rule.selector.includes(".hbu-nav-icon"));
-    expect(focus.map((rule) => rule.selector)).toEqual([
-      ".hbu-nav-link:focus-visible .hbu-nav-icon",
-      '.hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon',
+    expect(focus).toHaveLength(3);
+    expect(focus.slice(0, 2).map((rule) => rule.selector)).toEqual([
+      ".hbu-nav-link:focus-visible .hbu-nav-icon.hbu-ico-anim",
+      '.hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon.hbu-ico-anim',
     ]);
+    const focusDraw = focus.find((rule) => rule.selector.includes("path.hbu-ico-stroke"));
+    expect(focusDraw?.selector).toContain(".hbu-nav-link:active .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke");
+    expect(focusDraw?.style.getPropertyValue("animation")).toBe("hbu-nav-ico-draw .52s cubic-bezier(.4, 0, .2, 1) both");
     for (const rule of focus) expect(rule.media).toBe("");
     const press = rules.filter((rule) => rule.selector.includes(":active") && rule.selector.includes(".hbu-nav-icon"));
-    expect(press).toHaveLength(2);
+    expect(press).toHaveLength(3);
     for (const rule of press) {
       expect(rule.media).toBe("");
-      expect(rule.style.transform).toContain("scale(.9)");
+      if (rule.selector.includes("path")) {
+        expect(rule.style.getPropertyValue("animation")).toContain("hbu-nav-ico-draw");
+      } else {
+        expect(rule.style.transform).toContain("scale(.9)");
+      }
     }
     const underline = rules.find((rule) => rule.selector.includes(".hbu-nav-link.is-active::after"));
     expect(underline?.style.transform).toBe("scaleX(1)");
@@ -101,12 +115,20 @@ describe("navigation motion contract", () => {
     expect(staticRule?.style.getPropertyValue("transform")).toBe("none");
     expect(staticRule?.style.getPropertyValue("transition")).toBe("none");
     expect(staticRule?.style.getPropertyValue("animation")).toBe("none");
+    const staticStroke = rules.find((rule) => rule.selector === ":root.heybox-up-nav-static .hbu-nav-icon path");
+    expect(staticStroke?.style.getPropertyValue("stroke-dasharray")).toBe("none");
+    expect(staticStroke?.style.getPropertyValue("stroke-dashoffset")).toBe("0");
     const reduced = rules.find((rule) => rule.media === "(prefers-reduced-motion: reduce)"
-      && rule.selector === ".hbu-nav-icon");
+      && rule.selector.includes(".hbu-nav-icon"));
     expect(reduced).toBeDefined();
     expect(reduced?.style.getPropertyValue("transform")).toBe("none");
     expect(reduced?.style.getPropertyValue("transition")).toBe("none");
     expect(reduced?.style.getPropertyValue("animation")).toBe("none");
+    const reducedStroke = rules.find((rule) => rule.media === "(prefers-reduced-motion: reduce)"
+      && rule.selector === ".hbu-nav-icon path");
+    expect(reducedStroke?.style.getPropertyValue("stroke-dasharray")).toBe("none");
+    expect(reducedStroke?.style.getPropertyValue("stroke-dashoffset")).toBe("0");
+    expect(NAV_CSS).toContain("@keyframes hbu-nav-ico-draw");
   });
 
   it("preserves the 18px icon layout box", () => {

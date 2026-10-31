@@ -1,7 +1,7 @@
 import { PAGE_ROUTE } from "../config";
 import { ensureStyleElement, registerPageSync } from "../core/page-sync";
 import { COMMUNITY_SEARCH_ICONS } from "./community-search";
-import { NAV_ICONS, navigateToPath } from "./navigation";
+import { navIconMarkupFor, navigateToPath } from "./navigation";
 import { normalizeRailText } from "./rail";
 
 export const DESKTOP_STYLE_ID = "heybox-up-desktop-style";
@@ -335,9 +335,9 @@ export function createDesktopLeftRail(): DesktopLeftRail {
   browseTitle.textContent = "浏览";
   browse.append(browseTitle);
   const links = [
-    { id: "community", label: "社区首页", href: "/app/bbs/home", icon: NAV_ICONS["community"] },
-    { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: NAV_ICONS["favour"] },
-    { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: NAV_ICONS["article"] },
+    { id: "community", label: "社区首页", href: "/app/bbs/home", icon: navIconMarkupFor("community") },
+    { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: navIconMarkupFor("favour") },
+    { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: navIconMarkupFor("article") },
     { id: "search", label: "全站搜索", href: "/app/search/list", icon: COMMUNITY_SEARCH_ICONS.search },
   ];
   for (const item of links) browse.append(createDesktopRailLink(item, item.id === "community"));
@@ -375,8 +375,8 @@ export function createDesktopRightRail(): DesktopRightRail {
   toolsTitle.textContent = "快捷入口";
   toolsBlock.append(toolsTitle);
   const tools = [
-    { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: NAV_ICONS["favour"] },
-    { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: NAV_ICONS["article"] },
+    { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: navIconMarkupFor("favour") },
+    { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: navIconMarkupFor("article") },
   ];
   for (const item of tools) toolsBlock.append(createDesktopRailLink(item, false));
   root.append(hotBlock, toolsBlock);
