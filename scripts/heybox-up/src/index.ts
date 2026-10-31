@@ -13,6 +13,7 @@ import { watchCommentSort } from "./ui/comment-sort";
 import { watchCommunitySearch } from "./ui/community-search";
 import { watchDesktopShell } from "./ui/desktop";
 import { watchFavourPage } from "./ui/favour";
+import { watchNativeComments } from "./ui/native-comments";
 import { applyNavMotionPreference, watchTopNav } from "./ui/navigation";
 import { watchCommentRail } from "./ui/rail";
 import { createPostNavigationController, watchPostPager, watchReader } from "./ui/reader";
@@ -42,6 +43,7 @@ function boot(): void {
   watchCommentRail();
   watchPostPager(navigation);
   watchReader(navigation);
+  watchNativeComments();
   watchCommunitySearch();
   watchDesktopShell();
   startPageSyncObserver();
