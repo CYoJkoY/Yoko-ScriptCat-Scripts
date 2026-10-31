@@ -8,6 +8,8 @@ import {
 } from "./state";
 import { createCodeBlockUtils } from "./ui/code-blocks";
 import { createReasoningUtils } from "./core/reasoning";
+import { createToolMemoryUtils } from "./core/tool-memory";
+import { createToolPopupScope } from "./core/tool-scope";
 import { createComposerUtils } from "./core/composer";
 import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
 import { createHandoffUtils } from "./core/handoff";
@@ -104,6 +106,7 @@ export function initializeEngine(): void {
   }
 
   const reasoningStatusNode = el("div", { className: "reasoning-status", role: "status" }, []);
+  const toolStatusNode = el("div", { className: "reasoning-status", role: "status" }, []);
 
   const composer = createComposerUtils({ currentPlatform });
 
@@ -134,9 +137,12 @@ export function initializeEngine(): void {
   });
 
   // 从完整消息容器中提取文本；不再只取第一个 Markdown 子节点或截断到 800 字符。
+  const toolScope = createToolPopupScope();
+
   const reasoning = createReasoningUtils({
     el,
     state,
+    toolScope,
     withSelfMutation,
     triggerSendButton: (control) => composer.triggerSendButton(control),
     requestUpdate: () => requestUpdate(),
@@ -144,6 +150,12 @@ export function initializeEngine(): void {
     requestFullTurnSync: () => {
       fullTurnSyncRequested = true;
     },
+  });
+
+  const toolMemory = createToolMemoryUtils({
+    el,
+    state,
+    toolScope,
   });
 
   const virtualFiles: VirtualFileUtils = createVirtualFileUtils({
@@ -199,8 +211,10 @@ export function initializeEngine(): void {
     currentPlatform,
     version: VERSION,
     reasoningStatusNode,
+    toolStatusNode,
     codeBlocks,
     reasoning,
+    toolMemory,
     handoff,
     isEngineDormant,
     requestUpdate: () => requestUpdate(),
@@ -503,6 +517,7 @@ export function initializeEngine(): void {
 
     syncTurnIndex(fullTurnSyncRequested);
     codeBlocks.flushCodeBlockScan();
+    toolMemory.maybeRestore();
     hud?.updateHudDashboard();
     hud?.ensureHUDMounted();
     if (virtualFiles.isTrayDirty()) virtualFiles.renderVirtualFileTray();
@@ -554,6 +569,7 @@ export function initializeEngine(): void {
         codeBlocks.requestCodeScan();
         requestUpdate();
         reasoning.scheduleReasoningRestore();
+        toolMemory.scheduleRestore();
       }, 0);
       return result;
     };
@@ -577,12 +593,14 @@ export function initializeEngine(): void {
       codeBlocks.requestCodeScan();
       requestUpdate();
       reasoning.scheduleReasoningRestore();
+      toolMemory.scheduleRestore();
     });
   }
 
   /** Remove every engine artifact and inline style from the host page. */
   function teardownEngine(): void {
     reasoning.attachStatusNode(null);
+    toolMemory.teardown();
     setEngineActive(false);
     reasoning.clearReasoningRestoreTimer();
     handoff.clearResumeTimer();
@@ -701,6 +719,7 @@ export function initializeEngine(): void {
       true,
     );
     window.addEventListener("click", reasoning.handleReasoningClick, true);
+    window.addEventListener("click", toolMemory.handleToolClick, true);
     window.addEventListener("click", reasoning.handleDehydratedClick, true);
   }
 
@@ -721,6 +740,8 @@ export function initializeEngine(): void {
     bindGlobalListeners();
     reasoning.scheduleReasoningRestore();
     reasoning.renderReasoningStatus();
+    toolMemory.scheduleRestore();
+    toolMemory.renderStatus();
 
     if (!viewportListenersBound) {
       viewportListenersBound = true;

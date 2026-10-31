@@ -13,6 +13,7 @@ import {
 import type { CodeBlockUtils } from "./code-blocks";
 import type { ElementFactory } from "./code-blocks";
 import type { ReasoningUtils } from "../core/reasoning";
+import type { ToolMemoryUtils } from "../core/tool-memory";
 import type { HandoffUtils } from "../core/handoff";
 import { reportRecoverableError } from "../core/diagnostics";
 import type { EngineState } from "../state";
@@ -44,10 +45,15 @@ export interface HudDeps {
   currentPlatform: PlatformDefinition;
   version: string;
   reasoningStatusNode: HTMLElement;
+  toolStatusNode: HTMLElement;
   codeBlocks: Pick<CodeBlockUtils, "requestCodeScan">;
   reasoning: Pick<
     ReasoningUtils,
     "attachStatusNode" | "scheduleReasoningRestore" | "renderReasoningStatus"
+  >;
+  toolMemory: Pick<
+    ToolMemoryUtils,
+    "attachStatusNode" | "scheduleRestore" | "renderStatus"
   >;
   handoff: HandoffUtils;
   isEngineDormant: () => boolean;
@@ -86,8 +92,10 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     currentPlatform,
     version: VERSION,
     reasoningStatusNode,
+    toolStatusNode,
     codeBlocks,
     reasoning,
+    toolMemory,
     handoff,
     isEngineDormant,
     requestUpdate,
@@ -229,6 +237,7 @@ function renderSearchResults(queryText: string): void {
 
 function buildHUD() {
   reasoning.attachStatusNode(reasoningStatusNode);
+  toolMemory.attachStatusNode(toolStatusNode);
   if (isEngineDormant()) return;
   if (hudRootElement?.isConnected) return;
 
@@ -620,6 +629,18 @@ function buildHUD() {
     },
   });
 
+  const chkTools = el("input", {
+    type: "checkbox",
+    checked: state.rememberTools ? "checked" : "",
+    onchange: () => {
+      state.rememberTools = chkTools.checked;
+      saveConfig();
+      // Closing also clears the polling timer before returning.
+      toolMemory.scheduleRestore();
+      toolMemory.renderStatus();
+    },
+  });
+
   const forkText = el("span", { id: "fork-text" }, [
     "复制原始上下文（回退）",
   ]);
@@ -699,7 +720,15 @@ function buildHUD() {
         el("span", { className: "slider" }),
       ]),
     ]),
+    el("div", { className: "control-row" }, [
+      el("span", {}, ["记住工具选择"]),
+      el("label", { className: "switch" }, [
+        chkTools,
+        el("span", { className: "slider" }),
+      ]),
+    ]),
     reasoningStatusNode,
+    toolStatusNode,
   ]);
 
   const handoffSection = el("div", { className: "section" }, [
