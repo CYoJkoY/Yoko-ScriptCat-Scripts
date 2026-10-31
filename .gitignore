@@ -1,5 +1,6 @@
 desktop.ini
 node_modules/
 coverage/
+dist/
 *.tmp
 *.log
