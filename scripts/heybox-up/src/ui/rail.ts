@@ -59,6 +59,8 @@ export interface RailComment {
   /** Author account id; empty when the payload did not expose one. */
   userId: string;
   name: string;
+  /** Name echoed by the server for the comment this one answers. */
+  replyName: string;
   avatar: string;
   text: string;
   body: RailSegment[];
@@ -74,6 +76,11 @@ export interface RailCommentEntry extends RailComment {
   subComments: RailComment[];
   /** Backwards-compatible alias for subComments. */
   quotes: RailComment[];
+}
+
+/** One comment with its resolved replies, kept in the order the server sent. */
+export interface RailCommentThreadNode extends RailComment {
+  children: RailCommentThreadNode[];
 }
 
 export interface RailLinkInfo {
@@ -464,6 +471,7 @@ export function normalizeRailComment(comment: unknown): RailComment {
     id: id,
     userId: readRailCommentUserId(user),
     name: String(user["username"] || user["nickname"] || "匿名用户").trim(),
+    replyName: readRailReplyName(raw),
     avatar: typeof avatar === "string" ? avatar : "",
     text: railBodyText(body),
     body: body,
@@ -473,9 +481,14 @@ export function normalizeRailComment(comment: unknown): RailComment {
     // A root that points at itself is not a usable parent; the group builder
     // falls back to the floor id instead.
     rootId: rawRootId === id ? "" : rawRootId,
-    parentId: readRailRelationId(raw, ["parent_id", "reply_to_comment_id", "reply_comment_id", "reply_to", "to_comment_id"]),
+    parentId: readRailRelationId(raw, ["parent_id", "replyid", "reply_id", "reply_to_comment_id", "reply_comment_id", "reply_to", "to_comment_id"]),
     isCy: isCyComment(raw),
   };
+}
+
+function readRailReplyName(raw: Record<string, unknown>): string {
+  const replyUser = asRecord(raw["replyuser"]) ?? asRecord(raw["reply_user"]) ?? {};
+  return String(replyUser["username"] || replyUser["nickname"] || "").trim();
 }
 
 function readRailCommentUserId(user: Record<string, unknown>): string {
@@ -545,6 +558,58 @@ export function normalizeRailGroup(group: unknown): RailCommentEntry | null {
   };
 }
 
+/**
+ * Resolves the flat child list of one floor into a nested tree. A parent that
+ * is missing, self-referencing, outside this group, or part of a parent cycle
+ * is attached to the floor, so a malformed payload never drops a comment.
+ */
+export function buildRailCommentTree(entry: RailCommentEntry): RailCommentThreadNode[] {
+  const source = Array.isArray(entry.subComments) ? entry.subComments : [];
+  const nodes: RailCommentThreadNode[] = [];
+  const byId = new Map<string, RailCommentThreadNode>();
+  for (const comment of source) {
+    if (comment.id !== "" && byId.has(comment.id)) continue;
+    const node: RailCommentThreadNode = { ...comment, children: [] };
+    nodes.push(node);
+    if (comment.id !== "") byId.set(comment.id, node);
+  }
+  const parentOf = new Map<RailCommentThreadNode, RailCommentThreadNode>();
+  for (const node of nodes) {
+    if (node.id === "" || node.parentId === "" || node.parentId === entry.id || node.parentId === node.id) continue;
+    const parent = byId.get(node.parentId);
+    if (parent === undefined || parent === node) continue;
+    parentOf.set(node, parent);
+  }
+  // A cycle cannot be rendered recursively. Every node whose parent chain runs
+  // into one is promoted to a floor reply instead.
+  const detached = new Set<RailCommentThreadNode>();
+  for (const node of nodes) {
+    const seen = new Set<RailCommentThreadNode>();
+    let cursor: RailCommentThreadNode | undefined = node;
+    while (cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor);
+      cursor = parentOf.get(cursor);
+    }
+    if (cursor !== undefined) {
+      for (const member of seen) detached.add(member);
+    }
+  }
+  const roots: RailCommentThreadNode[] = [];
+  for (const node of nodes) {
+    if (detached.has(node)) {
+      roots.push(node);
+      continue;
+    }
+    const parent = parentOf.get(node);
+    if (parent === undefined || detached.has(parent)) {
+      roots.push(node);
+      continue;
+    }
+    parent.children.push(node);
+  }
+  return roots;
+}
+
 export function readRailFloorTotal(result: unknown): number {
   const value = Number(asRecord(result)?.["total_floor_num"]);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
@@ -602,9 +667,15 @@ export function railItemsHaveComment(items: readonly RailCommentEntry[], comment
   if (commentId === "") return false;
   for (const entry of items) {
     if (entry.id === commentId) return true;
-    for (const child of entry.subComments) {
-      if (child.id === commentId) return true;
-    }
+    if (railThreadHasComment(buildRailCommentTree(entry), commentId)) return true;
+  }
+  return false;
+}
+
+function railThreadHasComment(nodes: readonly RailCommentThreadNode[], commentId: string): boolean {
+  for (const node of nodes) {
+    if (node.id === commentId) return true;
+    if (railThreadHasComment(node.children, commentId)) return true;
   }
   return false;
 }
