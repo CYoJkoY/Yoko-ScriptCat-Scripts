@@ -76,6 +76,42 @@ export const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
 export const READER_PENDING_NOTICE_MS = 9000;
 
 /**
+ * A create or delete can be answered by the tree endpoint with the payload it
+ * built before the write landed, so the owning page is polled until the
+ * caller expectation is met instead of trusting the first answer. The first
+ * rounds are quick because the site usually echoes a reply within a second;
+ * the later rounds back off so a slow endpoint still gets a few chances.
+ */
+export const COMMENT_VERIFY_DELAYS_MS: readonly number[] = [400, 600, 900, 1200, 1500];
+
+export const COMMENT_VERIFY_ATTEMPTS = COMMENT_VERIFY_DELAYS_MS.length;
+
+/**
+ * A reply that has not been echoed by then stops saying "syncing", because a
+ * spinner that runs for half a minute reads as a broken publish. The site can
+ * still echo it much later, so a local row keeps a few sparse background
+ * checks that swap it for the real one without going back to "syncing".
+ */
+export const COMMENT_VERIFY_GRACE_DELAYS_MS: readonly number[] = [6000, 12000, 20000];
+
+/**
+ * Every delay in the schedule needs a round that waits it out. Attempt 0 is the
+ * first read right after the write, so the cap is the wait count plus one; the
+ * extra round is what keeps the last sparse check from being computed after the
+ * loop has already given up.
+ */
+export const COMMENT_VERIFY_WAIT_COUNT = COMMENT_VERIFY_DELAYS_MS.length + COMMENT_VERIFY_GRACE_DELAYS_MS.length;
+
+export const COMMENT_VERIFY_MAX_ATTEMPTS = COMMENT_VERIFY_WAIT_COUNT + 1;
+
+export const readCommentVerifyDelay = (attempt: number): number => {
+  const index = Math.max(0, attempt - 1);
+  if (index < COMMENT_VERIFY_DELAYS_MS.length) return COMMENT_VERIFY_DELAYS_MS[index];
+  const graceIndex = Math.min(index - COMMENT_VERIFY_DELAYS_MS.length, COMMENT_VERIFY_GRACE_DELAYS_MS.length - 1);
+  return COMMENT_VERIFY_GRACE_DELAYS_MS[graceIndex];
+};
+
+/**
  * Past this many nesting levels the branch stops adding indentation, so a deep
  * reply chain can never widen the comment sheet.
  */
@@ -3226,30 +3262,6 @@ export function watchReader(navigation: PostNavigationController): void {
       commentPanelRefresh.disabled = commentState.loading;
       commentPanelRefresh.dataset["busy"] = commentState.loading ? "true" : "false";
     }
-  };
-
-  // A create or delete can be answered by the tree endpoint with the payload it
-  // built before the write landed, so the owning page is polled until the
-  // caller's expectation is met instead of trusting the first answer. The first
-  // rounds are quick because the site usually echoes a reply within a second;
-  // the later rounds back off so a slow endpoint still gets a few chances.
-  const COMMENT_VERIFY_DELAYS_MS: readonly number[] = [400, 600, 900, 1200, 1500];
-
-  const COMMENT_VERIFY_ATTEMPTS = COMMENT_VERIFY_DELAYS_MS.length;
-
-  // A reply that has not been echoed by then stops saying "syncing", because a
-  // spinner that runs for half a minute reads as a broken publish. The site can
-  // still echo it much later, so a local row keeps a few sparse background
-  // checks that swap it for the real one without going back to "syncing".
-  const COMMENT_VERIFY_GRACE_DELAYS_MS: readonly number[] = [6000, 12000, 20000];
-
-  const COMMENT_VERIFY_MAX_ATTEMPTS = COMMENT_VERIFY_ATTEMPTS + COMMENT_VERIFY_GRACE_DELAYS_MS.length;
-
-  const readCommentVerifyDelay = (attempt: number): number => {
-    const index = Math.max(0, attempt - 1);
-    if (index < COMMENT_VERIFY_DELAYS_MS.length) return COMMENT_VERIFY_DELAYS_MS[index];
-    const graceIndex = Math.min(index - COMMENT_VERIFY_DELAYS_MS.length, COMMENT_VERIFY_GRACE_DELAYS_MS.length - 1);
-    return COMMENT_VERIFY_GRACE_DELAYS_MS[graceIndex];
   };
 
   // An empty expectation always matches: only a publish or delete asks for a
