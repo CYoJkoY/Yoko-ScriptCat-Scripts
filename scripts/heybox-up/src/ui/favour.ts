@@ -3,6 +3,7 @@ import { resolveHeyboxId } from "../core/account";
 import { createCard, loadCyFavorites, readCache, writeCache, type CyItem } from "../core/cy";
 import { readPageRoute, registerPageSync } from "../core/page-sync";
 import { isAbortError } from "../core/request";
+import { asRecord } from "../core/json";
 import { CY_HASH, scrollToCySection } from "./navigation";
 
 export const FAVOUR_HOST_ID = "heybox-up-favour";
@@ -266,4 +267,133 @@ export function watchFavourPage(): void {
 
   registerPageSync(sync, 300, [PAGE_ROUTE.FAVOUR], "favour");
   sync();
+}
+
+export interface FavourFolder {
+  id: string;
+  name: string;
+}
+
+export interface FavourChangePlan {
+  addIds: string[];
+  removeIds: string[];
+  removeAll: boolean;
+  unknownIds: string[];
+}
+
+export interface FavourPlanInput {
+  favourited: boolean;
+  folderIds: readonly string[];
+  checkedIds: readonly string[];
+  memberIds: readonly string[];
+  unknownIds: readonly string[];
+}
+
+export interface FavourFolderPage {
+  linkIds: string[];
+  hasNext: boolean;
+}
+
+function readFavourId(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  const text = String(value).trim();
+  if (text === "" || text === "0" || text === "-1" || text === "undefined" || text === "null") return "";
+  return text;
+}
+
+export function normalizeFavourFolders(records: readonly unknown[]): FavourFolder[] {
+  const folders: FavourFolder[] = [];
+  const seen = new Set<string>();
+  for (const entry of records) {
+    const record = asRecord(entry);
+    if (record === null) continue;
+    const id = readFavourId(record["id"] ?? record["folder_id"]);
+    if (id === "" || seen.has(id)) continue;
+    seen.add(id);
+    const rawName = String(record["name"] ?? record["folder_name"] ?? "").trim();
+    folders.push({ id: id, name: rawName === "" ? "未命名收藏夹" : rawName });
+  }
+  return folders;
+}
+
+export function readFavourFolderId(result: unknown): string {
+  const record = asRecord(result);
+  if (record === null) return "";
+  const folder = asRecord(record["folder"]);
+  return readFavourId(folder?.["id"] ?? folder?.["folder_id"] ?? record["folder_id"]);
+}
+
+function readFavourLinkId(entry: unknown): string {
+  const record = asRecord(entry);
+  if (record === null) return "";
+  const link = asRecord(record["link"]);
+  return readFavourId(
+    link?.["linkid"]
+      ?? link?.["link_id"]
+      ?? link?.["id"]
+      ?? record["link_id"]
+      ?? record["linkid"],
+  );
+}
+
+export function readFavourFolderPage(result: unknown): FavourFolderPage {
+  const record = asRecord(result);
+  if (record === null) return { linkIds: [], hasNext: false };
+  const rawLinks = Array.isArray(record["links"]) ? record["links"] : [];
+  const linkIds: string[] = [];
+  for (const entry of rawLinks) {
+    const id = readFavourLinkId(entry);
+    if (id !== "") linkIds.push(id);
+  }
+  const next = record["has_next"] ?? record["has_more"];
+  return {
+    linkIds: linkIds,
+    hasNext: next === true || next === 1 || next === "1",
+  };
+}
+
+/**
+ * Checked folders are joined, unchecked folders are left. A favourite in a
+ * folder whose membership could not be read is never removed implicitly.
+ */
+export function planFavourChanges(input: FavourPlanInput): FavourChangePlan {
+  const folderIds = new Set(input.folderIds);
+  const checked = new Set(input.checkedIds.filter((id) => folderIds.has(id)));
+  const unknown = input.unknownIds.filter((id) => folderIds.has(id));
+  const unknownSet = new Set(unknown);
+  // Membership of an unread folder stays untouched, so it can never become an
+  // implicit removal just because its checkbox is off.
+  const members = new Set(input.memberIds.filter((id) => folderIds.has(id) && !unknownSet.has(id)));
+  const addIds = Array.from(checked).filter((id) => !members.has(id));
+  const removeIds = Array.from(members).filter((id) => !checked.has(id));
+  return {
+    addIds: addIds,
+    removeIds: removeIds,
+    // An empty folder list means the request failed or the account has no
+    // folders yet; neither is proof that clearing every checkbox should
+    // unfavourite the link globally.
+    removeAll: folderIds.size > 0 && input.favourited && checked.size === 0 && unknown.length === 0,
+    unknownIds: unknown,
+  };
+}
+
+export function planHasFavourChange(plan: FavourChangePlan): boolean {
+  return plan.removeAll || plan.addIds.length > 0 || plan.removeIds.length > 0;
+}
+
+/** The link stays favourited while any folder still holds it. */
+export function resolveFavourOutcome(
+  favourited: boolean,
+  memberIds: readonly string[],
+  plan: FavourChangePlan,
+): boolean {
+  if (plan.removeAll) return false;
+  const removed = new Set(plan.removeIds);
+  const remaining = new Set<string>();
+  for (const id of memberIds) {
+    if (!removed.has(id)) remaining.add(id);
+  }
+  for (const id of plan.addIds) remaining.add(id);
+  if (remaining.size > 0) return true;
+  return favourited && plan.unknownIds.length > 0;
 }

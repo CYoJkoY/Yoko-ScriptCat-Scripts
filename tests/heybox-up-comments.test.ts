@@ -2,12 +2,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   RAIL_PAGE_SIZE,
+  buildRailCommentTree,
   buildArticleCommentBody,
   buildDeleteCommentBody,
   isOwnRailComment,
   normalizeRailGroup,
   readRailFloorTotal,
   readRailPageCache,
+  railItemsHaveComment,
   resolveCommentPageProgress,
   writeRailPageCache,
 } from "../scripts/heybox-up/src/ui/rail";
@@ -65,6 +67,69 @@ describe("rail comment tree", () => {
     const entry = normalizeRailGroup(group(floor("30", "root"), [anonymous]));
     expect(entry?.subComments).toHaveLength(1);
     expect(entry?.subComments[0].rootId).toBe("30");
+  });
+
+  it("nests a floor, its reply, and the reply to that reply", () => {
+    const entry = normalizeRailGroup(group(floor("50", "floor"), [
+      { ...floor("51", "child"), replyid: 50, replyuser: { username: "floor-author" } },
+      { ...floor("52", "grandchild"), replyid: 51, replyuser: { username: "child-author" } },
+    ]));
+    expect(entry).not.toBeNull();
+    if (entry === null) return;
+    const tree = buildRailCommentTree(entry);
+    expect(tree.map((node) => node.id)).toEqual(["51"]);
+    expect(tree[0].children.map((node) => node.id)).toEqual(["52"]);
+    expect(tree[0].children[0].replyName).toBe("child-author");
+  });
+
+  it("accepts replyid and reply_id as parent relations", () => {
+    const entry = normalizeRailGroup(group(floor("60", "floor"), [
+      { ...floor("61", "child"), replyid: 60 },
+      { ...floor("62", "other"), reply_id: "61" },
+    ]));
+    expect(entry?.subComments[0].parentId).toBe("60");
+    expect(entry?.subComments[1].parentId).toBe("61");
+    const tree = buildRailCommentTree(entry as NonNullable<typeof entry>);
+    expect(tree[0].children[0].id).toBe("62");
+  });
+
+  it("attaches a reply whose parent is missing or points at itself", () => {
+    const entry = normalizeRailGroup(group(floor("70", "floor"), [
+      { ...floor("71", "orphan"), replyid: 999 },
+      { ...floor("72", "self"), replyid: 72 },
+    ]));
+    const tree = buildRailCommentTree(entry as NonNullable<typeof entry>);
+    expect(tree.map((node) => node.id)).toEqual(["71", "72"]);
+    expect(tree[0].children).toHaveLength(0);
+  });
+
+  it("breaks a parent cycle without dropping either comment", () => {
+    const entry = normalizeRailGroup(group(floor("80", "floor"), [
+      { ...floor("81", "a"), replyid: 82 },
+      { ...floor("82", "b"), replyid: 81 },
+    ]));
+    const tree = buildRailCommentTree(entry as NonNullable<typeof entry>);
+    expect(tree.map((node) => node.id).sort()).toEqual(["81", "82"]);
+    expect(tree.every((node) => node.children.length === 0)).toBe(true);
+  });
+
+  it("keeps server order for independent replies and ignores duplicate ids", () => {
+    const entry = normalizeRailGroup(group(floor("90", "floor"), [
+      floor("91", "first"),
+      floor("92", "second"),
+      floor("91", "duplicate"),
+    ]));
+    const tree = buildRailCommentTree(entry as NonNullable<typeof entry>);
+    expect(tree.map((node) => node.id)).toEqual(["91", "92"]);
+  });
+
+  it("finds a grandchild when checking whether a loaded page holds an id", () => {
+    const entry = normalizeRailGroup(group(floor("95", "floor"), [
+      { ...floor("96", "child"), replyid: 95 },
+      { ...floor("97", "grandchild"), replyid: 96 },
+    ]));
+    expect(railItemsHaveComment(entry === null ? [] : [entry], "97")).toBe(true);
+    expect(railItemsHaveComment(entry === null ? [] : [entry], "98")).toBe(false);
   });
 });
 
