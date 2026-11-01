@@ -1,7 +1,7 @@
 import { PAGE_ROUTE } from "../config";
 import { getHeyboxId } from "../core/account";
 import { LINK_HREF_PREFIX, formatTime } from "../core/cy";
-import { registerPageSync } from "../core/page-sync";
+import { readPageRoute, registerPageSync } from "../core/page-sync";
 import { asRecord } from "../core/json";
 import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
 import { createSignature, md5Hex } from "../core/signature";
@@ -1107,7 +1107,7 @@ export function watchCommentRail() {
   const rail = createCommentRail();
   document.body.append(rail.host);
 
-  const isFeedPage = () => !location.pathname.startsWith(LINK_HREF_PREFIX)
+  const isFeedPage = () => readPageRoute() === PAGE_ROUTE.FEED
     && document.querySelector("#page-bbs-community .bbs-home__content-list") !== null;
 
   const readLinkId = (href: string | null): string => {
