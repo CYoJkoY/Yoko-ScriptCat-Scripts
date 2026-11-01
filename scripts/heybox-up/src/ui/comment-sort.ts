@@ -3,7 +3,7 @@ import { LINK_HREF_PREFIX } from "../core/cy";
 import { asRecord } from "../core/json";
 import { registerPageSync } from "../core/page-sync";
 import { fetchRailPage } from "./rail";
-import { HIDE_CY_EVENT, isCyComment, readHideCyPreference, setHideCyPreference } from "../state";
+import { HIDE_CY_EVENT, isCyComment, readHideCyPreference, setHideCyPreference, syncHideCyPreference } from "../state";
 
 export const COMMENT_SORTS = [
   { id: "default", label: "默认" },
@@ -253,6 +253,8 @@ export function watchCommentSort(): void {
       mode = "default";
       return;
     }
+    // The official homepage releases the body class; the next article restores it.
+    syncHideCyPreference();
     const tree = document.querySelector("#page-bbs-link .link-comment");
     if (!tree) return;
     const linkId = getLinkId();
