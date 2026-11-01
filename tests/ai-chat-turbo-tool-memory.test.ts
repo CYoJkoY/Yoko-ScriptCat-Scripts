@@ -5,8 +5,16 @@ import {
   createToolMemoryUtils,
 } from "../scripts/ai-chat-turbo-engine/src/core/tool-memory";
 import { createReasoningUtils } from "../scripts/ai-chat-turbo-engine/src/core/reasoning";
+import { createRestoreCoordinator } from "../scripts/ai-chat-turbo-engine/src/core/restore-coordination";
 import { readToolRecord, writeToolRecord } from "../scripts/ai-chat-turbo-engine/src/storage/tool-memory";
-import { readReasoningRecord } from "../scripts/ai-chat-turbo-engine/src/storage/reasoning-memory";
+import {
+  readReasoningRecord,
+  writeReasoningRecord,
+} from "../scripts/ai-chat-turbo-engine/src/storage/reasoning-memory";
+import {
+  readYuanbaoSelectionRecord,
+  writeYuanbaoSelectionRecord,
+} from "../scripts/ai-chat-turbo-engine/src/storage/yuanbao-selection";
 import { setEngineActive } from "../scripts/ai-chat-turbo-engine/src/core/auth";
 import { createEngineState } from "../scripts/ai-chat-turbo-engine/src/state";
 import type { ElementFactory } from "../scripts/ai-chat-turbo-engine/src/ui/code-blocks";
@@ -167,7 +175,7 @@ function installToolToolbar(): ToolFixture {
   return { toolbar, writing, painting, overflow, overflowMenu, overflowPainting, chipHost };
 }
 
-function createToolMemory(scope = createToolPopupScope()) {
+function createToolMemory(restoreCoordinator = createRestoreCoordinator()) {
   return createToolMemoryUtils({
     el,
     state: createEngineState(),
@@ -175,6 +183,7 @@ function createToolMemory(scope = createToolPopupScope()) {
       control.click();
       return true;
     },
+    restoreCoordinator,
   });
 }
 
@@ -364,7 +373,10 @@ function installReasoningToggle(attrs: Record<string, string>): ReasoningFixture
   return { button, clicks };
 }
 
-function createReasoning(state = createEngineState()) {
+function createReasoning(
+  state = createEngineState(),
+  restoreCoordinator = createRestoreCoordinator(),
+) {
   return createReasoningUtils({
     el,
     state,
@@ -374,6 +386,7 @@ function createReasoning(state = createEngineState()) {
     requestUpdate: () => undefined,
     markRestoredTurn: () => undefined,
     requestFullTurnSync: () => undefined,
+    restoreCoordinator,
   });
 }
 
@@ -414,46 +427,370 @@ describe("reasoning toggle restore", () => {
   });
 });
 
-describe("yuanbao model panel restore", () => {
-  it("closes the thinking-mode panel owned by the restore flow", async () => {
-    const trigger = el("button", {
-      "data-thinking-mode-switcher-trigger": "",
+const YUANBAO_MODES = ["快速回答", "深度思考", "专家模式"] as const;
+const YUANBAO_MODELS = ["Hy4 preview", "Hy3", "DeepSeek"] as const;
+
+interface YuanbaoFixture {
+  trigger: HTMLButtonElement;
+  label: HTMLElement;
+  clicks: string[];
+  modelMenu: () => HTMLElement | null;
+  mainMenu: () => HTMLElement | null;
+  selectMode: (mode: string) => void;
+}
+
+function installYuanbaoSelector(
+  initialModel: string = "Hy3",
+  initialMode: string = "快速回答",
+): YuanbaoFixture {
+  let model = initialModel;
+  let mode = initialMode;
+  let main: HTMLElement | null = null;
+  let submenu: HTMLElement | null = null;
+  let modelValue: HTMLElement | null = null;
+  const modeRows = new Map<string, HTMLElement>();
+  const clicks: string[] = [];
+  const trigger = el(
+    "button",
+    {
+      "data-thinking-mode-switcher-trigger": "true",
       "aria-label": "切换模型",
-      "aria-expanded": "true",
-      "aria-controls": "yb-model-menu",
-    }, ["元宝" ]);
-    const row = el("button", {
-      role: "menuitemradio",
-      "aria-checked": "true",
-    }, ["Pro"]);
-    const menu = el("div", { id: "yb-model-menu", role: "menu" }, [row]);
-    const clicks = vi.fn(() => {
-      trigger.setAttribute(
-        "aria-expanded",
-        trigger.getAttribute("aria-expanded") === "true" ? "false" : "true",
-      );
-    });
-    trigger.addEventListener("click", clicks);
-    document.body.append(trigger, menu);
-    window.localStorage.setItem(
-      "ai_turbo_reasoning_memory",
-      JSON.stringify({
-        [location.hostname]: {
-          mode: "choice",
-          key: "切换模型",
-          controlLabel: "元宝",
-          path: [],
-          option: "Pro",
-          ts: Date.now(),
+      "aria-expanded": "false",
+    },
+  );
+  const label = el("span", { "data-input-label": "model" }, [initialMode]);
+  trigger.append(label);
+
+  const closeSubmenu = (): void => {
+    submenu?.remove();
+    submenu = null;
+  };
+
+  const closeMain = (): void => {
+    closeSubmenu();
+    main?.remove();
+    main = null;
+    trigger.setAttribute("aria-expanded", "false");
+  };
+
+  const applyMode = (next: string, closeAfter: boolean): void => {
+    mode = next;
+    label.textContent = next;
+    for (const [name, row] of modeRows) {
+      row.setAttribute("aria-checked", name === next ? "true" : "false");
+    }
+    if (closeAfter) closeMain();
+  };
+
+  const buildModelMenu = (): void => {
+    closeSubmenu();
+    const menu = el("div", { role: "menu", "aria-label": "模型列表" });
+    for (const name of YUANBAO_MODELS) {
+      const row = el(
+        "button",
+        {
+          role: "menuitemradio",
+          "aria-checked": name === model ? "true" : "false",
         },
-      }),
+        [name],
+      );
+      row.addEventListener("click", () => {
+        clicks.push(`model:${name}`);
+        model = name;
+        if (modelValue) modelValue.textContent = name;
+        if (name === "Hy4 preview") applyMode("专家模式", false);
+        closeSubmenu();
+      });
+      menu.append(row);
+    }
+    submenu = menu;
+    document.body.append(menu);
+  };
+
+  const buildMain = (): void => {
+    const menu = el("div", { role: "menu" });
+    const modelRow = el("button", { role: "menuitem", "aria-label": "选择模型" });
+    modelRow.append(el("span", {}, ["模型"]));
+    modelValue = el("span", {}, [model]);
+    modelRow.append(modelValue);
+    modelRow.addEventListener("click", () => {
+      clicks.push("open-model-menu");
+      buildModelMenu();
+    });
+    menu.append(modelRow);
+    modeRows.clear();
+    for (const name of YUANBAO_MODES) {
+      const row = el(
+        "button",
+        {
+          role: "menuitemradio",
+          "aria-checked": name === mode ? "true" : "false",
+        },
+        [name],
+      );
+      row.addEventListener("click", () => {
+        clicks.push(`mode:${name}`);
+        applyMode(name, true);
+      });
+      modeRows.set(name, row);
+      menu.append(row);
+    }
+    main = menu;
+    trigger.setAttribute("aria-expanded", "true");
+    document.body.append(menu);
+  };
+
+  trigger.addEventListener("click", () => {
+    if (main) {
+      clicks.push("toggle:close");
+      closeMain();
+      return;
+    }
+    clicks.push("toggle:open");
+    buildMain();
+  });
+
+  document.body.append(trigger);
+  return {
+    trigger,
+    label,
+    clicks,
+    modelMenu: () =>
+      document.querySelector<HTMLElement>("[role='menu'][aria-label='模型列表']"),
+    mainMenu: () =>
+      document.querySelector<HTMLElement>("div[role='menu']:not([aria-label='模型列表'])"),
+    selectMode: (next: string) => {
+      const row = modeRows.get(next);
+      if (row) row.click();
+    },
+  };
+}
+
+function yuanbaoRow(menu: HTMLElement, text: string): HTMLElement {
+  const row =
+    menu.querySelector<HTMLElement>(`[aria-label='${text}']`) ??
+    Array.from(menu.querySelectorAll<HTMLElement>("[role='menuitemradio']")).find(
+      (node) => node.textContent?.trim() === text,
     );
+  if (!row) throw new Error(`missing Yuanbao row: ${text}`);
+  return row;
+}
 
+describe("yuanbao model and mode memory", () => {
+  it("leaves reasoning controls outside the model picker on the generic path", async () => {
+    const fixture = installYuanbaoSelector();
     const reasoning = createReasoning();
-    reasoning.applyReasoningMemory();
-    await vi.advanceTimersByTimeAsync(1200);
+    window.addEventListener("click", reasoning.handleReasoningClick, true);
+    const toggle = installReasoningToggle({ "aria-pressed": "true" });
 
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    reasoning.handleReasoningClick(press(toggle.button));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(readReasoningRecord()).toMatchObject({
+      mode: "toggle",
+      label: "深度思考",
+      on: true,
+    });
+    expect(readYuanbaoSelectionRecord()).toBeNull();
+    expect(fixture.clicks).toEqual([]);
+    window.removeEventListener("click", reasoning.handleReasoningClick, true);
     reasoning.clearReasoningRestoreTimer();
+  });
+
+  it("records model and mode without overwriting each other", async () => {
+    const fixture = installYuanbaoSelector();
+    const reasoning = createReasoning();
+    window.addEventListener("click", reasoning.handleReasoningClick, true);
+
+    press(fixture.trigger);
+    fixture.selectMode("深度思考");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(readYuanbaoSelectionRecord()).toMatchObject({
+      model: "Hy3",
+      mode: "深度思考",
+    });
+
+    press(fixture.trigger);
+    const main = fixture.mainMenu();
+    expect(main).not.toBeNull();
+    if (main) press(yuanbaoRow(main, "选择模型"));
+    const modelMenu = fixture.modelMenu();
+    expect(modelMenu).not.toBeNull();
+    if (modelMenu) press(yuanbaoRow(modelMenu, "DeepSeek"));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(readYuanbaoSelectionRecord()).toMatchObject({
+      model: "DeepSeek",
+      mode: "深度思考",
+    });
+
+    fixture.selectMode("快速回答");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(readYuanbaoSelectionRecord()).toMatchObject({
+      model: "DeepSeek",
+      mode: "快速回答",
+    });
+    window.removeEventListener("click", reasoning.handleReasoningClick, true);
+    reasoning.clearReasoningRestoreTimer();
+  });
+
+  it.each([
+    ["Hy4 preview", "专家模式", "Hy3", "快速回答"],
+    ["DeepSeek", "深度思考", "Hy3", "快速回答"],
+    ["Hy3", "快速回答", "DeepSeek", "深度思考"],
+  ])(
+    "restores model %s before mode %s and closes the panel",
+    async (model, mode, initialModel, initialMode) => {
+    const fixture = installYuanbaoSelector(initialModel, initialMode);
+    const coordinator = createRestoreCoordinator();
+    writeYuanbaoSelectionRecord({ model, mode, ts: Date.now() });
+    const reasoning = createReasoning(createEngineState(), coordinator);
+
+    reasoning.applyReasoningMemory();
+    expect(coordinator.activeOwner()).toBe("reasoning");
+    await vi.advanceTimersByTimeAsync(1500);
+
+    const selectedModel = fixture.clicks.findIndex((entry) => entry.startsWith("model:"));
+    const selectedMode = fixture.clicks.findIndex((entry) => entry.startsWith("mode:"));
+    expect(selectedModel).toBeGreaterThanOrEqual(0);
+    if (selectedMode >= 0) expect(selectedMode).toBeGreaterThan(selectedModel);
+    expect(fixture.label.textContent).toBe(mode);
+    expect(fixture.trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(fixture.mainMenu()).toBeNull();
+    expect(fixture.modelMenu()).toBeNull();
+    expect(coordinator.isPending("reasoning")).toBe(false);
+    expect(coordinator.activeOwner()).toBeNull();
+    reasoning.clearReasoningRestoreTimer();
+    },
+  );
+
+  it("migrates a legacy reasoning record into the selection record", async () => {
+    const fixture = installYuanbaoSelector("Hy3", "快速回答");
+    writeReasoningRecord({
+      mode: "choice",
+      key: "切换模型",
+      controlLabel: "快速回答",
+      option: "DeepSeek",
+      ts: Date.now(),
+    });
+    const reasoning = createReasoning();
+
+    reasoning.applyReasoningMemory();
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(readYuanbaoSelectionRecord()).toMatchObject({
+      model: "DeepSeek",
+      mode: "快速回答",
+    });
+    expect(fixture.clicks).toContain("model:DeepSeek");
+    reasoning.clearReasoningRestoreTimer();
+  });
+
+  it("stops an incompatible Hy4 and quick-answer pair without opening the menu", async () => {
+    const fixture = installYuanbaoSelector();
+    const coordinator = createRestoreCoordinator();
+    writeYuanbaoSelectionRecord({
+      model: "Hy4 preview",
+      mode: "快速回答",
+      ts: Date.now(),
+    });
+    const status = el("div", {});
+    const reasoning = createReasoning(createEngineState(), coordinator);
+    reasoning.attachStatusNode(status);
+
+    reasoning.applyReasoningMemory();
+
+    expect(fixture.clicks).toEqual([]);
+    expect(fixture.trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(coordinator.isPending("reasoning")).toBe(false);
+    expect(status.textContent).toContain("不兼容");
+    reasoning.clearReasoningRestoreTimer();
+  });
+
+  it("keeps a saved tool waiting until Yuanbao reasoning restoration ends", async () => {
+    const fixture = installYuanbaoSelector();
+    installToolToolbar();
+    writeToolRecord({
+      key: "atomic-actions",
+      controlLabel: "工具",
+      applicationId: "AI_PAINTING",
+      label: "AI生图",
+      legacyLabels: ["AI生图"],
+      ts: Date.now(),
+    });
+    writeYuanbaoSelectionRecord({
+      model: "DeepSeek",
+      mode: "深度思考",
+      ts: Date.now(),
+    });
+    const coordinator = createRestoreCoordinator();
+    const reasoning = createReasoning(createEngineState(), coordinator);
+    const toolMemory = createToolMemory(coordinator);
+
+    reasoning.applyReasoningMemory();
+    toolMemory.maybeRestore();
+    expect(selectedTool).toBeNull();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(fixture.label.textContent).toBe("深度思考");
+    expect(coordinator.isPending("reasoning")).toBe(false);
+
+    toolMemory.maybeRestore();
+    await vi.advanceTimersByTimeAsync(700);
+    expect(selectedTool?.id).toBe("AI_PAINTING");
+    reasoning.clearReasoningRestoreTimer();
+    toolMemory.teardown();
+  });
+
+  it("stops waiting for a missing trigger and releases the restore lock", async () => {
+    writeYuanbaoSelectionRecord({
+      model: "DeepSeek",
+      mode: "深度思考",
+      ts: Date.now(),
+    });
+    const coordinator = createRestoreCoordinator();
+    const status = el("div", {});
+    const reasoning = createReasoning(createEngineState(), coordinator);
+    reasoning.attachStatusNode(status);
+
+    reasoning.scheduleReasoningRestore();
+    expect(coordinator.isPending("reasoning")).toBe(true);
+    expect(coordinator.activeOwner()).toBeNull();
+    await vi.advanceTimersByTimeAsync(10_200);
+
+    expect(coordinator.isPending("reasoning")).toBe(false);
+    expect(coordinator.activeOwner()).toBeNull();
+    expect(status.textContent).toContain("未找到模型菜单");
+    reasoning.clearReasoningRestoreTimer();
+  });
+
+  it("clears both records and cancels an active restore from the status button", async () => {
+    installYuanbaoSelector();
+    writeYuanbaoSelectionRecord({
+      model: "DeepSeek",
+      mode: "深度思考",
+      ts: Date.now(),
+    });
+    writeReasoningRecord({
+      mode: "choice",
+      option: "Hy3",
+      ts: Date.now(),
+    });
+    const coordinator = createRestoreCoordinator();
+    const status = el("div", {});
+    const reasoning = createReasoning(createEngineState(), coordinator);
+    reasoning.attachStatusNode(status);
+    reasoning.scheduleReasoningRestore();
+    reasoning.renderReasoningStatus();
+    expect(coordinator.isPending("reasoning")).toBe(true);
+
+    const clear = status.querySelector("button");
+    expect(clear).not.toBeNull();
+    if (clear) press(clear);
+    await vi.advanceTimersByTimeAsync(10_500);
+
+    expect(readYuanbaoSelectionRecord()).toBeNull();
+    expect(readReasoningRecord()).toBeNull();
+    expect(coordinator.isPending("reasoning")).toBe(false);
+    expect(coordinator.activeOwner()).toBeNull();
+    expect(status.textContent).toBe("推理记忆：未记录（在模型菜单里选择模型或模式即可）");
   });
 });

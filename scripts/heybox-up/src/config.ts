@@ -38,18 +38,38 @@ export const PAGE_ROUTE = Object.freeze({
   TOPIC: "topic",
   CREATOR: "creator",
   OTHER: "other",
+  OFFICIAL_HOME: "official-home",
 } as const);
 
 export type PageRoute = (typeof PAGE_ROUTE)[keyof typeof PAGE_ROUTE];
 export type PageMutationRegion = "feed" | "article" | "topic" | "favour" | "creator" | "chrome";
 
 export const PAGE_ROUTE_RULES: readonly { readonly id: PageRoute; readonly pattern: RegExp }[] = Object.freeze([
+  { id: PAGE_ROUTE.OFFICIAL_HOME, pattern: /^\/$/ },
   { id: PAGE_ROUTE.ARTICLE, pattern: /^\/app\/bbs\/link\/\d+(?:\/|$)/ },
   { id: PAGE_ROUTE.FAVOUR, pattern: /^\/app\/user\/favour\/content(?:\/|$)/ },
-  { id: PAGE_ROUTE.FEED, pattern: /^\/(?:$|app\/bbs\/home(?:\/|$))/ },
+  { id: PAGE_ROUTE.FEED, pattern: /^\/app\/bbs\/home(?:\/|$)/ },
   { id: PAGE_ROUTE.TOPIC, pattern: /^\/app\/topic\/link\/\d+(?:\/|$)/ },
   { id: PAGE_ROUTE.CREATOR, pattern: /^\/creator(?:\/|$)/ },
 ]);
+
+/**
+ * Routes that receive the script adapters. The official root homepage keeps its
+ * own promotional layout, so it stays outside this list: every adapter tears
+ * down there and the site renders untouched.
+ */
+export const ADAPTED_ROUTES: readonly PageRoute[] = Object.freeze([
+  PAGE_ROUTE.ARTICLE,
+  PAGE_ROUTE.FAVOUR,
+  PAGE_ROUTE.FEED,
+  PAGE_ROUTE.TOPIC,
+  PAGE_ROUTE.CREATOR,
+  PAGE_ROUTE.OTHER,
+]);
+
+export function isOfficialHomePath(pathname: string): boolean {
+  return pathname === "/";
+}
 
 export const PAGE_MUTATION_REGION_SELECTORS: Readonly<Record<PageMutationRegion, string>> = Object.freeze({
   feed: "#page-bbs-community, #heybox-up-comment-rail",

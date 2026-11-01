@@ -4,10 +4,18 @@ import {
   REASONING_CONTROL_PATTERN,
   REASONING_CONTROL_SELECTOR,
   REASONING_MENU_SELECTOR,
+  YUANBAO_MODE_LABEL_SELECTOR,
+  YUANBAO_MODEL_MENU_SELECTOR,
+  YUANBAO_MODEL_ROW_SELECTOR,
+  YUANBAO_MODEL_TRIGGER_SELECTOR,
   isToolControlElement,
 } from "../config";
-import { isEngineDormant } from "./auth";
+import { hostnameMatches, isEngineDormant } from "./auth";
 import { reportRecoverableError } from "./diagnostics";
+import {
+  createRestoreCoordinator,
+  type RestoreCoordinator,
+} from "./restore-coordination";
 import type { ToolPopupScope } from "./tool-scope";
 import type { ElementFactory } from "../ui/code-blocks";
 import type { EngineState } from "../state";
@@ -19,6 +27,12 @@ import {
   writeReasoningRecord,
   type ReasoningRecord,
 } from "../storage/reasoning-memory";
+import {
+  clearYuanbaoSelectionRecord,
+  readYuanbaoSelectionRecord,
+  writeYuanbaoSelectionRecord,
+  type YuanbaoSelectionRecord,
+} from "../storage/yuanbao-selection";
 
 export interface ReasoningChoiceInfo {
   option: string;
@@ -35,6 +49,7 @@ export interface ReasoningDeps {
   requestUpdate: () => void;
   markRestoredTurn: (turnElement: Element) => void;
   requestFullTurnSync: () => void;
+  restoreCoordinator?: RestoreCoordinator;
 }
 
 export interface ReasoningUtils {
@@ -44,6 +59,7 @@ export interface ReasoningUtils {
   applyReasoningMemory(): void;
   clearReasoningRestoreTimer(): void;
   scheduleReasoningRestore(): void;
+  isRestorePending(): boolean;
   attachStatusNode(node: HTMLElement | null): void;
 }
 
@@ -57,23 +73,40 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     requestUpdate,
     markRestoredTurn,
     requestFullTurnSync,
+    restoreCoordinator: providedCoordinator,
   } = deps;
+  const restoreCoordinator = providedCoordinator ?? createRestoreCoordinator();
 
   let reasoningStatusNode: HTMLElement | null = null;
   let reasoningRestoreTimer = 0;
   let reasoningRestoreAttempts = 0;
   let reasoningRestoreDone = false;
+  let reasoningRestorePending = false;
+  let yuanbaoMissingTriggerAttempts = 0;
   let applyingReasoning = false;
   let restoreToken = 0;
   const correctedToggleAttempts = new Set<string>();
   const choiceRestoreAttempts = new Map<string, number>();
   const popupCloseTimers: number[] = [];
+  const yuanbaoRecordTimers: number[] = [];
   let conversationKey = `${location.origin}${location.pathname}`;
   let reasoningSettleTimer = 0;
   // 最近点开的控件：弹层里的选项点击时用来把“哪个控件的哪个选项”配对
   let reasoningMenuTrigger: HTMLElement | null = null;
   let reasoningMenuTriggerAt = 0;
   let reasoningMenuTriggerLabel = "";
+  let yuanbaoActionStatus = "";
+
+  function setReasoningPending(value: boolean): void {
+    reasoningRestorePending = value;
+    restoreCoordinator.setPending("reasoning", value);
+  }
+
+  function releaseReasoningRestore(): void {
+    setReasoningPending(false);
+    restoreCoordinator.release("reasoning");
+  }
+
   function isInsideTurboUI(node: unknown): boolean {
     if (!(node instanceof Element)) return false;
     return Boolean(node.closest("[id^='ai-turbo-'], .ai-turbo-code-bar"));
@@ -911,6 +944,10 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     if (!state.rememberReasoning || applyingReasoning) return;
     const target = event.target;
     if (!(target instanceof Element) || isInsideTurboUI(target)) return;
+    if (isYuanbaoHost()) {
+      if (isToolControlElement(target) || toolScope.isInside(target)) return;
+      if (handleYuanbaoSelectionClick(target)) return;
+    }
     // Yuanbao's add-tool entry is a popup trigger with no reasoning keyword;
     // its rows must never overwrite the reasoning record either.
     if (isToolControlElement(target) || toolScope.isInside(target)) return;
@@ -965,6 +1002,39 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     reasoningStatusNode.textContent = "";
     if (!state.rememberReasoning) {
       reasoningStatusNode.textContent = "推理记忆：已关闭";
+      return;
+    }
+    if (isYuanbaoHost() || readYuanbaoSelectionRecord()) {
+      const saved = readYuanbaoSelectionRecord();
+      if (!saved) {
+        reasoningStatusNode.textContent =
+          "推理记忆：未记录（在模型菜单里选择模型或模式即可）";
+        return;
+      }
+      const shown = [saved.model, saved.mode].filter(Boolean).join(" + ");
+      reasoningStatusNode.textContent = `推理记忆：${shown || "未记录"} `;
+      if (yuanbaoActionStatus) {
+        reasoningStatusNode.appendChild(
+          el("span", {}, [`· ${yuanbaoActionStatus} `]),
+        );
+      }
+      reasoningStatusNode.appendChild(
+        el(
+          "button",
+          {
+            type: "button",
+            onclick: () => {
+              clearReasoningRestoreTimer();
+              clearYuanbaoSelectionRecord();
+              clearReasoningRecord();
+              yuanbaoActionStatus = "";
+              reasoningRestoreDone = true;
+              renderReasoningStatus();
+            },
+          },
+          ["清除"],
+        ),
+      );
       return;
     }
     const saved = readReasoningRecord();
@@ -1031,10 +1101,644 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     return visible.find((node) => REASONING_CONTROL_PATTERN.test(controlLabel(node))) || null;
   }
 
+  function isYuanbaoHost(): boolean {
+    if (
+      hostnameMatches(location.hostname.toLowerCase(), [
+        "yuanbao.tencent.com",
+      ])
+    ) {
+      return true;
+    }
+    return Array.from(
+      document.querySelectorAll<HTMLElement>(YUANBAO_MODEL_TRIGGER_SELECTOR),
+    ).some((node) => !isInsideTurboUI(node));
+  }
+
+  function cleanSelectionText(raw: string): string {
+    return raw.replace(/\s+/g, " ").trim().slice(0, 120);
+  }
+
+  function selectionMatches(actual: string, expected: string): boolean {
+    return (
+      actual.toLowerCase().replace(/\s+/g, " ").trim() ===
+      expected.toLowerCase().replace(/\s+/g, " ").trim()
+    );
+  }
+
+  function yuanbaoTrigger(): HTMLElement | null {
+    return (
+      Array.from(
+        document.querySelectorAll<HTMLElement>(YUANBAO_MODEL_TRIGGER_SELECTOR),
+      ).find((node) => !isInsideTurboUI(node) && nodeVisible(node)) ?? null
+    );
+  }
+
+  function yuanbaoMainMenu(): HTMLElement | null {
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>(YUANBAO_MODEL_ROW_SELECTOR),
+    ).filter((row) => !isInsideTurboUI(row) && nodeVisible(row));
+    for (const row of rows) {
+      const menu = row.closest(REASONING_MENU_SELECTOR);
+      if (
+        menu instanceof HTMLElement &&
+        menu.getAttribute("aria-label") !== "模型列表" &&
+        nodeVisible(menu)
+      ) {
+        return menu;
+      }
+    }
+    return null;
+  }
+
+  function yuanbaoModelMenu(): HTMLElement | null {
+    return (
+      Array.from(
+        document.querySelectorAll<HTMLElement>(YUANBAO_MODEL_MENU_SELECTOR),
+      ).find((node) => !isInsideTurboUI(node) && nodeVisible(node)) ?? null
+    );
+  }
+
+  function yuanbaoLeafTexts(row: HTMLElement): string[] {
+    const leaves = Array.from(row.querySelectorAll<HTMLElement>("span"))
+      .filter(
+        (node) =>
+          !isInsideTurboUI(node) &&
+          nodeVisible(node) &&
+          node.querySelector("span") === null,
+      )
+      .map((node) => cleanSelectionText(node.textContent || ""))
+      .filter(Boolean);
+    if (leaves.length) return leaves;
+    return (row.innerText || row.textContent || "")
+      .split("\n")
+      .map(cleanSelectionText)
+      .filter(Boolean);
+  }
+
+  function yuanbaoRowTitle(row: HTMLElement): string {
+    return yuanbaoLeafTexts(row)[0] || "";
+  }
+
+  function yuanbaoModeValue(trigger: HTMLElement | null): string {
+    if (!trigger) return "";
+    const label = trigger.querySelector(YUANBAO_MODE_LABEL_SELECTOR);
+    if (label instanceof HTMLElement) {
+      const text = cleanSelectionText(label.textContent || "");
+      if (text) return text;
+    }
+    const main = yuanbaoMainMenu();
+    if (main) {
+      const selected = yuanbaoModeRows(main).find(
+        (row) => choiceRowIsSelected(row) === true,
+      );
+      if (selected) return yuanbaoRowTitle(selected);
+    }
+    return "";
+  }
+
+  function yuanbaoModeRows(menu: HTMLElement): HTMLElement[] {
+    return Array.from(
+      menu.querySelectorAll<HTMLElement>(CHOICE_RADIO_SELECTOR),
+    ).filter((row) => {
+      if (isInsideTurboUI(row) || !nodeVisible(row)) return false;
+      if (row.closest(REASONING_MENU_SELECTOR) !== menu) return false;
+      return !row.matches(YUANBAO_MODEL_ROW_SELECTOR);
+    });
+  }
+
+  function yuanbaoModelRow(menu: HTMLElement): HTMLElement | null {
+    return (
+      Array.from(
+        menu.querySelectorAll<HTMLElement>(YUANBAO_MODEL_ROW_SELECTOR),
+      ).find((row) => row.closest(REASONING_MENU_SELECTOR) === menu) ?? null
+    );
+  }
+
+  function yuanbaoModelValue(menu: HTMLElement | null): string {
+    if (menu) {
+      const row = yuanbaoModelRow(menu);
+      if (row) {
+        const parts = yuanbaoLeafTexts(row);
+        if (parts.length >= 2) return parts[1];
+      }
+    }
+    const modelMenu = yuanbaoModelMenu();
+    if (modelMenu) {
+      const selected = Array.from(
+        modelMenu.querySelectorAll<HTMLElement>(CHOICE_RADIO_SELECTOR),
+      ).find(
+        (row) =>
+          row.closest(REASONING_MENU_SELECTOR) === modelMenu &&
+          choiceRowIsSelected(row) === true,
+      );
+      if (selected) return yuanbaoRowTitle(selected);
+    }
+    return "";
+  }
+
+  function yuanbaoSelectionRow(
+    menu: HTMLElement,
+    expected: string,
+  ): HTMLElement | null {
+    return (
+      Array.from(
+        menu.querySelectorAll<HTMLElement>(CHOICE_RADIO_SELECTOR),
+      ).find(
+        (row) =>
+          row.closest(REASONING_MENU_SELECTOR) === menu &&
+          selectionMatches(yuanbaoRowTitle(row), expected),
+      ) ?? null
+    );
+  }
+
+  function yuanbaoModelConflicts(model: string, mode: string): boolean {
+    if (!model || !mode) return false;
+    return /^hy4\b/i.test(model) && !selectionMatches(mode, "专家模式");
+  }
+
+  function closeYuanbaoPanel(
+    trigger: HTMLElement,
+    done: () => void,
+    token: number,
+    attempt = 0,
+  ): void {
+    if (restoreIsStale(token)) return;
+    if (!trigger.isConnected) {
+      done();
+      return;
+    }
+    const menu = yuanbaoMainMenu();
+    const expanded = trigger.getAttribute("aria-expanded") === "true";
+    if (!expanded && !menu) {
+      done();
+      return;
+    }
+    if (attempt >= 8) {
+      done();
+      return;
+    }
+    if (attempt === 0) {
+      if (expanded || menu || yuanbaoModelMenu()) {
+        clickControlOnce(trigger);
+      }
+    } else if (attempt === 4 && expanded) {
+      clickControlOnce(trigger);
+    }
+    window.setTimeout(() => {
+      closeYuanbaoPanel(trigger, done, token, attempt + 1);
+    }, 160);
+  }
+
+  function waitForYuanbao(
+    read: () => HTMLElement | null,
+    done: (node: HTMLElement | null) => void,
+    token: number,
+    attempt = 0,
+  ): void {
+    if (restoreIsStale(token)) return;
+    const node = read();
+    if (node || attempt >= 12) {
+      done(node);
+      return;
+    }
+    window.setTimeout(() => {
+      waitForYuanbao(read, done, token, attempt + 1);
+    }, 160);
+  }
+
+  function openYuanbaoPanel(
+    trigger: HTMLElement,
+    done: (menu: HTMLElement | null) => void,
+    token: number,
+  ): void {
+    if (restoreIsStale(token)) return;
+    const open = yuanbaoMainMenu();
+    if (open) {
+      done(open);
+      return;
+    }
+    if (trigger.getAttribute("aria-expanded") !== "true") {
+      if (!clickControlOnce(trigger)) {
+        done(null);
+        return;
+      }
+    }
+    waitForYuanbao(
+      yuanbaoMainMenu,
+      (menu) => {
+        if (restoreIsStale(token)) return;
+        done(menu);
+      },
+      token,
+    );
+  }
+
+  function waitYuanbaoSelection(
+    read: () => string,
+    expected: string,
+    done: (ok: boolean) => void,
+    token: number,
+    attempt = 0,
+  ): void {
+    if (restoreIsStale(token)) return;
+    const actual = read();
+    if (actual && selectionMatches(actual, expected)) {
+      done(true);
+      return;
+    }
+    if (attempt >= 10) {
+      done(false);
+      return;
+    }
+    window.setTimeout(
+      () => waitYuanbaoSelection(read, expected, done, token, attempt + 1),
+      160,
+    );
+  }
+
+  function restoreYuanbaoModel(
+    saved: YuanbaoSelectionRecord,
+    trigger: HTMLElement,
+    token: number,
+    done: (ok: boolean, conclusive: boolean) => void,
+  ): void {
+    if (!saved.model) {
+      done(true, false);
+      return;
+    }
+    openYuanbaoPanel(
+      trigger,
+      (menu) => {
+        if (!menu) {
+          done(false, false);
+          return;
+        }
+        const current = yuanbaoModelValue(menu);
+        if (current && selectionMatches(current, saved.model || "")) {
+          done(true, false);
+          return;
+        }
+        const choose = (modelMenu: HTMLElement): void => {
+          const row = yuanbaoSelectionRow(modelMenu, saved.model || "");
+          if (!row) {
+            done(false, true);
+            return;
+          }
+          if (choiceRowIsSelected(row) === true) {
+            done(true, false);
+            return;
+          }
+          if (!clickControlOnce(interactiveTarget(row))) {
+            done(false, false);
+            return;
+          }
+          window.setTimeout(() => {
+            if (restoreIsStale(token)) return;
+            openYuanbaoPanel(
+              trigger,
+              (currentMenu) => {
+                if (!currentMenu) {
+                  done(false, false);
+                  return;
+                }
+                waitYuanbaoSelection(
+                  () => yuanbaoModelValue(currentMenu),
+                  saved.model || "",
+                  (ok) => done(ok, !ok),
+                  token,
+                );
+              },
+              token,
+            );
+          }, 220);
+        };
+        const modelMenu = yuanbaoModelMenu();
+        if (modelMenu) {
+          choose(modelMenu);
+          return;
+        }
+        const parent = yuanbaoModelRow(menu);
+        if (!parent) {
+          done(false, true);
+          return;
+        }
+        if (!clickControlOnce(interactiveTarget(parent))) {
+          done(false, false);
+          return;
+        }
+        waitForYuanbao(
+          yuanbaoModelMenu,
+          (sub) => {
+            if (restoreIsStale(token)) return;
+            if (!sub) {
+              done(false, false);
+              return;
+            }
+            choose(sub);
+          },
+          token,
+        );
+      },
+      token,
+    );
+  }
+
+  function restoreYuanbaoMode(
+    saved: YuanbaoSelectionRecord,
+    trigger: HTMLElement,
+    token: number,
+    done: (ok: boolean, conclusive: boolean) => void,
+  ): void {
+    if (!saved.mode) {
+      done(true, false);
+      return;
+    }
+    openYuanbaoPanel(
+      trigger,
+      (menu) => {
+        if (!menu) {
+          done(false, false);
+          return;
+        }
+        const current = yuanbaoModeValue(trigger);
+        if (current && selectionMatches(current, saved.mode || "")) {
+          done(true, false);
+          return;
+        }
+        const row = yuanbaoSelectionRow(menu, saved.mode || "");
+        if (!row) {
+          done(false, true);
+          return;
+        }
+        if (choiceRowIsSelected(row) === true) {
+          done(true, false);
+          return;
+        }
+        if (!clickControlOnce(interactiveTarget(row))) {
+          done(false, false);
+          return;
+        }
+        waitYuanbaoSelection(
+          () => yuanbaoModeValue(trigger),
+          saved.mode || "",
+          (ok) => done(ok, !ok),
+          token,
+        );
+      },
+      token,
+    );
+  }
+
+  function migrateYuanbaoReasoningRecord(
+    trigger: HTMLElement | null,
+  ): YuanbaoSelectionRecord | null {
+    const legacy = readReasoningRecord();
+    const option = cleanSelectionText(legacy?.option || legacy?.label || "");
+    if (!option) return null;
+    const mode = yuanbaoModeValue(trigger);
+    let record: YuanbaoSelectionRecord | null = null;
+    if (/^(?:hy\s?\d|hy[0-9]|deepseek|混元)/i.test(option)) {
+      record = { model: option };
+    } else if (/快速|深度|专家|expert|think/i.test(option)) {
+      record = { mode: option };
+    }
+    if (!record) return null;
+    if (mode && !record.mode) record.mode = mode;
+    record.ts = Date.now();
+    writeYuanbaoSelectionRecord(record);
+    return record;
+  }
+
+  function restoreYuanbaoSelection(): void {
+    const trigger = yuanbaoTrigger();
+    const stored = readYuanbaoSelectionRecord();
+    const saved = stored ?? migrateYuanbaoReasoningRecord(trigger);
+    if (!saved) {
+      reasoningRestoreDone = true;
+      releaseReasoningRestore();
+      return;
+    }
+    if (applyingReasoning) return;
+    setReasoningPending(true);
+    if (!trigger) {
+      yuanbaoMissingTriggerAttempts += 1;
+      if (yuanbaoMissingTriggerAttempts >= 20) {
+        reasoningRestoreDone = true;
+        yuanbaoActionStatus = "未找到模型菜单，已停止恢复";
+        releaseReasoningRestore();
+        renderReasoningStatus();
+      }
+      return;
+    }
+    yuanbaoMissingTriggerAttempts = 0;
+    if (!restoreCoordinator.tryAcquire("reasoning")) return;
+    if (yuanbaoModelConflicts(saved.model || "", saved.mode || "")) {
+      yuanbaoActionStatus = "模型与模式组合不兼容，已停止恢复";
+      reasoningRestoreDone = true;
+      releaseReasoningRestore();
+      renderReasoningStatus();
+      return;
+    }
+    const token = beginRestore();
+    applyingReasoning = true;
+    setReasoningPending(true);
+    let settled = false;
+    let modelConfirmed = !saved.model;
+    const finish = (ok: boolean): void => {
+      if (settled) return;
+      settled = true;
+      applyingReasoning = false;
+      reasoningRestoreDone = true;
+      releaseReasoningRestore();
+      yuanbaoActionStatus = ok ? "已恢复模型与模式" : "未能恢复模型与模式";
+      renderReasoningStatus();
+    };
+    const settleAfter = (
+      ok: boolean,
+      conclusive: boolean,
+      next: () => void,
+    ): void => {
+      if (settled || restoreIsStale(token)) return;
+      if (!ok) {
+        closeYuanbaoPanel(trigger, () => finish(false), token);
+        return;
+      }
+      if (conclusive) {
+        closeYuanbaoPanel(trigger, () => finish(false), token);
+        return;
+      }
+      next();
+    };
+    const verifyAndClose = (): void => {
+      if (settled || restoreIsStale(token)) return;
+      openYuanbaoPanel(
+        trigger,
+        (menu) => {
+          const modeOk =
+            !saved.mode ||
+            selectionMatches(yuanbaoModeValue(trigger), saved.mode);
+          const modelOk =
+            !saved.model ||
+            (modelConfirmed &&
+              (!menu || selectionMatches(yuanbaoModelValue(menu), saved.model)));
+          closeYuanbaoPanel(trigger, () => finish(modeOk && modelOk), token);
+        },
+        token,
+      );
+    };
+    restoreYuanbaoModel(
+      saved,
+      trigger,
+      token,
+      (modelOk, modelConclusive) => {
+        if (modelOk && !modelConclusive) modelConfirmed = true;
+        settleAfter(modelOk, modelConclusive, () => {
+          restoreYuanbaoMode(
+            saved,
+            trigger,
+            token,
+            (modeOk, modeConclusive) => {
+              settleAfter(modeOk, modeConclusive, verifyAndClose);
+            },
+          );
+        });
+      },
+    );
+  }
+
+  function mergeYuanbaoSelection(
+    next: YuanbaoSelectionRecord,
+  ): YuanbaoSelectionRecord | null {
+    const previous = readYuanbaoSelectionRecord();
+    const merged: YuanbaoSelectionRecord = {
+      ...(previous || {}),
+      ...(next.model ? { model: next.model } : {}),
+      ...(next.mode ? { mode: next.mode } : {}),
+      ts: Date.now(),
+    };
+    if (!merged.model && !merged.mode) return null;
+    writeYuanbaoSelectionRecord(merged);
+    return merged;
+  }
+
+  function cancelYuanbaoRecordTimers(): void {
+    for (const timer of yuanbaoRecordTimers.splice(0)) {
+      window.clearTimeout(timer);
+    }
+  }
+
+  function scheduleYuanbaoRecordSync(intent: "model" | "mode"): void {
+    cancelYuanbaoRecordTimers();
+    for (const delay of [120, 420, 900]) {
+      yuanbaoRecordTimers.push(
+        window.setTimeout(() => {
+          syncYuanbaoSelection(intent);
+        }, delay),
+      );
+    }
+  }
+
+  function syncYuanbaoSelection(intent: "model" | "mode"): void {
+    if (applyingReasoning) return;
+    const trigger = yuanbaoTrigger();
+    const main = yuanbaoMainMenu();
+    const modelMenu = yuanbaoModelMenu();
+    const model = modelMenu
+      ? (() => {
+          const selected = Array.from(
+            modelMenu.querySelectorAll<HTMLElement>(CHOICE_RADIO_SELECTOR),
+          ).find(
+            (row) =>
+              row.closest(REASONING_MENU_SELECTOR) === modelMenu &&
+              choiceRowIsSelected(row) === true,
+          );
+          return selected ? yuanbaoRowTitle(selected) : "";
+        })()
+      : main
+        ? yuanbaoModelValue(main)
+        : "";
+    const mode = yuanbaoModeValue(trigger);
+    const previous = readYuanbaoSelectionRecord();
+    const next: YuanbaoSelectionRecord = {
+      model:
+        intent === "model" ? previous?.model || "" : model || previous?.model || "",
+      mode:
+        intent === "mode" ? previous?.mode || "" : mode || previous?.mode || "",
+      ts: Date.now(),
+    };
+    if (!next.model && !next.mode) return;
+    if (
+      previous &&
+      previous.model === next.model &&
+      previous.mode === next.mode
+    ) {
+      return;
+    }
+    writeYuanbaoSelectionRecord(next);
+    renderReasoningStatus();
+  }
+
+  function handleYuanbaoSelectionClick(target: Element): boolean {
+    if (!isYuanbaoHost()) return false;
+    const trigger = yuanbaoTrigger();
+    if (!trigger) return false;
+    // Only clicks inside the Yuanbao model picker belong to this recorder.
+    // Other reasoning controls on Yuanbao keep the generic capture path.
+    const main = yuanbaoMainMenu();
+    const modelMenu = yuanbaoModelMenu();
+    const inPicker =
+      target.closest(YUANBAO_MODEL_TRIGGER_SELECTOR) !== null ||
+      (main !== null && main.contains(target)) ||
+      (modelMenu !== null && modelMenu.contains(target));
+    if (!inPicker) return false;
+    if (target.closest(YUANBAO_MODEL_TRIGGER_SELECTOR)) return true;
+    const modelRow =
+      modelMenu instanceof HTMLElement
+        ? (Array.from(
+            modelMenu.querySelectorAll<HTMLElement>(CHOICE_RADIO_SELECTOR),
+          ).find(
+            (row) =>
+              row.closest(REASONING_MENU_SELECTOR) === modelMenu &&
+              (row === target || row.contains(target)),
+          ) ?? null)
+        : null;
+    if (modelRow) {
+      const model = yuanbaoRowTitle(modelRow);
+      if (!model) return true;
+      mergeYuanbaoSelection({ model, mode: yuanbaoModeValue(trigger) });
+      renderReasoningStatus();
+      scheduleYuanbaoRecordSync("model");
+      return true;
+    }
+    if (!main) return false;
+    const modeRow =
+      Array.from(main.querySelectorAll<HTMLElement>(CHOICE_RADIO_SELECTOR)).find(
+        (row) =>
+          row.closest(REASONING_MENU_SELECTOR) === main &&
+          !row.matches(YUANBAO_MODEL_ROW_SELECTOR) &&
+          (row === target || row.contains(target)),
+      ) ?? null;
+    if (!modeRow) return main.contains(target);
+    const mode = yuanbaoRowTitle(modeRow);
+    if (!mode) return true;
+    mergeYuanbaoSelection({
+      model: yuanbaoModelValue(main),
+      mode,
+    });
+    renderReasoningStatus();
+    scheduleYuanbaoRecordSync("mode");
+    return true;
+  }
+
   function applyReasoningMemory(): void {
     syncConversationScope();
     if (isEngineDormant()) {
       reasoningRestoreDone = true;
+      releaseReasoningRestore();
+      return;
+    }
+    if (isYuanbaoHost() || readYuanbaoSelectionRecord()) {
+      restoreYuanbaoSelection();
       return;
     }
     const saved = readReasoningRecord();
@@ -1081,6 +1785,9 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
         // Retrying a record whose target row is missing only makes the menu flash open forever.
         reasoningRestoreDone = ok || conclusive === true;
         if (attempts + 1 >= 2) reasoningRestoreDone = true;
+        if (reasoningRestoreDone) {
+          restoreCoordinator.release("reasoning");
+        }
       }, token);
       return;
     }
@@ -1108,8 +1815,11 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     window.clearTimeout(reasoningSettleTimer);
     reasoningSettleTimer = 0;
     for (const timer of popupCloseTimers.splice(0)) window.clearTimeout(timer);
+    cancelYuanbaoRecordTimers();
     restoreToken += 1;
     applyingReasoning = false;
+    yuanbaoMissingTriggerAttempts = 0;
+    if (reasoningRestorePending) releaseReasoningRestore();
   }
 
   function scheduleReasoningRestore(): void {
@@ -1119,7 +1829,9 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     reasoningRestoreAttempts = 0;
     if (isEngineDormant()) return;
     if (!state.rememberReasoning) return;
-    if (!readReasoningRecord()) return;
+    const yuanbaoRecord = readYuanbaoSelectionRecord();
+    if (!yuanbaoRecord && !readReasoningRecord()) return;
+    if (isYuanbaoHost() || yuanbaoRecord) setReasoningPending(true);
     reasoningRestoreTimer = window.setInterval(() => {
       reasoningRestoreAttempts += 1;
       applyReasoningMemory();
@@ -1139,6 +1851,7 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     applyReasoningMemory,
     clearReasoningRestoreTimer,
     scheduleReasoningRestore,
+    isRestorePending: () => restoreCoordinator.isPending("reasoning"),
     attachStatusNode,
   };
 }

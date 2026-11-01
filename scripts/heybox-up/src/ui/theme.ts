@@ -1,5 +1,5 @@
-import { FEED_WIDTH_MAX, FEED_WIDTH_MIN, FEED_WIDTH_STEP, PAGE_ROUTE, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
-import { ensureStyleElement, registerPageSync } from "../core/page-sync";
+import { ADAPTED_ROUTES, FEED_WIDTH_MAX, FEED_WIDTH_MIN, FEED_WIDTH_STEP, isOfficialHomePath, PAGE_ROUTE, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
+import { ensureStyleElement, registerPageSync, removeStyleElement } from "../core/page-sync";
 import { localStore, parseFeedWidthInput, parseReaderLineHeightInput, readCommentPreviewPreference, readFeedWidth, readNavMotionPreference, readReaderLineHeight, readReaderPreference, setCommentPreviewPreference, setFeedWidthPreference, setNavMotionPreference, setReaderLineHeightPreference, setReaderPreference } from "../state";
 
 export const THEME_CLASS = "heybox-up-theme";
@@ -9,6 +9,8 @@ export const THEME_ATTR = "data-heybox-up-theme";
 export const THEME_STORAGE_KEY = "heybox-up.theme.v1";
 
 export const THEME_ENTRY_ID = "heybox-up-theme-entry";
+
+export const THEME_STYLE_ID = "heybox-up-theme-style";
 
 export const THEME_MEDIA = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -1722,7 +1724,7 @@ export const THEME_ICONS: Record<string, string> = {
 export const SETTINGS_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 8.9 4.6h.08A1.7 1.7 0 0 0 10 3.04V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 8.9v.08A1.7 1.7 0 0 0 20.96 10H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>';
 
 export function ensureThemeStyle(): void {
-  ensureStyleElement("heybox-up-theme-style", THEME_CSS, true);
+  ensureStyleElement(THEME_STYLE_ID, THEME_CSS, true);
 }
 
 export function updateThemeEntry(): void {
@@ -1744,6 +1746,10 @@ export function updateThemeEntry(): void {
 }
 
 export function applyTheme(mode: string, persist: boolean): void {
+  if (isOfficialHomePath(location.pathname)) {
+    releaseTheme();
+    return;
+  }
   currentThemeMode = normalizeThemeMode(mode);
   const effective = resolveTheme(currentThemeMode, THEME_MEDIA.matches);
   const preset = getThemePreset(effective);
@@ -1757,6 +1763,22 @@ export function applyTheme(mode: string, persist: boolean): void {
   updateThemeEntry();
   if (preset.dark === true) scheduleDarkSweep(true);
   else clearDarkSweep();
+}
+
+/**
+ * Drops every theme hook from the document. The stored preference is kept so
+ * the next adapted route paints with the same preset.
+ */
+export function releaseTheme(): void {
+  clearDarkSweep();
+  const root = document.documentElement;
+  root.classList.remove(THEME_CLASS);
+  root.removeAttribute(THEME_ATTR);
+  root.removeAttribute("data-heybox-up-dark");
+  root.style.removeProperty("color-scheme");
+  themeEntry?.host.remove();
+  themeEntry = null;
+  removeStyleElement(THEME_STYLE_ID);
 }
 
 export function createThemeEntry(): void {
@@ -2117,11 +2139,18 @@ export function mountThemeEntry(): void {
 export function watchTheme(): void {
   if (!document.body) return;
   const sync = () => {
+    if (isOfficialHomePath(location.pathname)) {
+      releaseTheme();
+      return;
+    }
+    // Re-read the stored preset so a homepage start still paints the user's
+    // choice instead of the module default.
+    if (document.documentElement.getAttribute(THEME_ATTR) === null) applyTheme(readThemeMode(), false);
     ensureThemeStyle();
     mountThemeEntry();
     scheduleDarkSweep();
   };
-  registerPageSync(sync, 400, null, "chrome");
+  registerPageSync(sync, 400, ADAPTED_ROUTES, "chrome");
   registerPageSync(() => scheduleDarkSweep(), 600, [PAGE_ROUTE.CREATOR, PAGE_ROUTE.TOPIC]);
   sync();
 }
