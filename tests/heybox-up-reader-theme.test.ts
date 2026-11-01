@@ -329,6 +329,10 @@ describe("immersive reader theme contract", () => {
     const deep = ruleFor(rules, ".hbu-reader-comments-children--deep").style;
     expect(deep.getPropertyValue("padding-left")).toBe("0px");
     expect(deep.getPropertyValue("border-left")).toBe("0px");
+    // A reply that never echoes back is marked as submitted instead of
+    // spinning on "syncing" for the rest of the session.
+    expect(ruleFor(rules, ".hbu-reader-comments-syncing").style.getPropertyValue("opacity")).toBe("0.85");
+    expect(ruleFor(rules, ".hbu-reader-comments-syncing--settled").style.getPropertyValue("opacity")).toBe("0.7");
   });
 });
 
