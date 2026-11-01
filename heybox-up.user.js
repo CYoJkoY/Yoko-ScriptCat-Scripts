@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.54
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼全量展示，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏顶部另有“刷新评论”按钮，发布或删除评论后自动从网络重读第一页，并轮询到目标评论出现或消失为止；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.55
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏顶部另有“刷新评论”按钮，发布或删除评论后自动从网络重读第一页，并轮询到目标评论出现或消失为止；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -1605,6 +1605,7 @@
       id,
       userId: readRailCommentUserId(user),
       name: String(user["username"] || user["nickname"] || "匿名用户").trim(),
+      replyName: readRailReplyName(raw),
       avatar: typeof avatar === "string" ? avatar : "",
       text: railBodyText(body),
       body,
@@ -1614,9 +1615,13 @@
       // A root that points at itself is not a usable parent; the group builder
       // falls back to the floor id instead.
       rootId: rawRootId === id ? "" : rawRootId,
-      parentId: readRailRelationId(raw, ["parent_id", "reply_to_comment_id", "reply_comment_id", "reply_to", "to_comment_id"]),
+      parentId: readRailRelationId(raw, ["parent_id", "replyid", "reply_id", "reply_to_comment_id", "reply_comment_id", "reply_to", "to_comment_id"]),
       isCy: isCyComment(raw)
     };
+  }
+  function readRailReplyName(raw) {
+    const replyUser = asRecord(raw["replyuser"]) ?? asRecord(raw["reply_user"]) ?? {};
+    return String(replyUser["username"] || replyUser["nickname"] || "").trim();
   }
   function readRailCommentUserId(user) {
     for (const key of ["userid", "user_id", "heybox_id", "id"]) {
@@ -1669,6 +1674,50 @@
       quotes: subComments
     };
   }
+  function buildRailCommentTree(entry) {
+    const source = Array.isArray(entry.subComments) ? entry.subComments : [];
+    const nodes = [];
+    const byId = /* @__PURE__ */ new Map();
+    for (const comment of source) {
+      if (comment.id !== "" && byId.has(comment.id)) continue;
+      const node = { ...comment, children: [] };
+      nodes.push(node);
+      if (comment.id !== "") byId.set(comment.id, node);
+    }
+    const parentOf = /* @__PURE__ */ new Map();
+    for (const node of nodes) {
+      if (node.id === "" || node.parentId === "" || node.parentId === entry.id || node.parentId === node.id) continue;
+      const parent = byId.get(node.parentId);
+      if (parent === void 0 || parent === node) continue;
+      parentOf.set(node, parent);
+    }
+    const detached = /* @__PURE__ */ new Set();
+    for (const node of nodes) {
+      const seen = /* @__PURE__ */ new Set();
+      let cursor = node;
+      while (cursor !== void 0 && !seen.has(cursor)) {
+        seen.add(cursor);
+        cursor = parentOf.get(cursor);
+      }
+      if (cursor !== void 0) {
+        for (const member of seen) detached.add(member);
+      }
+    }
+    const roots = [];
+    for (const node of nodes) {
+      if (detached.has(node)) {
+        roots.push(node);
+        continue;
+      }
+      const parent = parentOf.get(node);
+      if (parent === void 0 || detached.has(parent)) {
+        roots.push(node);
+        continue;
+      }
+      parent.children.push(node);
+    }
+    return roots;
+  }
   function readRailFloorTotal(result) {
     const value = Number(asRecord(result)?.["total_floor_num"]);
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
@@ -1715,9 +1764,14 @@
     if (commentId === "") return false;
     for (const entry of items) {
       if (entry.id === commentId) return true;
-      for (const child of entry.subComments) {
-        if (child.id === commentId) return true;
-      }
+      if (railThreadHasComment(buildRailCommentTree(entry), commentId)) return true;
+    }
+    return false;
+  }
+  function railThreadHasComment(nodes, commentId) {
+    for (const node of nodes) {
+      if (node.id === commentId) return true;
+      if (railThreadHasComment(node.children, commentId)) return true;
     }
     return false;
   }
@@ -4441,6 +4495,87 @@
     };
     registerPageSync(sync, 300, [PAGE_ROUTE.FAVOUR], "favour");
     sync();
+  }
+  function readFavourId(value) {
+    if (value === void 0 || value === null) return "";
+    const text = String(value).trim();
+    if (text === "" || text === "0" || text === "-1" || text === "undefined" || text === "null") return "";
+    return text;
+  }
+  function normalizeFavourFolders(records) {
+    const folders = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const entry of records) {
+      const record = asRecord(entry);
+      if (record === null) continue;
+      const id = readFavourId(record["id"] ?? record["folder_id"]);
+      if (id === "" || seen.has(id)) continue;
+      seen.add(id);
+      const rawName = String(record["name"] ?? record["folder_name"] ?? "").trim();
+      folders.push({ id, name: rawName === "" ? "未命名收藏夹" : rawName });
+    }
+    return folders;
+  }
+  function readFavourFolderId(result) {
+    const record = asRecord(result);
+    if (record === null) return "";
+    const folder = asRecord(record["folder"]);
+    return readFavourId(folder?.["id"] ?? folder?.["folder_id"] ?? record["folder_id"]);
+  }
+  function readFavourLinkId(entry) {
+    const record = asRecord(entry);
+    if (record === null) return "";
+    const link = asRecord(record["link"]);
+    return readFavourId(
+      link?.["linkid"] ?? link?.["link_id"] ?? link?.["id"] ?? record["link_id"] ?? record["linkid"]
+    );
+  }
+  function readFavourFolderPage(result) {
+    const record = asRecord(result);
+    if (record === null) return { linkIds: [], hasNext: false };
+    const rawLinks = Array.isArray(record["links"]) ? record["links"] : [];
+    const linkIds = [];
+    for (const entry of rawLinks) {
+      const id = readFavourLinkId(entry);
+      if (id !== "") linkIds.push(id);
+    }
+    const next = record["has_next"] ?? record["has_more"];
+    return {
+      linkIds,
+      hasNext: next === true || next === 1 || next === "1"
+    };
+  }
+  function planFavourChanges(input) {
+    const folderIds = new Set(input.folderIds);
+    const checked = new Set(input.checkedIds.filter((id) => folderIds.has(id)));
+    const unknown = input.unknownIds.filter((id) => folderIds.has(id));
+    const unknownSet = new Set(unknown);
+    const members = new Set(input.memberIds.filter((id) => folderIds.has(id) && !unknownSet.has(id)));
+    const addIds = Array.from(checked).filter((id) => !members.has(id));
+    const removeIds = Array.from(members).filter((id) => !checked.has(id));
+    return {
+      addIds,
+      removeIds,
+      // An empty folder list means the request failed or the account has no
+      // folders yet; neither is proof that clearing every checkbox should
+      // unfavourite the link globally.
+      removeAll: folderIds.size > 0 && input.favourited && checked.size === 0 && unknown.length === 0,
+      unknownIds: unknown
+    };
+  }
+  function planHasFavourChange(plan) {
+    return plan.removeAll || plan.addIds.length > 0 || plan.removeIds.length > 0;
+  }
+  function resolveFavourOutcome(favourited, memberIds, plan) {
+    if (plan.removeAll) return false;
+    const removed = new Set(plan.removeIds);
+    const remaining = /* @__PURE__ */ new Set();
+    for (const id of memberIds) {
+      if (!removed.has(id)) remaining.add(id);
+    }
+    for (const id of plan.addIds) remaining.add(id);
+    if (remaining.size > 0) return true;
+    return favourited && plan.unknownIds.length > 0;
   }
 
   // scripts/heybox-up/src/core/feed.ts
@@ -7683,10 +7818,14 @@
     position: absolute;
     right: calc(100% + 10px);
     bottom: 92px;
-    width: 172px;
-    max-height: min(300px, 56dvh);
-    padding: 6px;
-    overflow-y: auto;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 248px;
+    max-width: calc(100vw - 84px);
+    max-height: min(420px, 64dvh);
+    padding: 10px;
     border: 1px solid var(--hbu-reader-float-border);
     border-radius: 14px;
     background: var(--hbu-reader-float);
@@ -7695,26 +7834,41 @@
     backdrop-filter: blur(12px);
   }
   .hbu-reader-favour-menu[hidden] { display: none; }
-  .hbu-reader-favour-menu button {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    min-height: 36px;
-    padding: 7px 9px;
-    border: 0;
-    border-radius: 9px;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
+  .hbu-reader-favour-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .hbu-reader-favour-head > span { font-size: 13px; font-weight: 600; }
+  .hbu-reader-favour-close {
+    width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px;
+    background: transparent; color: inherit; font: inherit; font-size: 16px; line-height: 1; cursor: pointer;
   }
-  .hbu-reader-favour-menu button:hover { background: var(--hbu-reader-float-hover); }
-  .hbu-reader-favour-menu button svg, .hbu-reader-favour-menu button i { flex: none; width: 15px; height: 15px; }
-  .hbu-reader-favour-menu button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hbu-reader-favour-empty { padding: 10px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
+  .hbu-reader-favour-close:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-favour-status { min-height: 16px; font-size: 12px; line-height: 1.5; color: var(--hbu-reader-float-muted); }
+  .hbu-reader-favour-status[data-tone="error"] { color: var(--hbu-reader-danger); }
+  .hbu-reader-favour-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; }
+  .hbu-reader-favour-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .hbu-reader-favour-option:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-favour-option input { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--hbu-reader-accent); cursor: pointer; }
+  .hbu-reader-favour-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .hbu-reader-favour-tag {
+    flex: none; padding: 1px 5px; border-radius: 5px;
+    background: var(--hbu-reader-float-hover); color: var(--hbu-reader-float-muted); font-size: 10px;
+  }
+  .hbu-reader-favour-empty { padding: 8px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
+  .hbu-reader-favour-create { display: flex; gap: 6px; }
+  .hbu-reader-favour-create-input {
+    min-width: 0; flex: 1 1 auto; height: 30px; padding: 0 8px;
+    border: 1px solid var(--hbu-reader-float-border); border-radius: 8px; outline: none;
+    background: var(--hbu-reader-float-hover); color: inherit; font: inherit; font-size: 12px;
+  }
+  .hbu-reader-favour-create-input:focus { border-color: var(--hbu-reader-accent); }
+  .hbu-reader-favour-create-btn, .hbu-reader-favour-save {
+    height: 30px; padding: 0 12px; border: 1px solid var(--hbu-reader-float-border); border-radius: 8px;
+    background: var(--hbu-reader-float-hover); color: inherit; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .hbu-reader-favour-create-btn:hover:not(:disabled) { border-color: var(--hbu-reader-accent); }
+  .hbu-reader-favour-actions { display: flex; justify-content: flex-end; }
+  .hbu-reader-favour-save { min-width: 64px; border-color: var(--hbu-reader-accent); background: var(--hbu-reader-accent); color: #fff; font-weight: 600; }
+  .hbu-reader-favour-save:hover:not(:disabled) { filter: brightness(1.08); }
+  .hbu-reader-favour-menu :is(button, input):disabled { cursor: default; opacity: .5; }
   .hbu-reader-spacing-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; width: 196px; max-width: calc(100vw - 84px); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
   .hbu-reader-spacing-menu[hidden] { display: none; }
   .hbu-reader-spacing-label { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--hbu-reader-float-ink); }
@@ -7764,10 +7918,14 @@
   .hbu-reader-comments-list { margin: 0; padding: 0; list-style: none; }
   .hbu-reader-comments-item { display: flex; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--hbu-reader-border); }
   .hbu-reader-comments-item:last-child { border-bottom: 0; }
-  .hbu-reader-comments-avatar { width: 34px; height: 34px; flex: none; border-radius: 50%; object-fit: cover; background: var(--hbu-reader-subtle); }
+  .hbu-reader-comments-avatar-link { display: block; width: 34px; height: 34px; flex: none; border-radius: 50%; }
+  .hbu-reader-comments-avatar-link--child { width: 24px; height: 24px; }
+  .hbu-reader-comments-avatar { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; background: var(--hbu-reader-subtle); }
   .hbu-reader-comments-main { min-width: 0; flex: 1 1 auto; }
   .hbu-reader-comments-who { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; }
   .hbu-reader-comments-name { font-size: 13px; font-weight: 650; }
+  .hbu-reader-comments-name-link { color: inherit; text-decoration: none; }
+  .hbu-reader-comments-name-link:hover .hbu-reader-comments-name { color: var(--hbu-reader-link); text-decoration: underline; }
   .hbu-reader-comments-time { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-text { margin: 4px 0 0; font-size: 14px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
   .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
@@ -7776,9 +7934,14 @@
   .hbu-reader-comments-delete { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
   .hbu-reader-comments-delete:hover { color: var(--hbu-reader-danger); }
   .hbu-reader-comments-delete:disabled { opacity: .55; cursor: default; }
-  .hbu-reader-comments-children { margin: 9px 0 0; padding: 9px 0 0 10px; border-left: 2px solid var(--hbu-reader-border); list-style: none; }
-  .hbu-reader-comments-child { padding: 8px 0; border-top: 1px dashed var(--hbu-reader-border); }
-  .hbu-reader-comments-child:first-child { border-top: 0; padding-top: 0; }
+  .hbu-reader-comments-children { margin: 8px 0 0; padding: 0 0 0 13px; border-left: 1px solid var(--hbu-reader-border); list-style: none; }
+  .hbu-reader-comments-child { position: relative; padding: 7px 0 0; }
+  .hbu-reader-comments-child::before { content: ""; position: absolute; top: 19px; left: -13px; width: 11px; height: 1px; background: var(--hbu-reader-border); }
+  .hbu-reader-comments-child:first-child { padding-top: 0; }
+  .hbu-reader-comments-child:first-child::before { top: 12px; }
+  .hbu-reader-comments-child-row { display: flex; gap: 8px; align-items: flex-start; }
+  .hbu-reader-comments-child-main { min-width: 0; flex: 1 1 auto; }
+  .hbu-reader-comments-reply-to { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-child .hbu-reader-comments-text { margin-top: 2px; font-size: 13px; }
   .hbu-reader-comments-child .hbu-reader-comments-meta { margin-top: 3px; }
   .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
@@ -8502,6 +8665,21 @@
     let articleCommentPublishedCount = 0;
     let actionBusy = false;
     let favourMenuBusy = false;
+    let favourSaveBusy = false;
+    let favourCreateBusy = false;
+    let favourCreateController = null;
+    let favourSaveController = null;
+    let favourPanelFolders = [];
+    let favourPanelChecked = /* @__PURE__ */ new Set();
+    let favourPanelMembers = /* @__PURE__ */ new Set();
+    let favourPanelUnknown = /* @__PURE__ */ new Set();
+    let favourPanelFavourited = false;
+    let favourPanelStatus = null;
+    let favourPanelList = null;
+    let favourPanelSave = null;
+    let favourPanelCreateInput = null;
+    let favourPanelCreateButton = null;
+    let favourPanelClose = null;
     let cyDialog = null;
     let cyTextarea = null;
     let cySubmit = null;
@@ -8634,7 +8812,7 @@
       if (count >= 1e4) return (count / 1e4).toFixed(1).replace(/\.0$/, "") + "万";
       return String(count);
     };
-    const postReaderApi = async (path, body, accountId) => {
+    const postReaderApi = async (path, body, accountId, signal) => {
       if (typeof accountId !== "string" || accountId === "") throw new Error("请先登录小黑盒");
       const params = createApiParams(path);
       if (path === COMMENT_CREATE_API_PATH) {
@@ -8646,7 +8824,8 @@
         credentials: "include",
         cache: "no-store",
         headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
-        body: new URLSearchParams(body).toString()
+        body: new URLSearchParams(body).toString(),
+        ...signal !== void 0 ? { signal } : {}
       });
       if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
       const payload = await response.json();
@@ -8672,7 +8851,77 @@
       if (data["status"] !== "ok") throw new Error(String(data["msg"] || "获取收藏夹失败"));
       const result = asRecord(data["result"]);
       const folders = result !== null && Array.isArray(result["folders"]) ? result["folders"] : [];
-      return folders;
+      return normalizeFavourFolders(folders);
+    };
+    const FAVOUR_SCAN_PAGE_SIZE = 30;
+    const FAVOUR_SCAN_MAX_PAGES = 10;
+    const FAVOUR_SCAN_MAX_REQUESTS = 48;
+    const fetchFavourFolderLinks = async (folderId, offset, accountId, signal) => {
+      const path = "/bbs/app/profile/fav/folder/v2/links";
+      const query = new URLSearchParams({
+        ...createApiParams(path),
+        heybox_id: accountId,
+        target: "heybox_app",
+        enable_new_style_collect: "1",
+        folder_id: folderId,
+        offset: String(offset),
+        limit: String(FAVOUR_SCAN_PAGE_SIZE),
+        dw: "660"
+      });
+      const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
+        credentials: "include",
+        cache: "no-store",
+        headers: { accept: "application/json" },
+        signal
+      });
+      if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
+      const payload = await response.json();
+      const data = asRecord(payload) ?? {};
+      if (data["status"] === "login") throw new Error("请先登录小黑盒");
+      if (data["status"] !== "ok") throw new Error(String(data["msg"] || "读取收藏夹失败"));
+      return readFavourFolderPage(data["result"]);
+    };
+    const scanFavourFolder = async (folderId, accountId, signal, budget) => {
+      const ids = /* @__PURE__ */ new Set();
+      let offset = 0;
+      for (let page = 0; page < FAVOUR_SCAN_MAX_PAGES; page += 1) {
+        if (budget.left <= 0) return { ids, complete: false };
+        budget.left -= 1;
+        const result = await fetchFavourFolderLinks(folderId, offset, accountId, signal);
+        for (const id of result.linkIds) ids.add(id);
+        if (result.linkIds.length < FAVOUR_SCAN_PAGE_SIZE) return { ids, complete: true };
+        offset += FAVOUR_SCAN_PAGE_SIZE;
+      }
+      return { ids, complete: false };
+    };
+    const scanFavourMemberships = async (folders, accountId, signal) => {
+      const scans = /* @__PURE__ */ new Map();
+      const budget = { left: FAVOUR_SCAN_MAX_REQUESTS };
+      for (const folder of folders) {
+        try {
+          scans.set(folder.id, await scanFavourFolder(folder.id, accountId, signal, budget));
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          scans.set(folder.id, { ids: /* @__PURE__ */ new Set(), complete: false });
+        }
+      }
+      const signatures = /* @__PURE__ */ new Set();
+      let completeScans = 0;
+      for (const folder of folders) {
+        const scan = scans.get(folder.id);
+        if (scan === void 0 || !scan.complete) continue;
+        completeScans += 1;
+        signatures.add(Array.from(scan.ids).sort().join(","));
+      }
+      const filterSuspicious = folders.length >= 2 && completeScans >= 2 && signatures.size === 1;
+      for (const folder of folders) {
+        const scan = scans.get(folder.id);
+        if (scan === void 0 || !scan.complete || filterSuspicious) {
+          favourPanelUnknown.add(folder.id);
+          continue;
+        }
+        if (scan.ids.has(articleId)) favourPanelMembers.add(folder.id);
+      }
     };
     const addPublishedActions = (link, publishedCy, publishedComments) => {
       if (publishedCy > 0) {
@@ -8757,51 +9006,39 @@
         }
       }
     };
-    const toggleFavour = async (folderId) => {
-      if (actionBusy || articleId === "") return;
-      actionBusy = true;
-      const targetId = articleId;
-      const generation = readerGeneration;
-      try {
-        const userId = await resolveHeyboxId();
-        if (articleId !== targetId || readerGeneration !== generation) return;
-        if (userId === "") throw new Error("请先登录小黑盒");
-        const counts = readCounts();
-        const current = linkState === null ? await loadLinkState(userId) : linkState;
-        if (articleId !== targetId || readerGeneration !== generation) return;
-        const on = current !== null && current.isFavour;
-        const base = current === null ? parseCompactCount(counts.favour) : current.favourCount;
-        await postReaderApi("/bbs/app/link/favour", {
-          favour_type: on ? "2" : "1",
-          link_id: targetId,
-          userid: userId,
-          folder_id: on ? "" : String(folderId || "")
-        }, userId);
-        if (articleId !== targetId || readerGeneration !== generation) return;
-        linkState = {
-          ...current || {
-            isAward: false,
-            isFavour: false,
-            awardCount: parseCompactCount(counts.like),
-            favourCount: base,
-            commentCount: parseCompactCount(counts.comment),
-            cyCount: cyPublishedCount
-          },
-          isFavour: !on,
-          favourCount: Math.max(0, base + (on ? -1 : 1))
-        };
-        closeFavourMenu();
-        syncActionStates();
-        showToast(on ? "已取消收藏" : "已收藏");
-      } catch (error) {
-        if (articleId === targetId && readerGeneration === generation) {
-          showToast(error instanceof Error ? error.message : "收藏失败");
-        }
-      } finally {
-        if (articleId === targetId && readerGeneration === generation) {
-          actionBusy = false;
-        }
+    const currentFavourPlan = () => planFavourChanges({
+      favourited: favourPanelFavourited,
+      folderIds: favourPanelFolders.map((folder) => folder.id),
+      checkedIds: Array.from(favourPanelChecked),
+      memberIds: Array.from(favourPanelMembers),
+      unknownIds: Array.from(favourPanelUnknown)
+    });
+    const applyFavourState = (next) => {
+      if (linkState === null || linkState.isFavour === next) return;
+      linkState = {
+        ...linkState,
+        isFavour: next,
+        favourCount: Math.max(0, linkState.favourCount + (next ? 1 : -1))
+      };
+      syncActionStates();
+    };
+    const setFavourStatus = (message, error = false) => {
+      if (favourPanelStatus === null) return;
+      favourPanelStatus.textContent = message;
+      if (error) favourPanelStatus.dataset["tone"] = "error";
+      else delete favourPanelStatus.dataset["tone"];
+    };
+    const refreshFavourControls = () => {
+      if (favourPanel === null) return;
+      const busy = favourLoadController !== null || favourSaveBusy || favourCreateBusy;
+      for (const control of favourPanel.querySelectorAll("input, button")) {
+        control.disabled = busy;
       }
+      if (favourPanelSave !== null) {
+        const plan = currentFavourPlan();
+        favourPanelSave.disabled = busy || !planHasFavourChange(plan);
+      }
+      if (favourPanelClose !== null) favourPanelClose.disabled = favourSaveBusy;
     };
     const syncActionStates = () => {
       if (host === null) return;
@@ -8864,12 +9101,45 @@
       window.setTimeout(syncActionStates, 400);
       window.setTimeout(syncActionStates, 1200);
     };
-    const closeFavourMenu = () => {
+    const closeFavourMenu = (focusButton = false, force = false) => {
+      if ((favourSaveBusy || favourCreateBusy) && !force) return;
+      const wasOpen = favourPanel !== null && !favourPanel.hidden;
       favourLoadController?.abort();
       favourLoadController = null;
-      if (favourPanel === null) return;
-      favourPanel.hidden = true;
-      favourButton?.setAttribute("aria-expanded", "false");
+      if (favourPanel !== null) {
+        favourPanel.hidden = true;
+        favourButton?.setAttribute("aria-expanded", "false");
+      }
+      favourPanelFolders = [];
+      favourPanelChecked = /* @__PURE__ */ new Set();
+      favourPanelMembers = /* @__PURE__ */ new Set();
+      favourPanelUnknown = /* @__PURE__ */ new Set();
+      favourPanelFavourited = false;
+      if (focusButton && wasOpen) favourButton?.focus({ preventScroll: true });
+    };
+    const resetFavourPanel = () => {
+      favourLoadController?.abort();
+      favourLoadController = null;
+      favourSaveController?.abort();
+      favourSaveController = null;
+      favourCreateController?.abort();
+      favourCreateController = null;
+      favourMenuBusy = false;
+      favourSaveBusy = false;
+      favourCreateBusy = false;
+      favourPanelFolders = [];
+      favourPanelChecked = /* @__PURE__ */ new Set();
+      favourPanelMembers = /* @__PURE__ */ new Set();
+      favourPanelUnknown = /* @__PURE__ */ new Set();
+      favourPanelFavourited = false;
+      favourPanel = null;
+      favourPanelStatus = null;
+      favourPanelList = null;
+      favourPanelSave = null;
+      favourPanelCreateInput = null;
+      favourPanelCreateButton = null;
+      favourPanelClose = null;
+      favourButton = null;
     };
     document.addEventListener("pointerdown", (event) => {
       if (favourPanel === null || favourPanel.hidden) return;
@@ -8948,10 +9218,333 @@
       button.setAttribute("aria-expanded", "true");
       spacingInput.focus({ preventScroll: true });
     };
+    const ensureFavourPanel = (rail) => {
+      if (favourPanel === null) {
+        const panel = document.createElement("div");
+        panel.className = "hbu-reader-favour-menu";
+        panel.hidden = true;
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute("aria-label", "收藏到收藏夹");
+        const head = document.createElement("div");
+        head.className = "hbu-reader-favour-head";
+        const title = document.createElement("span");
+        title.textContent = "收藏到收藏夹";
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "hbu-reader-favour-close";
+        close.setAttribute("aria-label", "关闭收藏夹面板");
+        close.textContent = "×";
+        close.addEventListener("click", () => closeFavourMenu(true));
+        head.append(title, close);
+        const status = document.createElement("div");
+        status.className = "hbu-reader-favour-status";
+        status.setAttribute("role", "status");
+        status.setAttribute("aria-live", "polite");
+        const list = document.createElement("div");
+        list.className = "hbu-reader-favour-list";
+        list.setAttribute("role", "group");
+        list.setAttribute("aria-label", "收藏夹");
+        const create = document.createElement("div");
+        create.className = "hbu-reader-favour-create";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "hbu-reader-favour-create-input";
+        input.maxLength = 30;
+        input.placeholder = "新建收藏夹";
+        input.setAttribute("aria-label", "新收藏夹名称");
+        const createButton = document.createElement("button");
+        createButton.type = "button";
+        createButton.className = "hbu-reader-favour-create-btn";
+        createButton.textContent = "创建";
+        createButton.addEventListener("click", () => void createFavourFolder());
+        input.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          void createFavourFolder();
+        });
+        create.append(input, createButton);
+        const actions = document.createElement("div");
+        actions.className = "hbu-reader-favour-actions";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "hbu-reader-favour-save";
+        save.textContent = "保存";
+        save.addEventListener("click", () => void saveFavourChanges());
+        actions.append(save);
+        panel.append(head, status, list, create, actions);
+        rail.append(panel);
+        favourPanel = panel;
+        favourPanelStatus = status;
+        favourPanelList = list;
+        favourPanelSave = save;
+        favourPanelCreateInput = input;
+        favourPanelCreateButton = createButton;
+        favourPanelClose = close;
+      }
+      if (favourPanel.parentNode !== rail) rail.append(favourPanel);
+      return favourPanel;
+    };
+    const renderFavourFolderList = () => {
+      if (favourPanelList === null) return;
+      const list = favourPanelList;
+      if (favourPanelFolders.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "hbu-reader-favour-empty";
+        empty.textContent = "还没有收藏夹，可在下方新建";
+        list.replaceChildren(empty);
+        refreshFavourControls();
+        return;
+      }
+      const rows = [];
+      for (const folder of favourPanelFolders) {
+        const option = document.createElement("label");
+        option.className = "hbu-reader-favour-option";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = folder.id;
+        input.checked = favourPanelChecked.has(folder.id);
+        input.addEventListener("change", () => {
+          if (input.checked) favourPanelChecked.add(folder.id);
+          else favourPanelChecked.delete(folder.id);
+          refreshFavourControls();
+        });
+        const name = document.createElement("span");
+        name.className = "hbu-reader-favour-name";
+        name.textContent = folder.name;
+        name.title = folder.name;
+        option.append(input, name);
+        if (favourPanelUnknown.has(folder.id)) {
+          const tag = document.createElement("span");
+          tag.className = "hbu-reader-favour-tag";
+          tag.textContent = "待核对";
+          tag.title = "未能读取该收藏夹的收藏状态，取消勾选不会移除";
+          option.append(tag);
+        }
+        rows.push(option);
+      }
+      list.replaceChildren(...rows);
+      refreshFavourControls();
+    };
+    const createFavourFolder = async () => {
+      if (favourPanelCreateInput === null || favourPanel === null) return;
+      if (favourCreateBusy || favourSaveBusy || favourLoadController !== null || articleId === "") return;
+      const name = favourPanelCreateInput.value.trim();
+      if (name === "") {
+        setFavourStatus("请输入收藏夹名称", true);
+        favourPanelCreateInput.focus({ preventScroll: true });
+        return;
+      }
+      const targetId = articleId;
+      const generation = readerGeneration;
+      const previousIds = new Set(favourPanelFolders.map((folder) => folder.id));
+      favourCreateBusy = true;
+      const controller = new AbortController();
+      favourCreateController = controller;
+      refreshFavourControls();
+      setFavourStatus("正在创建收藏夹…");
+      let message = "";
+      let created = null;
+      try {
+        const accountId = await resolveHeyboxId();
+        if (accountId === "") throw new Error("请先登录小黑盒");
+        const result = await postReaderApi("/bbs/app/profile/fav/folder/add", { name }, accountId, controller.signal);
+        if (articleId !== targetId || readerGeneration !== generation || favourCreateController !== controller) return;
+        const createdId = readFavourFolderId(result);
+        const loadController = new AbortController();
+        favourLoadController = loadController;
+        let folders;
+        try {
+          folders = await fetchFavourFolders(loadController.signal, accountId);
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          folders = favourPanelFolders.slice();
+        } finally {
+          if (favourLoadController === loadController) favourLoadController = null;
+        }
+        if (articleId !== targetId || readerGeneration !== generation || favourCreateController !== controller) return;
+        let id = createdId;
+        if (id === "") {
+          const fresh = folders.find((folder) => !previousIds.has(folder.id) && folder.name === name);
+          if (fresh !== void 0) id = fresh.id;
+        }
+        favourPanelFolders = folders;
+        if (id !== "") {
+          created = { id, name };
+          if (!favourPanelFolders.some((folder) => folder.id === id)) {
+            favourPanelFolders = favourPanelFolders.concat([created]);
+          }
+          favourPanelChecked.add(id);
+          favourPanelMembers.delete(id);
+          favourPanelUnknown.delete(id);
+          message = "已创建收藏夹「" + name + "」，勾选后保存";
+        } else {
+          message = "已创建收藏夹，请重新打开面板后勾选";
+        }
+        if (favourPanelCreateInput !== null) favourPanelCreateInput.value = "";
+      } catch (error) {
+        if (isAbortError(error)) return;
+        setFavourStatus("创建收藏夹失败：" + (error instanceof Error ? error.message : "请稍后重试"), true);
+      } finally {
+        if (favourCreateController === controller) {
+          favourCreateController = null;
+          favourCreateBusy = false;
+          refreshFavourControls();
+        }
+      }
+      if (articleId !== targetId || readerGeneration !== generation) return;
+      renderFavourFolderList();
+      if (message !== "") setFavourStatus(message);
+    };
+    const saveFavourChanges = async () => {
+      if (favourSaveBusy || favourCreateBusy || favourMenuBusy || articleId === "") return;
+      if (favourPanel === null || favourLoadController !== null) return;
+      const plan = currentFavourPlan();
+      if (!favourPanelFavourited && favourPanelChecked.size === 0) {
+        setFavourStatus("请至少选择一个收藏夹", true);
+        return;
+      }
+      if (!planHasFavourChange(plan)) {
+        setFavourStatus(favourPanelUnknown.size > 0 ? "没有可保存的变更，部分收藏夹未核对" : "没有需要保存的变更");
+        return;
+      }
+      const targetId = articleId;
+      const generation = readerGeneration;
+      favourSaveBusy = true;
+      const controller = new AbortController();
+      favourSaveController = controller;
+      refreshFavourControls();
+      setFavourStatus("正在保存…");
+      const appliedAdd = [];
+      const appliedRemove = [];
+      let removeAll = false;
+      let failure = "";
+      try {
+        const userId = await resolveHeyboxId();
+        if (userId === "") throw new Error("请先登录小黑盒");
+        for (const id of plan.addIds) {
+          await postReaderApi("/bbs/app/link/favour", {
+            favour_type: "1",
+            link_id: targetId,
+            userid: userId,
+            folder_id: id
+          }, userId, controller.signal);
+          appliedAdd.push(id);
+        }
+        if (plan.removeAll) {
+          await postReaderApi("/bbs/app/link/favour", {
+            favour_type: "2",
+            link_id: targetId,
+            userid: userId,
+            folder_id: ""
+          }, userId, controller.signal);
+          removeAll = true;
+        } else {
+          for (const id of plan.removeIds) {
+            await postReaderApi("/bbs/app/link/favour", {
+              favour_type: "2",
+              link_id: targetId,
+              userid: userId,
+              folder_id: id
+            }, userId, controller.signal);
+            appliedRemove.push(id);
+          }
+        }
+      } catch (error) {
+        failure = error instanceof Error ? error.message : "收藏保存失败";
+      } finally {
+        if (favourSaveController === controller) {
+          favourSaveController = null;
+          favourSaveBusy = false;
+        }
+      }
+      if (articleId !== targetId || readerGeneration !== generation) return;
+      const appliedPlan = {
+        addIds: appliedAdd,
+        removeIds: appliedRemove,
+        removeAll,
+        unknownIds: plan.unknownIds
+      };
+      const nextFavourited = resolveFavourOutcome(favourPanelFavourited, Array.from(favourPanelMembers), appliedPlan);
+      const wasFavourited = favourPanelFavourited;
+      if (nextFavourited !== wasFavourited) applyFavourState(nextFavourited);
+      if (failure !== "") {
+        for (const id of appliedAdd) {
+          favourPanelChecked.add(id);
+          favourPanelMembers.add(id);
+          favourPanelUnknown.delete(id);
+        }
+        for (const id of appliedRemove) {
+          favourPanelChecked.delete(id);
+          favourPanelMembers.delete(id);
+        }
+        favourPanelFavourited = nextFavourited;
+        renderFavourFolderList();
+        setFavourStatus("保存失败：" + failure + "。已完成的修改已保留，可再次保存。", true);
+        return;
+      }
+      closeFavourMenu(true);
+      showToast(wasFavourited ? "已更新收藏夹" : "已收藏");
+    };
+    const showFavourPanel = async (rail, button, accountId) => {
+      ensureFavourPanel(rail);
+      if (favourPanel === null) return;
+      favourButton = button;
+      favourPanel.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      favourPanelFolders = [];
+      favourPanelChecked = /* @__PURE__ */ new Set();
+      favourPanelMembers = /* @__PURE__ */ new Set();
+      favourPanelUnknown = /* @__PURE__ */ new Set();
+      favourPanelFavourited = linkState !== null && linkState.isFavour;
+      renderFavourFolderList();
+      setFavourStatus("正在读取收藏夹…");
+      favourLoadController?.abort();
+      const controller = new AbortController();
+      favourLoadController = controller;
+      refreshFavourControls();
+      favourPanelClose?.focus({ preventScroll: true });
+      let folders;
+      try {
+        folders = await fetchFavourFolders(controller.signal, accountId);
+      } catch (error) {
+        if (isAbortError(error) || favourPanel === null || favourLoadController !== controller) return;
+        favourLoadController = null;
+        refreshFavourControls();
+        setFavourStatus(error instanceof Error ? error.message : "获取收藏夹失败", true);
+        return;
+      }
+      if (favourPanel === null || favourLoadController !== controller) return;
+      favourPanelFolders = folders;
+      renderFavourFolderList();
+      if (folders.length === 0) {
+        favourLoadController = null;
+        refreshFavourControls();
+        setFavourStatus("还没有收藏夹，可在下方新建");
+        return;
+      }
+      if (!favourPanelFavourited) {
+        favourLoadController = null;
+        refreshFavourControls();
+        setFavourStatus("勾选要收藏到的收藏夹，然后保存");
+        return;
+      }
+      setFavourStatus("正在核对收藏夹…");
+      try {
+        await scanFavourMemberships(folders, accountId, controller.signal);
+      } catch (error) {
+        if (!isAbortError(error)) {
+          for (const folder of folders) favourPanelUnknown.add(folder.id);
+        }
+      }
+      if (favourPanel === null || favourLoadController !== controller) return;
+      favourLoadController = null;
+      renderFavourFolderList();
+      setFavourStatus(favourPanelUnknown.size > 0 ? "部分收藏夹未能核对，未勾选的不会移除" : "勾选加入，取消勾选移除，然后保存");
+    };
     const openFavourMenu = async (rail, button) => {
-      if (favourMenuBusy) return;
+      if (favourMenuBusy || favourSaveBusy) return;
       if (favourPanel !== null && !favourPanel.hidden) {
-        closeFavourMenu();
+        closeFavourMenu(true);
         return;
       }
       closeSpacingMenu();
@@ -8961,70 +9554,15 @@
       try {
         const accountId = await resolveHeyboxId();
         if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
-        if (linkState === null) await loadLinkState(accountId);
-        if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
-        if (linkState !== null && linkState.isFavour) {
-          void toggleFavour();
-          return;
-        }
         if (accountId === "") {
           showToast("请先登录小黑盒");
           return;
         }
+        if (linkState === null) await loadLinkState(accountId);
+        if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
         await showFavourPanel(rail, button, accountId);
       } finally {
         favourMenuBusy = false;
-      }
-    };
-    const showFavourPanel = async (rail, button, accountId) => {
-      if (favourPanel === null) {
-        favourPanel = document.createElement("div");
-        favourPanel.className = "hbu-reader-favour-menu";
-        favourPanel.setAttribute("role", "menu");
-        favourPanel.setAttribute("aria-label", "选择收藏夹");
-        rail.append(favourPanel);
-      }
-      favourButton = button;
-      favourPanel.hidden = false;
-      button.setAttribute("aria-expanded", "true");
-      const status = document.createElement("div");
-      status.className = "hbu-reader-favour-empty";
-      status.textContent = "正在读取收藏夹…";
-      favourPanel.replaceChildren(status);
-      favourLoadController?.abort();
-      const controller = new AbortController();
-      favourLoadController = controller;
-      try {
-        const folders = await fetchFavourFolders(controller.signal, accountId);
-        if (favourPanel === null || favourLoadController !== controller) return;
-        favourLoadController = null;
-        if (folders.length === 0) {
-          const empty = document.createElement("div");
-          empty.className = "hbu-reader-favour-empty";
-          empty.textContent = "暂无收藏夹，请先在站点创建";
-          favourPanel.replaceChildren(empty);
-          return;
-        }
-        favourPanel.replaceChildren(...folders.map((folder) => {
-          const proxy = document.createElement("button");
-          proxy.type = "button";
-          proxy.setAttribute("role", "menuitem");
-          proxy.textContent = String(folder.name || folder.folder_name || "收藏夹");
-          proxy.title = proxy.textContent;
-          proxy.addEventListener("click", () => {
-            void toggleFavour(folder.id);
-          });
-          return proxy;
-        }));
-      } catch (error) {
-        if (isAbortError(error) || favourPanel === null || favourLoadController !== controller) return;
-        favourLoadController = null;
-        const empty = document.createElement("div");
-        empty.className = "hbu-reader-favour-empty";
-        empty.textContent = error instanceof Error ? error.message : "获取收藏夹失败";
-        favourPanel.replaceChildren(empty);
-      } finally {
-        if (favourLoadController === controller) favourLoadController = null;
       }
     };
     const closeCyDialog = () => {
@@ -9206,24 +9744,57 @@
       remove.disabled = commentDeleteBusy.has(comment.id);
       return remove;
     };
-    const createReaderCommentItem = (comment) => {
-      const item = document.createElement("li");
-      item.className = "hbu-reader-comments-item";
-      item.setAttribute("role", "listitem");
+    const readerCommentProfileHref = (userId) => "/app/user/profile/" + encodeURIComponent(userId);
+    const createReaderCommentAvatar = (comment, small) => {
       const avatar = document.createElement("img");
       avatar.className = "hbu-reader-comments-avatar";
       avatar.alt = "";
       avatar.loading = "lazy";
       avatar.referrerPolicy = "no-referrer";
       if (comment.avatar !== "") avatar.src = comment.avatar;
+      const wrapperClass = "hbu-reader-comments-avatar-link" + (small ? " hbu-reader-comments-avatar-link--child" : "");
+      if (comment.userId === "") {
+        const span = document.createElement("span");
+        span.className = wrapperClass;
+        span.append(avatar);
+        return span;
+      }
+      const link = document.createElement("a");
+      link.className = wrapperClass;
+      link.href = readerCommentProfileHref(comment.userId);
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.setAttribute("aria-label", "查看 " + comment.name + " 的主页");
+      link.title = "查看 " + comment.name + " 的主页";
+      link.append(avatar);
+      return link;
+    };
+    const createReaderCommentName = (comment) => {
+      const name = document.createElement("span");
+      name.className = "hbu-reader-comments-name";
+      name.textContent = comment.name;
+      if (comment.userId === "") return name;
+      const link = document.createElement("a");
+      link.className = "hbu-reader-comments-name-link";
+      link.href = readerCommentProfileHref(comment.userId);
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.setAttribute("aria-label", "查看 " + comment.name + " 的主页");
+      link.title = comment.name + " 的主页";
+      link.append(name);
+      return link;
+    };
+    const filterReaderCommentThread = (nodes, hideCy) => nodes.filter((node) => !hideCy || node.isCy !== true).map((node) => ({ ...node, children: filterReaderCommentThread(node.children, hideCy) }));
+    const createReaderCommentItem = (comment) => {
+      const item = document.createElement("li");
+      item.className = "hbu-reader-comments-item";
+      item.setAttribute("role", "listitem");
+      const avatar = createReaderCommentAvatar(comment, false);
       const main = document.createElement("div");
       main.className = "hbu-reader-comments-main";
       const who = document.createElement("div");
       who.className = "hbu-reader-comments-who";
-      const name = document.createElement("span");
-      name.className = "hbu-reader-comments-name";
-      name.textContent = comment.name;
-      who.append(name);
+      who.append(createReaderCommentName(comment));
       if (comment.createAt > 0) {
         const time = document.createElement("span");
         time.className = "hbu-reader-comments-time";
@@ -9254,9 +9825,7 @@
       const deleteButton = createReaderCommentDeleteButton(comment);
       if (deleteButton !== null) meta.append(deleteButton);
       main.append(meta);
-      const subComments = Array.isArray(comment.subComments) ? comment.subComments : [];
-      const hideCy = readHideCyPreference();
-      const visibleChildren = subComments.filter((child) => !hideCy || child.isCy !== true);
+      const visibleChildren = filterReaderCommentThread(buildRailCommentTree(comment), readHideCyPreference());
       if (visibleChildren.length > 0) {
         const children = document.createElement("ul");
         children.className = "hbu-reader-comments-children";
@@ -9270,12 +9839,19 @@
       const item = document.createElement("li");
       item.className = "hbu-reader-comments-child";
       item.setAttribute("role", "listitem");
+      const avatar = createReaderCommentAvatar(child, true);
+      const main = document.createElement("div");
+      main.className = "hbu-reader-comments-child-main";
       const who = document.createElement("div");
       who.className = "hbu-reader-comments-who";
-      const name = document.createElement("span");
-      name.className = "hbu-reader-comments-name";
-      name.textContent = child.name;
-      who.append(name);
+      who.append(createReaderCommentName(child));
+      const replyTo = child.replyName !== "" ? child.replyName : parent.name;
+      if (replyTo !== "") {
+        const hint = document.createElement("span");
+        hint.className = "hbu-reader-comments-reply-to";
+        hint.textContent = "回复 @" + replyTo;
+        who.append(hint);
+      }
       if (child.createAt > 0) {
         const time = document.createElement("span");
         time.className = "hbu-reader-comments-time";
@@ -9287,15 +9863,36 @@
       fillReaderCommentBody(text, child.body);
       const actions = document.createElement("div");
       actions.className = "hbu-reader-comments-meta";
+      if (child.likes > 0) {
+        const likes = document.createElement("span");
+        likes.textContent = "赞 " + child.likes;
+        actions.append(likes);
+      }
+      if (child.replies > 0) {
+        const replies = document.createElement("span");
+        replies.textContent = child.replies + " 条回复";
+        actions.append(replies);
+      }
       const reply = createReaderReplyButton({
         id: child.id !== "" ? child.id : parent.id,
-        rootId: child.rootId !== "" ? child.rootId : parent.id,
+        rootId: child.rootId !== "" ? child.rootId : parent.rootId !== "" ? parent.rootId : parent.id,
         name: child.name
       });
       actions.append(reply);
       const deleteButton = createReaderCommentDeleteButton(child);
       if (deleteButton !== null) actions.append(deleteButton);
-      item.append(who, text, actions);
+      main.append(who, text, actions);
+      const visibleChildren = filterReaderCommentThread(child.children, readHideCyPreference());
+      if (visibleChildren.length > 0) {
+        const children = document.createElement("ul");
+        children.className = "hbu-reader-comments-children";
+        for (const nested of visibleChildren) children.append(createReaderCommentChild(nested, child));
+        main.append(children);
+      }
+      const row = document.createElement("div");
+      row.className = "hbu-reader-comments-child-row";
+      row.append(avatar, main);
+      item.append(row);
       return item;
     };
     const createReaderReplyButton = (target) => {
@@ -9370,12 +9967,30 @@
       if (wantAbsent !== "" && railItemsHaveComment(loaded, wantAbsent)) return false;
       return true;
     };
+    const collectReaderCommentSubtree = (nodes, commentId, removed) => {
+      for (const node of nodes) {
+        if (node.id === commentId) {
+          const collectAll = (branch) => {
+            for (const member of branch) {
+              if (member.id !== "") removed.add(member.id);
+              collectAll(member.children);
+            }
+          };
+          collectAll([node]);
+          return true;
+        }
+        if (collectReaderCommentSubtree(node.children, commentId, removed)) return true;
+      }
+      return false;
+    };
     const withoutCommentId = (items, commentId) => {
       if (commentId === "") return items.slice();
       const next = [];
       for (const entry of items) {
         if (entry.id === commentId) continue;
-        const children = entry.subComments.filter((child) => child.id !== commentId);
+        const removed = /* @__PURE__ */ new Set();
+        collectReaderCommentSubtree(buildRailCommentTree(entry), commentId, removed);
+        const children = entry.subComments.filter((child) => !removed.has(child.id));
         if (children.length === entry.subComments.length) {
           next.push(entry);
           continue;
@@ -9552,12 +10167,37 @@
         }
       }
     };
+    const findReaderCommentNode = (nodes, commentId) => {
+      for (const node of nodes) {
+        if (node.id === commentId) return node;
+        const nested = findReaderCommentNode(node.children, commentId);
+        if (nested !== null) return nested;
+      }
+      return null;
+    };
     const readReaderCommentById = (commentId) => {
       for (const entry of commentState.items) {
         if (entry.id === commentId) return entry;
-        for (const child of entry.subComments) {
-          if (child.id === commentId) return child;
+        const nested = findReaderCommentNode(buildRailCommentTree(entry), commentId);
+        if (nested !== null) return nested;
+      }
+      return null;
+    };
+    const collectReaderThreadIds = (nodes, commentId) => {
+      for (const node of nodes) {
+        if (node.id === commentId) {
+          const ids = /* @__PURE__ */ new Set();
+          const collect = (list) => {
+            for (const member of list) {
+              if (member.id !== "") ids.add(member.id);
+              collect(member.children);
+            }
+          };
+          collect([node]);
+          return ids;
         }
+        const nested = collectReaderThreadIds(node.children, commentId);
+        if (nested !== null) return nested;
       }
       return null;
     };
@@ -9570,11 +10210,12 @@
           continue;
         }
         const visibleChildren = Array.isArray(entry.subComments) ? entry.subComments : [];
-        const keptChildren = visibleChildren.filter((child) => child.id !== commentId);
-        if (keptChildren.length === visibleChildren.length) {
+        const subtree = collectReaderThreadIds(buildRailCommentTree(entry), commentId);
+        if (subtree === null) {
           nextItems.push(entry);
           continue;
         }
+        const keptChildren = visibleChildren.filter((child) => !subtree.has(child.id));
         removed += visibleChildren.length - keptChildren.length;
         nextItems.push({ ...entry, subComments: keptChildren, quotes: keptChildren });
       }
@@ -10776,7 +11417,7 @@
       favour.className = "hbu-reader-action";
       favour.dataset["action"] = "favour";
       favour.setAttribute("aria-label", "收藏");
-      favour.setAttribute("aria-haspopup", "menu");
+      favour.setAttribute("aria-haspopup", "dialog");
       favour.setAttribute("aria-expanded", "false");
       favour.title = "收藏到收藏夹";
       favour.addEventListener("click", () => openFavourMenu(rail, favour));
@@ -11249,8 +11890,7 @@
       linkStateController = null;
       commentLoadController?.abort();
       commentLoadController = null;
-      favourLoadController?.abort();
-      favourLoadController = null;
+      resetFavourPanel();
       linkState = null;
       linkStatePromise = null;
       cyPublishedCount = 0;
@@ -11263,8 +11903,6 @@
       cyTextarea = null;
       cySubmit = null;
       cyStatus = null;
-      favourPanel = null;
-      favourButton = null;
       spacingPanel = null;
       spacingButton = null;
       spacingInput = null;
@@ -11428,8 +12066,7 @@
       linkStateController = null;
       commentLoadController?.abort();
       commentLoadController = null;
-      favourLoadController?.abort();
-      favourLoadController = null;
+      resetFavourPanel();
       linkState = null;
       linkStatePromise = null;
       cyPublishedCount = 0;
@@ -11455,8 +12092,6 @@
       commentPanelClose = null;
       commentPanelRefresh = null;
       commentState = createCommentState();
-      favourPanel = null;
-      favourButton = null;
       spacingPanel = null;
       spacingButton = null;
       spacingInput = null;
@@ -11569,7 +12204,7 @@
           spacingButton?.focus({ preventScroll: true });
         } else if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
-          closeFavourMenu();
+          closeFavourMenu(true);
         } else if (isCommentPanelOpen() && articleReplyTarget !== null) {
           event.preventDefault();
           clearArticleReplyTarget(true);
