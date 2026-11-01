@@ -89,6 +89,12 @@ function press(node: Element): MouseEvent {
   return event;
 }
 
+function hover(node: Element): void {
+  node.dispatchEvent(
+    new MouseEvent("mousemove", { bubbles: true, cancelable: true }),
+  );
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(visibleRect);
@@ -513,9 +519,15 @@ function installYuanbaoSelector(
     modelRow.append(el("span", {}, ["模型"]));
     modelValue = el("span", {}, [model]);
     modelRow.append(modelValue);
-    modelRow.addEventListener("click", () => {
-      clicks.push("open-model-menu");
+    // The live page reveals the model list from pointer movement only; a
+    // click on the parent row leaves the picker on that row.
+    modelRow.addEventListener("mousemove", () => {
+      if (submenu) return;
+      clicks.push("hover-model-row");
       buildModelMenu();
+    });
+    modelRow.addEventListener("click", () => {
+      clicks.push("click-model-row");
     });
     menu.append(modelRow);
     modeRows.clear();
@@ -613,7 +625,7 @@ describe("yuanbao model and mode memory", () => {
     press(fixture.trigger);
     const main = fixture.mainMenu();
     expect(main).not.toBeNull();
-    if (main) press(yuanbaoRow(main, "选择模型"));
+    if (main) hover(yuanbaoRow(main, "选择模型"));
     const modelMenu = fixture.modelMenu();
     expect(modelMenu).not.toBeNull();
     if (modelMenu) press(yuanbaoRow(modelMenu, "DeepSeek"));
@@ -662,6 +674,50 @@ describe("yuanbao model and mode memory", () => {
     reasoning.clearReasoningRestoreTimer();
     },
   );
+
+  it("opens the model submenu from pointer movement alone", async () => {
+    const fixture = installYuanbaoSelector("Hy3", "快速回答");
+    writeYuanbaoSelectionRecord({
+      model: "DeepSeek",
+      mode: "快速回答",
+      ts: Date.now(),
+    });
+    const reasoning = createReasoning();
+
+    reasoning.applyReasoningMemory();
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(fixture.clicks).toContain("hover-model-row");
+    expect(fixture.clicks).not.toContain("click-model-row");
+    expect(fixture.clicks).toContain("model:DeepSeek");
+    reasoning.clearReasoningRestoreTimer();
+  });
+
+  it("keeps the panel closed when a restore is requested again", async () => {
+    const fixture = installYuanbaoSelector("Hy3", "快速回答");
+    writeYuanbaoSelectionRecord({
+      model: "DeepSeek",
+      mode: "深度思考",
+      ts: Date.now(),
+    });
+    const reasoning = createReasoning();
+
+    reasoning.applyReasoningMemory();
+    await vi.advanceTimersByTimeAsync(1500);
+    const settledClicks = fixture.clicks.length;
+    expect(fixture.trigger.getAttribute("aria-expanded")).toBe("false");
+
+    // Yuanbao pushes a history entry while it applies a model, and the SPA
+    // history patch answers that with another restore request.
+    reasoning.applyReasoningMemory();
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(fixture.trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(fixture.mainMenu()).toBeNull();
+    expect(fixture.modelMenu()).toBeNull();
+    expect(fixture.clicks).toHaveLength(settledClicks);
+    reasoning.clearReasoningRestoreTimer();
+  });
 
   it("migrates a legacy reasoning record into the selection record", async () => {
     const fixture = installYuanbaoSelector("Hy3", "快速回答");

@@ -96,6 +96,13 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
   let reasoningMenuTriggerAt = 0;
   let reasoningMenuTriggerLabel = "";
   let yuanbaoActionStatus = "";
+  // Yuanbao pushes a history entry while it applies a new model, which asks
+  // the engine to restore again right after a confirmed restore. Reopening
+  // the picker for values that are already applied leaves the panel on
+  // screen, so remember what this document has already restored.
+  let yuanbaoAppliedKey = "";
+  let yuanbaoAppliedAt = 0;
+  const YUANBAO_APPLIED_WINDOW_MS = 15000;
 
   function setReasoningPending(value: boolean): void {
     reasoningRestorePending = value;
@@ -215,6 +222,28 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       return true;
     } catch (error: unknown) {
       reportRecoverableError("restore reasoning control", error);
+      return false;
+    }
+  }
+
+  /**
+   * Yuanbao reveals its model submenu from pointer movement, so a synthetic
+   * click on the parent row leaves the picker stuck on that row.
+   */
+  function hoverControlOnce(control: HTMLElement): boolean {
+    try {
+      const rect = control.getBoundingClientRect();
+      const init: MouseEventInit = {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      };
+      control.dispatchEvent(new MouseEvent("mouseover", init));
+      control.dispatchEvent(new MouseEvent("mousemove", init));
+      return true;
+    } catch (error: unknown) {
+      reportRecoverableError("hover reasoning control", error);
       return false;
     }
   }
@@ -1133,6 +1162,35 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     );
   }
 
+  function yuanbaoPanelOpen(trigger: HTMLElement): boolean {
+    return trigger.getAttribute("aria-expanded") === "true";
+  }
+
+  function yuanbaoSelectionKey(record: YuanbaoSelectionRecord): string {
+    return `${conversationKey}|${record.model || ""}|${record.mode || ""}`;
+  }
+
+  /**
+   * Yuanbao pushes a history entry while it applies a new model, and the SPA
+   * history patch answers that with another restore request. Reopening the
+   * picker to re-read a record this document already applied leaves the panel
+   * on screen, so treat an applied record as settled while the page still
+   * shows it and the picker is closed. A reload starts a fresh instance with
+   * no applied record, so the first load after a refresh still restores.
+   */
+  function yuanbaoSelectionApplied(
+    record: YuanbaoSelectionRecord,
+    trigger: HTMLElement | null,
+  ): boolean {
+    if (!trigger || !yuanbaoAppliedKey) return false;
+    if (yuanbaoAppliedKey !== yuanbaoSelectionKey(record)) return false;
+    if (Date.now() - yuanbaoAppliedAt > YUANBAO_APPLIED_WINDOW_MS) return false;
+    if (yuanbaoPanelOpen(trigger) || yuanbaoMainMenu() || yuanbaoModelMenu()) {
+      return false;
+    }
+    return !record.mode || selectionMatches(yuanbaoModeValue(trigger), record.mode);
+  }
+
   function yuanbaoMainMenu(): HTMLElement | null {
     const rows = Array.from(
       document.querySelectorAll<HTMLElement>(YUANBAO_MODEL_ROW_SELECTOR),
@@ -1267,9 +1325,11 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       done();
       return;
     }
-    const menu = yuanbaoMainMenu();
-    const expanded = trigger.getAttribute("aria-expanded") === "true";
-    if (!expanded && !menu) {
+    // Yuanbao updates aria-expanded asynchronously, so a mounted menu still
+    // counts as open even when the trigger attribute lags behind.
+    const expanded = yuanbaoPanelOpen(trigger);
+    const mounted = yuanbaoMainMenu() !== null || yuanbaoModelMenu() !== null;
+    if (!expanded && !mounted) {
       done();
       return;
     }
@@ -1277,10 +1337,10 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       done();
       return;
     }
+    // The first click always targets an open panel. The retry waits for the
+    // trigger attribute, because a menu node alone may already be detaching.
     if (attempt === 0) {
-      if (expanded || menu || yuanbaoModelMenu()) {
-        clickControlOnce(trigger);
-      }
+      clickControlOnce(trigger);
     } else if (attempt === 4 && expanded) {
       clickControlOnce(trigger);
     }
@@ -1356,6 +1416,34 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     );
   }
 
+  /**
+   * Yuanbao opens the model submenu from pointer movement. A click on the
+   * parent row only toggles it on some builds, so hover first and keep the
+   * click as a fallback instead of waiting on a menu that never appears.
+   */
+  function openYuanbaoModelSubmenu(
+    parent: HTMLElement,
+    done: (menu: HTMLElement | null) => void,
+    token: number,
+    attempt = 0,
+  ): void {
+    if (restoreIsStale(token)) return;
+    const opened = yuanbaoModelMenu();
+    if (opened) {
+      done(opened);
+      return;
+    }
+    if (attempt >= 8) {
+      done(null);
+      return;
+    }
+    hoverControlOnce(parent);
+    if (attempt >= 3) clickControlOnce(interactiveTarget(parent));
+    window.setTimeout(() => {
+      openYuanbaoModelSubmenu(parent, done, token, attempt + 1);
+    }, 180);
+  }
+
   function restoreYuanbaoModel(
     saved: YuanbaoSelectionRecord,
     trigger: HTMLElement,
@@ -1422,12 +1510,8 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
           done(false, true);
           return;
         }
-        if (!clickControlOnce(interactiveTarget(parent))) {
-          done(false, false);
-          return;
-        }
-        waitForYuanbao(
-          yuanbaoModelMenu,
+        openYuanbaoModelSubmenu(
+          parent,
           (sub) => {
             if (restoreIsStale(token)) return;
             if (!sub) {
@@ -1518,6 +1602,11 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       releaseReasoningRestore();
       return;
     }
+    if (yuanbaoSelectionApplied(saved, trigger)) {
+      reasoningRestoreDone = true;
+      releaseReasoningRestore();
+      return;
+    }
     if (applyingReasoning) return;
     setReasoningPending(true);
     if (!trigger) {
@@ -1551,6 +1640,10 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
       reasoningRestoreDone = true;
       releaseReasoningRestore();
       yuanbaoActionStatus = ok ? "已恢复模型与模式" : "未能恢复模型与模式";
+      if (ok) {
+        yuanbaoAppliedKey = yuanbaoSelectionKey(saved);
+        yuanbaoAppliedAt = Date.now();
+      }
       renderReasoningStatus();
     };
     const settleAfter = (
@@ -1618,6 +1711,10 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     };
     if (!merged.model && !merged.mode) return null;
     writeYuanbaoSelectionRecord(merged);
+    // The page now shows this selection, so a restore request must not
+    // reopen the picker to apply it again.
+    yuanbaoAppliedKey = yuanbaoSelectionKey(merged);
+    yuanbaoAppliedAt = Date.now();
     return merged;
   }
 
@@ -1831,10 +1928,24 @@ export function createReasoningUtils(deps: ReasoningDeps): ReasoningUtils {
     if (!state.rememberReasoning) return;
     const yuanbaoRecord = readYuanbaoSelectionRecord();
     if (!yuanbaoRecord && !readReasoningRecord()) return;
+    // The panel change that applies a saved model can also push a history
+    // entry, and the history patch asks for another restore. Starting a fresh
+    // cycle for a record this page already applied only reopens the picker.
+    if (
+      yuanbaoRecord &&
+      isYuanbaoHost() &&
+      yuanbaoSelectionApplied(yuanbaoRecord, yuanbaoTrigger())
+    ) {
+      reasoningRestoreDone = true;
+      releaseReasoningRestore();
+      return;
+    }
     if (isYuanbaoHost() || yuanbaoRecord) setReasoningPending(true);
     reasoningRestoreTimer = window.setInterval(() => {
       reasoningRestoreAttempts += 1;
-      applyReasoningMemory();
+      // A restore that already settled must not be repeated by a tick that
+      // was queued before it finished, or the picker reopens unclosed.
+      if (!reasoningRestoreDone) applyReasoningMemory();
       if (reasoningRestoreDone || reasoningRestoreAttempts >= 120) {
         clearReasoningRestoreTimer();
       }
