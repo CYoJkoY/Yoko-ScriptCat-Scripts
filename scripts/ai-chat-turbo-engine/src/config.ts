@@ -111,6 +111,13 @@ export const REASONING_SELECTOR = [
 
 export const STORAGE_KEY_REASONING = "ai_turbo_reasoning_memory";
 export const STORAGE_KEY_TOOL_MEMORY = "ai_turbo_tool_memory";
+export const STORAGE_KEY_YUANBAO_SELECTION = "ai_turbo_yuanbao_selection";
+export const YUANBAO_MODEL_TRIGGER_SELECTOR =
+  "[data-thinking-mode-switcher-trigger]";
+export const YUANBAO_MODEL_ROW_SELECTOR = "[aria-label='选择模型']";
+export const YUANBAO_MODEL_MENU_SELECTOR =
+  "[role='menu'][aria-label='模型列表']";
+export const YUANBAO_MODE_LABEL_SELECTOR = "[data-input-label='model']";
 export const REASONING_CONTROL_PATTERN =
   /深度思考|深度推理|思考|推理|思维链|thinking|reasoning|think harder|effort|智商|extended thinking/i;
 export const REASONING_CONTROL_SELECTOR = [

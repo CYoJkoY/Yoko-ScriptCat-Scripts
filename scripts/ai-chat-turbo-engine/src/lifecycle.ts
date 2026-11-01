@@ -9,6 +9,7 @@ import {
 import { createCodeBlockUtils } from "./ui/code-blocks";
 import { createReasoningUtils } from "./core/reasoning";
 import { createToolMemoryUtils } from "./core/tool-memory";
+import { createRestoreCoordinator } from "./core/restore-coordination";
 import { createToolPopupScope } from "./core/tool-scope";
 import { createComposerUtils } from "./core/composer";
 import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
@@ -138,6 +139,7 @@ export function initializeEngine(): void {
 
   // 从完整消息容器中提取文本；不再只取第一个 Markdown 子节点或截断到 800 字符。
   const toolScope = createToolPopupScope();
+  const restoreCoordinator = createRestoreCoordinator();
 
   const reasoning = createReasoningUtils({
     el,
@@ -150,12 +152,14 @@ export function initializeEngine(): void {
     requestFullTurnSync: () => {
       fullTurnSyncRequested = true;
     },
+    restoreCoordinator,
   });
 
   const toolMemory = createToolMemoryUtils({
     el,
     state,
     triggerSendButton: (control) => composer.triggerSendButton(control),
+    restoreCoordinator,
   });
 
   const virtualFiles: VirtualFileUtils = createVirtualFileUtils({
