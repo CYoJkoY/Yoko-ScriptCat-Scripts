@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.16.3
+// @version      0.16.4
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -155,6 +155,11 @@
   ].join(", ");
   var STORAGE_KEY_REASONING = "ai_turbo_reasoning_memory";
   var STORAGE_KEY_TOOL_MEMORY = "ai_turbo_tool_memory";
+  var STORAGE_KEY_YUANBAO_SELECTION = "ai_turbo_yuanbao_selection";
+  var YUANBAO_MODEL_TRIGGER_SELECTOR = "[data-thinking-mode-switcher-trigger]";
+  var YUANBAO_MODEL_ROW_SELECTOR = "[aria-label='选择模型']";
+  var YUANBAO_MODEL_MENU_SELECTOR = "[role='menu'][aria-label='模型列表']";
+  var YUANBAO_MODE_LABEL_SELECTOR = "[data-input-label='model']";
   var REASONING_CONTROL_PATTERN = /深度思考|深度推理|思考|推理|思维链|thinking|reasoning|think harder|effort|智商|extended thinking/i;
   var REASONING_CONTROL_SELECTOR = [
     "button",
@@ -2130,6 +2135,36 @@ ${CODE_FENCE}`;
     return null;
   }
 
+  // scripts/ai-chat-turbo-engine/src/core/restore-coordination.ts
+  function createRestoreCoordinator() {
+    let active = null;
+    const pending = {
+      reasoning: false,
+      tools: false
+    };
+    return {
+      setPending(owner, value) {
+        pending[owner] = value;
+      },
+      isPending(owner) {
+        return pending[owner];
+      },
+      tryAcquire(owner) {
+        if (active === null || active === owner) {
+          active = owner;
+          return true;
+        }
+        return false;
+      },
+      release(owner) {
+        if (active === owner) active = null;
+      },
+      activeOwner() {
+        return active;
+      }
+    };
+  }
+
   // scripts/ai-chat-turbo-engine/src/storage/reasoning-memory.ts
   var memoryStore = createReportedStorage("localStorage", (failure) => {
     const scope = failure.operation === "write" || failure.operation === "remove" ? "save reasoning memory" : "load reasoning memory";
@@ -2209,6 +2244,66 @@ ${CODE_FENCE}`;
     saveReasoningMemory(memory);
   }
 
+  // scripts/ai-chat-turbo-engine/src/storage/yuanbao-selection.ts
+  var selectionStore = createReportedStorage("localStorage", (failure) => {
+    const scope = failure.operation === "write" || failure.operation === "remove" ? "save Yuanbao selection" : "load Yuanbao selection";
+    reportRecoverableError(scope, failure.error);
+  });
+  var MAX_LABEL = 120;
+  function cleanLabel(raw) {
+    if (typeof raw !== "string") return "";
+    return raw.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL);
+  }
+  function toSelectionRecord(value) {
+    if (!isObjectRecord(value)) return null;
+    const model = cleanLabel(value["model"]);
+    const mode = cleanLabel(value["mode"]);
+    if (!model && !mode) return null;
+    const record = {};
+    if (model) record.model = model;
+    if (mode) record.mode = mode;
+    const ts = value["ts"];
+    if (typeof ts === "number" && Number.isFinite(ts)) record.ts = ts;
+    return record;
+  }
+  function loadYuanbaoSelectionMemory() {
+    try {
+      const raw = selectionStore.read(STORAGE_KEY_YUANBAO_SELECTION);
+      const parsed = raw === null || raw === "" ? {} : JSON.parse(raw);
+      if (!isObjectRecord(parsed)) return {};
+      const memory = {};
+      for (const [scope, entry] of Object.entries(parsed)) {
+        const record = toSelectionRecord(entry);
+        if (record) memory[scope] = record;
+      }
+      return memory;
+    } catch (error) {
+      reportRecoverableError("load Yuanbao selection", error);
+      return {};
+    }
+  }
+  function saveYuanbaoSelectionMemory(memory) {
+    selectionStore.writeJson(STORAGE_KEY_YUANBAO_SELECTION, memory);
+  }
+  function readYuanbaoSelectionRecord(memory) {
+    const all = memory ?? loadYuanbaoSelectionMemory();
+    return all[reasoningScope()] ?? all[location.hostname] ?? null;
+  }
+  function writeYuanbaoSelectionRecord(record) {
+    const memory = loadYuanbaoSelectionMemory();
+    const scope = reasoningScope();
+    memory[scope] = record;
+    if (scope !== location.hostname) delete memory[location.hostname];
+    saveYuanbaoSelectionMemory(memory);
+    return record;
+  }
+  function clearYuanbaoSelectionRecord() {
+    const memory = loadYuanbaoSelectionMemory();
+    delete memory[reasoningScope()];
+    delete memory[location.hostname];
+    saveYuanbaoSelectionMemory(memory);
+  }
+
   // scripts/ai-chat-turbo-engine/src/core/reasoning.ts
   function createReasoningUtils(deps) {
     const {
@@ -2219,22 +2314,36 @@ ${CODE_FENCE}`;
       triggerSendButton,
       requestUpdate,
       markRestoredTurn,
-      requestFullTurnSync
+      requestFullTurnSync,
+      restoreCoordinator: providedCoordinator
     } = deps;
+    const restoreCoordinator = providedCoordinator ?? createRestoreCoordinator();
     let reasoningStatusNode = null;
     let reasoningRestoreTimer = 0;
     let reasoningRestoreAttempts = 0;
     let reasoningRestoreDone = false;
+    let reasoningRestorePending = false;
+    let yuanbaoMissingTriggerAttempts = 0;
     let applyingReasoning = false;
     let restoreToken = 0;
     const correctedToggleAttempts = /* @__PURE__ */ new Set();
     const choiceRestoreAttempts = /* @__PURE__ */ new Map();
     const popupCloseTimers = [];
+    const yuanbaoRecordTimers = [];
     let conversationKey = `${location.origin}${location.pathname}`;
     let reasoningSettleTimer = 0;
     let reasoningMenuTrigger = null;
     let reasoningMenuTriggerAt = 0;
     let reasoningMenuTriggerLabel = "";
+    let yuanbaoActionStatus = "";
+    function setReasoningPending(value) {
+      reasoningRestorePending = value;
+      restoreCoordinator.setPending("reasoning", value);
+    }
+    function releaseReasoningRestore() {
+      setReasoningPending(false);
+      restoreCoordinator.release("reasoning");
+    }
     function isInsideTurboUI3(node) {
       if (!(node instanceof Element)) return false;
       return Boolean(node.closest("[id^='ai-turbo-'], .ai-turbo-code-bar"));
@@ -2937,6 +3046,10 @@ ${CODE_FENCE}`;
       if (!state.rememberReasoning || applyingReasoning) return;
       const target = event.target;
       if (!(target instanceof Element) || isInsideTurboUI3(target)) return;
+      if (isYuanbaoHost()) {
+        if (isToolControlElement(target) || toolScope.isInside(target)) return;
+        if (handleYuanbaoSelectionClick(target)) return;
+      }
       if (isToolControlElement(target) || toolScope.isInside(target)) return;
       if (pairOptionClick(target)) return;
       if (target.closest(REASONING_MENU_SELECTOR)) return;
@@ -2981,6 +3094,38 @@ ${CODE_FENCE}`;
       reasoningStatusNode.textContent = "";
       if (!state.rememberReasoning) {
         reasoningStatusNode.textContent = "推理记忆：已关闭";
+        return;
+      }
+      if (isYuanbaoHost() || readYuanbaoSelectionRecord()) {
+        const saved2 = readYuanbaoSelectionRecord();
+        if (!saved2) {
+          reasoningStatusNode.textContent = "推理记忆：未记录（在模型菜单里选择模型或模式即可）";
+          return;
+        }
+        const shown2 = [saved2.model, saved2.mode].filter(Boolean).join(" + ");
+        reasoningStatusNode.textContent = `推理记忆：${shown2 || "未记录"} `;
+        if (yuanbaoActionStatus) {
+          reasoningStatusNode.appendChild(
+            el("span", {}, [`· ${yuanbaoActionStatus} `])
+          );
+        }
+        reasoningStatusNode.appendChild(
+          el(
+            "button",
+            {
+              type: "button",
+              onclick: () => {
+                clearReasoningRestoreTimer();
+                clearYuanbaoSelectionRecord();
+                clearReasoningRecord();
+                yuanbaoActionStatus = "";
+                reasoningRestoreDone = true;
+                renderReasoningStatus();
+              }
+            },
+            ["清除"]
+          )
+        );
         return;
       }
       const saved = readReasoningRecord();
@@ -3033,10 +3178,515 @@ ${CODE_FENCE}`;
       }
       return visible.find((node) => REASONING_CONTROL_PATTERN.test(controlLabel(node))) || null;
     }
+    function isYuanbaoHost() {
+      if (hostnameMatches(location.hostname.toLowerCase(), [
+        "yuanbao.tencent.com"
+      ])) {
+        return true;
+      }
+      return Array.from(
+        document.querySelectorAll(YUANBAO_MODEL_TRIGGER_SELECTOR)
+      ).some((node) => !isInsideTurboUI3(node));
+    }
+    function cleanSelectionText(raw) {
+      return raw.replace(/\s+/g, " ").trim().slice(0, 120);
+    }
+    function selectionMatches(actual, expected) {
+      return actual.toLowerCase().replace(/\s+/g, " ").trim() === expected.toLowerCase().replace(/\s+/g, " ").trim();
+    }
+    function yuanbaoTrigger() {
+      return Array.from(
+        document.querySelectorAll(YUANBAO_MODEL_TRIGGER_SELECTOR)
+      ).find((node) => !isInsideTurboUI3(node) && nodeVisible3(node)) ?? null;
+    }
+    function yuanbaoMainMenu() {
+      const rows = Array.from(
+        document.querySelectorAll(YUANBAO_MODEL_ROW_SELECTOR)
+      ).filter((row) => !isInsideTurboUI3(row) && nodeVisible3(row));
+      for (const row of rows) {
+        const menu = row.closest(REASONING_MENU_SELECTOR);
+        if (menu instanceof HTMLElement && menu.getAttribute("aria-label") !== "模型列表" && nodeVisible3(menu)) {
+          return menu;
+        }
+      }
+      return null;
+    }
+    function yuanbaoModelMenu() {
+      return Array.from(
+        document.querySelectorAll(YUANBAO_MODEL_MENU_SELECTOR)
+      ).find((node) => !isInsideTurboUI3(node) && nodeVisible3(node)) ?? null;
+    }
+    function yuanbaoLeafTexts(row) {
+      const leaves = Array.from(row.querySelectorAll("span")).filter(
+        (node) => !isInsideTurboUI3(node) && nodeVisible3(node) && node.querySelector("span") === null
+      ).map((node) => cleanSelectionText(node.textContent || "")).filter(Boolean);
+      if (leaves.length) return leaves;
+      return (row.innerText || row.textContent || "").split("\n").map(cleanSelectionText).filter(Boolean);
+    }
+    function yuanbaoRowTitle(row) {
+      return yuanbaoLeafTexts(row)[0] || "";
+    }
+    function yuanbaoModeValue(trigger) {
+      if (!trigger) return "";
+      const label = trigger.querySelector(YUANBAO_MODE_LABEL_SELECTOR);
+      if (label instanceof HTMLElement) {
+        const text = cleanSelectionText(label.textContent || "");
+        if (text) return text;
+      }
+      const main = yuanbaoMainMenu();
+      if (main) {
+        const selected = yuanbaoModeRows(main).find(
+          (row) => choiceRowIsSelected(row) === true
+        );
+        if (selected) return yuanbaoRowTitle(selected);
+      }
+      return "";
+    }
+    function yuanbaoModeRows(menu) {
+      return Array.from(
+        menu.querySelectorAll(CHOICE_RADIO_SELECTOR)
+      ).filter((row) => {
+        if (isInsideTurboUI3(row) || !nodeVisible3(row)) return false;
+        if (row.closest(REASONING_MENU_SELECTOR) !== menu) return false;
+        return !row.matches(YUANBAO_MODEL_ROW_SELECTOR);
+      });
+    }
+    function yuanbaoModelRow(menu) {
+      return Array.from(
+        menu.querySelectorAll(YUANBAO_MODEL_ROW_SELECTOR)
+      ).find((row) => row.closest(REASONING_MENU_SELECTOR) === menu) ?? null;
+    }
+    function yuanbaoModelValue(menu) {
+      if (menu) {
+        const row = yuanbaoModelRow(menu);
+        if (row) {
+          const parts = yuanbaoLeafTexts(row);
+          if (parts.length >= 2) return parts[1];
+        }
+      }
+      const modelMenu = yuanbaoModelMenu();
+      if (modelMenu) {
+        const selected = Array.from(
+          modelMenu.querySelectorAll(CHOICE_RADIO_SELECTOR)
+        ).find(
+          (row) => row.closest(REASONING_MENU_SELECTOR) === modelMenu && choiceRowIsSelected(row) === true
+        );
+        if (selected) return yuanbaoRowTitle(selected);
+      }
+      return "";
+    }
+    function yuanbaoSelectionRow(menu, expected) {
+      return Array.from(
+        menu.querySelectorAll(CHOICE_RADIO_SELECTOR)
+      ).find(
+        (row) => row.closest(REASONING_MENU_SELECTOR) === menu && selectionMatches(yuanbaoRowTitle(row), expected)
+      ) ?? null;
+    }
+    function yuanbaoModelConflicts(model, mode) {
+      if (!model || !mode) return false;
+      return /^hy4\b/i.test(model) && !selectionMatches(mode, "专家模式");
+    }
+    function closeYuanbaoPanel(trigger, done, token, attempt = 0) {
+      if (restoreIsStale(token)) return;
+      if (!trigger.isConnected) {
+        done();
+        return;
+      }
+      const menu = yuanbaoMainMenu();
+      const expanded = trigger.getAttribute("aria-expanded") === "true";
+      if (!expanded && !menu) {
+        done();
+        return;
+      }
+      if (attempt >= 8) {
+        done();
+        return;
+      }
+      if (attempt === 0) {
+        if (expanded || menu || yuanbaoModelMenu()) {
+          clickControlOnce(trigger);
+        }
+      } else if (attempt === 4 && expanded) {
+        clickControlOnce(trigger);
+      }
+      window.setTimeout(() => {
+        closeYuanbaoPanel(trigger, done, token, attempt + 1);
+      }, 160);
+    }
+    function waitForYuanbao(read, done, token, attempt = 0) {
+      if (restoreIsStale(token)) return;
+      const node = read();
+      if (node || attempt >= 12) {
+        done(node);
+        return;
+      }
+      window.setTimeout(() => {
+        waitForYuanbao(read, done, token, attempt + 1);
+      }, 160);
+    }
+    function openYuanbaoPanel(trigger, done, token) {
+      if (restoreIsStale(token)) return;
+      const open = yuanbaoMainMenu();
+      if (open) {
+        done(open);
+        return;
+      }
+      if (trigger.getAttribute("aria-expanded") !== "true") {
+        if (!clickControlOnce(trigger)) {
+          done(null);
+          return;
+        }
+      }
+      waitForYuanbao(
+        yuanbaoMainMenu,
+        (menu) => {
+          if (restoreIsStale(token)) return;
+          done(menu);
+        },
+        token
+      );
+    }
+    function waitYuanbaoSelection(read, expected, done, token, attempt = 0) {
+      if (restoreIsStale(token)) return;
+      const actual = read();
+      if (actual && selectionMatches(actual, expected)) {
+        done(true);
+        return;
+      }
+      if (attempt >= 10) {
+        done(false);
+        return;
+      }
+      window.setTimeout(
+        () => waitYuanbaoSelection(read, expected, done, token, attempt + 1),
+        160
+      );
+    }
+    function restoreYuanbaoModel(saved, trigger, token, done) {
+      if (!saved.model) {
+        done(true, false);
+        return;
+      }
+      openYuanbaoPanel(
+        trigger,
+        (menu) => {
+          if (!menu) {
+            done(false, false);
+            return;
+          }
+          const current = yuanbaoModelValue(menu);
+          if (current && selectionMatches(current, saved.model || "")) {
+            done(true, false);
+            return;
+          }
+          const choose = (modelMenu2) => {
+            const row = yuanbaoSelectionRow(modelMenu2, saved.model || "");
+            if (!row) {
+              done(false, true);
+              return;
+            }
+            if (choiceRowIsSelected(row) === true) {
+              done(true, false);
+              return;
+            }
+            if (!clickControlOnce(interactiveTarget(row))) {
+              done(false, false);
+              return;
+            }
+            window.setTimeout(() => {
+              if (restoreIsStale(token)) return;
+              openYuanbaoPanel(
+                trigger,
+                (currentMenu) => {
+                  if (!currentMenu) {
+                    done(false, false);
+                    return;
+                  }
+                  waitYuanbaoSelection(
+                    () => yuanbaoModelValue(currentMenu),
+                    saved.model || "",
+                    (ok) => done(ok, !ok),
+                    token
+                  );
+                },
+                token
+              );
+            }, 220);
+          };
+          const modelMenu = yuanbaoModelMenu();
+          if (modelMenu) {
+            choose(modelMenu);
+            return;
+          }
+          const parent = yuanbaoModelRow(menu);
+          if (!parent) {
+            done(false, true);
+            return;
+          }
+          if (!clickControlOnce(interactiveTarget(parent))) {
+            done(false, false);
+            return;
+          }
+          waitForYuanbao(
+            yuanbaoModelMenu,
+            (sub) => {
+              if (restoreIsStale(token)) return;
+              if (!sub) {
+                done(false, false);
+                return;
+              }
+              choose(sub);
+            },
+            token
+          );
+        },
+        token
+      );
+    }
+    function restoreYuanbaoMode(saved, trigger, token, done) {
+      if (!saved.mode) {
+        done(true, false);
+        return;
+      }
+      openYuanbaoPanel(
+        trigger,
+        (menu) => {
+          if (!menu) {
+            done(false, false);
+            return;
+          }
+          const current = yuanbaoModeValue(trigger);
+          if (current && selectionMatches(current, saved.mode || "")) {
+            done(true, false);
+            return;
+          }
+          const row = yuanbaoSelectionRow(menu, saved.mode || "");
+          if (!row) {
+            done(false, true);
+            return;
+          }
+          if (choiceRowIsSelected(row) === true) {
+            done(true, false);
+            return;
+          }
+          if (!clickControlOnce(interactiveTarget(row))) {
+            done(false, false);
+            return;
+          }
+          waitYuanbaoSelection(
+            () => yuanbaoModeValue(trigger),
+            saved.mode || "",
+            (ok) => done(ok, !ok),
+            token
+          );
+        },
+        token
+      );
+    }
+    function migrateYuanbaoReasoningRecord(trigger) {
+      const legacy = readReasoningRecord();
+      const option = cleanSelectionText(legacy?.option || legacy?.label || "");
+      if (!option) return null;
+      const mode = yuanbaoModeValue(trigger);
+      let record = null;
+      if (/^(?:hy\s?\d|hy[0-9]|deepseek|混元)/i.test(option)) {
+        record = { model: option };
+      } else if (/快速|深度|专家|expert|think/i.test(option)) {
+        record = { mode: option };
+      }
+      if (!record) return null;
+      if (mode && !record.mode) record.mode = mode;
+      record.ts = Date.now();
+      writeYuanbaoSelectionRecord(record);
+      return record;
+    }
+    function restoreYuanbaoSelection() {
+      const trigger = yuanbaoTrigger();
+      const stored = readYuanbaoSelectionRecord();
+      const saved = stored ?? migrateYuanbaoReasoningRecord(trigger);
+      if (!saved) {
+        reasoningRestoreDone = true;
+        releaseReasoningRestore();
+        return;
+      }
+      if (applyingReasoning) return;
+      setReasoningPending(true);
+      if (!trigger) {
+        yuanbaoMissingTriggerAttempts += 1;
+        if (yuanbaoMissingTriggerAttempts >= 20) {
+          reasoningRestoreDone = true;
+          yuanbaoActionStatus = "未找到模型菜单，已停止恢复";
+          releaseReasoningRestore();
+          renderReasoningStatus();
+        }
+        return;
+      }
+      yuanbaoMissingTriggerAttempts = 0;
+      if (!restoreCoordinator.tryAcquire("reasoning")) return;
+      if (yuanbaoModelConflicts(saved.model || "", saved.mode || "")) {
+        yuanbaoActionStatus = "模型与模式组合不兼容，已停止恢复";
+        reasoningRestoreDone = true;
+        releaseReasoningRestore();
+        renderReasoningStatus();
+        return;
+      }
+      const token = beginRestore();
+      applyingReasoning = true;
+      setReasoningPending(true);
+      let settled = false;
+      let modelConfirmed = !saved.model;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        applyingReasoning = false;
+        reasoningRestoreDone = true;
+        releaseReasoningRestore();
+        yuanbaoActionStatus = ok ? "已恢复模型与模式" : "未能恢复模型与模式";
+        renderReasoningStatus();
+      };
+      const settleAfter = (ok, conclusive, next) => {
+        if (settled || restoreIsStale(token)) return;
+        if (!ok) {
+          closeYuanbaoPanel(trigger, () => finish(false), token);
+          return;
+        }
+        if (conclusive) {
+          closeYuanbaoPanel(trigger, () => finish(false), token);
+          return;
+        }
+        next();
+      };
+      const verifyAndClose = () => {
+        if (settled || restoreIsStale(token)) return;
+        openYuanbaoPanel(
+          trigger,
+          (menu) => {
+            const modeOk = !saved.mode || selectionMatches(yuanbaoModeValue(trigger), saved.mode);
+            const modelOk = !saved.model || modelConfirmed && (!menu || selectionMatches(yuanbaoModelValue(menu), saved.model));
+            closeYuanbaoPanel(trigger, () => finish(modeOk && modelOk), token);
+          },
+          token
+        );
+      };
+      restoreYuanbaoModel(
+        saved,
+        trigger,
+        token,
+        (modelOk, modelConclusive) => {
+          if (modelOk && !modelConclusive) modelConfirmed = true;
+          settleAfter(modelOk, modelConclusive, () => {
+            restoreYuanbaoMode(
+              saved,
+              trigger,
+              token,
+              (modeOk, modeConclusive) => {
+                settleAfter(modeOk, modeConclusive, verifyAndClose);
+              }
+            );
+          });
+        }
+      );
+    }
+    function mergeYuanbaoSelection(next) {
+      const previous = readYuanbaoSelectionRecord();
+      const merged = {
+        ...previous || {},
+        ...next.model ? { model: next.model } : {},
+        ...next.mode ? { mode: next.mode } : {},
+        ts: Date.now()
+      };
+      if (!merged.model && !merged.mode) return null;
+      writeYuanbaoSelectionRecord(merged);
+      return merged;
+    }
+    function cancelYuanbaoRecordTimers() {
+      for (const timer of yuanbaoRecordTimers.splice(0)) {
+        window.clearTimeout(timer);
+      }
+    }
+    function scheduleYuanbaoRecordSync(intent) {
+      cancelYuanbaoRecordTimers();
+      for (const delay of [120, 420, 900]) {
+        yuanbaoRecordTimers.push(
+          window.setTimeout(() => {
+            syncYuanbaoSelection(intent);
+          }, delay)
+        );
+      }
+    }
+    function syncYuanbaoSelection(intent) {
+      if (applyingReasoning) return;
+      const trigger = yuanbaoTrigger();
+      const main = yuanbaoMainMenu();
+      const modelMenu = yuanbaoModelMenu();
+      const model = modelMenu ? (() => {
+        const selected = Array.from(
+          modelMenu.querySelectorAll(CHOICE_RADIO_SELECTOR)
+        ).find(
+          (row) => row.closest(REASONING_MENU_SELECTOR) === modelMenu && choiceRowIsSelected(row) === true
+        );
+        return selected ? yuanbaoRowTitle(selected) : "";
+      })() : main ? yuanbaoModelValue(main) : "";
+      const mode = yuanbaoModeValue(trigger);
+      const previous = readYuanbaoSelectionRecord();
+      const next = {
+        model: intent === "model" ? previous?.model || "" : model || previous?.model || "",
+        mode: intent === "mode" ? previous?.mode || "" : mode || previous?.mode || "",
+        ts: Date.now()
+      };
+      if (!next.model && !next.mode) return;
+      if (previous && previous.model === next.model && previous.mode === next.mode) {
+        return;
+      }
+      writeYuanbaoSelectionRecord(next);
+      renderReasoningStatus();
+    }
+    function handleYuanbaoSelectionClick(target) {
+      if (!isYuanbaoHost()) return false;
+      const trigger = yuanbaoTrigger();
+      if (!trigger) return false;
+      const main = yuanbaoMainMenu();
+      const modelMenu = yuanbaoModelMenu();
+      const inPicker = target.closest(YUANBAO_MODEL_TRIGGER_SELECTOR) !== null || main !== null && main.contains(target) || modelMenu !== null && modelMenu.contains(target);
+      if (!inPicker) return false;
+      if (target.closest(YUANBAO_MODEL_TRIGGER_SELECTOR)) return true;
+      const modelRow = modelMenu instanceof HTMLElement ? Array.from(
+        modelMenu.querySelectorAll(CHOICE_RADIO_SELECTOR)
+      ).find(
+        (row) => row.closest(REASONING_MENU_SELECTOR) === modelMenu && (row === target || row.contains(target))
+      ) ?? null : null;
+      if (modelRow) {
+        const model = yuanbaoRowTitle(modelRow);
+        if (!model) return true;
+        mergeYuanbaoSelection({ model, mode: yuanbaoModeValue(trigger) });
+        renderReasoningStatus();
+        scheduleYuanbaoRecordSync("model");
+        return true;
+      }
+      if (!main) return false;
+      const modeRow = Array.from(main.querySelectorAll(CHOICE_RADIO_SELECTOR)).find(
+        (row) => row.closest(REASONING_MENU_SELECTOR) === main && !row.matches(YUANBAO_MODEL_ROW_SELECTOR) && (row === target || row.contains(target))
+      ) ?? null;
+      if (!modeRow) return main.contains(target);
+      const mode = yuanbaoRowTitle(modeRow);
+      if (!mode) return true;
+      mergeYuanbaoSelection({
+        model: yuanbaoModelValue(main),
+        mode
+      });
+      renderReasoningStatus();
+      scheduleYuanbaoRecordSync("mode");
+      return true;
+    }
     function applyReasoningMemory() {
       syncConversationScope();
       if (isEngineDormant()) {
         reasoningRestoreDone = true;
+        releaseReasoningRestore();
+        return;
+      }
+      if (isYuanbaoHost() || readYuanbaoSelectionRecord()) {
+        restoreYuanbaoSelection();
         return;
       }
       const saved = readReasoningRecord();
@@ -3076,6 +3726,9 @@ ${CODE_FENCE}`;
         restore(saved, control, (ok, conclusive) => {
           reasoningRestoreDone = ok || conclusive === true;
           if (attempts + 1 >= 2) reasoningRestoreDone = true;
+          if (reasoningRestoreDone) {
+            restoreCoordinator.release("reasoning");
+          }
         }, token2);
         return;
       }
@@ -3101,8 +3754,11 @@ ${CODE_FENCE}`;
       window.clearTimeout(reasoningSettleTimer);
       reasoningSettleTimer = 0;
       for (const timer of popupCloseTimers.splice(0)) window.clearTimeout(timer);
+      cancelYuanbaoRecordTimers();
       restoreToken += 1;
       applyingReasoning = false;
+      yuanbaoMissingTriggerAttempts = 0;
+      if (reasoningRestorePending) releaseReasoningRestore();
     }
     function scheduleReasoningRestore() {
       clearReasoningRestoreTimer();
@@ -3111,7 +3767,9 @@ ${CODE_FENCE}`;
       reasoningRestoreAttempts = 0;
       if (isEngineDormant()) return;
       if (!state.rememberReasoning) return;
-      if (!readReasoningRecord()) return;
+      const yuanbaoRecord = readYuanbaoSelectionRecord();
+      if (!yuanbaoRecord && !readReasoningRecord()) return;
+      if (isYuanbaoHost() || yuanbaoRecord) setReasoningPending(true);
       reasoningRestoreTimer = window.setInterval(() => {
         reasoningRestoreAttempts += 1;
         applyReasoningMemory();
@@ -3130,6 +3788,7 @@ ${CODE_FENCE}`;
       applyReasoningMemory,
       clearReasoningRestoreTimer,
       scheduleReasoningRestore,
+      isRestorePending: () => restoreCoordinator.isPending("reasoning"),
       attachStatusNode
     };
   }
@@ -3140,29 +3799,29 @@ ${CODE_FENCE}`;
     reportRecoverableError(scope, failure.error);
   });
   var MAX_TOOLS = 40;
-  var MAX_LABEL = 120;
+  var MAX_LABEL2 = 120;
   var MAX_APPLICATION_ID = 120;
-  function cleanLabel(raw) {
+  function cleanLabel2(raw) {
     if (typeof raw !== "string") return "";
-    return raw.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL);
+    return raw.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL2);
   }
   function toToolRecord(value) {
     if (!isObjectRecord(value)) return null;
-    const key = cleanLabel(value["key"]);
-    const applicationId = cleanLabel(value["applicationId"]).slice(0, MAX_APPLICATION_ID);
-    const label = cleanLabel(value["label"]);
+    const key = cleanLabel2(value["key"]);
+    const applicationId = cleanLabel2(value["applicationId"]).slice(0, MAX_APPLICATION_ID);
+    const label = cleanLabel2(value["label"]);
     const selectedRaw = value["selected"];
     const legacyLabels = [];
     if (Array.isArray(selectedRaw)) {
       for (const entry of selectedRaw) {
-        const legacy = cleanLabel(entry);
+        const legacy = cleanLabel2(entry);
         if (!legacy || legacyLabels.includes(legacy)) continue;
         legacyLabels.push(legacy);
         if (legacyLabels.length >= MAX_TOOLS) break;
       }
     }
     if (!key || !applicationId && !label && !legacyLabels.length) return null;
-    const controlLabel = cleanLabel(value["controlLabel"]);
+    const controlLabel = cleanLabel2(value["controlLabel"]);
     const ts = value["ts"];
     return {
       key,
@@ -3317,7 +3976,13 @@ ${CODE_FENCE}`;
     return tools.find((tool) => tool.label === expected) ?? null;
   }
   function createToolMemoryUtils(deps) {
-    const { el, state, triggerSendButton } = deps;
+    const {
+      el,
+      state,
+      triggerSendButton,
+      restoreCoordinator: providedCoordinator
+    } = deps;
+    const restoreCoordinator = providedCoordinator ?? createRestoreCoordinator();
     let statusNode = null;
     let pollTimer = 0;
     let pollCount = 0;
@@ -3353,9 +4018,14 @@ ${CODE_FENCE}`;
       if (trigger.getAttribute("aria-expanded") !== "true") return;
       click(trigger, "close tool overflow menu");
     }
+    function endRestoreAttempt() {
+      restoring = false;
+      restoreCoordinator.setPending("tools", false);
+      restoreCoordinator.release("tools");
+    }
     function finishRestore(token, status) {
       if (token !== restoreToken) return;
-      restoring = false;
+      endRestoreAttempt();
       restoreDone = true;
       closeOverflow();
       actionStatus = status;
@@ -3455,7 +4125,7 @@ ${CODE_FENCE}`;
             return;
           }
           if (index !== VERIFY_DELAYS.length - 1) return;
-          restoring = false;
+          endRestoreAttempt();
           closeOverflow();
           if (attemptsLeft > 1) return;
           finishRestore(token, "未能恢复已记录的工具");
@@ -3474,7 +4144,7 @@ ${CODE_FENCE}`;
       const inline = findTool(inlineTools(), saved);
       if (inline) {
         if (!click(inline.node, "select atomic tool")) {
-          restoring = false;
+          endRestoreAttempt();
           return;
         }
         verifyRestored(token, saved, attemptsLeft);
@@ -3483,7 +4153,7 @@ ${CODE_FENCE}`;
       const openMenuTool = findTool(menuTools(), saved);
       if (openMenuTool) {
         if (!click(openMenuTool.node, "select atomic overflow tool")) {
-          restoring = false;
+          endRestoreAttempt();
           return;
         }
         verifyRestored(token, saved, attemptsLeft);
@@ -3491,14 +4161,14 @@ ${CODE_FENCE}`;
       }
       const trigger = overflowTrigger();
       if (!trigger) {
-        restoring = false;
+        endRestoreAttempt();
         return;
       }
       if (trigger.getAttribute("aria-expanded") !== "true") {
         openedOverflow = trigger;
         if (!click(trigger, "open atomic tool overflow")) {
           openedOverflow = null;
-          restoring = false;
+          endRestoreAttempt();
           return;
         }
       }
@@ -3509,7 +4179,7 @@ ${CODE_FENCE}`;
         const menuTool = findTool(menuTools(), saved);
         if (menuTool) {
           if (!click(menuTool.node, "select atomic overflow tool")) {
-            restoring = false;
+            endRestoreAttempt();
             closeOverflow();
             return;
           }
@@ -3518,7 +4188,7 @@ ${CODE_FENCE}`;
         }
         attempt += 1;
         if (attempt >= MENU_WAIT_ATTEMPTS) {
-          restoring = false;
+          endRestoreAttempt();
           closeOverflow();
           return;
         }
@@ -3528,6 +4198,7 @@ ${CODE_FENCE}`;
     }
     function maybeRestore() {
       if (restoreDone || restoring) return;
+      if (restoreCoordinator.isPending("reasoning")) return;
       if (isEngineDormant() || !state.rememberTools) {
         restoreDone = true;
         return;
@@ -3547,6 +4218,8 @@ ${CODE_FENCE}`;
         finishRestore(restoreToken, "找不到已记录的工具");
         return;
       }
+      if (!restoreCoordinator.tryAcquire("tools")) return;
+      restoreCoordinator.setPending("tools", true);
       restoring = true;
       restoreToken += 1;
       tryRestore(saved, restoreToken);
@@ -3558,7 +4231,7 @@ ${CODE_FENCE}`;
       clearTimers(recordTimers);
       clearTimers(verifyTimers);
       restoreToken += 1;
-      restoring = false;
+      endRestoreAttempt();
       restoreDone = false;
       restoreAttempts = 0;
       closeOverflow();
@@ -3570,6 +4243,7 @@ ${CODE_FENCE}`;
       if (!saved) return;
       restoreDone = false;
       pollTimer = window.setInterval(() => {
+        if (restoreCoordinator.isPending("reasoning")) return;
         pollCount += 1;
         maybeRestore();
         if (restoreDone || pollCount >= MAX_POLLS) stopPolling();
@@ -6874,6 +7548,7 @@ ${CODE_FENCE}`;
       isUserTurn
     });
     const toolScope = createToolPopupScope();
+    const restoreCoordinator = createRestoreCoordinator();
     const reasoning = createReasoningUtils({
       el,
       state,
@@ -6884,12 +7559,14 @@ ${CODE_FENCE}`;
       markRestoredTurn: (turnElement) => restoredTurns.add(turnElement),
       requestFullTurnSync: () => {
         fullTurnSyncRequested = true;
-      }
+      },
+      restoreCoordinator
     });
     const toolMemory = createToolMemoryUtils({
       el,
       state,
-      triggerSendButton: (control) => composer.triggerSendButton(control)
+      triggerSendButton: (control) => composer.triggerSendButton(control),
+      restoreCoordinator
     });
     const virtualFiles = createVirtualFileUtils({
       el,

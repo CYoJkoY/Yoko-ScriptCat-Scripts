@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.49
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼全量展示。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换，动态图标仅在开关开启时出现；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.50
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼全量展示。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口，官方根首页（/）保持站点原样、不做注入，静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换，动态图标仅在开关开启时出现；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -52,15 +52,28 @@
     FEED: "feed",
     TOPIC: "topic",
     CREATOR: "creator",
-    OTHER: "other"
+    OTHER: "other",
+    OFFICIAL_HOME: "official-home"
   });
   var PAGE_ROUTE_RULES = Object.freeze([
+    { id: PAGE_ROUTE.OFFICIAL_HOME, pattern: /^\/$/ },
     { id: PAGE_ROUTE.ARTICLE, pattern: /^\/app\/bbs\/link\/\d+(?:\/|$)/ },
     { id: PAGE_ROUTE.FAVOUR, pattern: /^\/app\/user\/favour\/content(?:\/|$)/ },
-    { id: PAGE_ROUTE.FEED, pattern: /^\/(?:$|app\/bbs\/home(?:\/|$))/ },
+    { id: PAGE_ROUTE.FEED, pattern: /^\/app\/bbs\/home(?:\/|$)/ },
     { id: PAGE_ROUTE.TOPIC, pattern: /^\/app\/topic\/link\/\d+(?:\/|$)/ },
     { id: PAGE_ROUTE.CREATOR, pattern: /^\/creator(?:\/|$)/ }
   ]);
+  var ADAPTED_ROUTES = Object.freeze([
+    PAGE_ROUTE.ARTICLE,
+    PAGE_ROUTE.FAVOUR,
+    PAGE_ROUTE.FEED,
+    PAGE_ROUTE.TOPIC,
+    PAGE_ROUTE.CREATOR,
+    PAGE_ROUTE.OTHER
+  ]);
+  function isOfficialHomePath(pathname) {
+    return pathname === "/";
+  }
   var PAGE_MUTATION_REGION_SELECTORS = Object.freeze({
     feed: "#page-bbs-community, #heybox-up-comment-rail",
     article: "#page-bbs-link, #heybox-up-reader",
@@ -119,13 +132,13 @@
     }
     return PAGE_ROUTE.OTHER;
   }
-  function registerPageSync(task, intervalMs = 0, routes = null, region = null) {
+  function registerPageSync(task, intervalMs = 0, routes = ADAPTED_ROUTES, region = null) {
     pageSyncTasks.set(task, {
       intervalMs: Math.max(0, Number(intervalMs) || 0),
       lastRun: 0,
       lastRegionRevision: -1,
       pending: false,
-      routes: Array.isArray(routes) ? new Set(routes) : null,
+      routes: new Set(routes),
       region
     });
   }
@@ -139,7 +152,7 @@
     pageSyncLastRun = now;
     pageSyncRoute = route;
     for (const [task, entry] of pageSyncTasks) {
-      const routeMatches = entry.routes === null || entry.routes.has(route);
+      const routeMatches = entry.routes.has(route);
       if (!routeMatches && !forceAll) {
         entry.pending = false;
         continue;
@@ -305,6 +318,17 @@
       parent.append(style);
     }
   }
+  function removeStyleElement(id) {
+    const entry = constructedStylesById.get(id);
+    if (entry !== void 0) {
+      constructedStylesById.delete(id);
+      const adopted = document.adoptedStyleSheets;
+      if (adopted.includes(entry.sheet)) {
+        document.adoptedStyleSheets = adopted.filter((sheet) => sheet !== entry.sheet);
+      }
+    }
+    document.getElementById(id)?.remove();
+  }
 
   // shared/storage/keyValue.ts
   var DEFAULT_MESSAGES = {
@@ -426,13 +450,25 @@
     (document.head ?? document.documentElement).append(style);
   }
   function applyHideCyPreference(value) {
+    applyHideCyClass(value);
+    document.dispatchEvent(new CustomEvent(HIDE_CY_EVENT, { detail: value }));
+  }
+  function applyHideCyClass(value) {
     ensureHideCyStyle();
     if (document.body !== null) document.body.classList.toggle(HIDE_CY_CLASS, value);
-    document.dispatchEvent(new CustomEvent(HIDE_CY_EVENT, { detail: value }));
   }
   function setHideCyPreference(value) {
     localStore.write(STORAGE_KEYS.hideCy, value ? "1" : "0");
     applyHideCyPreference(value);
+  }
+  function releaseHideCy() {
+    document.body?.classList.remove(HIDE_CY_CLASS);
+    document.getElementById(HIDE_CY_STYLE_ID)?.remove();
+  }
+  function syncHideCyPreference() {
+    const value = readHideCyPreference();
+    if ((document.body?.classList.contains(HIDE_CY_CLASS) ?? false) === value) return;
+    applyHideCyClass(value);
   }
   function readCommentPreviewPreference() {
     return localStore.read(STORAGE_KEYS.commentPreview) !== "0";
@@ -2140,7 +2176,7 @@
     if (!document.body) return;
     const rail = createCommentRail();
     document.body.append(rail.host);
-    const isFeedPage = () => !location.pathname.startsWith(LINK_HREF_PREFIX) && document.querySelector("#page-bbs-community .bbs-home__content-list") !== null;
+    const isFeedPage = () => readPageRoute() === PAGE_ROUTE.FEED && document.querySelector("#page-bbs-community .bbs-home__content-list") !== null;
     const readLinkId = (href) => {
       const match = /link\/(\d+)/.exec(href || "");
       return match ? match[1] : "";
@@ -2471,6 +2507,7 @@
         mode = "default";
         return;
       }
+      syncHideCyPreference();
       const tree = document.querySelector("#page-bbs-link .link-comment");
       if (!tree) return;
       const linkId = getLinkId();
@@ -2505,15 +2542,11 @@
   var NAV_STATIC_CLASS = "heybox-up-nav-static";
   var CY_HASH = "#heybox-up-cy";
   var NAV_ITEMS = [
-    { id: "home", label: "首页", href: "/" },
     { id: "community", label: "社区", href: "/app/bbs/home" },
     { id: "favour", label: "收藏", href: "/app/user/favour/content" },
     { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" }
   ];
   var NAV_GLYPHS = {
-    home: {
-      paths: ["M4 11.2 12 4l8 7.2", "M6.6 9.8V20h10.8V9.8", "M10.2 20v-5.2h3.6V20"]
-    },
     community: {
       paths: ["M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"],
       circles: [
@@ -2703,10 +2736,16 @@
   function ensureNavStyle() {
     ensureStyleElement(NAV_STYLE_ID, NAV_CSS);
   }
+  function releaseNav() {
+    document.getElementById(NAV_ID)?.remove();
+    removeStyleElement(NAV_STYLE_ID);
+    document.documentElement.classList.remove(NAV_STATIC_CLASS);
+    navActiveHost = null;
+    navActiveId = "";
+  }
   function readNavActiveId() {
     const path = location.pathname;
     if (path === "/app/user/favour/content") return "favour";
-    if (path === "/") return "home";
     if (path.startsWith("/creator/")) return "article";
     if (path.startsWith("/app/bbs/")) return "community";
     return "";
@@ -2827,12 +2866,16 @@
   function watchTopNav() {
     if (!document.body) return;
     const sync = () => {
+      if (isOfficialHomePath(location.pathname)) {
+        releaseNav();
+        return;
+      }
       mountTopNav();
       syncNavActive();
     };
     window.addEventListener("hashchange", syncNavActive);
     window.addEventListener("popstate", syncNavActive);
-    registerPageSync(sync, 300, null, "chrome");
+    registerPageSync(sync, 300, ADAPTED_ROUTES, "chrome");
     sync();
   }
 
@@ -4766,6 +4809,7 @@
   var THEME_ATTR = "data-heybox-up-theme";
   var THEME_STORAGE_KEY = "heybox-up.theme.v1";
   var THEME_ENTRY_ID = "heybox-up-theme-entry";
+  var THEME_STYLE_ID = "heybox-up-theme-style";
   var THEME_MEDIA = window.matchMedia("(prefers-color-scheme: dark)");
   var THEME_PRESETS = [
     { id: "system", label: "跟随系统", hint: "随系统深浅切换", dark: null, icon: "system", swatch: ["#f5f7f9", "#1b2430"] },
@@ -6439,7 +6483,7 @@
   };
   var SETTINGS_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 8.9 4.6h.08A1.7 1.7 0 0 0 10 3.04V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 8.9v.08A1.7 1.7 0 0 0 20.96 10H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>';
   function ensureThemeStyle() {
-    ensureStyleElement("heybox-up-theme-style", THEME_CSS, true);
+    ensureStyleElement(THEME_STYLE_ID, THEME_CSS, true);
   }
   function updateThemeEntry() {
     if (!themeEntry) return;
@@ -6459,6 +6503,10 @@
     syncNumberInput(readerLineHeightInput, readReaderLineHeight());
   }
   function applyTheme(mode, persist) {
+    if (isOfficialHomePath(location.pathname)) {
+      releaseTheme();
+      return;
+    }
     currentThemeMode = normalizeThemeMode(mode);
     const effective = resolveTheme(currentThemeMode, THEME_MEDIA.matches);
     const preset = getThemePreset(effective);
@@ -6472,6 +6520,17 @@
     updateThemeEntry();
     if (preset.dark === true) scheduleDarkSweep(true);
     else clearDarkSweep();
+  }
+  function releaseTheme() {
+    clearDarkSweep();
+    const root = document.documentElement;
+    root.classList.remove(THEME_CLASS);
+    root.removeAttribute(THEME_ATTR);
+    root.removeAttribute("data-heybox-up-dark");
+    root.style.removeProperty("color-scheme");
+    themeEntry?.host.remove();
+    themeEntry = null;
+    removeStyleElement(THEME_STYLE_ID);
   }
   function createThemeEntry() {
     const host = document.createElement("span");
@@ -6816,11 +6875,16 @@
   function watchTheme() {
     if (!document.body) return;
     const sync = () => {
+      if (isOfficialHomePath(location.pathname)) {
+        releaseTheme();
+        return;
+      }
+      if (document.documentElement.getAttribute(THEME_ATTR) === null) applyTheme(readThemeMode(), false);
       ensureThemeStyle();
       mountThemeEntry();
       scheduleDarkSweep();
     };
-    registerPageSync(sync, 400, null, "chrome");
+    registerPageSync(sync, 400, ADAPTED_ROUTES, "chrome");
     registerPageSync(() => scheduleDarkSweep(), 600, [PAGE_ROUTE.CREATOR, PAGE_ROUTE.TOPIC]);
     sync();
   }
@@ -11329,19 +11393,34 @@
   }
 
   // scripts/heybox-up/src/index.ts
-  THEME_MEDIA.addEventListener("change", () => {
-    if (currentThemeMode === "system") applyTheme("system", false);
-  });
-  applyTheme(readThemeMode(), false);
-  applyFeedWidth(readFeedWidth());
-  applyReaderLineHeight(readReaderLineHeight());
+  if (isOfficialHomePath(location.pathname)) {
+    releaseTheme();
+  } else {
+    THEME_MEDIA.addEventListener("change", () => {
+      if (currentThemeMode === "system") applyTheme("system", false);
+    });
+    applyTheme(readThemeMode(), false);
+    applyFeedWidth(readFeedWidth());
+    applyReaderLineHeight(readReaderLineHeight());
+  }
   document.addEventListener(NAV_MOTION_EVENT, (event) => {
     const detail = event instanceof CustomEvent ? event.detail : void 0;
     applyNavMotionPreference(detail === true);
   });
-  applyNavMotionPreference(readNavMotionPreference());
+  if (!isOfficialHomePath(location.pathname)) applyNavMotionPreference(readNavMotionPreference());
+  function releaseOfficialHome() {
+    if (!isOfficialHomePath(location.pathname)) return;
+    releaseTheme();
+    releaseNav();
+    releaseHideCy();
+  }
   function boot() {
-    applyHideCyPreference(readHideCyPreference());
+    if (isOfficialHomePath(location.pathname)) {
+      releaseOfficialHome();
+    } else {
+      applyHideCyPreference(readHideCyPreference());
+    }
+    registerPageSync(releaseOfficialHome, 0, [PAGE_ROUTE.OFFICIAL_HOME]);
     const navigation = createPostNavigationController();
     watchTheme();
     watchTopNav();
