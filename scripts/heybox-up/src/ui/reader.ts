@@ -9,7 +9,7 @@ import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, holdRailPageCache, isOwnRailComment, railItemsHaveComment, readCreatedCommentId, resolveCommentPageProgress } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railThreadHasPendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
@@ -715,6 +715,7 @@ export const READER_CSS = `
   .hbu-reader-comments-reply-to { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-child .hbu-reader-comments-text { margin-top: 2px; font-size: 13px; }
   .hbu-reader-comments-child .hbu-reader-comments-meta { margin-top: 3px; }
+  .hbu-reader-comments-syncing { flex: none; color: var(--hbu-reader-muted); font-size: 11px; opacity: .85; }
   .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
   .hbu-reader-comments-text img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
@@ -1483,6 +1484,10 @@ interface ReaderCommentState {
   /** Timestamp of the last successful page-one read, used to age out the panel. */
   loadedAt: number;
   seq: number;
+  /** Page each loaded floor came from, so a reply can re-read its own page. */
+  floorPages: Map<string, number>;
+  /** Replies written here but not echoed by the tree endpoint yet. */
+  pendingReplies: RailComment[];
 }
 
 interface ReaderCommentLoadOptions {
@@ -1496,6 +1501,16 @@ interface ReaderCommentLoadOptions {
   expectAbsentId?: string;
   /** Verification round counter for the polling loop below. */
   attempt?: number;
+  /**
+   * Reply written from this panel that the server may not have returned yet.
+   * It is matched by id or by text so a create without an id still verifies.
+   */
+  expectPending?: RailComment;
+  /**
+   * Merges the answer into the loaded list instead of replacing it, so a
+   * refresh after a write keeps the floors read from the other pages.
+   */
+  merge?: boolean;
 }
 
 interface SuspendedMediaEmbedState {
@@ -1638,6 +1653,8 @@ export function watchReader(navigation: PostNavigationController): void {
   let cyStatus: HTMLDivElement | null = null;
   let cyBusy = false;
   let articleCommentBusy = false;
+  // Distinguishes optimistic reply rows that the create call returned no id for.
+  let pendingReplySeq = 0;
   const ARTICLE_COMMENT_MAX_LENGTH = 1000;
   const articleComposerEmojiClosers: WeakMap<Element, () => void> = new WeakMap();
   let commentPanel: HTMLElement | null = null;
@@ -1668,7 +1685,20 @@ export function watchReader(navigation: PostNavigationController): void {
   let readerPendingGeneration = -1;
 
   function createCommentState(): ReaderCommentState {
-    return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, loadedAt: 0, seq: 0 };
+    return {
+      items: [],
+      page: 0,
+      total: 0,
+      loading: false,
+      error: "",
+      hasMore: false,
+      loadedGroups: 0,
+      loaded: false,
+      loadedAt: 0,
+      seq: 0,
+      floorPages: new Map<string, number>(),
+      pendingReplies: [],
+    };
   }
 
   const showToast = (message: string): void => {
@@ -2811,7 +2841,10 @@ export function watchReader(navigation: PostNavigationController): void {
   };
 
   const createReaderCommentDeleteButton = (comment: RailComment): HTMLButtonElement | null => {
-    if (comment.id === "" || !isOwnRailComment(comment, readerAccountId)) return null;
+    // A row the site has not echoed back yet has no usable id, so it cannot be
+    // deleted or replied to until a refresh replaces it with the real comment.
+    if (comment.id === "" || isPendingReplyRow(comment.id)) return null;
+    if (!isOwnRailComment(comment, readerAccountId)) return null;
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "hbu-reader-comments-delete";
@@ -2876,7 +2909,31 @@ export function watchReader(navigation: PostNavigationController): void {
     .filter((node) => !hideCy || node.isCy !== true)
     .map((node) => ({ ...node, children: filterReaderCommentThread(node.children, hideCy) }));
 
-  const createReaderCommentItem = (comment: RailCommentEntry): HTMLLIElement => {
+  // A reply can carry the floor id, or only the id of the comment it answers
+  // when the site reports no root. Both resolve to the floor that owns it, so
+  // the local row is never dropped for lack of a usable root id.
+  const resolvePendingFloorId = (items: readonly RailCommentEntry[], pending: RailComment): string => {
+    if (pending.rootId !== "" && items.some((item) => item.id === pending.rootId)) return pending.rootId;
+    return findRailFloorIdForComment(items, pending.parentId);
+  };
+
+  // Replies are attached to their floor before the tree is built, so a reply
+  // that the site has not echoed back yet is still visible right after publish.
+  const readPendingRepliesFor = (floorId: string): RailComment[] => commentState.pendingReplies.filter((pending) =>
+    resolvePendingFloorId(commentState.items, pending) === floorId);
+
+  const withPendingReplies = (entry: RailCommentEntry): RailCommentEntry =>
+    attachRailPendingReplies(entry, readPendingRepliesFor(entry.id));
+
+  // A row that only lives in this panel has nothing the site can act on yet,
+  // whether the create call reported an id or not.
+  const isPendingReplyRow = (commentId: string): boolean =>
+    commentId.startsWith(RAIL_PENDING_ID_PREFIX) || commentState.pendingReplies.some((row) => row.id === commentId);
+
+  const createReaderCommentItem = (raw: RailCommentEntry): HTMLLIElement => {
+    // A reply posted here is attached before the tree is built, so it shows up
+    // even while the tree endpoint still answers without it.
+    const comment = withPendingReplies(raw);
     const item = document.createElement("li");
     item.className = "hbu-reader-comments-item";
     item.setAttribute("role", "listitem");
@@ -2915,8 +2972,8 @@ export function watchReader(navigation: PostNavigationController): void {
     }));
     const deleteButton = createReaderCommentDeleteButton(comment);
     if (deleteButton !== null) meta.append(deleteButton);
-    main.append(meta);
     const visibleChildren = filterReaderCommentThread(buildRailCommentTree(comment), readHideCyPreference());
+    main.append(meta);
     if (visibleChildren.length > 0) {
       const children = document.createElement("ul");
       children.className = "hbu-reader-comments-children";
@@ -2967,14 +3024,24 @@ export function watchReader(navigation: PostNavigationController): void {
       replies.textContent = child.replies + " 条回复";
       actions.append(replies);
     }
-    const reply = createReaderReplyButton({
-      id: child.id !== "" ? child.id : parent.id,
-      rootId: child.rootId !== "" ? child.rootId : parent.rootId !== "" ? parent.rootId : parent.id,
-      name: child.name,
-    });
-    actions.append(reply);
-    const deleteButton = createReaderCommentDeleteButton(child);
-    if (deleteButton !== null) actions.append(deleteButton);
+    const pendingRow = isPendingReplyRow(child.id);
+    if (pendingRow) {
+      // The tree endpoint has not echoed this row yet. Replying to it would
+      // target a comment the server does not know, and deleting it would need
+      // an id the list cannot resolve, so it says it is syncing instead.
+      const syncing = document.createElement("span");
+      syncing.className = "hbu-reader-comments-syncing";
+      syncing.textContent = "同步中…";
+      actions.append(syncing);
+    } else {
+      actions.append(createReaderReplyButton({
+        id: child.id !== "" ? child.id : parent.id,
+        rootId: child.rootId !== "" ? child.rootId : parent.rootId !== "" ? parent.rootId : parent.id,
+        name: child.name,
+      }));
+      const deleteButton = createReaderCommentDeleteButton(child);
+      if (deleteButton !== null) actions.append(deleteButton);
+    }
     main.append(who, text, actions);
     const visibleChildren = filterReaderCommentThread(child.children, readHideCyPreference());
     if (visibleChildren.length > 0) {
@@ -3061,13 +3128,19 @@ export function watchReader(navigation: PostNavigationController): void {
   const COMMENT_VERIFY_DELAY_MS = 900;
 
   // An empty expectation always matches: only a publish or delete asks for a
-  // specific id to appear or disappear.
-  const matchesCommentExpectation = (page: number, options: ReaderCommentLoadOptions, loaded: readonly RailCommentEntry[]): boolean => {
-    if (page !== 1) return true;
+  // specific id to appear or disappear. A pending reply with no id from the
+  // create call is matched by its text, so a publish is still verifiable.
+  const matchesCommentExpectation = (options: ReaderCommentLoadOptions, loaded: readonly RailCommentEntry[]): boolean => {
     const wantPresent = options.expectPresentId ?? "";
     const wantAbsent = options.expectAbsentId ?? "";
     if (wantPresent !== "" && !railItemsHaveComment(loaded, wantPresent)) return false;
     if (wantAbsent !== "" && railItemsHaveComment(loaded, wantAbsent)) return false;
+    const pending = options.expectPending;
+    if (pending !== undefined) {
+      const floorId = resolvePendingFloorId(loaded, pending);
+      const entry = loaded.find((item) => item.id === floorId);
+      if (entry === undefined || !railThreadHasPendingReply(entry, pending)) return false;
+    }
     return true;
   };
 
@@ -3112,6 +3185,16 @@ export function watchReader(navigation: PostNavigationController): void {
     return next;
   };
 
+  // Remembers which page a floor came from, so a reply written under a floor of
+  // page three refreshes that page instead of page one. The last page that
+  // returned a floor wins, because new comments shift floors between pages.
+  const recordFloorPages = (items: readonly RailCommentEntry[], page: number): void => {
+    for (const entry of items) {
+      if (entry.id === "") continue;
+      commentState.floorPages.set(entry.id, page);
+    }
+  };
+
   const loadReaderComments = async (page: number, options: ReaderCommentLoadOptions = {}): Promise<void> => {
     if (commentState.loading && options.force !== true) return;
     const seq = ++commentState.seq;
@@ -3122,9 +3205,11 @@ export function watchReader(navigation: PostNavigationController): void {
     commentLoadController = controller;
     commentState.loading = true;
     commentState.error = "";
+    const merge = options.merge === true;
+    const writeRefresh = options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined || options.expectPending !== undefined;
     // A refresh keeps the rendered list until the new page arrives, so the panel
     // does not flash empty while the reader is waiting for its own comment.
-    const keepItems = page === 1 && (options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined);
+    const keepItems = merge || (page === 1 && writeRefresh);
     if (page === 1 && !keepItems) {
       commentState.items = [];
       commentState.page = 0;
@@ -3132,6 +3217,7 @@ export function watchReader(navigation: PostNavigationController): void {
       commentState.hasMore = false;
       commentState.loadedGroups = 0;
       commentState.loaded = false;
+      commentState.floorPages.clear();
     }
     renderReaderComments();
     let stale = false;
@@ -3139,7 +3225,7 @@ export function watchReader(navigation: PostNavigationController): void {
       const accountId = await resolveHeyboxId(controller.signal);
       if (seq !== commentState.seq || commentLoadController !== controller) return;
       if (accountId !== readerAccountId) readerAccountId = accountId;
-      const fresh = page === 1 && (options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined);
+      const fresh = merge || (page === 1 && writeRefresh);
       const data = await fetchRailPage(targetId, page, {
         signal: controller.signal,
         accountId: accountId,
@@ -3147,29 +3233,47 @@ export function watchReader(navigation: PostNavigationController): void {
         ...(page === 1 ? { maxAgeMs: RAIL_PAGE_CACHE_FRESH_MS } : {}),
       });
       if (seq !== commentState.seq || commentLoadController !== controller) return;
+      const incoming = withoutCommentId(data.items, options.expectAbsentId ?? "");
       const seen = new Set(commentState.items.map((item) => item.id));
-      const added = data.items.filter((item) => item.id === "" || !seen.has(item.id));
-      // Page one always replaces the list with the full fresh answer: a refresh
-      // keeps the previous rows on screen only while waiting, never afterwards.
-      commentState.items = page === 1
-        ? withoutCommentId(data.items, options.expectAbsentId ?? "")
-        : commentState.items.concat(added);
-      commentState.page = page;
+      const added = incoming.filter((item) => item.id === "" || !seen.has(item.id));
+      if (merge) {
+        // A merged refresh replaces the floors it returned in place and keeps
+        // the floors of the pages read earlier, so a reply never wipes them.
+        // The deleted floor is dropped from both sides before the merge.
+        const base = withoutCommentId(commentState.items, options.expectAbsentId ?? "");
+        commentState.items = mergeRailPageItems(base, incoming);
+        commentState.page = Math.max(commentState.page, page);
+      } else if (page === 1) {
+        commentState.items = incoming;
+        commentState.page = 1;
+      } else {
+        commentState.items = commentState.items.concat(added);
+        commentState.page = page;
+      }
+      recordFloorPages(incoming, page);
       // A delete already lowered the count locally, so a page that still lists
       // the removed comment must not raise it back.
       const absentId = options.expectAbsentId ?? "";
-      const echoingDeleted = absentId !== "" && railItemsHaveComment(data.items, absentId);
+      const echoingDeleted = absentId !== "" && railItemsHaveComment(incoming, absentId);
       commentState.total = echoingDeleted ? commentState.total : data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
-      const progress = resolveCommentPageProgress({
-        rawGroupCount: data.items.length,
-        freshGroupCount: page === 1 ? data.items.length : added.length,
-        previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
-        floorTotal: data.floorTotal,
-      });
+      // A reply the site has echoed back replaces its optimistic copy.
+      commentState.pendingReplies = pruneRailPendingReplies(commentState.items, commentState.pendingReplies);
+      const progress = merge
+        ? resolveMergedCommentProgress({
+          loadedGroups: commentState.items.length,
+          floorTotal: data.floorTotal,
+          rawGroupCount: incoming.length,
+        })
+        : resolveCommentPageProgress({
+          rawGroupCount: data.items.length,
+          freshGroupCount: page === 1 ? data.items.length : added.length,
+          previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
+          floorTotal: data.floorTotal,
+        });
       commentState.loadedGroups = progress.loadedGroups;
       commentState.hasMore = progress.hasMore;
       commentState.loaded = true;
-      if (page === 1) commentState.loadedAt = Date.now();
+      if (page === 1 || merge) commentState.loadedAt = Date.now();
       // The tree endpoint can lag behind a successful publish. Keep the freshly
       // incremented count visible while still accepting a larger server total.
       if (linkState !== null && !echoingDeleted && Number.isFinite(data.total) && data.total > 0) {
@@ -3177,7 +3281,7 @@ export function watchReader(navigation: PostNavigationController): void {
         linkState.commentCount = Math.max(Number.isFinite(current) ? current : 0, data.total);
       }
       syncActionStates();
-      stale = !matchesCommentExpectation(page, options, page === 1 ? data.items : commentState.items);
+      stale = !matchesCommentExpectation(options, commentState.items);
     } catch (error) {
       if (isAbortError(error)) return;
       if (seq !== commentState.seq || commentLoadController !== controller) return;
@@ -3191,20 +3295,23 @@ export function watchReader(navigation: PostNavigationController): void {
         renderReaderComments();
       }
     }
-    if (!stale || page !== 1) return;
+    if (!stale) return;
     if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
     // A manual refresh or a second write owns the panel now, so this poll stops
     // instead of competing with the newer load.
     if (seq !== commentState.seq) return;
     const attempt = (options.attempt ?? 0) + 1;
     if (attempt >= COMMENT_VERIFY_ATTEMPTS) {
-      showToast(options.expectAbsentId === undefined ? "评论已提交，列表仍待站点同步" : "评论已删除，列表仍待站点同步");
+      // A reply kept as a local pending row is already on screen, so only an
+      // absent expectation reports a failure here.
+      if (options.expectAbsentId !== undefined) showToast("评论已删除，列表仍待站点同步");
+      else if ((options.expectPresentId ?? "") !== "") showToast("评论已提交，列表仍待站点同步");
       return;
     }
     void waitForDelay(COMMENT_VERIFY_DELAY_MS, controller.signal).then(() => {
       if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
       if (seq !== commentState.seq) return;
-      void loadReaderComments(1, { ...options, fresh: true, force: true, attempt: attempt });
+      void loadReaderComments(page, { ...options, fresh: true, force: true, merge: true, attempt: attempt });
     }).catch(() => undefined);
   };
 
@@ -3273,8 +3380,9 @@ export function watchReader(navigation: PostNavigationController): void {
       showToast("评论已发布");
       articleCommentPublishedCount += 1;
       // A write invalidates every cached page, and the tree endpoint may still
-      // answer with the pre-write payload for a moment, so page one is read
-      // again from the network and polled until the new comment appears.
+      // answer with the pre-write payload for a moment, so the page that owns
+      // the target is read again from the network and polled until the new
+      // comment appears.
       holdRailPageCache(targetId);
       if (linkState !== null) {
         linkState.commentCount = Math.max(0, Number(linkState.commentCount) || 0) + 1;
@@ -3283,10 +3391,31 @@ export function watchReader(navigation: PostNavigationController): void {
       }
       syncActionStates();
       if (commentPanel !== null && !commentPanel.hidden) {
-        void loadReaderComments(1, {
+        // A reply is drawn right away and then verified on the page that holds
+        // its floor. Re-reading page one alone used to drop the floor of a
+        // later page, which is why a nested reply vanished from the panel.
+        const pending = reply === null ? null : createRailPendingReply({
+          parentId: reply.id,
+          rootId: reply.rootId !== "" ? reply.rootId : reply.id,
+          text: text,
+          userId: accountId,
+          createAt: Math.floor(Date.now() / 1000),
+          sequence: ++pendingReplySeq,
+          ...(createdId === "" ? {} : { commentId: createdId }),
+        });
+        if (pending !== null) {
+          commentState.pendingReplies.push(pending);
+          renderReaderComments();
+        }
+        const floorId = pending === null ? "" : resolvePendingFloorId(commentState.items, pending);
+        const page = floorId === "" ? 1 : commentState.floorPages.get(floorId) ?? 1;
+        void loadReaderComments(page, {
           fresh: true,
           force: true,
-          ...(createdId === "" ? {} : { expectPresentId: createdId }),
+          merge: true,
+          ...(pending !== null
+            ? { expectPending: pending }
+            : createdId === "" ? {} : { expectPresentId: createdId }),
         });
       }
     } catch (error) {
@@ -3404,7 +3533,11 @@ export function watchReader(navigation: PostNavigationController): void {
       syncActionStates();
       showToast("评论已删除");
       if (commentPanel !== null && !commentPanel.hidden) {
-        void loadReaderComments(1, { fresh: true, force: true, expectAbsentId: commentId });
+        // The removed comment can sit on any loaded page, so its own page is
+        // re-read and merged instead of replacing the list with page one.
+        const floorId = owned.rootId !== "" ? owned.rootId : commentId;
+        const page = commentState.floorPages.get(floorId) ?? 1;
+        void loadReaderComments(page, { fresh: true, force: true, merge: true, expectAbsentId: commentId });
       }
     } catch (error) {
       if (articleId === targetId && readerGeneration === generation) {
@@ -3697,7 +3830,9 @@ export function watchReader(navigation: PostNavigationController): void {
     scrim.addEventListener("click", closeComments);
     refresh.addEventListener("click", () => {
       if (commentState.loading) return;
-      void loadReaderComments(1, { fresh: true, force: true });
+      // Refreshing page one keeps the floors read from later pages, so a manual
+      // refresh cannot drop a thread the reader already paged in.
+      void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
     });
     more.addEventListener("click", () => {
       if (!commentState.loading) void loadReaderComments(commentState.page + 1);
@@ -3757,7 +3892,7 @@ export function watchReader(navigation: PostNavigationController): void {
     if (!commentState.loaded) {
       void loadReaderComments(1);
     } else if (stalePanel) {
-      void loadReaderComments(1, { fresh: true, force: true });
+      void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
     }
   };
 

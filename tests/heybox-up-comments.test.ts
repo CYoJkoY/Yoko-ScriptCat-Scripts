@@ -2,15 +2,23 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   RAIL_PAGE_SIZE,
+  RAIL_PENDING_ID_PREFIX,
+  attachRailPendingReplies,
   buildRailCommentTree,
   buildArticleCommentBody,
   buildDeleteCommentBody,
+  createRailPendingReply,
+  findRailFloorIdForComment,
   isOwnRailComment,
+  mergeRailPageItems,
   normalizeRailGroup,
+  pruneRailPendingReplies,
   readRailFloorTotal,
   readRailPageCache,
   railItemsHaveComment,
+  railThreadHasPendingReply,
   resolveCommentPageProgress,
+  resolveMergedCommentProgress,
   writeRailPageCache,
 } from "../scripts/heybox-up/src/ui/rail";
 import { clearRailPageCache } from "../scripts/heybox-up/src/ui/rail";
@@ -238,5 +246,121 @@ describe("comment ownership", () => {
     expect(isOwnRailComment(comment, "4322")).toBe(false);
     expect(isOwnRailComment(comment, "")).toBe(false);
     expect(isOwnRailComment({ userId: "" }, "4321")).toBe(false);
+  });
+});
+
+function entry(id: string, children: readonly Record<string, unknown>[] = []): NonNullable<ReturnType<typeof normalizeRailGroup>> {
+  const parsed = normalizeRailGroup(group(floor(id, "floor " + id), children));
+  if (parsed === null) throw new Error("Expected a floor for " + id);
+  return parsed;
+}
+
+describe("floor lookup for a refresh", () => {
+  it("finds the floor of a direct reply and of a nested reply", () => {
+    const items = [
+      entry("100", [floor("101", "child")]),
+      entry("200", [{ ...floor("201", "child"), replyid: 200 }, { ...floor("202", "grandchild"), replyid: 201 }]),
+    ];
+    expect(findRailFloorIdForComment(items, "100")).toBe("100");
+    expect(findRailFloorIdForComment(items, "101")).toBe("100");
+    expect(findRailFloorIdForComment(items, "202")).toBe("200");
+  });
+
+  it("reports no floor for an id that is not loaded", () => {
+    expect(findRailFloorIdForComment([entry("300")], "301")).toBe("");
+    expect(findRailFloorIdForComment([], "300")).toBe("");
+    expect(findRailFloorIdForComment([entry("300")], "")).toBe("");
+  });
+});
+
+describe("merged page refresh", () => {
+  it("keeps floors of other pages and replaces the refreshed floor in place", () => {
+    const existing = [entry("1"), entry("2"), entry("3")];
+    const incoming = [entry("2", [floor("20", "new reply")])];
+    const merged = mergeRailPageItems(existing, incoming);
+    expect(merged.map((item) => item.id)).toEqual(["1", "2", "3"]);
+    expect(merged[1].subComments.map((item) => item.id)).toEqual(["20"]);
+  });
+
+  it("puts a floor the list has not seen above the loaded ones", () => {
+    const merged = mergeRailPageItems([entry("1"), entry("2")], [entry("0"), entry("2")]);
+    expect(merged.map((item) => item.id)).toEqual(["0", "1", "2"]);
+  });
+
+  it("keeps the loaded floors when the refreshed page is empty", () => {
+    const merged = mergeRailPageItems([entry("1"), entry("2")], []);
+    expect(merged.map((item) => item.id)).toEqual(["1", "2"]);
+  });
+
+  it("reports progress from the merged list, not from the refreshed page", () => {
+    expect(resolveMergedCommentProgress({ loadedGroups: 40, floorTotal: 40, rawGroupCount: 20 })).toEqual({
+      hasMore: false,
+      loadedGroups: 40,
+    });
+    expect(resolveMergedCommentProgress({ loadedGroups: 20, floorTotal: 40, rawGroupCount: 20 })).toEqual({
+      hasMore: true,
+      loadedGroups: 20,
+    });
+    expect(resolveMergedCommentProgress({ loadedGroups: 20, floorTotal: 0, rawGroupCount: RAIL_PAGE_SIZE }).hasMore).toBe(true);
+    expect(resolveMergedCommentProgress({ loadedGroups: 20, floorTotal: 0, rawGroupCount: 1 }).hasMore).toBe(false);
+  });
+});
+
+describe("optimistic reply rows", () => {
+  const pending = createRailPendingReply({
+    parentId: "500",
+    rootId: "400",
+    text: "hello there",
+    userId: "77",
+    createAt: 1_700_000_000,
+    sequence: 3,
+  });
+
+  it("uses the created id when the create call reported one", () => {
+    expect(createRailPendingReply({
+      parentId: "500",
+      rootId: "400",
+      text: "hello there",
+      userId: "77",
+      createAt: 1_700_000_000,
+      sequence: 3,
+      commentId: "9001",
+    }).id).toBe("9001");
+    expect(pending.id).toBe(RAIL_PENDING_ID_PREFIX + "3");
+    expect(pending.text).toBe("hello there");
+    expect(pending.parentId).toBe("500");
+    expect(pending.rootId).toBe("400");
+    expect(pending.body).toEqual([{ type: "text", text: "hello there" }]);
+  });
+
+  it("attaches the local row under its floor without touching the server rows", () => {
+    const floorEntry = entry("400", [floor("401", "existing")]);
+    const attached = attachRailPendingReplies(floorEntry, [pending]);
+    expect(attached.subComments.map((item) => item.id)).toEqual(["401", pending.id]);
+    expect(attached.quotes).toBe(attached.subComments);
+    expect(floorEntry.subComments.map((item) => item.id)).toEqual(["401"]);
+    expect(attachRailPendingReplies(floorEntry, [])).toBe(floorEntry);
+  });
+
+  it("matches a local row against the echoed row by id or by author and text", () => {
+    const echoed = entry("400", [{ ...floor("500", "hello there"), user: { username: "u", userid: 77 } }]);
+    expect(railThreadHasPendingReply(echoed, pending)).toBe(true);
+    expect(railThreadHasPendingReply(echoed, { ...pending, text: "something else" })).toBe(false);
+    expect(railThreadHasPendingReply(entry("400"), pending)).toBe(false);
+    const byId = { ...pending, id: "500", text: "different text" };
+    expect(railThreadHasPendingReply(echoed, byId)).toBe(true);
+  });
+
+  it("does not treat a local row as its own echo", () => {
+    const attached = attachRailPendingReplies(entry("400"), [pending]);
+    expect(railThreadHasPendingReply(attached, pending)).toBe(false);
+  });
+
+  it("keeps only the local rows the site has not returned yet", () => {
+    const items = [entry("400", [{ ...floor("500", "hello there"), user: { username: "u", userid: 77 } }])];
+    expect(pruneRailPendingReplies(items, [pending])).toEqual([]);
+    expect(pruneRailPendingReplies(items, [pending, { ...pending, text: "second", id: RAIL_PENDING_ID_PREFIX + "4" }])).toHaveLength(1);
+    expect(pruneRailPendingReplies([entry("400")], [pending])).toEqual([pending]);
+    expect(pruneRailPendingReplies(items, [])).toEqual([]);
   });
 });
