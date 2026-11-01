@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.16.3**
+当前版本：**0.16.4**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -284,6 +284,8 @@ pointerdown → mousedown → pointerup → mouseup → click
 
 各平台的"深度思考 / 推理强度"是会话级状态，刷新或新建对话后常常回到默认值。脚本把它变成跨会话记忆。记录分两种形态，存进 `localStorage` 的 `ai_turbo_reasoning_memory`。Gemini 带账号槽位的路径（`/u/0`、`/u/1` 等）按 `hostname#uN` 分开存放，其余页面按主机名存放；读取时若当前账号还没有记录，会回退到旧版的主机名记录。
 
+腾讯元宝的模型选择由两个独立维度组成：模型（`Hy4 preview`、`Hy3`、`DeepSeek`）与模式（`快速回答`、`深度思考`、`专家模式`）。这两个维度存在 `localStorage` 的 `ai_turbo_yuanbao_selection`，结构为 `{ model?, mode?, ts? }`，按当前会话作用域存放并保留主机名读取回退；只改变其中一个维度时，另一个维度的记录保持不变。旧版把选项写进 `ai_turbo_reasoning_memory` 的元宝记录会在首次还原时迁移过来：模型文案归入 `model`，模式文案归入 `mode`，并补上当前模式下读到的另一维度。
+
 - `{ mode: "toggle", label, on }`：开关型控件（`深度思考`、`Thinking` 等）。
 - `{ mode: "choice", key, controlLabel, path, option, hint, resultLabel }`：选择型控件（Gemini 的模型 / 思考强度、ChatGPT 的推理等级）。`key` 优先取 `data-test-id` / `data-testid` / `id`，最后才用 `aria-label`；`path` 是从触发器到目标行经过的可见子菜单标题（如 `["Thinking level"]` 或 `["思考等级"]`）；`option` 是目标行的标题；`hint` 是同一行的说明；`controlLabel` 是点击前的可见文案；`resultLabel` 是选完后触发器上出现的文案。不记录任何固定等级词表。
 
@@ -300,6 +302,8 @@ pointerdown → mousedown → pointerup → mouseup → click
 4. **可见性**：面板开关下方显示当前状态（`未记录` / `控件 → 路径 / 选项` / `标签（开\|关）`），并可一键清除当前账号与旧版主机名记录。
 5. **边界**：平台未暴露开 / 关状态（没有 `aria-pressed`、`aria-checked`、`data-state` 或 active 类名）时只记录不还原，避免把用户的开关反向切掉；控件文案不随选择变化的平台只能靠"选项配对"路径记录。
 
+元宝的记录与还原使用独立分支（`data-thinking-mode-switcher-trigger` 触发器、`aria-label="选择模型"` 父行、`aria-label="模型列表"` 子菜单、`data-input-label="model"` 模式文案）。还原先选模型，等菜单回到主面板后再选模式，最后打开一次主面板核对两个维度并收起；模式文案与模型文案分开读取，模型选择不会覆盖模式记录。`Hy4 preview` 仅提供专家模式，若记录里是 `Hy4 preview + 快速回答` 这类不兼容组合，脚本会在打开菜单前停止还原并在状态行说明原因。面板状态行显示 `模型 + 模式`，清除按钮同时删除新的选择记录和旧的推理记录。
+
 面板开关「记住推理强度」控制整个功能，关闭后立即写入配置并停止轮询。
 
 ### 工具记忆
@@ -308,6 +312,7 @@ pointerdown → mousedown → pointerup → mouseup → click
 
 - **记录**：点击工具行后，在 120 / 320 / 700 / 1200ms 轮询输入框芯片，确认芯片的 `data-application-id` 与按钮一致后写入 `localStorage` 的 `ai_turbo_tool_memory`。点击芯片的移除按钮后，确认芯片消失再清空记录；未确认时保留原记录。
 - **恢复**：页面加载与 SPA 路由变化后轮询等待原子工具行出现，最多约 28 秒。已经有匹配芯片时不重复点击；否则先找内联按钮，再打开「工具 / 更多」菜单找 `role="menuitem"` 行。每次点击后按 150 / 400 / 800 / 1400ms 验证芯片，失败会重试，最多 6 次。由脚本打开的菜单会在结束时关闭，失败时也不会留在页面上。
+- **协调**：推理还原与工具还原共用一把互斥锁，推理优先。元宝存在待还原的模型 / 模式记录时，工具还原会等待推理还原结束再开始，避免两套弹层交叉开合；推理恢复因找不到触发器或超时退出时会释放锁。
 - **隔离**：原子工具行、芯片和它自己的菜单不会被当作推理控件，工具点击也不会写进推理记忆。
 - **兼容**：0.16.2 及更早版本按主机名保存的行标题集合仍可读取，首个标题会作为标签回退匹配；产生新记录时迁移到当前会话作用域并删除旧主机名记录。
 - **边界**：恢复依赖 `atomic-actions`、`selected-atomic-action` 与 `data-application-id`。溢出菜单是否与静态资源中的同层 `role="menu"` 结构一致尚未在真实页面复核，属于待确认项；站点改版后可能需要在工具行里重新选一次以刷新记录。
@@ -353,7 +358,7 @@ pointerdown → mousedown → pointerup → mouseup → click
 | `rememberReasoning` | boolean | true | 是否记住并在新对话中还原推理强度 |
 | `rememberTools` | boolean | true | 是否记住并在新话题中还原元宝工具选择 |
 
-悬浮仪表位置存储在 `ai_turbo_pill_pos`；推理强度记忆存放在 `ai_turbo_reasoning_memory`，Gemini 的 `/u/N` 路径按账号槽位分开，其他页面按主机名存放，并保留对旧主机名记录的读取回退；工具记忆存放在 `ai_turbo_tool_memory`，按当前会话作用域保存单个工具的 application id 与标签，并保留对 0.16.2 及更早主机名标签记录的读取回退；跨页交接暂存使用 `sessionStorage` 的 `ai_turbo_handoff_restore`。
+悬浮仪表位置存储在 `ai_turbo_pill_pos`；推理强度记忆存放在 `ai_turbo_reasoning_memory`，Gemini 的 `/u/N` 路径按账号槽位分开，其他页面按主机名存放，并保留对旧主机名记录的读取回退；元宝的模型与模式存放在 `ai_turbo_yuanbao_selection`（`{ model?, mode?, ts? }`，按当前会话作用域存放，保留主机名读取回退，并从旧的 `ai_turbo_reasoning_memory` 记录迁移）；工具记忆存放在 `ai_turbo_tool_memory`，按当前会话作用域保存单个工具的 application id 与标签，并保留对 0.16.2 及更早主机名标签记录的读取回退；跨页交接暂存使用 `sessionStorage` 的 `ai_turbo_handoff_restore`。
 
 ---
 
@@ -421,11 +426,19 @@ pointerdown → mousedown → pointerup → mouseup → click
 - AI 生成中若平台将发送按钮替换为"停止生成"按钮，脚本会通过 `isSendLikeButton` 的排除规则跳过；请等生成结束后再发送。
 - 一键交接的等待交接包上限为 **3 分钟**；模型回答极其冗长时可能触发超时，此时生成指令会被复制到剪贴板供手动重试。
 - 推理强度记忆的开关型控件依赖平台把开 / 关状态暴露在无障碍属性上；纯 class 切换的控件能识别 `active / selected / checked / is-on` 形式的类名，其余情况只记录不还原。选择型控件（如 Gemini 的模型 / 思考强度）不靠文案词表，触发器识别覆盖 `aria-expanded` / `aria-haspopup` 与 Angular Material / CDK 的自定义属性；选项行优先按单选语义（`aria-checked` / `aria-selected` / `role=menuitemradio`）识别，Gemini 这种只用 class 和选中图标的行也能配对。路径还原依赖每层子菜单有稳定的 `aria-controls` 与可见标题；触发文案无法唯一对应选项、且没有路径信息时，仍可能只记录不还原。页面刚打开、按钮尚未接上事件时点击不会生效，这类情况靠轮询重试（约 60 秒内），超时后需手动选择或刷新。
+- 元宝的模型 / 模式还原依赖 `data-thinking-mode-switcher-trigger`、`aria-label="选择模型"`、`aria-label="模型列表"` 与 `data-input-label="model"`。这些选择器与恢复流程由静态 DOM 构建的双层菜单测试覆盖，真实页面尚未复核；站点改版后可能出现只记录不还原，状态行会显示停止原因，重新在模型菜单里选择一次即可刷新记录。
 - 工具记忆依赖元宝原子工具行的 `atomic-actions`、选中芯片的 `selected-atomic-action` 与按钮上的 `data-application-id`；这些结构改版时，可能只记录不恢复。溢出菜单的按钮文案与容器层级来自静态资源，真实页面尚未复核，属于待确认项；脚本不会凭空选择菜单中不存在的工具。
 
 ---
 
 ## 版本记录
+
+### 0.16.4
+
+- **元宝模型与模式分开记录。** 模型选择与深度思考、专家模式等回答模式不再挤在同一条推理记录里，分别存入 `ai_turbo_yuanbao_selection` 的 `model` 与 `mode` 字段；只切换其中一个维度时另一个保持不变，状态行显示 `Hy3 + 深度思考` 这样的组合。旧的 `ai_turbo_reasoning_memory` 元宝记录会在首次还原时迁移，无需重新选择。
+- **还原按模型、模式顺序执行。** 先展开模型列表写入模型，等回到主面板后再点模式行，最后打开主面板核对两个维度并收起。`Hy4 preview` 只允许专家模式，遇到 `Hy4 preview + 快速回答` 之类的旧组合会在打开菜单前停止，并在状态行说明原因。
+- **推理与工具恢复互斥。** 两套恢复流程共用一把推理优先的锁；推理记录待还原时工具恢复等待，推理结束时释放锁，避免模型菜单与工具菜单交叉开合导致功能恢复失效。找不到模型触发器时最多等待约 10 秒并释放锁。
+- **测试覆盖双层模型菜单。** 定向测试用有状态的 `data-thinking-mode-switcher-trigger`、主面板与 `aria-label="模型列表"` 子菜单重建观察到的元宝结构，覆盖模型 / 模式互不覆盖、三种组合的还原顺序、旧记录迁移、不兼容组合、工具等待与清除按钮。
 
 ### 0.16.3
 

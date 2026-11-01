@@ -47,8 +47,8 @@ function mountLinkHost(iconMarkup: string): HTMLAnchorElement {
     '<nav class="nav">',
     '<div class="nav-links">',
     '<div id="' + NAV_ID + '" role="navigation">',
-    '<a class="hbu-nav-link is-active" data-nav="home" href="/" aria-label="首页" title="首页" aria-current="page">',
-    iconMarkup + "<span>首页</span>",
+    '<a class="hbu-nav-link is-active" data-nav="community" href="/app/bbs/home" aria-label="社区" title="社区" aria-current="page">',
+    iconMarkup + "<span>社区</span>",
     "</a>",
     "</div>",
     "</div>",
@@ -135,15 +135,15 @@ describe("navigation icon variants", () => {
 
   it("reads the static preference from the root class", () => {
     document.documentElement.classList.add(NAV_STATIC_CLASS);
-    expect(parseMarkup(navIconMarkupFor("home")).classList.contains("hbu-ico-anim")).toBe(false);
+    expect(parseMarkup(navIconMarkupFor("community")).classList.contains("hbu-ico-anim")).toBe(false);
     document.documentElement.classList.remove(NAV_STATIC_CLASS);
-    expect(parseMarkup(navIconMarkupFor("home")).classList.contains("hbu-ico-anim")).toBe(true);
+    expect(parseMarkup(navIconMarkupFor("community")).classList.contains("hbu-ico-anim")).toBe(true);
   });
 });
 
 describe("navigation icon preference", () => {
   it("swaps the mounted icons while preserving the anchors", () => {
-    const link = mountLinkHost(NAV_DYNAMIC_ICONS["home"] ?? "");
+    const link = mountLinkHost(NAV_DYNAMIC_ICONS["community"] ?? "");
     const click = vi.fn();
     link.addEventListener("click", click);
     link.focus();
@@ -152,12 +152,12 @@ describe("navigation icon preference", () => {
     expect(document.documentElement.classList.contains(NAV_STATIC_CLASS)).toBe(true);
     const staticIcon = link.querySelector(".hbu-nav-icon");
     expect(staticIcon?.classList.contains("hbu-ico-anim")).toBe(false);
-    expect(link.getAttribute("href")).toBe("/");
-    expect(link.getAttribute("aria-label")).toBe("首页");
-    expect(link.getAttribute("title")).toBe("首页");
+    expect(link.getAttribute("href")).toBe("/app/bbs/home");
+    expect(link.getAttribute("aria-label")).toBe("社区");
+    expect(link.getAttribute("title")).toBe("社区");
     expect(link.classList.contains("is-active")).toBe(true);
     expect(link.getAttribute("aria-current")).toBe("page");
-    expect(link.textContent).toBe("首页");
+    expect(link.textContent).toBe("社区");
     expect(document.activeElement).toBe(link);
     link.click();
     expect(click).toHaveBeenCalledTimes(1);
@@ -169,7 +169,7 @@ describe("navigation icon preference", () => {
   });
 
   it("does not swap an icon that already matches the preference", () => {
-    const link = mountLinkHost(NAV_STATIC_ICONS["home"] ?? "");
+    const link = mountLinkHost(NAV_STATIC_ICONS["community"] ?? "");
     const original = link.querySelector(".hbu-nav-icon");
     syncNavIconVariant(false);
     expect(link.querySelector(".hbu-nav-icon")).toBe(original);
@@ -181,13 +181,13 @@ describe("navigation icon preference", () => {
     mountTopNav();
     const host = document.getElementById(NAV_ID);
     expect(host).not.toBeNull();
-    expect(host?.querySelectorAll(".hbu-nav-icon")).toHaveLength(4);
+    expect(host?.querySelectorAll(".hbu-nav-icon")).toHaveLength(3);
     expect(host?.querySelectorAll(".hbu-nav-icon.hbu-ico-anim")).toHaveLength(0);
     expect(host?.querySelectorAll("path[pathLength]")).toHaveLength(0);
 
     document.documentElement.classList.remove(NAV_STATIC_CLASS);
     mountTopNav();
-    expect(host?.querySelectorAll(".hbu-nav-icon.hbu-ico-anim")).toHaveLength(4);
+    expect(host?.querySelectorAll(".hbu-nav-icon.hbu-ico-anim")).toHaveLength(3);
   });
 
   it("switches desktop rail icons tagged with a route", () => {
