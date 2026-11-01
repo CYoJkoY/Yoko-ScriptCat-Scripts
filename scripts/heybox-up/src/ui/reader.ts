@@ -6,9 +6,11 @@ import { EMBEDDED_MEDIA_SELECTOR, EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, ensureStyleE
 import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
 import { asRecord } from "../core/json";
 import { parseCompactCount } from "./desktop";
+import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
+import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, buildArticleCommentBody, buildDeleteCommentBody, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, holdRailPageCache, isOwnRailComment, railItemsHaveComment, readCreatedCommentId, resolveCommentPageProgress } from "./rail";
-import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailLinkInfo, RailSegment } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, holdRailPageCache, isOwnRailComment, railItemsHaveComment, readCreatedCommentId, resolveCommentPageProgress } from "./rail";
+import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
@@ -587,10 +589,14 @@ export const READER_CSS = `
     position: absolute;
     right: calc(100% + 10px);
     bottom: 92px;
-    width: 172px;
-    max-height: min(300px, 56dvh);
-    padding: 6px;
-    overflow-y: auto;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 248px;
+    max-width: calc(100vw - 84px);
+    max-height: min(420px, 64dvh);
+    padding: 10px;
     border: 1px solid var(--hbu-reader-float-border);
     border-radius: 14px;
     background: var(--hbu-reader-float);
@@ -599,26 +605,41 @@ export const READER_CSS = `
     backdrop-filter: blur(12px);
   }
   .hbu-reader-favour-menu[hidden] { display: none; }
-  .hbu-reader-favour-menu button {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    min-height: 36px;
-    padding: 7px 9px;
-    border: 0;
-    border-radius: 9px;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
+  .hbu-reader-favour-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .hbu-reader-favour-head > span { font-size: 13px; font-weight: 600; }
+  .hbu-reader-favour-close {
+    width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px;
+    background: transparent; color: inherit; font: inherit; font-size: 16px; line-height: 1; cursor: pointer;
   }
-  .hbu-reader-favour-menu button:hover { background: var(--hbu-reader-float-hover); }
-  .hbu-reader-favour-menu button svg, .hbu-reader-favour-menu button i { flex: none; width: 15px; height: 15px; }
-  .hbu-reader-favour-menu button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hbu-reader-favour-empty { padding: 10px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
+  .hbu-reader-favour-close:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-favour-status { min-height: 16px; font-size: 12px; line-height: 1.5; color: var(--hbu-reader-float-muted); }
+  .hbu-reader-favour-status[data-tone="error"] { color: var(--hbu-reader-danger); }
+  .hbu-reader-favour-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; }
+  .hbu-reader-favour-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .hbu-reader-favour-option:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-favour-option input { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--hbu-reader-accent); cursor: pointer; }
+  .hbu-reader-favour-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .hbu-reader-favour-tag {
+    flex: none; padding: 1px 5px; border-radius: 5px;
+    background: var(--hbu-reader-float-hover); color: var(--hbu-reader-float-muted); font-size: 10px;
+  }
+  .hbu-reader-favour-empty { padding: 8px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
+  .hbu-reader-favour-create { display: flex; gap: 6px; }
+  .hbu-reader-favour-create-input {
+    min-width: 0; flex: 1 1 auto; height: 30px; padding: 0 8px;
+    border: 1px solid var(--hbu-reader-float-border); border-radius: 8px; outline: none;
+    background: var(--hbu-reader-float-hover); color: inherit; font: inherit; font-size: 12px;
+  }
+  .hbu-reader-favour-create-input:focus { border-color: var(--hbu-reader-accent); }
+  .hbu-reader-favour-create-btn, .hbu-reader-favour-save {
+    height: 30px; padding: 0 12px; border: 1px solid var(--hbu-reader-float-border); border-radius: 8px;
+    background: var(--hbu-reader-float-hover); color: inherit; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .hbu-reader-favour-create-btn:hover:not(:disabled) { border-color: var(--hbu-reader-accent); }
+  .hbu-reader-favour-actions { display: flex; justify-content: flex-end; }
+  .hbu-reader-favour-save { min-width: 64px; border-color: var(--hbu-reader-accent); background: var(--hbu-reader-accent); color: #fff; font-weight: 600; }
+  .hbu-reader-favour-save:hover:not(:disabled) { filter: brightness(1.08); }
+  .hbu-reader-favour-menu :is(button, input):disabled { cursor: default; opacity: .5; }
   .hbu-reader-spacing-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; width: 196px; max-width: calc(100vw - 84px); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
   .hbu-reader-spacing-menu[hidden] { display: none; }
   .hbu-reader-spacing-label { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--hbu-reader-float-ink); }
@@ -668,10 +689,14 @@ export const READER_CSS = `
   .hbu-reader-comments-list { margin: 0; padding: 0; list-style: none; }
   .hbu-reader-comments-item { display: flex; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--hbu-reader-border); }
   .hbu-reader-comments-item:last-child { border-bottom: 0; }
-  .hbu-reader-comments-avatar { width: 34px; height: 34px; flex: none; border-radius: 50%; object-fit: cover; background: var(--hbu-reader-subtle); }
+  .hbu-reader-comments-avatar-link { display: block; width: 34px; height: 34px; flex: none; border-radius: 50%; }
+  .hbu-reader-comments-avatar-link--child { width: 24px; height: 24px; }
+  .hbu-reader-comments-avatar { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; background: var(--hbu-reader-subtle); }
   .hbu-reader-comments-main { min-width: 0; flex: 1 1 auto; }
   .hbu-reader-comments-who { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; }
   .hbu-reader-comments-name { font-size: 13px; font-weight: 650; }
+  .hbu-reader-comments-name-link { color: inherit; text-decoration: none; }
+  .hbu-reader-comments-name-link:hover .hbu-reader-comments-name { color: var(--hbu-reader-link); text-decoration: underline; }
   .hbu-reader-comments-time { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-text { margin: 4px 0 0; font-size: 14px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
   .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
@@ -680,9 +705,14 @@ export const READER_CSS = `
   .hbu-reader-comments-delete { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
   .hbu-reader-comments-delete:hover { color: var(--hbu-reader-danger); }
   .hbu-reader-comments-delete:disabled { opacity: .55; cursor: default; }
-  .hbu-reader-comments-children { margin: 9px 0 0; padding: 9px 0 0 10px; border-left: 2px solid var(--hbu-reader-border); list-style: none; }
-  .hbu-reader-comments-child { padding: 8px 0; border-top: 1px dashed var(--hbu-reader-border); }
-  .hbu-reader-comments-child:first-child { border-top: 0; padding-top: 0; }
+  .hbu-reader-comments-children { margin: 8px 0 0; padding: 0 0 0 13px; border-left: 1px solid var(--hbu-reader-border); list-style: none; }
+  .hbu-reader-comments-child { position: relative; padding: 7px 0 0; }
+  .hbu-reader-comments-child::before { content: ""; position: absolute; top: 19px; left: -13px; width: 11px; height: 1px; background: var(--hbu-reader-border); }
+  .hbu-reader-comments-child:first-child { padding-top: 0; }
+  .hbu-reader-comments-child:first-child::before { top: 12px; }
+  .hbu-reader-comments-child-row { display: flex; gap: 8px; align-items: flex-start; }
+  .hbu-reader-comments-child-main { min-width: 0; flex: 1 1 auto; }
+  .hbu-reader-comments-reply-to { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-child .hbu-reader-comments-text { margin-top: 2px; font-size: 13px; }
   .hbu-reader-comments-child .hbu-reader-comments-meta { margin-top: 3px; }
   .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
@@ -1543,12 +1573,6 @@ interface ReaderData {
   signature: string;
 }
 
-interface FavourFolderRecord {
-  name?: unknown;
-  folder_name?: unknown;
-  id?: unknown;
-}
-
 export function watchReader(navigation: PostNavigationController): void {
   if (!document.body) return;
   let host: HTMLElement | null = null;
@@ -1593,6 +1617,21 @@ export function watchReader(navigation: PostNavigationController): void {
   let articleCommentPublishedCount = 0;
   let actionBusy = false;
   let favourMenuBusy = false;
+  let favourSaveBusy = false;
+  let favourCreateBusy = false;
+  let favourCreateController: AbortController | null = null;
+  let favourSaveController: AbortController | null = null;
+  let favourPanelFolders: FavourFolder[] = [];
+  let favourPanelChecked: Set<string> = new Set<string>();
+  let favourPanelMembers: Set<string> = new Set<string>();
+  let favourPanelUnknown: Set<string> = new Set<string>();
+  let favourPanelFavourited = false;
+  let favourPanelStatus: HTMLDivElement | null = null;
+  let favourPanelList: HTMLDivElement | null = null;
+  let favourPanelSave: HTMLButtonElement | null = null;
+  let favourPanelCreateInput: HTMLInputElement | null = null;
+  let favourPanelCreateButton: HTMLButtonElement | null = null;
+  let favourPanelClose: HTMLButtonElement | null = null;
   let cyDialog: HTMLDivElement | null = null;
   let cyTextarea: HTMLTextAreaElement | null = null;
   let cySubmit: HTMLButtonElement | null = null;
@@ -1751,7 +1790,12 @@ export function watchReader(navigation: PostNavigationController): void {
 
   // The site can keep a valid session while the heybox_id cookie is still missing, so
   // every write takes the resolved account ID instead of reading the cookie directly.
-  const postReaderApi = async (path: string, body: Record<string, string>, accountId: unknown): Promise<unknown> => {
+  const postReaderApi = async (
+    path: string,
+    body: Record<string, string>,
+    accountId: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> => {
     if (typeof accountId !== "string" || accountId === "") throw new Error("请先登录小黑盒");
     const params = createApiParams(path);
     if (path === COMMENT_CREATE_API_PATH) {
@@ -1764,6 +1808,7 @@ export function watchReader(navigation: PostNavigationController): void {
       cache: "no-store",
       headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
       body: new URLSearchParams(body).toString(),
+      ...(signal !== undefined ? { signal } : {}),
     });
     if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
     const payload: unknown = await response.json();
@@ -1774,7 +1819,7 @@ export function watchReader(navigation: PostNavigationController): void {
     return data["result"];
   };
 
-  const fetchFavourFolders = async (signal: AbortSignal, accountId: unknown): Promise<FavourFolderRecord[]> => {
+  const fetchFavourFolders = async (signal: AbortSignal, accountId: unknown): Promise<FavourFolder[]> => {
     if (typeof accountId !== "string" || accountId === "") throw new Error("请先登录小黑盒");
     const path = "/bbs/app/profile/fav/folders";
     const query = new URLSearchParams({ ...createApiParams(path), heybox_id: accountId, target: "heybox_app" });
@@ -1791,9 +1836,109 @@ export function watchReader(navigation: PostNavigationController): void {
     if (data["status"] !== "ok") throw new Error(String(data["msg"] || "获取收藏夹失败"));
     const result = asRecord(data["result"]);
     const folders = result !== null && Array.isArray(result["folders"]) ? result["folders"] : [];
-    // The site payload is untyped in the original script; every field is read defensively below.
-    // Only the folders array is asserted; folder fields stay unknown and are read defensively.
-    return folders as FavourFolderRecord[];
+    // Only the folders array is asserted; every folder field is read defensively.
+    return normalizeFavourFolders(folders);
+  };
+
+  const FAVOUR_SCAN_PAGE_SIZE = 30;
+  const FAVOUR_SCAN_MAX_PAGES = 10;
+  const FAVOUR_SCAN_MAX_REQUESTS = 48;
+
+  // The observed site bundle does not send folder_id here, so per-folder
+  // filtering is unverified. A caller that cannot trust the filter marks the
+  // whole folder unknown instead of planning a removal.
+  const fetchFavourFolderLinks = async (
+    folderId: string,
+    offset: number,
+    accountId: string,
+    signal: AbortSignal,
+  ): Promise<{ linkIds: string[]; hasNext: boolean }> => {
+    const path = "/bbs/app/profile/fav/folder/v2/links";
+    const query = new URLSearchParams({
+      ...createApiParams(path),
+      heybox_id: accountId,
+      target: "heybox_app",
+      enable_new_style_collect: "1",
+      folder_id: folderId,
+      offset: String(offset),
+      limit: String(FAVOUR_SCAN_PAGE_SIZE),
+      dw: "660",
+    });
+    const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
+      credentials: "include",
+      cache: "no-store",
+      headers: { accept: "application/json" },
+      signal: signal,
+    });
+    if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
+    const payload: unknown = await response.json();
+    const data = asRecord(payload) ?? {};
+    if (data["status"] === "login") throw new Error("请先登录小黑盒");
+    if (data["status"] !== "ok") throw new Error(String(data["msg"] || "读取收藏夹失败"));
+    return readFavourFolderPage(data["result"]);
+  };
+
+  interface FavourFolderScan {
+    ids: Set<string>;
+    complete: boolean;
+  }
+
+  const scanFavourFolder = async (
+    folderId: string,
+    accountId: string,
+    signal: AbortSignal,
+    budget: { left: number },
+  ): Promise<FavourFolderScan> => {
+    const ids = new Set<string>();
+    let offset = 0;
+    for (let page = 0; page < FAVOUR_SCAN_MAX_PAGES; page += 1) {
+      if (budget.left <= 0) return { ids: ids, complete: false };
+      budget.left -= 1;
+      const result = await fetchFavourFolderLinks(folderId, offset, accountId, signal);
+      for (const id of result.linkIds) ids.add(id);
+      // A missing pagination flag can still accompany a full page. Only an
+      // empty or short page proves this folder was read to the end.
+      if (result.linkIds.length < FAVOUR_SCAN_PAGE_SIZE) return { ids: ids, complete: true };
+      offset += FAVOUR_SCAN_PAGE_SIZE;
+    }
+    return { ids: ids, complete: false };
+  };
+
+  const scanFavourMemberships = async (
+    folders: readonly FavourFolder[],
+    accountId: string,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    const scans = new Map<string, FavourFolderScan>();
+    const budget = { left: FAVOUR_SCAN_MAX_REQUESTS };
+    for (const folder of folders) {
+      try {
+        scans.set(folder.id, await scanFavourFolder(folder.id, accountId, signal, budget));
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        scans.set(folder.id, { ids: new Set<string>(), complete: false });
+      }
+    }
+    // Folders that all return the same list mean the server ignored folder_id.
+    // Such a duplicate answer says nothing about membership, so keep every
+    // checkbox as an add-only option and never remove from it.
+    const signatures = new Set<string>();
+    let completeScans = 0;
+    for (const folder of folders) {
+      const scan = scans.get(folder.id);
+      if (scan === undefined || !scan.complete) continue;
+      completeScans += 1;
+      signatures.add(Array.from(scan.ids).sort().join(","));
+    }
+    const filterSuspicious = folders.length >= 2 && completeScans >= 2 && signatures.size === 1;
+    for (const folder of folders) {
+      const scan = scans.get(folder.id);
+      if (scan === undefined || !scan.complete || filterSuspicious) {
+        favourPanelUnknown.add(folder.id);
+        continue;
+      }
+      if (scan.ids.has(articleId)) favourPanelMembers.add(folder.id);
+    }
   };
 
   // A CY or comment published while the first tree page is in flight is missing from
@@ -1888,51 +2033,44 @@ export function watchReader(navigation: PostNavigationController): void {
     }
   };
 
-  const toggleFavour = async (folderId?: unknown): Promise<void> => {
-    if (actionBusy || articleId === "") return;
-    actionBusy = true;
-    const targetId = articleId;
-    const generation = readerGeneration;
-    try {
-      const userId = await resolveHeyboxId();
-      if (articleId !== targetId || readerGeneration !== generation) return;
-      if (userId === "") throw new Error("请先登录小黑盒");
-      const counts = readCounts();
-      const current = linkState === null ? await loadLinkState(userId) : linkState;
-      if (articleId !== targetId || readerGeneration !== generation) return;
-      const on = current !== null && current.isFavour;
-      const base = current === null ? parseCompactCount(counts.favour) : current.favourCount;
-      await postReaderApi("/bbs/app/link/favour", {
-        favour_type: on ? "2" : "1",
-        link_id: targetId,
-        userid: userId,
-        folder_id: on ? "" : String(folderId || ""),
-      }, userId);
-      if (articleId !== targetId || readerGeneration !== generation) return;
-      linkState = {
-        ...(current || {
-          isAward: false,
-          isFavour: false,
-          awardCount: parseCompactCount(counts.like),
-          favourCount: base,
-          commentCount: parseCompactCount(counts.comment),
-          cyCount: cyPublishedCount,
-        }),
-        isFavour: !on,
-        favourCount: Math.max(0, base + (on ? -1 : 1)),
-      };
-      closeFavourMenu();
-      syncActionStates();
-      showToast(on ? "已取消收藏" : "已收藏");
-    } catch (error) {
-      if (articleId === targetId && readerGeneration === generation) {
-        showToast(error instanceof Error ? error.message : "收藏失败");
-      }
-    } finally {
-      if (articleId === targetId && readerGeneration === generation) {
-        actionBusy = false;
-      }
+  const currentFavourPlan = (): FavourChangePlan => planFavourChanges({
+    favourited: favourPanelFavourited,
+    folderIds: favourPanelFolders.map((folder) => folder.id),
+    checkedIds: Array.from(favourPanelChecked),
+    memberIds: Array.from(favourPanelMembers),
+    unknownIds: Array.from(favourPanelUnknown),
+  });
+
+  // A folder write only moves the favourite count on the first add or the
+  // last removal, so a multi-folder save still changes the number once.
+  const applyFavourState = (next: boolean): void => {
+    if (linkState === null || linkState.isFavour === next) return;
+    linkState = {
+      ...linkState,
+      isFavour: next,
+      favourCount: Math.max(0, linkState.favourCount + (next ? 1 : -1)),
+    };
+    syncActionStates();
+  };
+
+  const setFavourStatus = (message: string, error = false): void => {
+    if (favourPanelStatus === null) return;
+    favourPanelStatus.textContent = message;
+    if (error) favourPanelStatus.dataset["tone"] = "error";
+    else delete favourPanelStatus.dataset["tone"];
+  };
+
+  const refreshFavourControls = (): void => {
+    if (favourPanel === null) return;
+    const busy = favourLoadController !== null || favourSaveBusy || favourCreateBusy;
+    for (const control of favourPanel.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) {
+      control.disabled = busy;
     }
+    if (favourPanelSave !== null) {
+      const plan = currentFavourPlan();
+      favourPanelSave.disabled = busy || !planHasFavourChange(plan);
+    }
+    if (favourPanelClose !== null) favourPanelClose.disabled = favourSaveBusy;
   };
 
   const syncActionStates = (): void => {
@@ -2007,12 +2145,51 @@ export function watchReader(navigation: PostNavigationController): void {
     window.setTimeout(syncActionStates, 1200);
   };
 
-  const closeFavourMenu = (): void => {
+  const closeFavourMenu = (focusButton = false, force = false): void => {
+    // Writes in flight keep the dialog open; closing it early would hide a
+    // partial result and leave the user without feedback.
+    if ((favourSaveBusy || favourCreateBusy) && !force) return;
+    const wasOpen = favourPanel !== null && !favourPanel.hidden;
     favourLoadController?.abort();
     favourLoadController = null;
-    if (favourPanel === null) return;
-    favourPanel.hidden = true;
-    favourButton?.setAttribute("aria-expanded", "false");
+    if (favourPanel !== null) {
+      favourPanel.hidden = true;
+      favourButton?.setAttribute("aria-expanded", "false");
+    }
+    favourPanelFolders = [];
+    favourPanelChecked = new Set<string>();
+    favourPanelMembers = new Set<string>();
+    favourPanelUnknown = new Set<string>();
+    favourPanelFavourited = false;
+    if (focusButton && wasOpen) favourButton?.focus({ preventScroll: true });
+  };
+
+  // A reader rebuild drops the whole rail, including the dialog. Abort in-flight
+  // work and clear every dialog reference so a stale save cannot keep the new
+  // article's favourite button locked or paint into detached nodes.
+  const resetFavourPanel = (): void => {
+    favourLoadController?.abort();
+    favourLoadController = null;
+    favourSaveController?.abort();
+    favourSaveController = null;
+    favourCreateController?.abort();
+    favourCreateController = null;
+    favourMenuBusy = false;
+    favourSaveBusy = false;
+    favourCreateBusy = false;
+    favourPanelFolders = [];
+    favourPanelChecked = new Set<string>();
+    favourPanelMembers = new Set<string>();
+    favourPanelUnknown = new Set<string>();
+    favourPanelFavourited = false;
+    favourPanel = null;
+    favourPanelStatus = null;
+    favourPanelList = null;
+    favourPanelSave = null;
+    favourPanelCreateInput = null;
+    favourPanelCreateButton = null;
+    favourPanelClose = null;
+    favourButton = null;
   };
   document.addEventListener("pointerdown", (event) => {
     if (favourPanel === null || favourPanel.hidden) return;
@@ -2095,10 +2272,344 @@ export function watchReader(navigation: PostNavigationController): void {
     spacingInput.focus({ preventScroll: true });
   };
 
+  const ensureFavourPanel = (rail: HTMLElement): HTMLDivElement => {
+    if (favourPanel === null) {
+      const panel = document.createElement("div");
+      panel.className = "hbu-reader-favour-menu";
+      panel.hidden = true;
+      panel.setAttribute("role", "dialog");
+      panel.setAttribute("aria-label", "收藏到收藏夹");
+      const head = document.createElement("div");
+      head.className = "hbu-reader-favour-head";
+      const title = document.createElement("span");
+      title.textContent = "收藏到收藏夹";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "hbu-reader-favour-close";
+      close.setAttribute("aria-label", "关闭收藏夹面板");
+      close.textContent = "×";
+      close.addEventListener("click", () => closeFavourMenu(true));
+      head.append(title, close);
+      const status = document.createElement("div");
+      status.className = "hbu-reader-favour-status";
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      const list = document.createElement("div");
+      list.className = "hbu-reader-favour-list";
+      list.setAttribute("role", "group");
+      list.setAttribute("aria-label", "收藏夹");
+      const create = document.createElement("div");
+      create.className = "hbu-reader-favour-create";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "hbu-reader-favour-create-input";
+      input.maxLength = 30;
+      input.placeholder = "新建收藏夹";
+      input.setAttribute("aria-label", "新收藏夹名称");
+      const createButton = document.createElement("button");
+      createButton.type = "button";
+      createButton.className = "hbu-reader-favour-create-btn";
+      createButton.textContent = "创建";
+      createButton.addEventListener("click", () => void createFavourFolder());
+      input.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        void createFavourFolder();
+      });
+      create.append(input, createButton);
+      const actions = document.createElement("div");
+      actions.className = "hbu-reader-favour-actions";
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "hbu-reader-favour-save";
+      save.textContent = "保存";
+      save.addEventListener("click", () => void saveFavourChanges());
+      actions.append(save);
+      panel.append(head, status, list, create, actions);
+      rail.append(panel);
+      favourPanel = panel;
+      favourPanelStatus = status;
+      favourPanelList = list;
+      favourPanelSave = save;
+      favourPanelCreateInput = input;
+      favourPanelCreateButton = createButton;
+      favourPanelClose = close;
+    }
+    if (favourPanel.parentNode !== rail) rail.append(favourPanel);
+    return favourPanel;
+  };
+
+  const renderFavourFolderList = (): void => {
+    if (favourPanelList === null) return;
+    const list = favourPanelList;
+    if (favourPanelFolders.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "hbu-reader-favour-empty";
+      empty.textContent = "还没有收藏夹，可在下方新建";
+      list.replaceChildren(empty);
+      refreshFavourControls();
+      return;
+    }
+    const rows: HTMLElement[] = [];
+    for (const folder of favourPanelFolders) {
+      const option = document.createElement("label");
+      option.className = "hbu-reader-favour-option";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = folder.id;
+      input.checked = favourPanelChecked.has(folder.id);
+      input.addEventListener("change", () => {
+        if (input.checked) favourPanelChecked.add(folder.id);
+        else favourPanelChecked.delete(folder.id);
+        refreshFavourControls();
+      });
+      const name = document.createElement("span");
+      name.className = "hbu-reader-favour-name";
+      name.textContent = folder.name;
+      name.title = folder.name;
+      option.append(input, name);
+      if (favourPanelUnknown.has(folder.id)) {
+        const tag = document.createElement("span");
+        tag.className = "hbu-reader-favour-tag";
+        tag.textContent = "待核对";
+        tag.title = "未能读取该收藏夹的收藏状态，取消勾选不会移除";
+        option.append(tag);
+      }
+      rows.push(option);
+    }
+    list.replaceChildren(...rows);
+    refreshFavourControls();
+  };
+
+  const createFavourFolder = async (): Promise<void> => {
+    if (favourPanelCreateInput === null || favourPanel === null) return;
+    if (favourCreateBusy || favourSaveBusy || favourLoadController !== null || articleId === "") return;
+    const name = favourPanelCreateInput.value.trim();
+    if (name === "") {
+      setFavourStatus("请输入收藏夹名称", true);
+      favourPanelCreateInput.focus({ preventScroll: true });
+      return;
+    }
+    const targetId = articleId;
+    const generation = readerGeneration;
+    const previousIds = new Set(favourPanelFolders.map((folder) => folder.id));
+    favourCreateBusy = true;
+    const controller = new AbortController();
+    favourCreateController = controller;
+    refreshFavourControls();
+    setFavourStatus("正在创建收藏夹…");
+    let message = "";
+    let created: FavourFolder | null = null;
+    try {
+      const accountId = await resolveHeyboxId();
+      if (accountId === "") throw new Error("请先登录小黑盒");
+      const result = await postReaderApi("/bbs/app/profile/fav/folder/add", { name: name }, accountId, controller.signal);
+      if (articleId !== targetId || readerGeneration !== generation || favourCreateController !== controller) return;
+      const createdId = readFavourFolderId(result);
+      const loadController = new AbortController();
+      favourLoadController = loadController;
+      let folders: FavourFolder[];
+      try {
+        folders = await fetchFavourFolders(loadController.signal, accountId);
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        folders = favourPanelFolders.slice();
+      } finally {
+        if (favourLoadController === loadController) favourLoadController = null;
+      }
+      if (articleId !== targetId || readerGeneration !== generation || favourCreateController !== controller) return;
+      let id = createdId;
+      if (id === "") {
+        const fresh = folders.find((folder) => !previousIds.has(folder.id) && folder.name === name);
+        if (fresh !== undefined) id = fresh.id;
+      }
+      favourPanelFolders = folders;
+      if (id !== "") {
+        created = { id: id, name: name };
+        if (!favourPanelFolders.some((folder) => folder.id === id)) {
+          favourPanelFolders = favourPanelFolders.concat([created]);
+        }
+        favourPanelChecked.add(id);
+        favourPanelMembers.delete(id);
+        favourPanelUnknown.delete(id);
+        message = "已创建收藏夹「" + name + "」，勾选后保存";
+      } else {
+        message = "已创建收藏夹，请重新打开面板后勾选";
+      }
+      if (favourPanelCreateInput !== null) favourPanelCreateInput.value = "";
+    } catch (error) {
+      if (isAbortError(error)) return;
+      setFavourStatus("创建收藏夹失败：" + (error instanceof Error ? error.message : "请稍后重试"), true);
+    } finally {
+      if (favourCreateController === controller) {
+        favourCreateController = null;
+        favourCreateBusy = false;
+        refreshFavourControls();
+      }
+    }
+    if (articleId !== targetId || readerGeneration !== generation) return;
+    renderFavourFolderList();
+    if (message !== "") setFavourStatus(message);
+  };
+
+  const saveFavourChanges = async (): Promise<void> => {
+    if (favourSaveBusy || favourCreateBusy || favourMenuBusy || articleId === "") return;
+    if (favourPanel === null || favourLoadController !== null) return;
+    const plan = currentFavourPlan();
+    if (!favourPanelFavourited && favourPanelChecked.size === 0) {
+      setFavourStatus("请至少选择一个收藏夹", true);
+      return;
+    }
+    if (!planHasFavourChange(plan)) {
+      setFavourStatus(favourPanelUnknown.size > 0
+        ? "没有可保存的变更，部分收藏夹未核对"
+        : "没有需要保存的变更");
+      return;
+    }
+    const targetId = articleId;
+    const generation = readerGeneration;
+    favourSaveBusy = true;
+    const controller = new AbortController();
+    favourSaveController = controller;
+    refreshFavourControls();
+    setFavourStatus("正在保存…");
+    const appliedAdd: string[] = [];
+    const appliedRemove: string[] = [];
+    let removeAll = false;
+    let failure = "";
+    try {
+      const userId = await resolveHeyboxId();
+      if (userId === "") throw new Error("请先登录小黑盒");
+      // Adds run before removals so a failed request never leaves the link
+      // unfavourited while the reader still shows it as favourited.
+      for (const id of plan.addIds) {
+        await postReaderApi("/bbs/app/link/favour", {
+          favour_type: "1",
+          link_id: targetId,
+          userid: userId,
+          folder_id: id,
+        }, userId, controller.signal);
+        appliedAdd.push(id);
+      }
+      if (plan.removeAll) {
+        await postReaderApi("/bbs/app/link/favour", {
+          favour_type: "2",
+          link_id: targetId,
+          userid: userId,
+          folder_id: "",
+        }, userId, controller.signal);
+        removeAll = true;
+      } else {
+        for (const id of plan.removeIds) {
+          await postReaderApi("/bbs/app/link/favour", {
+            favour_type: "2",
+            link_id: targetId,
+            userid: userId,
+            folder_id: id,
+          }, userId, controller.signal);
+          appliedRemove.push(id);
+        }
+      }
+    } catch (error) {
+      failure = error instanceof Error ? error.message : "收藏保存失败";
+    } finally {
+      if (favourSaveController === controller) {
+        favourSaveController = null;
+        favourSaveBusy = false;
+      }
+    }
+    if (articleId !== targetId || readerGeneration !== generation) return;
+    const appliedPlan: FavourChangePlan = {
+      addIds: appliedAdd,
+      removeIds: appliedRemove,
+      removeAll: removeAll,
+      unknownIds: plan.unknownIds,
+    };
+    const nextFavourited = resolveFavourOutcome(favourPanelFavourited, Array.from(favourPanelMembers), appliedPlan);
+    const wasFavourited = favourPanelFavourited;
+    if (nextFavourited !== wasFavourited) applyFavourState(nextFavourited);
+    if (failure !== "") {
+      for (const id of appliedAdd) {
+        favourPanelChecked.add(id);
+        favourPanelMembers.add(id);
+        favourPanelUnknown.delete(id);
+      }
+      for (const id of appliedRemove) {
+        favourPanelChecked.delete(id);
+        favourPanelMembers.delete(id);
+      }
+      favourPanelFavourited = nextFavourited;
+      renderFavourFolderList();
+      setFavourStatus("保存失败：" + failure + "。已完成的修改已保留，可再次保存。", true);
+      return;
+    }
+    closeFavourMenu(true);
+    showToast(wasFavourited ? "已更新收藏夹" : "已收藏");
+  };
+
+  const showFavourPanel = async (rail: HTMLElement, button: HTMLButtonElement, accountId: string): Promise<void> => {
+    ensureFavourPanel(rail);
+    if (favourPanel === null) return;
+    favourButton = button;
+    favourPanel.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    favourPanelFolders = [];
+    favourPanelChecked = new Set<string>();
+    favourPanelMembers = new Set<string>();
+    favourPanelUnknown = new Set<string>();
+    favourPanelFavourited = linkState !== null && linkState.isFavour;
+    renderFavourFolderList();
+    setFavourStatus("正在读取收藏夹…");
+    favourLoadController?.abort();
+    const controller = new AbortController();
+    favourLoadController = controller;
+    refreshFavourControls();
+    favourPanelClose?.focus({ preventScroll: true });
+    let folders: FavourFolder[];
+    try {
+      folders = await fetchFavourFolders(controller.signal, accountId);
+    } catch (error) {
+      if (isAbortError(error) || favourPanel === null || favourLoadController !== controller) return;
+      favourLoadController = null;
+      refreshFavourControls();
+      setFavourStatus(error instanceof Error ? error.message : "获取收藏夹失败", true);
+      return;
+    }
+    if (favourPanel === null || favourLoadController !== controller) return;
+    favourPanelFolders = folders;
+    renderFavourFolderList();
+    if (folders.length === 0) {
+      favourLoadController = null;
+      refreshFavourControls();
+      setFavourStatus("还没有收藏夹，可在下方新建");
+      return;
+    }
+    if (!favourPanelFavourited) {
+      favourLoadController = null;
+      refreshFavourControls();
+      setFavourStatus("勾选要收藏到的收藏夹，然后保存");
+      return;
+    }
+    setFavourStatus("正在核对收藏夹…");
+    try {
+      await scanFavourMemberships(folders, accountId, controller.signal);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        for (const folder of folders) favourPanelUnknown.add(folder.id);
+      }
+    }
+    if (favourPanel === null || favourLoadController !== controller) return;
+    favourLoadController = null;
+    renderFavourFolderList();
+    setFavourStatus(favourPanelUnknown.size > 0
+      ? "部分收藏夹未能核对，未勾选的不会移除"
+      : "勾选加入，取消勾选移除，然后保存");
+  };
+
   const openFavourMenu = async (rail: HTMLElement, button: HTMLButtonElement): Promise<void> => {
-    if (favourMenuBusy) return;
+    if (favourMenuBusy || favourSaveBusy) return;
     if (favourPanel !== null && !favourPanel.hidden) {
-      closeFavourMenu();
+      closeFavourMenu(true);
       return;
     }
     closeSpacingMenu();
@@ -2108,71 +2619,15 @@ export function watchReader(navigation: PostNavigationController): void {
     try {
       const accountId = await resolveHeyboxId();
       if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
-      if (linkState === null) await loadLinkState(accountId);
-      if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
-      if (linkState !== null && linkState.isFavour) {
-        void toggleFavour();
-        return;
-      }
       if (accountId === "") {
         showToast("请先登录小黑盒");
         return;
       }
+      if (linkState === null) await loadLinkState(accountId);
+      if (articleId !== targetId || readerGeneration !== generation || !rail.isConnected || host === null) return;
       await showFavourPanel(rail, button, accountId);
     } finally {
       favourMenuBusy = false;
-    }
-  };
-
-  const showFavourPanel = async (rail: HTMLElement, button: HTMLButtonElement, accountId: string): Promise<void> => {
-    if (favourPanel === null) {
-      favourPanel = document.createElement("div");
-      favourPanel.className = "hbu-reader-favour-menu";
-      favourPanel.setAttribute("role", "menu");
-      favourPanel.setAttribute("aria-label", "选择收藏夹");
-      rail.append(favourPanel);
-    }
-    favourButton = button;
-    favourPanel.hidden = false;
-    button.setAttribute("aria-expanded", "true");
-    const status = document.createElement("div");
-    status.className = "hbu-reader-favour-empty";
-    status.textContent = "正在读取收藏夹…";
-    favourPanel.replaceChildren(status);
-    favourLoadController?.abort();
-    const controller = new AbortController();
-    favourLoadController = controller;
-    try {
-      const folders = await fetchFavourFolders(controller.signal, accountId);
-      if (favourPanel === null || favourLoadController !== controller) return;
-      favourLoadController = null;
-      if (folders.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "hbu-reader-favour-empty";
-        empty.textContent = "暂无收藏夹，请先在站点创建";
-        favourPanel.replaceChildren(empty);
-        return;
-      }
-      favourPanel.replaceChildren(...folders.map((folder) => {
-        const proxy = document.createElement("button");
-        proxy.type = "button";
-        proxy.setAttribute("role", "menuitem");
-        proxy.textContent = String(folder.name || folder.folder_name || "收藏夹");
-        proxy.title = proxy.textContent;
-        proxy.addEventListener("click", () => {
-          void toggleFavour(folder.id);
-        });
-        return proxy;
-      }));
-    } catch (error) {
-      if (isAbortError(error) || favourPanel === null || favourLoadController !== controller) return;
-      favourLoadController = null;
-      const empty = document.createElement("div");
-      empty.className = "hbu-reader-favour-empty";
-      empty.textContent = error instanceof Error ? error.message : "获取收藏夹失败";
-      favourPanel.replaceChildren(empty);
-    } finally {
-      if (favourLoadController === controller) favourLoadController = null;
     }
   };
 
@@ -2367,24 +2822,70 @@ export function watchReader(navigation: PostNavigationController): void {
     return remove;
   };
 
-  const createReaderCommentItem = (comment: RailCommentEntry): HTMLLIElement => {
-    const item = document.createElement("li");
-    item.className = "hbu-reader-comments-item";
-    item.setAttribute("role", "listitem");
+  const readerCommentProfileHref = (userId: string): string => "/app/user/profile/" + encodeURIComponent(userId);
+
+  const createReaderCommentAvatar = (comment: RailComment, small: boolean): HTMLElement => {
     const avatar = document.createElement("img");
     avatar.className = "hbu-reader-comments-avatar";
     avatar.alt = "";
     avatar.loading = "lazy";
     avatar.referrerPolicy = "no-referrer";
     if (comment.avatar !== "") avatar.src = comment.avatar;
+    // The wrapper owns the fixed avatar size, so a comment without a profile
+    // link keeps the same 34px or 24px box as a linked avatar.
+    const wrapperClass = "hbu-reader-comments-avatar-link" + (small ? " hbu-reader-comments-avatar-link--child" : "");
+    if (comment.userId === "") {
+      const span = document.createElement("span");
+      span.className = wrapperClass;
+      span.append(avatar);
+      return span;
+    }
+    const link = document.createElement("a");
+    link.className = wrapperClass;
+    link.href = readerCommentProfileHref(comment.userId);
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.setAttribute("aria-label", "查看 " + comment.name + " 的主页");
+    link.title = "查看 " + comment.name + " 的主页";
+    link.append(avatar);
+    return link;
+  };
+
+  const createReaderCommentName = (comment: RailComment): HTMLElement => {
+    const name = document.createElement("span");
+    name.className = "hbu-reader-comments-name";
+    name.textContent = comment.name;
+    if (comment.userId === "") return name;
+    const link = document.createElement("a");
+    link.className = "hbu-reader-comments-name-link";
+    link.href = readerCommentProfileHref(comment.userId);
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.setAttribute("aria-label", "查看 " + comment.name + " 的主页");
+    link.title = comment.name + " 的主页";
+    link.append(name);
+    return link;
+  };
+
+  // A hidden CY node takes its whole branch with it, so a reply is never shown
+  // without the comment it answers.
+  const filterReaderCommentThread = (
+    nodes: readonly RailCommentThreadNode[],
+    hideCy: boolean,
+  ): RailCommentThreadNode[] => nodes
+    .filter((node) => !hideCy || node.isCy !== true)
+    .map((node) => ({ ...node, children: filterReaderCommentThread(node.children, hideCy) }));
+
+  const createReaderCommentItem = (comment: RailCommentEntry): HTMLLIElement => {
+    const item = document.createElement("li");
+    item.className = "hbu-reader-comments-item";
+    item.setAttribute("role", "listitem");
+    const avatar = createReaderCommentAvatar(comment, false);
     const main = document.createElement("div");
     main.className = "hbu-reader-comments-main";
     const who = document.createElement("div");
     who.className = "hbu-reader-comments-who";
-    const name = document.createElement("span");
-    name.className = "hbu-reader-comments-name";
-    name.textContent = comment.name;
-    who.append(name);
+    who.append(createReaderCommentName(comment));
     if (comment.createAt > 0) {
       const time = document.createElement("span");
       time.className = "hbu-reader-comments-time";
@@ -2415,9 +2916,7 @@ export function watchReader(navigation: PostNavigationController): void {
     const deleteButton = createReaderCommentDeleteButton(comment);
     if (deleteButton !== null) meta.append(deleteButton);
     main.append(meta);
-    const subComments = Array.isArray(comment.subComments) ? comment.subComments : [];
-    const hideCy = readHideCyPreference();
-    const visibleChildren = subComments.filter((child) => !hideCy || child.isCy !== true);
+    const visibleChildren = filterReaderCommentThread(buildRailCommentTree(comment), readHideCyPreference());
     if (visibleChildren.length > 0) {
       const children = document.createElement("ul");
       children.className = "hbu-reader-comments-children";
@@ -2428,16 +2927,25 @@ export function watchReader(navigation: PostNavigationController): void {
     return item;
   };
 
-  const createReaderCommentChild = (child: RailComment, parent: RailCommentEntry): HTMLLIElement => {
+  const createReaderCommentChild = (child: RailCommentThreadNode, parent: RailComment): HTMLLIElement => {
     const item = document.createElement("li");
     item.className = "hbu-reader-comments-child";
     item.setAttribute("role", "listitem");
+    const avatar = createReaderCommentAvatar(child, true);
+    const main = document.createElement("div");
+    main.className = "hbu-reader-comments-child-main";
     const who = document.createElement("div");
     who.className = "hbu-reader-comments-who";
-    const name = document.createElement("span");
-    name.className = "hbu-reader-comments-name";
-    name.textContent = child.name;
-    who.append(name);
+    who.append(createReaderCommentName(child));
+    // replyName is the author the server says this reply answers. Fall back to
+    // the resolved parent author when the payload omits it.
+    const replyTo = child.replyName !== "" ? child.replyName : parent.name;
+    if (replyTo !== "") {
+      const hint = document.createElement("span");
+      hint.className = "hbu-reader-comments-reply-to";
+      hint.textContent = "回复 @" + replyTo;
+      who.append(hint);
+    }
     if (child.createAt > 0) {
       const time = document.createElement("span");
       time.className = "hbu-reader-comments-time";
@@ -2449,15 +2957,36 @@ export function watchReader(navigation: PostNavigationController): void {
     fillReaderCommentBody(text, child.body);
     const actions = document.createElement("div");
     actions.className = "hbu-reader-comments-meta";
+    if (child.likes > 0) {
+      const likes = document.createElement("span");
+      likes.textContent = "赞 " + child.likes;
+      actions.append(likes);
+    }
+    if (child.replies > 0) {
+      const replies = document.createElement("span");
+      replies.textContent = child.replies + " 条回复";
+      actions.append(replies);
+    }
     const reply = createReaderReplyButton({
       id: child.id !== "" ? child.id : parent.id,
-      rootId: child.rootId !== "" ? child.rootId : parent.id,
+      rootId: child.rootId !== "" ? child.rootId : parent.rootId !== "" ? parent.rootId : parent.id,
       name: child.name,
     });
     actions.append(reply);
     const deleteButton = createReaderCommentDeleteButton(child);
     if (deleteButton !== null) actions.append(deleteButton);
-    item.append(who, text, actions);
+    main.append(who, text, actions);
+    const visibleChildren = filterReaderCommentThread(child.children, readHideCyPreference());
+    if (visibleChildren.length > 0) {
+      const children = document.createElement("ul");
+      children.className = "hbu-reader-comments-children";
+      for (const nested of visibleChildren) children.append(createReaderCommentChild(nested, child));
+      main.append(children);
+    }
+    const row = document.createElement("div");
+    row.className = "hbu-reader-comments-child-row";
+    row.append(avatar, main);
+    item.append(row);
     return item;
   };
 
@@ -2542,14 +3071,38 @@ export function watchReader(navigation: PostNavigationController): void {
     return true;
   };
 
+  const collectReaderCommentSubtree = (
+    nodes: readonly RailCommentThreadNode[],
+    commentId: string,
+    removed: Set<string>,
+  ): boolean => {
+    for (const node of nodes) {
+      if (node.id === commentId) {
+        const collectAll = (branch: readonly RailCommentThreadNode[]): void => {
+          for (const member of branch) {
+            if (member.id !== "") removed.add(member.id);
+            collectAll(member.children);
+          }
+        };
+        collectAll([node]);
+        return true;
+      }
+      if (collectReaderCommentSubtree(node.children, commentId, removed)) return true;
+    }
+    return false;
+  };
+
   // A delete keeps its row off screen while page one is re-read, so the site
-  // echoing the deleted floor back for a moment does not resurrect it.
+  // echoing the deleted floor back for a moment does not resurrect it. Nested
+  // replies of a deleted comment go with it instead of resurfacing as orphans.
   const withoutCommentId = (items: readonly RailCommentEntry[], commentId: string): RailCommentEntry[] => {
     if (commentId === "") return items.slice();
     const next: RailCommentEntry[] = [];
     for (const entry of items) {
       if (entry.id === commentId) continue;
-      const children = entry.subComments.filter((child) => child.id !== commentId);
+      const removed = new Set<string>();
+      collectReaderCommentSubtree(buildRailCommentTree(entry), commentId, removed);
+      const children = entry.subComments.filter((child) => !removed.has(child.id));
       if (children.length === entry.subComments.length) {
         next.push(entry);
         continue;
@@ -2751,12 +3304,47 @@ export function watchReader(navigation: PostNavigationController): void {
     }
   };
 
+  const findReaderCommentNode = (
+    nodes: readonly RailCommentThreadNode[],
+    commentId: string,
+  ): RailCommentThreadNode | null => {
+    for (const node of nodes) {
+      if (node.id === commentId) return node;
+      const nested = findReaderCommentNode(node.children, commentId);
+      if (nested !== null) return nested;
+    }
+    return null;
+  };
+
+  // Walks the resolved tree, so a grandchild reply is reachable just like a
+  // direct reply and its own ownership check can run before the delete write.
   const readReaderCommentById = (commentId: string): RailComment | null => {
     for (const entry of commentState.items) {
       if (entry.id === commentId) return entry;
-      for (const child of entry.subComments) {
-        if (child.id === commentId) return child;
+      const nested = findReaderCommentNode(buildRailCommentTree(entry), commentId);
+      if (nested !== null) return nested;
+    }
+    return null;
+  };
+
+  const collectReaderThreadIds = (
+    nodes: readonly RailCommentThreadNode[],
+    commentId: string,
+  ): Set<string> | null => {
+    for (const node of nodes) {
+      if (node.id === commentId) {
+        const ids = new Set<string>();
+        const collect = (list: readonly RailCommentThreadNode[]): void => {
+          for (const member of list) {
+            if (member.id !== "") ids.add(member.id);
+            collect(member.children);
+          }
+        };
+        collect([node]);
+        return ids;
       }
+      const nested = collectReaderThreadIds(node.children, commentId);
+      if (nested !== null) return nested;
     }
     return null;
   };
@@ -2774,11 +3362,14 @@ export function watchReader(navigation: PostNavigationController): void {
         continue;
       }
       const visibleChildren = Array.isArray(entry.subComments) ? entry.subComments : [];
-      const keptChildren = visibleChildren.filter((child) => child.id !== commentId);
-      if (keptChildren.length === visibleChildren.length) {
+      // The server stores every descendant in the floor's flat sub-comment
+      // list, so the removed subtree is resolved before filtering that list.
+      const subtree = collectReaderThreadIds(buildRailCommentTree(entry), commentId);
+      if (subtree === null) {
         nextItems.push(entry);
         continue;
       }
+      const keptChildren = visibleChildren.filter((child) => !subtree.has(child.id));
       removed += visibleChildren.length - keptChildren.length;
       nextItems.push({ ...entry, subComments: keptChildren, quotes: keptChildren });
     }
@@ -4102,7 +4693,7 @@ export function watchReader(navigation: PostNavigationController): void {
     favour.className = "hbu-reader-action";
     favour.dataset["action"] = "favour";
     favour.setAttribute("aria-label", "收藏");
-    favour.setAttribute("aria-haspopup", "menu");
+    favour.setAttribute("aria-haspopup", "dialog");
     favour.setAttribute("aria-expanded", "false");
     favour.title = "收藏到收藏夹";
     favour.addEventListener("click", () => openFavourMenu(rail, favour));
@@ -4609,8 +5200,7 @@ export function watchReader(navigation: PostNavigationController): void {
     linkStateController = null;
     commentLoadController?.abort();
     commentLoadController = null;
-    favourLoadController?.abort();
-    favourLoadController = null;
+    resetFavourPanel();
     linkState = null;
     linkStatePromise = null;
     cyPublishedCount = 0;
@@ -4623,8 +5213,6 @@ export function watchReader(navigation: PostNavigationController): void {
     cyTextarea = null;
     cySubmit = null;
     cyStatus = null;
-    favourPanel = null;
-    favourButton = null;
     spacingPanel = null;
     spacingButton = null;
     spacingInput = null;
@@ -4796,8 +5384,7 @@ export function watchReader(navigation: PostNavigationController): void {
     linkStateController = null;
     commentLoadController?.abort();
     commentLoadController = null;
-    favourLoadController?.abort();
-    favourLoadController = null;
+    resetFavourPanel();
     linkState = null;
     linkStatePromise = null;
     cyPublishedCount = 0;
@@ -4823,8 +5410,6 @@ export function watchReader(navigation: PostNavigationController): void {
     commentPanelClose = null;
     commentPanelRefresh = null;
     commentState = createCommentState();
-    favourPanel = null;
-    favourButton = null;
     spacingPanel = null;
     spacingButton = null;
     spacingInput = null;
@@ -4942,7 +5527,7 @@ export function watchReader(navigation: PostNavigationController): void {
         spacingButton?.focus({ preventScroll: true });
       } else if (favourPanel !== null && !favourPanel.hidden) {
         event.preventDefault();
-        closeFavourMenu();
+        closeFavourMenu(true);
       } else if (isCommentPanelOpen() && articleReplyTarget !== null) {
         event.preventDefault();
         clearArticleReplyTarget(true);
