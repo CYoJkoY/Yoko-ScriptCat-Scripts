@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.48
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可直接发布文章主评论（is_cy: 0），支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试，并按 is_cy 标记屏蔽插眼评论。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，图标默认播放轻量动效，可在齿轮设置菜单切换为静态；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.49
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼全量展示。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换，动态图标仅在开关开启时出现；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -1562,8 +1562,10 @@
     const user = asRecord(raw["user"]) ?? {};
     const avatar = user["avatar"] || user["avartar"] || "";
     const body = parseRailBody(raw["text"]);
+    const id = String(raw["comment_id"] || raw["commentid"] || raw["id"] || "");
+    const rawRootId = readRailRelationId(raw, ["root_id", "root_comment_id", "reply_root_id"]);
     return {
-      id: String(raw["comment_id"] || raw["commentid"] || raw["id"] || ""),
+      id,
       name: String(user["username"] || user["nickname"] || "匿名用户").trim(),
       avatar: typeof avatar === "string" ? avatar : "",
       text: railBodyText(body),
@@ -1571,8 +1573,22 @@
       createAt: Number(raw["create_at"]) || 0,
       likes: Number(raw["support_num"] || raw["support_count"]) || 0,
       replies: Number(raw["reply_count"] || raw["sub_comment_num"]) || 0,
+      // A root that points at itself is not a usable parent; the group builder
+      // falls back to the floor id instead.
+      rootId: rawRootId === id ? "" : rawRootId,
+      parentId: readRailRelationId(raw, ["parent_id", "reply_to_comment_id", "reply_comment_id", "reply_to", "to_comment_id"]),
       isCy: isCyComment(raw)
     };
+  }
+  function readRailRelationId(raw, keys) {
+    for (const key of keys) {
+      const value = raw[key];
+      if (value === void 0 || value === null) continue;
+      const text = String(value).trim();
+      if (text === "" || text === "-1" || text === "0") continue;
+      return text;
+    }
+    return "";
   }
   function normalizeRailGroup(group) {
     const source = asRecord(group)?.["comment"];
@@ -1581,8 +1597,49 @@
     if (root === void 0) return null;
     const item = normalizeRailComment(root);
     if (item.id === "" && item.body.length === 0 && item.name === "匿名用户") return null;
-    const quotes = list.slice(1, 3).map(normalizeRailComment).filter((quote) => quote.body.length > 0);
-    return { ...item, quotes };
+    const seen = /* @__PURE__ */ new Set();
+    const subComments = list.slice(1).map(normalizeRailComment).filter((quote) => quote.body.length > 0).filter((quote) => {
+      if (quote.id === "") return true;
+      if (seen.has(quote.id)) return false;
+      seen.add(quote.id);
+      return true;
+    }).map((quote) => ({
+      ...quote,
+      rootId: quote.rootId !== "" ? quote.rootId : item.id,
+      parentId: quote.parentId !== "" ? quote.parentId : item.id
+    }));
+    return {
+      ...item,
+      rootId: item.id,
+      parentId: item.id,
+      subComments,
+      quotes: subComments
+    };
+  }
+  function readRailFloorTotal(result) {
+    const value = Number(asRecord(result)?.["total_floor_num"]);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  }
+  function resolveCommentPageProgress(input) {
+    const loadedGroups = input.previouslyLoadedGroups + input.rawGroupCount;
+    if (input.rawGroupCount <= 0) return { hasMore: false, loadedGroups };
+    if (input.freshGroupCount <= 0) return { hasMore: false, loadedGroups };
+    if (input.floorTotal > 0 && loadedGroups >= input.floorTotal) {
+      return { hasMore: false, loadedGroups };
+    }
+    if (input.floorTotal <= 0 && input.rawGroupCount < RAIL_PAGE_SIZE) {
+      return { hasMore: false, loadedGroups };
+    }
+    return { hasMore: true, loadedGroups };
+  }
+  function buildArticleCommentBody(linkId, text, target) {
+    return {
+      is_cy: "0",
+      link_id: linkId,
+      reply_id: target === null ? "-1" : target.id,
+      root_id: target === null ? "-1" : target.rootId,
+      text
+    };
   }
   var lastRailRequestAt = 0;
   var RAIL_PAGE_CACHE_TTL_MS = 2 * 60 * 1e3;
@@ -1601,6 +1658,7 @@
     return {
       items: cached.data.items,
       total: cached.data.total,
+      floorTotal: cached.data.floorTotal,
       title: cached.data.title,
       link: { ...cached.data.link },
       groups: cached.data.groups
@@ -1698,6 +1756,7 @@
     const normalized = {
       items: groups.map(normalizeRailGroup).filter((item) => item !== null),
       total: Number(link["comment_num"] || result["total_floor_num"]) || 0,
+      floorTotal: readRailFloorTotal(result),
       title: typeof link["title"] === "string" ? link["title"].trim() : "",
       link: {
         isAward: Number(link["is_award_link"]) === 1,
@@ -1796,6 +1855,7 @@
       loading: false,
       error: "",
       hasMore: false,
+      loadedGroups: 0,
       seq: 0
     };
     let hideCy = readHideCyPreference();
@@ -1974,9 +2034,18 @@
       try {
         const data = await fetchRailPage(state.linkId, page, { signal: loadController.signal });
         if (seq !== state.seq) return;
-        state.items = page === 1 ? data.items : state.items.concat(data.items);
+        const seen = new Set(state.items.map((item) => item.id));
+        const fresh = data.items.filter((item) => item.id === "" || !seen.has(item.id));
+        state.items = page === 1 ? fresh : state.items.concat(fresh);
         state.page = page;
-        state.hasMore = data.items.length > 0;
+        const progress = resolveCommentPageProgress({
+          rawGroupCount: data.items.length,
+          freshGroupCount: fresh.length,
+          previouslyLoadedGroups: page === 1 ? 0 : state.loadedGroups,
+          floorTotal: data.floorTotal
+        });
+        state.loadedGroups = progress.loadedGroups;
+        state.hasMore = progress.hasMore;
         if (data.total > 0) state.total = data.total;
         if (data.title !== "" && state.title === "") state.title = data.title;
       } catch (error) {
@@ -2009,6 +2078,7 @@
       state.page = 0;
       state.items = [];
       state.hasMore = false;
+      state.loadedGroups = 0;
       state.error = "";
       render();
       void load(1);
@@ -2440,12 +2510,49 @@
     { id: "favour", label: "收藏", href: "/app/user/favour/content" },
     { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" }
   ];
-  var NAV_ICONS = {
-    home: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-home" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 12 4l8 7.2"/><path d="M6.6 9.8V20h10.8V9.8"/><path d="M10.2 20v-5.2h3.6V20"/></svg></span>',
-    community: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-community" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"/><circle cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r=".9" fill="currentColor" stroke="none"/></svg></span>',
-    favour: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-favour" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"/></svg></span>',
-    article: '<span class="hbu-nav-icon hbu-ico-anim hbu-ico-article" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 16.5h6"/></svg></span>'
+  var NAV_GLYPHS = {
+    home: {
+      paths: ["M4 11.2 12 4l8 7.2", "M6.6 9.8V20h10.8V9.8", "M10.2 20v-5.2h3.6V20"]
+    },
+    community: {
+      paths: ["M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"],
+      circles: [
+        'cx="8.8" cy="12" r=".9" fill="currentColor" stroke="none"',
+        'cx="12.4" cy="12" r=".9" fill="currentColor" stroke="none"',
+        'cx="16" cy="12" r=".9" fill="currentColor" stroke="none"'
+      ]
+    },
+    favour: {
+      paths: ["M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4.2L5.5 20V5a1 1 0 0 1 1-1Z"]
+    },
+    article: {
+      paths: ["M6 3h8l4 4v14H6z", "M14 3v5h5", "M9 13h6", "M9 16.5h6"]
+    }
   };
+  var NAV_SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">';
+  function navIconMarkup(id, animated) {
+    const glyph = NAV_GLYPHS[id];
+    if (glyph === void 0) return "";
+    const paths = glyph.paths.map(
+      (d) => animated ? '<path d="' + d + '" pathLength="1" class="hbu-ico-stroke"/>' : '<path d="' + d + '"/>'
+    ).join("");
+    const circles = (glyph.circles ?? []).map((attrs) => "<circle " + attrs + "/>").join("");
+    const variant = animated ? " hbu-ico-anim" : "";
+    return '<span class="hbu-nav-icon' + variant + " hbu-ico-" + id + '" aria-hidden="true">' + NAV_SVG_OPEN + paths + circles + "</svg></span>";
+  }
+  function buildNavIconMap(animated) {
+    const map = {};
+    for (const id of Object.keys(NAV_GLYPHS)) map[id] = navIconMarkup(id, animated);
+    return map;
+  }
+  var NAV_STATIC_ICONS = buildNavIconMap(false);
+  var NAV_DYNAMIC_ICONS = buildNavIconMap(true);
+  function hasNavGlyph(id) {
+    return Object.prototype.hasOwnProperty.call(NAV_GLYPHS, id);
+  }
+  function navIconMarkupFor(id) {
+    return navIconMarkup(id, !document.documentElement.classList.contains(NAV_STATIC_CLASS));
+  }
   var NAV_CSS = `
   .nav-links > .nav-link { display: none !important; }
   #${NAV_ID} {
@@ -2505,36 +2612,60 @@
       color .18s ease;
   }
   .hbu-nav-icon svg { display: block; width: 100%; height: 100%; flex: none; }
-  .hbu-nav-link:focus-visible .hbu-nav-icon {
+  .hbu-nav-link:focus-visible .hbu-nav-icon.hbu-ico-anim {
     color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
     transform: translateY(-2px) scale(1.14);
   }
-  .hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon {
+  .hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon.hbu-ico-anim {
     transform: rotate(-7deg) translateY(-2px) scale(1.1);
+  }
+  .hbu-ico-anim path.hbu-ico-stroke {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+  @keyframes hbu-nav-ico-draw {
+    from { stroke-dashoffset: 1; }
+    to { stroke-dashoffset: 0; }
+  }
+  .hbu-nav-link:focus-visible .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke,
+  .hbu-nav-link:active .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke {
+    animation: hbu-nav-ico-draw .52s cubic-bezier(.4, 0, .2, 1) both;
   }
   /* Touch browsers keep :hover on the tapped link, which would leave the icon enlarged.
      Gate hover-only motion to devices that can hover with a precise pointer. */
   @media (hover: hover) and (pointer: fine) {
-    .hbu-nav-link:hover .hbu-nav-icon {
+    .hbu-nav-link:hover .hbu-nav-icon.hbu-ico-anim {
       color: var(--nav-link-active-color, var(--heybox-up-text, #14191e));
       transform: translateY(-2px) scale(1.14);
     }
-    .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon {
+    .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon.hbu-ico-anim {
       transform: rotate(-7deg) translateY(-2px) scale(1.1);
     }
+    .hbu-nav-link:hover .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke {
+      animation: hbu-nav-ico-draw .52s cubic-bezier(.4, 0, .2, 1) both;
+    }
   }
-  .hbu-nav-link:active .hbu-nav-icon { transform: translateY(0) scale(.9); transition-duration: .08s; }
-  .hbu-nav-link[data-nav="article"]:active .hbu-nav-icon { transform: translateY(0) rotate(0) scale(.9); }
+  .hbu-nav-link:active .hbu-nav-icon.hbu-ico-anim { transform: translateY(0) scale(.9); transition-duration: .08s; }
+  .hbu-nav-link[data-nav="article"]:active .hbu-nav-icon.hbu-ico-anim { transform: translateY(0) rotate(0) scale(.9); }
   :root.${NAV_STATIC_CLASS} .hbu-nav-icon {
     animation: none !important;
     transform: none !important;
     transition: none !important;
   }
+  :root.${NAV_STATIC_CLASS} .hbu-nav-icon path {
+    stroke-dasharray: none !important;
+    stroke-dashoffset: 0 !important;
+  }
   @media (prefers-reduced-motion: reduce) {
-    .hbu-nav-icon {
+    .hbu-nav-icon,
+    .hbu-nav-icon path {
       animation: none !important;
       transform: none !important;
       transition: none !important;
+    }
+    .hbu-nav-icon path {
+      stroke-dasharray: none !important;
+      stroke-dashoffset: 0 !important;
     }
     .hbu-nav-link::after { transition: none; }
   }
@@ -2549,6 +2680,25 @@
 `;
   function applyNavMotionPreference(value) {
     document.documentElement.classList.toggle(NAV_STATIC_CLASS, value === false);
+    syncNavIconVariant(value === true);
+  }
+  function syncNavIconVariant(animated) {
+    for (const link of Array.from(document.querySelectorAll("a[data-nav], a[data-route]"))) {
+      const id = link.dataset["nav"] || link.dataset["route"] || "";
+      if (!hasNavGlyph(id)) continue;
+      const icon = link.querySelector(".hbu-nav-icon");
+      if (icon === null) continue;
+      if (icon.classList.contains("hbu-ico-anim") === animated) continue;
+      const markup = navIconMarkup(id, animated);
+      if (markup === "") continue;
+      const template = document.createElement("template");
+      template.innerHTML = markup;
+      const next = template.content.firstElementChild;
+      if (!(next instanceof HTMLElement)) continue;
+      const heldFocus = icon.contains(document.activeElement);
+      icon.replaceWith(next);
+      if (heldFocus) link.focus({ preventScroll: true });
+    }
   }
   function ensureNavStyle() {
     ensureStyleElement(NAV_STYLE_ID, NAV_CSS);
@@ -2651,6 +2801,7 @@
     if (!document.body) return;
     const current = document.getElementById(NAV_ID);
     if (current?.parentElement?.classList.contains("nav-links") && current.parentElement.firstElementChild === current) {
+      syncNavIconVariant(!document.documentElement.classList.contains(NAV_STATIC_CLASS));
       syncNavActive();
       return;
     }
@@ -2663,12 +2814,14 @@
       host.id = NAV_ID;
       host.setAttribute("role", "navigation");
       host.setAttribute("aria-label", "站内导航");
+      const animated = !document.documentElement.classList.contains(NAV_STATIC_CLASS);
       host.innerHTML = NAV_ITEMS.map(
-        (item) => '<a class="hbu-nav-link" data-nav="' + item.id + '" href="' + item.href + '" aria-label="' + item.label + '" title="' + item.label + '">' + NAV_ICONS[item.id] + "<span>" + item.label + "</span></a>"
+        (item) => '<a class="hbu-nav-link" data-nav="' + item.id + '" href="' + item.href + '" aria-label="' + item.label + '" title="' + item.label + '">' + navIconMarkup(item.id, animated) + "<span>" + item.label + "</span></a>"
       ).join("");
       host.addEventListener("click", handleNavClick);
     }
     if (host.parentNode !== links || links.firstElementChild !== host) links.prepend(host);
+    syncNavIconVariant(!document.documentElement.classList.contains(NAV_STATIC_CLASS));
     syncNavActive();
   }
   function watchTopNav() {
@@ -3722,9 +3875,9 @@
     browseTitle.textContent = "浏览";
     browse.append(browseTitle);
     const links = [
-      { id: "community", label: "社区首页", href: "/app/bbs/home", icon: NAV_ICONS["community"] },
-      { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: NAV_ICONS["favour"] },
-      { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: NAV_ICONS["article"] },
+      { id: "community", label: "社区首页", href: "/app/bbs/home", icon: navIconMarkupFor("community") },
+      { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: navIconMarkupFor("favour") },
+      { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: navIconMarkupFor("article") },
       { id: "search", label: "全站搜索", href: "/app/search/list", icon: COMMUNITY_SEARCH_ICONS.search }
     ];
     for (const item of links) browse.append(createDesktopRailLink(item, item.id === "community"));
@@ -3758,8 +3911,8 @@
     toolsTitle.textContent = "快捷入口";
     toolsBlock.append(toolsTitle);
     const tools = [
-      { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: NAV_ICONS["favour"] },
-      { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: NAV_ICONS["article"] }
+      { id: "favour", label: "我的收藏", href: "/app/user/favour/content", icon: navIconMarkupFor("favour") },
+      { id: "article", label: "我的文章", href: "/creator/content_management/home?article_type=all", icon: navIconMarkupFor("article") }
     ];
     for (const item of tools) toolsBlock.append(createDesktopRailLink(item, false));
     root.append(hotBlock, toolsBlock);
@@ -7351,10 +7504,15 @@
   .hbu-reader-comments-time { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-text { margin: 4px 0 0; font-size: 14px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
   .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
-  .hbu-reader-comments-quote { margin-top: 8px; padding: 7px 9px; border-radius: 9px; background: var(--hbu-reader-subtle); color: var(--hbu-reader-ink-2); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
-  .hbu-reader-comments-quote b { color: var(--hbu-reader-muted); font-weight: 600; }
-  .hbu-reader-comments-text .hbu-reader-comments-emoji, .hbu-reader-comments-quote .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
-  .hbu-reader-comments-text img, .hbu-reader-comments-quote img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
+  .hbu-reader-comments-reply { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-reply:hover { color: var(--heybox-up-accent, #8fb0cf); }
+  .hbu-reader-comments-children { margin: 9px 0 0; padding: 9px 0 0 10px; border-left: 2px solid var(--hbu-reader-border); list-style: none; }
+  .hbu-reader-comments-child { padding: 8px 0; border-top: 1px dashed var(--hbu-reader-border); }
+  .hbu-reader-comments-child:first-child { border-top: 0; padding-top: 0; }
+  .hbu-reader-comments-child .hbu-reader-comments-text { margin-top: 2px; font-size: 13px; }
+  .hbu-reader-comments-child .hbu-reader-comments-meta { margin-top: 3px; }
+  .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
+  .hbu-reader-comments-text img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
   .hbu-reader-comments-status-retry { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 16px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-comments-status-retry:hover { border-color: var(--heybox-up-accent, #8fb0cf); }
@@ -7388,6 +7546,10 @@
   }
   .hbu-reader-composer-input::placeholder { color: var(--hbu-reader-muted); }
   .hbu-reader-composer-input:focus { border-color: var(--heybox-up-accent, #8fb0cf); }
+  .hbu-reader-composer-reply { display: flex; gap: 8px; align-items: center; min-width: 0; padding: 5px 9px; border-radius: 8px; background: var(--hbu-reader-subtle); color: var(--hbu-reader-ink-2); font-size: 11px; }
+  .hbu-reader-composer-reply[hidden] { display: none; }
+  .hbu-reader-composer-reply-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbu-reader-composer-reply-cancel { flex: none; padding: 0; border: 0; background: transparent; color: var(--heybox-up-accent, #8fb0cf); font: inherit; cursor: pointer; }
   .hbu-reader-composer-bar { display: flex; gap: 8px; align-items: center; }
   .hbu-reader-composer-emoji-toggle { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid var(--hbu-reader-border); border-radius: 8px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-composer-emoji-toggle[aria-expanded="true"] { border-color: var(--heybox-up-accent, #8fb0cf); color: var(--hbu-reader-ink); }
@@ -8086,6 +8248,7 @@
     let commentPanelMeta = null;
     let commentPanelMore = null;
     let commentPanelClose = null;
+    let articleReplyTarget = null;
     let commentState = createCommentState();
     let readerPendingAdvanceSourceId = "";
     let readerPendingAdvanceRevision = -1;
@@ -8096,7 +8259,7 @@
     let readerPendingArticleId = "";
     let readerPendingGeneration = -1;
     function createCommentState() {
-      return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loaded: false, seq: 0 };
+      return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, seq: 0 };
     }
     const showToast = (message) => {
       let toast = host?.querySelector(".hbu-reader-toast") ?? null;
@@ -8786,33 +8949,76 @@
       text.className = "hbu-reader-comments-text";
       fillReaderCommentBody(text, comment.body);
       main.append(who, text);
-      if (comment.likes > 0 || comment.replies > 0) {
-        const meta = document.createElement("div");
-        meta.className = "hbu-reader-comments-meta";
-        if (comment.likes > 0) {
-          const likes = document.createElement("span");
-          likes.textContent = "赞 " + comment.likes;
-          meta.append(likes);
-        }
-        if (comment.replies > 0) {
-          const replies = document.createElement("span");
-          replies.textContent = comment.replies + " 条回复";
-          meta.append(replies);
-        }
-        main.append(meta);
+      const meta = document.createElement("div");
+      meta.className = "hbu-reader-comments-meta";
+      if (comment.likes > 0) {
+        const likes = document.createElement("span");
+        likes.textContent = "赞 " + comment.likes;
+        meta.append(likes);
       }
-      const quotes = Array.isArray(comment.quotes) ? comment.quotes : [];
-      for (const quote of quotes) {
-        const node = document.createElement("div");
-        node.className = "hbu-reader-comments-quote";
-        const author = document.createElement("b");
-        author.textContent = quote.name + "：";
-        node.append(author);
-        fillReaderCommentBody(node, quote.body);
-        main.append(node);
+      if (comment.replies > 0) {
+        const replies = document.createElement("span");
+        replies.textContent = comment.replies + " 条回复";
+        meta.append(replies);
+      }
+      meta.append(createReaderReplyButton({
+        id: comment.id,
+        rootId: comment.rootId !== "" ? comment.rootId : comment.id,
+        name: comment.name
+      }));
+      main.append(meta);
+      const subComments = Array.isArray(comment.subComments) ? comment.subComments : [];
+      const hideCy = readHideCyPreference();
+      const visibleChildren = subComments.filter((child) => !hideCy || child.isCy !== true);
+      if (visibleChildren.length > 0) {
+        const children = document.createElement("ul");
+        children.className = "hbu-reader-comments-children";
+        for (const child of visibleChildren) children.append(createReaderCommentChild(child, comment));
+        main.append(children);
       }
       item.append(avatar, main);
       return item;
+    };
+    const createReaderCommentChild = (child, parent) => {
+      const item = document.createElement("li");
+      item.className = "hbu-reader-comments-child";
+      item.setAttribute("role", "listitem");
+      const who = document.createElement("div");
+      who.className = "hbu-reader-comments-who";
+      const name = document.createElement("span");
+      name.className = "hbu-reader-comments-name";
+      name.textContent = child.name;
+      who.append(name);
+      if (child.createAt > 0) {
+        const time = document.createElement("span");
+        time.className = "hbu-reader-comments-time";
+        time.textContent = formatRailAge(child.createAt);
+        who.append(time);
+      }
+      const text = document.createElement("p");
+      text.className = "hbu-reader-comments-text";
+      fillReaderCommentBody(text, child.body);
+      const actions = document.createElement("div");
+      actions.className = "hbu-reader-comments-meta";
+      const reply = createReaderReplyButton({
+        id: child.id !== "" ? child.id : parent.id,
+        rootId: child.rootId !== "" ? child.rootId : parent.id,
+        name: child.name
+      });
+      actions.append(reply);
+      item.append(who, text, actions);
+      return item;
+    };
+    const createReaderReplyButton = (target) => {
+      const reply = document.createElement("button");
+      reply.type = "button";
+      reply.className = "hbu-reader-comments-reply";
+      reply.textContent = "回复";
+      reply.setAttribute("aria-label", "回复 " + target.name);
+      reply.dataset["replyId"] = target.id;
+      reply.dataset["replyRoot"] = target.rootId;
+      reply.dataset["replyName"] = target.name;
+      return reply;
     };
     const renderReaderComments = () => {
       if (commentPanel === null) return;
@@ -8875,6 +9081,7 @@
         commentState.page = 0;
         commentState.total = 0;
         commentState.hasMore = false;
+        commentState.loadedGroups = 0;
         commentState.loaded = false;
       }
       renderReaderComments();
@@ -8888,7 +9095,14 @@
         commentState.items = page === 1 ? fresh : commentState.items.concat(fresh);
         commentState.page = page;
         commentState.total = data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
-        commentState.hasMore = data.items.length >= RAIL_PAGE_SIZE;
+        const progress = resolveCommentPageProgress({
+          rawGroupCount: data.items.length,
+          freshGroupCount: fresh.length,
+          previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
+          floorTotal: data.floorTotal
+        });
+        commentState.loadedGroups = progress.loadedGroups;
+        commentState.hasMore = progress.hasMore;
         commentState.loaded = true;
         if (linkState !== null && Number.isFinite(data.total) && data.total > 0) {
           const current = Number(linkState.commentCount);
@@ -8910,13 +9124,26 @@
       }
     };
     const readArticleComposers = () => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
+    const clearArticleReplyTarget = (restoreFocus) => {
+      if (articleReplyTarget === null) return;
+      articleReplyTarget = null;
+      syncArticleComposers();
+      if (restoreFocus) readArticleComposers()[0]?.querySelector(".hbu-reader-composer-input")?.focus({ preventScroll: true });
+    };
     const syncArticleComposers = () => {
+      const reply = articleReplyTarget;
       for (const root of readArticleComposers()) {
         const input = root.querySelector(".hbu-reader-composer-input");
         const submit = root.querySelector(".hbu-reader-composer-submit");
         if (!(input instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) continue;
         submit.disabled = articleCommentBusy || input.value.trim() === "";
         submit.textContent = articleCommentBusy ? "发布中…" : "发布";
+        const replyBar = root.querySelector(".hbu-reader-composer-reply");
+        const replyName = root.querySelector(".hbu-reader-composer-reply-name");
+        if (replyBar instanceof HTMLElement) replyBar.hidden = reply === null;
+        if (replyName !== null) replyName.textContent = reply === null ? "" : "回复 @" + reply.name;
+        input.placeholder = reply === null ? "评论这篇文章…" : "回复 @" + reply.name + "…";
+        input.setAttribute("aria-label", reply === null ? "评论内容" : "回复 " + reply.name);
       }
     };
     const clearArticleComposers = () => {
@@ -8929,6 +9156,7 @@
         if (status !== null) status.textContent = "";
         if (count !== null) count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
       }
+      articleReplyTarget = null;
       syncArticleComposers();
     };
     const submitArticleComment = async (input, status) => {
@@ -8941,6 +9169,7 @@
       }
       const targetId = articleId;
       const generation = readerGeneration;
+      const reply = articleReplyTarget;
       articleCommentBusy = true;
       syncArticleComposers();
       status.textContent = "";
@@ -8948,13 +9177,7 @@
         const accountId = await resolveHeyboxId();
         if (articleId !== targetId || readerGeneration !== generation) return;
         if (accountId === "") throw new Error("请先登录小黑盒");
-        await postReaderApi(COMMENT_CREATE_API_PATH, {
-          is_cy: "0",
-          link_id: targetId,
-          reply_id: "-1",
-          root_id: "-1",
-          text
-        }, accountId);
+        await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply), accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
         clearArticleComposers();
         showToast("评论已发布");
@@ -9079,6 +9302,17 @@
       const root = document.createElement("div");
       root.className = "hbu-reader-composer";
       root.dataset["hbuArticleComposer"] = "";
+      const replyBar = document.createElement("div");
+      replyBar.className = "hbu-reader-composer-reply";
+      replyBar.hidden = true;
+      const replyText = document.createElement("span");
+      replyText.className = "hbu-reader-composer-reply-name";
+      const replyCancel = document.createElement("button");
+      replyCancel.type = "button";
+      replyCancel.className = "hbu-reader-composer-reply-cancel";
+      replyCancel.textContent = "取消回复";
+      replyCancel.addEventListener("click", () => clearArticleReplyTarget(true));
+      replyBar.append(replyText, replyCancel);
       const input = document.createElement("textarea");
       input.className = "hbu-reader-composer-input";
       input.maxLength = ARTICLE_COMMENT_MAX_LENGTH;
@@ -9127,7 +9361,7 @@
       });
       submit.addEventListener("click", () => void submitArticleComment(input, status));
       bar.append(emojiToggle, status, count, submit);
-      root.append(input, emojiPanel, bar);
+      root.append(replyBar, input, emojiPanel, bar);
       articleComposerEmojiClosers.set(root, () => emojiPicker.close(false));
       return root;
     };
@@ -9233,6 +9467,20 @@
         commentPanelClose?.focus({ preventScroll: true });
         void loadReaderComments(commentState.page > 0 ? commentState.page + 1 : 1);
       });
+      list.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const reply = target.closest(".hbu-reader-comments-reply");
+        if (!(reply instanceof HTMLElement)) return;
+        const id = reply.dataset["replyId"] || "";
+        const rootId = reply.dataset["replyRoot"] || id;
+        const name = reply.dataset["replyName"] || "";
+        if (id === "") return;
+        event.preventDefault();
+        articleReplyTarget = { id, rootId, name };
+        syncArticleComposers();
+        readArticleComposers()[0]?.querySelector(".hbu-reader-composer-input")?.focus({ preventScroll: true });
+      });
       sheet.addEventListener("keydown", trapCommentPanelTab);
       document.body.append(panel);
       return panel;
@@ -9251,6 +9499,7 @@
       host.inert = true;
       renderReaderComments();
       commentPanelClose?.focus({ preventScroll: true });
+      syncArticleComposers();
       if (!commentState.loaded && !commentState.loading) void loadReaderComments(1);
     };
     const resetReaderComments = () => {
@@ -10879,6 +11128,9 @@
         } else if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
           closeFavourMenu();
+        } else if (isCommentPanelOpen() && articleReplyTarget !== null) {
+          event.preventDefault();
+          clearArticleReplyTarget(true);
         } else if (isCommentPanelOpen()) {
           event.preventDefault();
           closeComments();
@@ -10955,6 +11207,127 @@
     sync();
   }
 
+  // scripts/heybox-up/src/ui/native-comments.ts
+  var NATIVE_COMMENT_CONTAINER_SELECTOR = "#page-bbs-link .link-comment";
+  var NATIVE_COMMENT_LOAD_THRESHOLD = 240;
+  var NATIVE_COMMENT_LOAD_COOLDOWN_MS = 1200;
+  var LOAD_MORE_TEXT = /^(?:加载更多|查看更多|点击加载|更多评论)(?:\s*[(（].*[)）])?$/;
+  var LOAD_MORE_EXCLUDED_SELECTOR = [
+    ".comment-children__load-all",
+    ".link-comment__comment-children",
+    "textarea",
+    "input",
+    "[contenteditable]:not([contenteditable='false'])",
+    ".link-comment__reply"
+  ].join(", ");
+  function isNearCommentScrollEnd(metrics, threshold = NATIVE_COMMENT_LOAD_THRESHOLD) {
+    if (!Number.isFinite(metrics.scrollHeight) || !Number.isFinite(metrics.scrollTop) || !Number.isFinite(metrics.clientHeight)) {
+      return false;
+    }
+    return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= threshold;
+  }
+  function shouldTriggerNativeCommentLoad(gate, metrics, now) {
+    if (!isNearCommentScrollEnd(metrics)) return false;
+    if (gate.lastTriggerAt > 0 && now - gate.lastTriggerAt < NATIVE_COMMENT_LOAD_COOLDOWN_MS) return false;
+    return gate.lastTriggerHeight === 0 || metrics.scrollHeight > gate.lastTriggerHeight;
+  }
+  function isHiddenControl(node) {
+    if (node.hasAttribute("hidden")) return true;
+    if (node.getAttribute("aria-hidden") === "true") return true;
+    if (node instanceof HTMLElement && node.style.display === "none") return true;
+    return false;
+  }
+  function isDisabledControl(node) {
+    if (node.hasAttribute("disabled")) return true;
+    if (node.getAttribute("aria-disabled") === "true") return true;
+    return false;
+  }
+  function readNativeLoadMoreButton(container) {
+    for (const node of Array.from(container.querySelectorAll('button, a, [role="button"]'))) {
+      if (node.closest(LOAD_MORE_EXCLUDED_SELECTOR) !== null) continue;
+      if (isHiddenControl(node) || isDisabledControl(node)) continue;
+      const label = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (!LOAD_MORE_TEXT.test(label)) continue;
+      return node;
+    }
+    return null;
+  }
+  function requestNativeCommentLoad(container) {
+    const button = readNativeLoadMoreButton(container);
+    if (button !== null) {
+      button.click();
+      return "button";
+    }
+    window.dispatchEvent(new Event("scroll"));
+    document.dispatchEvent(new Event("scroll"));
+    return "scroll";
+  }
+  function watchNativeComments() {
+    if (!document.body) return;
+    let bound = null;
+    let boundScrollTop = 0;
+    let frame = 0;
+    const gate = { lastTriggerAt: 0, lastTriggerHeight: 0 };
+    const readContainer = () => {
+      const node = document.querySelector(NATIVE_COMMENT_CONTAINER_SELECTOR);
+      return node instanceof HTMLElement ? node : null;
+    };
+    const unbind = () => {
+      if (bound !== null) bound.removeEventListener("scroll", onScroll);
+      bound = null;
+      boundScrollTop = 0;
+      if (frame !== 0) {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      }
+    };
+    const run = () => {
+      frame = 0;
+      const container = bound;
+      if (container === null || !container.isConnected) return;
+      if (document.body.classList.contains(READER_CLASS)) return;
+      boundScrollTop = container.scrollTop;
+      const metrics = {
+        scrollTop: container.scrollTop,
+        clientHeight: container.clientHeight,
+        scrollHeight: container.scrollHeight
+      };
+      if (!shouldTriggerNativeCommentLoad(gate, metrics, performance.now())) return;
+      const action = requestNativeCommentLoad(container);
+      if (action === "none") return;
+      gate.lastTriggerAt = performance.now();
+      gate.lastTriggerHeight = metrics.scrollHeight;
+    };
+    function onScroll() {
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(run);
+    }
+    const sync = () => {
+      const container = readContainer();
+      const unavailable = container === null || !location.pathname.startsWith("/app/bbs/link/") || document.body.classList.contains(READER_CLASS) || container.clientHeight <= 0 || container.scrollHeight <= container.clientHeight;
+      if (unavailable) {
+        unbind();
+        return;
+      }
+      if (container === bound) {
+        if (container.scrollTop < boundScrollTop - NATIVE_COMMENT_LOAD_THRESHOLD) {
+          gate.lastTriggerAt = 0;
+          gate.lastTriggerHeight = 0;
+        }
+        boundScrollTop = container.scrollTop;
+        return;
+      }
+      unbind();
+      bound = container;
+      boundScrollTop = container.scrollTop;
+      gate.lastTriggerAt = 0;
+      gate.lastTriggerHeight = 0;
+      container.addEventListener("scroll", onScroll, { passive: true });
+    };
+    registerPageSync(sync, 400, [PAGE_ROUTE.ARTICLE], "article");
+    sync();
+  }
+
   // scripts/heybox-up/src/index.ts
   THEME_MEDIA.addEventListener("change", () => {
     if (currentThemeMode === "system") applyTheme("system", false);
@@ -10977,6 +11350,7 @@
     watchCommentRail();
     watchPostPager(navigation);
     watchReader(navigation);
+    watchNativeComments();
     watchCommunitySearch();
     watchDesktopShell();
     startPageSyncObserver();
