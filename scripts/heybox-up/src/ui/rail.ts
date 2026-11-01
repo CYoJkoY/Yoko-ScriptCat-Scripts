@@ -13,6 +13,8 @@ export const COMMENT_TREE_API_PATH = "/bbs/app/link/tree";
 
 export const COMMENT_CREATE_API_PATH = "/bbs/app/comment/create";
 
+export const DELETE_COMMENT_API_PATH = "/bbs/app/comment/delete";
+
 export const COMMENT_CREATE_RND_VERSION = "15";
 
 export const COMMENT_CREATE_RND_SECRET = "Z7mFG4tQp9Ws2LxB8H";
@@ -54,6 +56,8 @@ export type RailSegment = RailTextSegment | RailEmojiSegment | RailImageSegment;
 
 export interface RailComment {
   id: string;
+  /** Author account id; empty when the payload did not expose one. */
+  userId: string;
   name: string;
   avatar: string;
   text: string;
@@ -454,6 +458,7 @@ export function normalizeRailComment(comment: unknown): RailComment {
   const rawRootId = readRailRelationId(raw, ["root_id", "root_comment_id", "reply_root_id"]);
   return {
     id: id,
+    userId: readRailCommentUserId(user),
     name: String(user["username"] || user["nickname"] || "匿名用户").trim(),
     avatar: typeof avatar === "string" ? avatar : "",
     text: railBodyText(body),
@@ -467,6 +472,27 @@ export function normalizeRailComment(comment: unknown): RailComment {
     parentId: readRailRelationId(raw, ["parent_id", "reply_to_comment_id", "reply_comment_id", "reply_to", "to_comment_id"]),
     isCy: isCyComment(raw),
   };
+}
+
+function readRailCommentUserId(user: Record<string, unknown>): string {
+  for (const key of ["userid", "user_id", "heybox_id", "id"]) {
+    const value = user[key];
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text === "" || text === "-1" || text === "0" || text === "undefined" || text === "null") continue;
+    return text;
+  }
+  return "";
+}
+
+/**
+ * Only the author of a comment may delete it, so the reader compares the
+ * resolved account id against the comment author instead of trusting the DOM.
+ */
+export function isOwnRailComment(comment: { readonly userId: string }, accountId: string): boolean {
+  const owner = typeof accountId === "string" ? accountId.trim() : "";
+  if (owner === "" || comment.userId === "") return false;
+  return comment.userId === owner;
 }
 
 function readRailRelationId(raw: Record<string, unknown>, keys: readonly string[]): string {
@@ -545,6 +571,10 @@ export function buildArticleCommentBody(
     root_id: target === null ? "-1" : target.rootId,
     text: text,
   };
+}
+
+export function buildDeleteCommentBody(commentId: string): Record<string, string> {
+  return { comment_id: commentId };
 }
 
 export let lastRailRequestAt = 0;

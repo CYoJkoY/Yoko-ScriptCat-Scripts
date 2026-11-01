@@ -7,7 +7,7 @@ import { fetchWithTimeout, isAbortError } from "../core/request";
 import { asRecord } from "../core/json";
 import { parseCompactCount } from "./desktop";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, buildArticleCommentBody, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, resolveCommentPageProgress } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, buildArticleCommentBody, buildDeleteCommentBody, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, isOwnRailComment, resolveCommentPageProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
@@ -115,6 +115,7 @@ export const READER_CSS = `
     --hbu-reader-active-like: #c0364e;
     --hbu-reader-active-favour: #8a6512;
     --hbu-reader-active-cy: #2f7a52;
+    --hbu-reader-danger: #c0364e;
     --hbu-reader-scrim: rgba(20, 25, 30, .42);
     --hbu-reader-shadow: 0 20px 60px rgba(16, 24, 40, .18);
   }
@@ -142,6 +143,7 @@ export const READER_CSS = `
     --hbu-reader-active-like: #ff8e9a;
     --hbu-reader-active-favour: #f0c56a;
     --hbu-reader-active-cy: #8fd0a8;
+    --hbu-reader-danger: #ff8e9a;
     --hbu-reader-scrim: rgba(2, 4, 7, .62);
     --hbu-reader-shadow: 0 24px 70px rgba(0, 0, 0, .5);
   }
@@ -165,6 +167,7 @@ export const READER_CSS = `
     --hbu-reader-active-like: #ff8e9a;
     --hbu-reader-active-favour: #f0c56a;
     --hbu-reader-active-cy: #8fd0a8;
+    --hbu-reader-danger: #ff8e9a;
     --hbu-reader-scrim: rgba(0, 0, 0, .74);
     --hbu-reader-shadow: 0 24px 70px rgba(0, 0, 0, .72);
   }
@@ -192,6 +195,7 @@ export const READER_CSS = `
     --hbu-reader-active-like: #b23a4c;
     --hbu-reader-active-favour: #7d5a16;
     --hbu-reader-active-cy: #2e6d4c;
+    --hbu-reader-danger: #b23a4c;
     --hbu-reader-scrim: rgba(51, 43, 33, .46);
     --hbu-reader-shadow: 0 18px 44px rgba(51, 43, 33, .18);
   }
@@ -219,6 +223,7 @@ export const READER_CSS = `
     --hbu-reader-active-like: #b83c50;
     --hbu-reader-active-favour: #83601a;
     --hbu-reader-active-cy: #2b6f55;
+    --hbu-reader-danger: #b83c50;
     --hbu-reader-scrim: rgba(29, 51, 56, .44);
     --hbu-reader-shadow: 0 18px 44px rgba(47, 74, 84, .2);
   }
@@ -665,6 +670,9 @@ export const READER_CSS = `
   .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-reply { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
   .hbu-reader-comments-reply:hover { color: var(--hbu-reader-link); }
+  .hbu-reader-comments-delete { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-delete:hover { color: var(--hbu-reader-danger); }
+  .hbu-reader-comments-delete:disabled { opacity: .55; cursor: default; }
   .hbu-reader-comments-children { margin: 9px 0 0; padding: 9px 0 0 10px; border-left: 2px solid var(--hbu-reader-border); list-style: none; }
   .hbu-reader-comments-child { padding: 8px 0; border-top: 1px dashed var(--hbu-reader-border); }
   .hbu-reader-comments-child:first-child { border-top: 0; padding-top: 0; }
@@ -1581,6 +1589,10 @@ export function watchReader(navigation: PostNavigationController): void {
   let commentPanelClose: HTMLButtonElement | null = null;
   let articleReplyTarget: (ArticleReplyTargetPayload & { name: string }) | null = null;
   let commentState: ReaderCommentState = createCommentState();
+  // The comment author id is only known after account discovery, so delete
+  // actions stay hidden until the reader can prove who is logged in.
+  let readerAccountId = "";
+  const commentDeleteBusy = new Set<string>();
   let readerPendingAdvanceSourceId = "";
   let readerPendingAdvanceRevision = -1;
   let readerAdvanceLocked = false;
@@ -2316,6 +2328,18 @@ export function watchReader(navigation: PostNavigationController): void {
     }
   };
 
+  const createReaderCommentDeleteButton = (comment: RailComment): HTMLButtonElement | null => {
+    if (comment.id === "" || !isOwnRailComment(comment, readerAccountId)) return null;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "hbu-reader-comments-delete";
+    remove.textContent = commentDeleteBusy.has(comment.id) ? "删除中…" : "删除";
+    remove.setAttribute("aria-label", "删除这条评论");
+    remove.dataset["deleteId"] = comment.id;
+    remove.disabled = commentDeleteBusy.has(comment.id);
+    return remove;
+  };
+
   const createReaderCommentItem = (comment: RailCommentEntry): HTMLLIElement => {
     const item = document.createElement("li");
     item.className = "hbu-reader-comments-item";
@@ -2361,6 +2385,8 @@ export function watchReader(navigation: PostNavigationController): void {
       rootId: comment.rootId !== "" ? comment.rootId : comment.id,
       name: comment.name,
     }));
+    const deleteButton = createReaderCommentDeleteButton(comment);
+    if (deleteButton !== null) meta.append(deleteButton);
     main.append(meta);
     const subComments = Array.isArray(comment.subComments) ? comment.subComments : [];
     const hideCy = readHideCyPreference();
@@ -2402,6 +2428,8 @@ export function watchReader(navigation: PostNavigationController): void {
       name: child.name,
     });
     actions.append(reply);
+    const deleteButton = createReaderCommentDeleteButton(child);
+    if (deleteButton !== null) actions.append(deleteButton);
     item.append(who, text, actions);
     return item;
   };
@@ -2487,6 +2515,7 @@ export function watchReader(navigation: PostNavigationController): void {
     try {
       const accountId = await resolveHeyboxId(controller.signal);
       if (seq !== commentState.seq || commentLoadController !== controller) return;
+      if (accountId !== readerAccountId) readerAccountId = accountId;
       const data = await fetchRailPage(targetId, page, { signal: controller.signal, accountId: accountId });
       if (seq !== commentState.seq || commentLoadController !== controller) return;
       const seen = new Set(commentState.items.map((item) => item.id));
@@ -2608,6 +2637,74 @@ export function watchReader(navigation: PostNavigationController): void {
         articleCommentBusy = false;
         syncArticleComposers();
       }
+    }
+  };
+
+  const readReaderCommentById = (commentId: string): RailComment | null => {
+    for (const entry of commentState.items) {
+      if (entry.id === commentId) return entry;
+      for (const child of entry.subComments) {
+        if (child.id === commentId) return child;
+      }
+    }
+    return null;
+  };
+
+  // Returns how many entries the removal took out, so the two counters can drop
+  // by the same amount the tree lost (a floor takes its replies with it).
+  const removeDeletedComment = (commentId: string): number => {
+    let removed = 0;
+    const nextItems: RailCommentEntry[] = [];
+    for (const entry of commentState.items) {
+      if (entry.id === commentId) {
+        // The tree endpoint returns replies as children, so dropping the floor
+        // also drops the replies the server must have removed with it.
+        removed += 1 + (Array.isArray(entry.subComments) ? entry.subComments.length : 0);
+        continue;
+      }
+      const visibleChildren = Array.isArray(entry.subComments) ? entry.subComments : [];
+      const keptChildren = visibleChildren.filter((child) => child.id !== commentId);
+      if (keptChildren.length === visibleChildren.length) {
+        nextItems.push(entry);
+        continue;
+      }
+      removed += visibleChildren.length - keptChildren.length;
+      nextItems.push({ ...entry, subComments: keptChildren, quotes: keptChildren });
+    }
+    if (removed === 0) return 0;
+    commentState.items = nextItems;
+    return removed;
+  };
+
+  const deleteReaderComment = async (commentId: string): Promise<void> => {
+    if (commentId === "" || commentDeleteBusy.has(commentId)) return;
+    const owned = readReaderCommentById(commentId);
+    if (owned === null || !isOwnRailComment(owned, readerAccountId)) return;
+    const targetId = articleId;
+    const generation = readerGeneration;
+    // Ask before a destructive write; hosts that stub confirm keep the action.
+    if (typeof window.confirm === "function" && !window.confirm("删除这条评论？")) return;
+    commentDeleteBusy.add(commentId);
+    renderReaderComments();
+    try {
+      const accountId = await resolveHeyboxId();
+      if (accountId === "") throw new Error("请先登录小黑盒");
+      await postReaderApi(DELETE_COMMENT_API_PATH, buildDeleteCommentBody(commentId), accountId);
+      if (articleId !== targetId || readerGeneration !== generation) return;
+      if (articleReplyTarget !== null && articleReplyTarget.id === commentId) clearArticleReplyTarget(false);
+      const removedCount = removeDeletedComment(commentId);
+      commentState.total = Math.max(0, commentState.total - removedCount);
+      if (linkState !== null) linkState.commentCount = Math.max(0, (Number(linkState.commentCount) || 0) - removedCount);
+      clearRailPageCache(targetId);
+      syncActionStates();
+      showToast("评论已删除");
+    } catch (error) {
+      if (articleId === targetId && readerGeneration === generation) {
+        showToast(error instanceof Error ? error.message : "评论删除失败");
+      }
+    } finally {
+      commentDeleteBusy.delete(commentId);
+      if (articleId === targetId && readerGeneration === generation) renderReaderComments();
     }
   };
 
@@ -2893,6 +2990,14 @@ export function watchReader(navigation: PostNavigationController): void {
     list.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const remove = target.closest(".hbu-reader-comments-delete");
+      if (remove instanceof HTMLElement) {
+        const deleteId = remove.dataset["deleteId"] || "";
+        if (deleteId === "") return;
+        event.preventDefault();
+        void deleteReaderComment(deleteId);
+        return;
+      }
       const reply = target.closest(".hbu-reader-comments-reply");
       if (!(reply instanceof HTMLElement)) return;
       const id = reply.dataset["replyId"] || "";
@@ -2932,6 +3037,7 @@ export function watchReader(navigation: PostNavigationController): void {
     commentLoadController?.abort();
     commentLoadController = null;
     articleCommentBusy = false;
+    commentDeleteBusy.clear();
     clearArticleComposers();
     if (host !== null) host.inert = false;
     if (commentPanel !== null) {

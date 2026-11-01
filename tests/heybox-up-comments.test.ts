@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   RAIL_PAGE_SIZE,
   buildArticleCommentBody,
+  buildDeleteCommentBody,
+  isOwnRailComment,
   normalizeRailGroup,
   readRailFloorTotal,
   readRailPageCache,
@@ -145,5 +147,31 @@ describe("comment payload helpers", () => {
       reply_id: "11",
       root_id: "10",
     });
+  });
+
+  it("builds a delete body with only the comment id", () => {
+    expect(buildDeleteCommentBody("123")).toEqual({ comment_id: "123" });
+  });
+});
+
+describe("comment ownership", () => {
+  it("reads the author id from the documented user fields", () => {
+    for (const key of ["userid", "user_id", "heybox_id", "id"] as const) {
+      const entry = normalizeRailGroup(group({ comment_id: "40", text: "<p>x</p>", user: { username: "u", [key]: 4321 } }, []));
+      expect(entry?.userId, key).toBe("4321");
+    }
+  });
+
+  it("leaves the author id empty when the payload hides it", () => {
+    expect(normalizeRailGroup(group(floor("41", "no id"), []))?.userId).toBe("");
+    expect(normalizeRailGroup(group({ comment_id: "42", text: "<p>y</p>", user: { username: "u", userid: "0" } }, []))?.userId).toBe("");
+  });
+
+  it("only matches the signed-in account", () => {
+    const comment = { userId: "4321" };
+    expect(isOwnRailComment(comment, "4321")).toBe(true);
+    expect(isOwnRailComment(comment, "4322")).toBe(false);
+    expect(isOwnRailComment(comment, "")).toBe(false);
+    expect(isOwnRailComment({ userId: "" }, "4321")).toBe(false);
   });
 });

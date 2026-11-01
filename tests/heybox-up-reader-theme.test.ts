@@ -41,6 +41,7 @@ const REQUIRED_TOKENS = [
   "active-like",
   "active-favour",
   "active-cy",
+  "danger",
   "shadow",
   "scrim",
 ] as const;
@@ -212,6 +213,7 @@ describe("immersive reader theme contract", () => {
         ["ink-2/page", solid(tokens, "ink-2"), page],
         ["muted/subtle", solid(tokens, "muted"), subtle],
         ["link/page", tokenColor(tokens, "link", page), page],
+        ["danger/page", tokenColor(tokens, "danger", page), page],
         ["on-accent/accent", solid(tokens, "on-accent"), accent],
       ] as const) {
         const ratio = contrast(foreground, background);
@@ -237,6 +239,7 @@ describe("immersive reader theme contract", () => {
       [".hbu-reader-toast", "background", "var(--hbu-reader-float)"],
       [".hbu-reader-cy-dialog", "background", "var(--hbu-reader-scrim)"],
       [".hbu-reader-comments-scrim", "background", "var(--hbu-reader-scrim)"],
+      [".hbu-reader-comments-delete:hover", "color", "var(--hbu-reader-danger)"],
     ];
     for (const [selector, property, expected] of expectations) {
       expect(ruleFor(rules, selector).style.getPropertyValue(property), selector + " " + property).toBe(expected);
