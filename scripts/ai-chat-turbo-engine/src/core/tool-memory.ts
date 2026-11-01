@@ -1,12 +1,11 @@
 import {
-  TOOL_ROW_SELECTOR,
-  TOOL_TOGGLE_ROW_SELECTOR,
-  TOOL_TRIGGER_CONTAINER_SELECTOR,
-  TOOL_TRIGGER_SELECTOR,
+  ATOMIC_ACTIONS_SELECTOR,
+  ATOMIC_TOOL_CHIP_SELECTOR,
+  ATOMIC_TOOL_ITEM_SELECTOR,
+  ATOMIC_TOOL_MENU_SELECTOR,
 } from "../config";
 import { isEngineDormant } from "./auth";
 import { reportRecoverableError } from "./diagnostics";
-import type { ToolPopupScope } from "./tool-scope";
 import type { EngineState } from "../state";
 import type { ElementFactory } from "../ui/code-blocks";
 import {
@@ -16,20 +15,18 @@ import {
   type ToolRecord,
 } from "../storage/tool-memory";
 
-const POLL_INTERVAL = 500;
-const MAX_POLLS = 60;
-const MAX_RESTORE_STEPS = 8;
+const POLL_INTERVAL = 350;
+const MAX_POLLS = 80;
 const MENU_WAIT_INTERVAL = 120;
-const MENU_WAIT_ATTEMPTS = 10;
-const ROW_SETTLE_DELAY = 400;
-const ROW_RECORD_DELAY = 200;
-const TRACK_DELAYS = [120, 350, 800];
-const MAX_REARMS = 3;
+const MENU_WAIT_ATTEMPTS = 12;
+const MAX_RESTORE_ATTEMPTS = 6;
+const RECORD_DELAYS = [120, 320, 700, 1200];
+const VERIFY_DELAYS = [150, 400, 800, 1400];
 
 export interface ToolMemoryDeps {
   el: ElementFactory;
   state: EngineState;
-  toolScope: ToolPopupScope;
+  triggerSendButton: (control: HTMLElement) => boolean;
 }
 
 export interface ToolMemoryUtils {
@@ -42,9 +39,9 @@ export interface ToolMemoryUtils {
   attachStatusNode(node: HTMLElement | null): void;
 }
 
-interface ToolRowState {
+interface AtomicTool {
+  applicationId: string;
   label: string;
-  selected: boolean;
   node: HTMLElement;
 }
 
@@ -57,112 +54,126 @@ function nodeVisible(node: HTMLElement): boolean {
   return rect.width >= 1 && rect.height >= 1;
 }
 
-function rowText(row: HTMLElement): string {
-  const line = (row.innerText || "").split("\n").find((part) => part.trim());
-  const visible = cleanText(line || row.textContent || "");
-  if (visible) return visible;
-  return cleanText(row.getAttribute("aria-label") || "");
+function isInsideTurboUI(node: Element): boolean {
+  return Boolean(node.closest("[id^='ai-turbo-'], .ai-turbo-code-bar"));
 }
 
-export function rowSelected(row: HTMLElement): boolean | null {
-  const checked = row.getAttribute("aria-checked");
-  if (checked === "true" || checked === "false") return checked === "true";
-  const pressed = row.getAttribute("aria-pressed");
-  if (pressed === "true" || pressed === "false") return pressed === "true";
-  const selected = row.getAttribute("aria-selected");
-  if (selected === "true" || selected === "false") return selected === "true";
-  const dataState = row.getAttribute("data-state");
-  if (
-    dataState === "checked" ||
-    dataState === "selected" ||
-    dataState === "on" ||
-    dataState === "active"
-  ) {
-    return true;
+function applicationIdOf(node: Element): string {
+  return cleanText(node.getAttribute("data-application-id") || "");
+}
+
+function toolLabel(node: HTMLElement): string {
+  const aria = cleanText(node.getAttribute("aria-label") || "");
+  if (aria) return aria;
+  const visible = node.querySelector("[data-input-label='tools']");
+  if (visible instanceof HTMLElement) {
+    const label = cleanText(visible.textContent || "");
+    if (label) return label;
   }
-  if (
-    dataState === "unchecked" ||
-    dataState === "unselected" ||
-    dataState === "off" ||
-    dataState === "inactive"
-  ) {
-    return false;
-  }
-  const toggleInput = row.querySelector(
-    'input[type="checkbox"], input[type="radio"]',
-  );
-  if (toggleInput instanceof HTMLInputElement) return toggleInput.checked;
-  if (row.matches(".selected, .checked")) return true;
-  if (row.matches(".unselected, .unchecked")) return false;
-  if (
-    row.querySelector(
-      ".selected, .checked, [aria-label='Selected'], [aria-label='selected'], [aria-label='已选中'], [data-state='checked'], [data-mat-icon-name='check']",
-    )
-  ) {
-    return true;
+  return cleanText(node.textContent || "");
+}
+
+function chipRecord(node: HTMLElement): AtomicTool | null {
+  if (!nodeVisible(node)) return null;
+  const applicationId = applicationIdOf(node);
+  if (!applicationId) return null;
+  const labelNode = node.querySelector("span > span");
+  const label =
+    labelNode instanceof HTMLElement
+      ? cleanText(labelNode.textContent || "")
+      : "";
+  return { applicationId, label, node };
+}
+
+function currentChip(): AtomicTool | null {
+  const chips = Array.from(
+    document.querySelectorAll<HTMLElement>(ATOMIC_TOOL_CHIP_SELECTOR),
+  ).filter((node) => !isInsideTurboUI(node) && nodeVisible(node));
+  for (const chip of chips) {
+    const record = chipRecord(chip);
+    if (record) return record;
   }
   return null;
 }
 
-function sameLabels(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  const sortedLeft = [...left].sort();
-  const sortedRight = [...right].sort();
-  return sortedLeft.every((label, index) => label === sortedRight[index]);
+function matchesSaved(tool: AtomicTool, saved: ToolRecord): boolean {
+  if (saved.applicationId) return tool.applicationId === saved.applicationId;
+  const expected = saved.label || saved.legacyLabels[0] || "";
+  return Boolean(expected) && tool.label === expected;
 }
 
-function clickElement(node: HTMLElement, scope: string): boolean {
-  try {
-    node.click();
-    return true;
-  } catch (error: unknown) {
-    reportRecoverableError(scope, error);
-    return false;
+function collectTools(nodes: Iterable<HTMLElement>): AtomicTool[] {
+  const tools: AtomicTool[] = [];
+  for (const node of nodes) {
+    if (isInsideTurboUI(node) || !nodeVisible(node)) continue;
+    const applicationId = applicationIdOf(node);
+    if (!applicationId) continue;
+    tools.push({ applicationId, label: toolLabel(node), node });
   }
+  return tools;
 }
 
-function interactiveRow(row: HTMLElement): HTMLElement {
-  if (
-    row.matches(
-      "button, a, [role='menuitemcheckbox'], [role='menuitemradio'], [role='checkbox'], [role='option']",
-    )
-  ) {
-    return row;
-  }
-  const inner = row.querySelector(
-    "button, a, [role='menuitemcheckbox'], [role='menuitemradio'], [role='checkbox'], [role='option']",
+function inlineTools(): AtomicTool[] {
+  const items = Array.from(
+    document.querySelectorAll<HTMLElement>(ATOMIC_TOOL_ITEM_SELECTOR),
+  ).filter((node) => !node.closest("[role='menu']"));
+  return collectTools(items);
+}
+
+function menuTools(): AtomicTool[] {
+  return collectTools(
+    document.querySelectorAll<HTMLElement>(
+      `${ATOMIC_TOOL_MENU_SELECTOR} [role='menuitem'][data-application-id]`,
+    ),
   );
-  return inner instanceof HTMLElement ? inner : row;
 }
 
-/**
- * The click target may be a button nested inside a row that owns the selected
- * state. Prefer the nearest row with toggle semantics before falling back to a
- * plain interactive row.
- */
-function toggleRowFor(target: Element, popup: HTMLElement): HTMLElement | null {
-  const toggle = target.closest(TOOL_TOGGLE_ROW_SELECTOR);
-  if (toggle instanceof HTMLElement && popup.contains(toggle)) return toggle;
-  const row = target.closest(TOOL_ROW_SELECTOR);
-  return row instanceof HTMLElement && popup.contains(row) ? row : null;
+function overflowTrigger(): HTMLElement | null {
+  const actions = document.querySelectorAll<HTMLElement>(ATOMIC_ACTIONS_SELECTOR);
+  for (const action of actions) {
+    if (isInsideTurboUI(action) || !nodeVisible(action)) continue;
+    const candidates = Array.from(
+      action.querySelectorAll<HTMLElement>("button[aria-expanded]"),
+    ).filter((node) => !node.hasAttribute("data-application-id"));
+    const trigger = candidates.find((node) => nodeVisible(node));
+    if (trigger) return trigger;
+  }
+  return null;
+}
+
+function atomicToolbarPresent(): boolean {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>(ATOMIC_ACTIONS_SELECTOR),
+  ).some((node) => !isInsideTurboUI(node) && nodeVisible(node));
+}
+
+function findTool(
+  tools: readonly AtomicTool[],
+  saved: ToolRecord,
+): AtomicTool | null {
+  if (saved.applicationId) {
+    const byId = tools.find((tool) => tool.applicationId === saved.applicationId);
+    if (byId) return byId;
+  }
+  const expected = saved.label || saved.legacyLabels[0] || "";
+  if (!expected) return null;
+  return tools.find((tool) => tool.label === expected) ?? null;
 }
 
 export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
-  const { el, state, toolScope } = deps;
+  const { el, state, triggerSendButton } = deps;
   let statusNode: HTMLElement | null = null;
   let pollTimer = 0;
   let pollCount = 0;
   let stepTimer = 0;
-  let recordTimer = 0;
-  const trackTimers: number[] = [];
+  const recordTimers: number[] = [];
+  const verifyTimers: number[] = [];
   let restoreToken = 0;
   let restoring = false;
   let restoreDone = false;
-  let openedByUs = false;
+  let restoreAttempts = 0;
+  let openedOverflow: HTMLElement | null = null;
   let actionStatus = "";
-  let restoredTriggers = new WeakSet<Element>();
-  let lastRestoredTrigger: HTMLElement | null = null;
-  let rearmCount = 0;
 
   function stopPolling(): void {
     window.clearInterval(pollTimer);
@@ -170,336 +181,269 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
     pollCount = 0;
   }
 
-  function closeOpenedMenu(): void {
-    if (!openedByUs) return;
-    openedByUs = false;
-    toolScope.close();
+  function clearTimers(list: number[]): void {
+    for (const timer of list.splice(0)) window.clearTimeout(timer);
   }
 
-  function clearTimer(): void {
-    stopPolling();
-    window.clearTimeout(stepTimer);
-    window.clearTimeout(recordTimer);
-    for (const timer of trackTimers.splice(0)) window.clearTimeout(timer);
-    stepTimer = 0;
-    recordTimer = 0;
-    restoreToken += 1;
-    restoring = false;
-    restoreDone = false;
-    lastRestoredTrigger = null;
-    rearmCount = 0;
-    closeOpenedMenu();
-  }
-
-  function teardown(): void {
-    clearTimer();
-    statusNode = null;
-  }
-
-  function collectRows(popup: Element): ToolRowState[] {
-    const candidates = Array.from(
-      popup.querySelectorAll<HTMLElement>(TOOL_ROW_SELECTOR),
-    );
-    const rows: ToolRowState[] = [];
-    const seen = new Set<string>();
-    for (const row of candidates) {
-      if (row.closest(TOOL_TRIGGER_CONTAINER_SELECTOR)) continue;
-      const popupKind = row.getAttribute("aria-haspopup");
-      if (popupKind !== null && popupKind !== "false") continue;
-      if (!nodeVisible(row)) continue;
-      const selected = rowSelected(row);
-      if (selected === null) continue;
-      const label = rowText(row);
-      if (!label || seen.has(label)) continue;
-      seen.add(label);
-      rows.push({ label, selected, node: row });
+  function click(control: HTMLElement, scope: string): boolean {
+    try {
+      return triggerSendButton(control);
+    } catch (error: unknown) {
+      reportRecoverableError(scope, error);
+      return false;
     }
-    return rows;
   }
 
-  function selectedLabels(popup: Element): string[] | null {
-    const rows = collectRows(popup);
-    if (!rows.length) return null;
-    return rows.filter((row) => row.selected).map((row) => row.label);
-  }
-
-  function triggerNode(): HTMLElement | null {
-    const nodes = Array.from(
-      document.querySelectorAll<HTMLElement>(TOOL_TRIGGER_SELECTOR),
-    );
-    return nodes.find((node) => nodeVisible(node)) ?? null;
-  }
-
-  function triggerLabel(trigger: Element): string {
-    return cleanText(
-      trigger.getAttribute("aria-label") || trigger.textContent || "add-tools",
-    );
-  }
-
-  function persistSelection(
-    trigger: Element,
-    selected: readonly string[],
-  ): void {
-    const saved = readToolRecord();
-    if (saved && sameLabels(saved.selected, selected)) return;
-    const record: ToolRecord = {
-      key: "add-tools",
-      controlLabel: triggerLabel(trigger),
-      selected: [...selected],
-      ts: Date.now(),
-    };
-    writeToolRecord(record);
-  }
-
-  function recordRowClick(
-    popup: HTMLElement,
-    row: HTMLElement,
-    trigger: HTMLElement,
-  ): void {
-    const label = rowText(row);
-    if (!label) return;
-    const wasSelected = rowSelected(row);
-    const before = selectedLabels(popup);
-    if (wasSelected === null && !row.matches(TOOL_TOGGLE_ROW_SELECTOR)) return;
-    window.clearTimeout(recordTimer);
-    recordTimer = window.setTimeout(() => {
-      recordTimer = 0;
-      if (isEngineDormant() || !state.rememberTools) return;
-      stopPolling();
-      restoreToken += 1;
-      restoring = false;
-      restoreDone = true;
-      let next = popup.isConnected ? selectedLabels(popup) : null;
-      if (next === null && before !== null) {
-        if (wasSelected === true) {
-          next = before.filter((entry) => entry !== label);
-        } else if (wasSelected === false) {
-          next = before.includes(label) ? before : [...before, label];
-        } else {
-          next = before.includes(label)
-            ? before.filter((entry) => entry !== label)
-            : [...before, label];
-        }
-      }
-      if (next === null) return;
-      persistSelection(trigger, next);
-      actionStatus = next.length
-        ? "已记录 " + next.join(" / ")
-        : "当前没有选中任何工具";
-      renderStatus();
-    }, ROW_RECORD_DELAY);
-  }
-
-  function handleRowClick(target: Element): void {
-    if (restoring) return;
-    const popup = toolScope.popupFor(target);
-    if (!popup) return;
-    const row = toggleRowFor(target, popup);
-    if (!row) return;
-    const trigger = triggerNode();
-    if (!trigger) return;
-    recordRowClick(popup, row, trigger);
-  }
-
-  function handleToolClick(event: MouseEvent): void {
-    if (isEngineDormant()) return;
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (toolScope.isInside(target)) {
-      if (!state.rememberTools) return;
-      handleRowClick(target);
-      return;
-    }
-    const trigger = target.closest(TOOL_TRIGGER_SELECTOR);
-    if (trigger instanceof Element) {
-      if (restoring) return;
-      const before = toolScope.snapshot();
-      for (const delay of TRACK_DELAYS) {
-        const timer = window.setTimeout(() => {
-          const index = trackTimers.indexOf(timer);
-          if (index >= 0) trackTimers.splice(index, 1);
-          // Yuanbao may swap the composer on click; fall back to the live
-          // trigger so the popup still gets an owner.
-          const owner = trigger.isConnected ? trigger : triggerNode();
-          if (!owner) return;
-          toolScope.note(owner, before);
-        }, delay);
-        trackTimers.push(timer);
-      }
-      return;
-    }
+  function closeOverflow(): void {
+    const trigger = openedOverflow;
+    openedOverflow = null;
+    if (!trigger || !trigger.isConnected) return;
+    if (trigger.getAttribute("aria-expanded") !== "true") return;
+    click(trigger, "close tool overflow menu");
   }
 
   function finishRestore(token: number, status: string): void {
     if (token !== restoreToken) return;
     restoring = false;
     restoreDone = true;
-    stopPolling();
-    closeOpenedMenu();
+    closeOverflow();
     actionStatus = status;
     renderStatus();
   }
 
-  function waitForMenu(
-    token: number,
-    trigger: HTMLElement,
-    before: Set<Element>,
-    onReady: (popup: HTMLElement) => void,
-    attempt: number,
-  ): void {
-    if (token !== restoreToken) return;
-    const popup = toolScope.note(trigger, before) ?? toolScope.resolve(trigger);
-    if (popup) {
-      onReady(popup);
+  function persistChip(tool: AtomicTool | null): void {
+    if (!tool) {
+      clearToolRecord();
+      actionStatus = "当前没有选中任何工具";
+      renderStatus();
       return;
     }
-    if (attempt >= MENU_WAIT_ATTEMPTS) {
-      finishRestore(token, "未识别到工具菜单");
+    const saved = readToolRecord();
+    if (
+      saved &&
+      saved.applicationId === tool.applicationId &&
+      saved.label === tool.label
+    ) {
       return;
     }
-    stepTimer = window.setTimeout(() => {
-      waitForMenu(token, trigger, before, onReady, attempt + 1);
-    }, MENU_WAIT_INTERVAL);
-  }
-
-  function withToolMenu(
-    token: number,
-    trigger: HTMLElement,
-    onReady: (popup: HTMLElement) => void,
-  ): void {
-    const openPopup = toolScope.resolve(trigger);
-    if (openPopup) {
-      onReady(openPopup);
-      return;
-    }
-    const before = toolScope.snapshot();
-    if (!clickElement(trigger, "open tool menu")) {
-      finishRestore(token, "无法打开工具菜单");
-      return;
-    }
-    openedByUs = true;
-    waitForMenu(token, trigger, before, onReady, 0);
-  }
-
-  function restoreStep(
-    token: number,
-    trigger: HTMLElement,
-    record: ToolRecord,
-    step: number,
-    attempted: Map<string, number>,
-  ): void {
-    if (token !== restoreToken) return;
-    if (isEngineDormant() || !state.rememberTools) {
-      finishRestore(token, "");
-      return;
-    }
-    if (step >= MAX_RESTORE_STEPS) {
-      finishRestore(token, "恢复次数已达到上限");
-      return;
-    }
-    withToolMenu(token, trigger, (popup) => {
-      if (token !== restoreToken) return;
-      const rows = collectRows(popup);
-      if (!rows.length) {
-        finishRestore(token, "当前菜单没有可读选中状态，暂不可恢复");
-        return;
-      }
-      const missing = record.selected.filter((label) => {
-        const match = rows.find((row) => row.label === label);
-        return !match || !match.selected;
-      });
-      if (!missing.length) {
-        const actual = rows.filter((row) => row.selected).map((row) => row.label);
-        persistSelection(trigger, actual);
-        finishRestore(
-          token,
-          actual.length ? "已恢复 " + actual.join(" / ") : "当前没有选中任何工具",
-        );
-        return;
-      }
-      const nextLabel = missing.find((label) =>
-        rows.some((row) => row.label === label),
-      );
-      if (!nextLabel) {
-        finishRestore(token, "找不到已记录的工具");
-        return;
-      }
-      // A radio-style menu cannot hold every saved label at once; stop
-      // instead of toggling the same rows until the step cap. One repeat is
-      // allowed so a slow host update is not mistaken for a rejection.
-      const clicks = attempted.get(nextLabel) ?? 0;
-      if (clicks >= 2) {
-        finishRestore(token, "这些工具无法同时选中");
-        return;
-      }
-      attempted.set(nextLabel, clicks + 1);
-      const row = rows.find((entry) => entry.label === nextLabel);
-      if (!row) {
-        finishRestore(token, "找不到已记录的工具");
-        return;
-      }
-      if (!clickElement(interactiveRow(row.node), "select tool menu row")) {
-        finishRestore(token, "无法选择工具");
-        return;
-      }
-      stepTimer = window.setTimeout(() => {
-        if (token !== restoreToken) return;
-        restoreStep(token, trigger, record, step + 1, attempted);
-      }, ROW_SETTLE_DELAY);
+    writeToolRecord({
+      key: "atomic-actions",
+      controlLabel: "工具",
+      applicationId: tool.applicationId,
+      label: tool.label,
+      legacyLabels: tool.label ? [tool.label] : [],
+      ts: Date.now(),
     });
+    actionStatus = tool.label
+      ? `已记录 ${tool.label}`
+      : `已记录 ${tool.applicationId}`;
+    renderStatus();
+  }
+
+  function scheduleRecordCapture(
+    applicationId: string,
+    label: string,
+    removing: boolean,
+  ): void {
+    clearTimers(recordTimers);
+    let confirmed = false;
+    for (const [index, delay] of RECORD_DELAYS.entries()) {
+      const timer = window.setTimeout(() => {
+        const position = recordTimers.indexOf(timer);
+        if (position >= 0) recordTimers.splice(position, 1);
+        if (isEngineDormant() || !state.rememberTools || confirmed) return;
+        const chip = currentChip();
+        if (!removing && chip) {
+          if (chip.applicationId === applicationId || index === RECORD_DELAYS.length - 1) {
+            confirmed = true;
+            persistChip(chip);
+          }
+          return;
+        }
+        if (removing && !chip) {
+          confirmed = true;
+          persistChip(null);
+          return;
+        }
+        if (index === RECORD_DELAYS.length - 1) {
+          actionStatus = label
+            ? `未确认 ${label} 的选择，已保留原记录`
+            : "未确认工具选择，已保留原记录";
+          renderStatus();
+        }
+      }, delay);
+      recordTimers.push(timer);
+    }
+  }
+
+  function handleToolClick(event: MouseEvent): void {
+    if (isEngineDormant()) return;
+    const target = event.target;
+    if (!(target instanceof Element) || isInsideTurboUI(target)) return;
+    const chip = target.closest(ATOMIC_TOOL_CHIP_SELECTOR);
+    if (chip instanceof HTMLElement) {
+      if (restoring || !target.closest("button")) return;
+      const info = chipRecord(chip);
+      scheduleRecordCapture(info?.applicationId || "", info?.label || "", true);
+      return;
+    }
+    if (restoring || !state.rememberTools) return;
+    const item = target.closest(ATOMIC_TOOL_ITEM_SELECTOR);
+    if (!(item instanceof HTMLElement)) return;
+    const applicationId = applicationIdOf(item);
+    if (!applicationId) return;
+    scheduleRecordCapture(applicationId, toolLabel(item), false);
+  }
+
+  function verifyRestored(
+    token: number,
+    saved: ToolRecord,
+    attemptsLeft: number,
+  ): void {
+    clearTimers(verifyTimers);
+    for (const [index, delay] of VERIFY_DELAYS.entries()) {
+      const timer = window.setTimeout(() => {
+        const position = verifyTimers.indexOf(timer);
+        if (position >= 0) verifyTimers.splice(position, 1);
+        if (token !== restoreToken) return;
+        const chip = currentChip();
+        if (chip && matchesSaved(chip, saved)) {
+          clearTimers(verifyTimers);
+          writeToolRecord({
+            key: "atomic-actions",
+            controlLabel: "工具",
+            applicationId: chip.applicationId,
+            label: chip.label || saved.label,
+            legacyLabels: chip.label ? [chip.label] : saved.legacyLabels,
+            ts: Date.now(),
+          });
+          finishRestore(
+            token,
+            `已恢复 ${chip.label || saved.label || saved.applicationId}`,
+          );
+          return;
+        }
+        if (index !== VERIFY_DELAYS.length - 1) return;
+        restoring = false;
+        closeOverflow();
+        if (attemptsLeft > 1) return;
+        finishRestore(token, "未能恢复已记录的工具");
+      }, delay);
+      verifyTimers.push(timer);
+    }
+  }
+
+  function tryRestore(saved: ToolRecord, token: number): void {
+    restoreAttempts += 1;
+    const chip = currentChip();
+    if (chip && matchesSaved(chip, saved)) {
+      finishRestore(token, `已恢复 ${chip.label || saved.label || saved.applicationId}`);
+      return;
+    }
+    const attemptsLeft = MAX_RESTORE_ATTEMPTS - restoreAttempts + 1;
+    const inline = findTool(inlineTools(), saved);
+    if (inline) {
+      if (!click(inline.node, "select atomic tool")) {
+        restoring = false;
+        return;
+      }
+      verifyRestored(token, saved, attemptsLeft);
+      return;
+    }
+    const openMenuTool = findTool(menuTools(), saved);
+    if (openMenuTool) {
+      if (!click(openMenuTool.node, "select atomic overflow tool")) {
+        restoring = false;
+        return;
+      }
+      verifyRestored(token, saved, attemptsLeft);
+      return;
+    }
+    const trigger = overflowTrigger();
+    if (!trigger) {
+      restoring = false;
+      return;
+    }
+    if (trigger.getAttribute("aria-expanded") !== "true") {
+      openedOverflow = trigger;
+      if (!click(trigger, "open atomic tool overflow")) {
+        openedOverflow = null;
+        restoring = false;
+        return;
+      }
+    }
+    let attempt = 0;
+    const wait = (): void => {
+      stepTimer = 0;
+      if (token !== restoreToken) return;
+      const menuTool = findTool(menuTools(), saved);
+      if (menuTool) {
+        if (!click(menuTool.node, "select atomic overflow tool")) {
+          restoring = false;
+          closeOverflow();
+          return;
+        }
+        verifyRestored(token, saved, attemptsLeft);
+        return;
+      }
+      attempt += 1;
+      if (attempt >= MENU_WAIT_ATTEMPTS) {
+        restoring = false;
+        closeOverflow();
+        return;
+      }
+      stepTimer = window.setTimeout(wait, MENU_WAIT_INTERVAL);
+    };
+    stepTimer = window.setTimeout(wait, MENU_WAIT_INTERVAL);
   }
 
   function maybeRestore(): void {
-    if (restoreDone) {
-      // A new topic can rebuild the composer without a history entry. The old
-      // trigger detaching is the only reliable signal that the host reset its
-      // selection, so re-arm once in that case.
-      if (!lastRestoredTrigger || lastRestoredTrigger.isConnected) return;
-      if (rearmCount >= MAX_REARMS) return;
-      rearmCount += 1;
-      restoreDone = false;
-      restoredTriggers = new WeakSet<Element>();
-    }
+    if (restoreDone || restoring) return;
     if (isEngineDormant() || !state.rememberTools) {
       restoreDone = true;
       return;
     }
     const saved = readToolRecord();
-    if (!saved || !saved.selected.length) {
+    if (
+      !saved ||
+      (!saved.applicationId && !saved.label && !saved.legacyLabels.length)
+    ) {
       restoreDone = true;
       return;
     }
-    const trigger = triggerNode();
-    if (!trigger) return;
-    if (restoredTriggers.has(trigger)) {
-      restoreDone = true;
+    const chip = currentChip();
+    if (chip && matchesSaved(chip, saved)) {
+      finishRestore(restoreToken, `已恢复 ${chip.label || saved.label || saved.applicationId}`);
       return;
     }
-    if (restoring) return;
-    restoredTriggers.add(trigger);
-    lastRestoredTrigger = trigger;
+    if (!chip && !atomicToolbarPresent()) return;
+    if (restoreAttempts >= MAX_RESTORE_ATTEMPTS) {
+      finishRestore(restoreToken, "找不到已记录的工具");
+      return;
+    }
     restoring = true;
     restoreToken += 1;
-    const token = restoreToken;
-    restoreStep(token, trigger, saved, 0, new Map<string, number>());
+    tryRestore(saved, restoreToken);
+  }
+
+  function clearTimer(): void {
+    stopPolling();
+    window.clearTimeout(stepTimer);
+    stepTimer = 0;
+    clearTimers(recordTimers);
+    clearTimers(verifyTimers);
+    restoreToken += 1;
+    restoring = false;
+    restoreDone = false;
+    restoreAttempts = 0;
+    closeOverflow();
   }
 
   function scheduleRestore(): void {
-    stopPolling();
-    window.clearTimeout(stepTimer);
-    window.clearTimeout(recordTimer);
-    stepTimer = 0;
-    recordTimer = 0;
-    restoreToken += 1;
-    restoring = false;
-    lastRestoredTrigger = null;
-    rearmCount = 0;
-    closeOpenedMenu();
-    restoredTriggers = new WeakSet<Element>();
-    if (isEngineDormant()) return;
-    if (!state.rememberTools) return;
+    clearTimer();
+    if (isEngineDormant() || !state.rememberTools) return;
     const saved = readToolRecord();
-    if (!saved || !saved.selected.length) return;
+    if (!saved) return;
     restoreDone = false;
     pollTimer = window.setInterval(() => {
       pollCount += 1;
@@ -519,18 +463,13 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
     const saved = readToolRecord();
     if (!saved) {
       statusNode.textContent =
-        actionStatus || "工具记忆：未记录（在工具菜单里勾选工具即可）";
+        actionStatus || "工具记忆：未记录（在工具按钮里选择一个工具即可）";
       return;
     }
-    if (!saved.selected.length) {
-      statusNode.textContent = actionStatus || "工具记忆：当前没有选中任何工具";
-      return;
-    }
-    statusNode.textContent = "工具记忆：" + saved.selected.join(" / ") + " ";
+    const shown = saved.label || saved.applicationId || "已记录工具";
+    statusNode.textContent = "工具记忆：" + shown + " ";
     if (actionStatus) {
-      statusNode.appendChild(
-        el("span", {}, ["· " + actionStatus + " "]),
-      );
+      statusNode.appendChild(el("span", {}, ["· " + actionStatus + " "]));
     }
     statusNode.appendChild(
       el(
@@ -551,6 +490,11 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
 
   function attachStatusNode(node: HTMLElement | null): void {
     statusNode = node;
+  }
+
+  function teardown(): void {
+    clearTimer();
+    statusNode = null;
   }
 
   return {

@@ -141,6 +141,15 @@ export const TOOL_TRIGGER_SELECTOR =
   '[data-new-input-control="add-tools-trigger"]';
 export const TOOL_TRIGGER_CONTAINER_SELECTOR =
   '[data-new-input-control="add-tools"]';
+// Yuanbao's real one-shot tools (AI writing, painting, search, ...) live in a
+// separate row. The selected tool is mirrored as a removable chip in the
+// composer, which is the only reliable source of the selected application id.
+export const ATOMIC_ACTIONS_SELECTOR =
+  '[data-new-input-control="atomic-actions"]';
+export const ATOMIC_TOOL_ITEM_SELECTOR = `${ATOMIC_ACTIONS_SELECTOR} [data-application-id]`;
+export const ATOMIC_TOOL_CHIP_SELECTOR =
+  '[data-new-input-control="selected-atomic-action"][data-application-id]';
+export const ATOMIC_TOOL_MENU_SELECTOR = `${ATOMIC_ACTIONS_SELECTOR} [role='menu']`;
 export const TOOL_POPUP_SELECTOR = [
   "[role='menu']",
   "[role='listbox']",
@@ -179,7 +188,9 @@ export function isToolControlElement(node: unknown): boolean {
   if (!(node instanceof Element)) return false;
   return Boolean(
     node.closest(TOOL_TRIGGER_SELECTOR) ||
-      node.closest(TOOL_TRIGGER_CONTAINER_SELECTOR),
+      node.closest(TOOL_TRIGGER_CONTAINER_SELECTOR) ||
+      node.closest(ATOMIC_ACTIONS_SELECTOR) ||
+      node.closest(ATOMIC_TOOL_CHIP_SELECTOR),
   );
 }
 

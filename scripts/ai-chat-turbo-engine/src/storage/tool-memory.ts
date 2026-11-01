@@ -13,11 +13,15 @@ const toolStore = createReportedStorage("localStorage", (failure) => {
 
 const MAX_TOOLS = 40;
 const MAX_LABEL = 120;
+const MAX_APPLICATION_ID = 120;
 
 export interface ToolRecord {
   key: string;
   controlLabel: string;
-  selected: string[];
+  applicationId: string;
+  label: string;
+  /** Labels written by 0.16.2 and earlier; used only for migration. */
+  legacyLabels: string[];
   ts: number;
 }
 
@@ -31,22 +35,27 @@ function cleanLabel(raw: unknown): string {
 function toToolRecord(value: unknown): ToolRecord | null {
   if (!isObjectRecord(value)) return null;
   const key = cleanLabel(value["key"]);
-  if (!key) return null;
+  const applicationId = cleanLabel(value["applicationId"]).slice(0, MAX_APPLICATION_ID);
+  const label = cleanLabel(value["label"]);
   const selectedRaw = value["selected"];
-  if (!Array.isArray(selectedRaw)) return null;
-  const selected: string[] = [];
-  for (const entry of selectedRaw) {
-    const label = cleanLabel(entry);
-    if (!label || selected.includes(label)) continue;
-    selected.push(label);
-    if (selected.length >= MAX_TOOLS) break;
+  const legacyLabels: string[] = [];
+  if (Array.isArray(selectedRaw)) {
+    for (const entry of selectedRaw) {
+      const legacy = cleanLabel(entry);
+      if (!legacy || legacyLabels.includes(legacy)) continue;
+      legacyLabels.push(legacy);
+      if (legacyLabels.length >= MAX_TOOLS) break;
+    }
   }
+  if (!key || (!applicationId && !label && !legacyLabels.length)) return null;
   const controlLabel = cleanLabel(value["controlLabel"]);
   const ts = value["ts"];
   return {
     key,
     controlLabel,
-    selected,
+    applicationId,
+    label: label || legacyLabels[0] || "",
+    legacyLabels,
     ts: typeof ts === "number" && Number.isFinite(ts) ? ts : 0,
   };
 }

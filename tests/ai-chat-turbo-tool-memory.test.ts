@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createToolPopupScope } from "../scripts/ai-chat-turbo-engine/src/core/tool-scope";
 import {
   createToolMemoryUtils,
-  rowSelected,
 } from "../scripts/ai-chat-turbo-engine/src/core/tool-memory";
 import { createReasoningUtils } from "../scripts/ai-chat-turbo-engine/src/core/reasoning";
 import { readToolRecord, writeToolRecord } from "../scripts/ai-chat-turbo-engine/src/storage/tool-memory";
@@ -99,54 +98,104 @@ afterEach(() => {
 });
 
 interface ToolFixture {
-  trigger: HTMLButtonElement;
-  popup: HTMLElement;
-  paintRow: HTMLElement;
-  searchRow: HTMLElement;
+  toolbar: HTMLElement;
+  writing: HTMLButtonElement;
+  painting: HTMLButtonElement;
+  overflow: HTMLButtonElement;
+  overflowMenu: HTMLElement;
+  overflowPainting: HTMLButtonElement;
+  chipHost: HTMLElement;
 }
 
-function installToolMenu(): ToolFixture {
-  const container = el("div", { "data-new-input-control": "add-tools" });
-  const trigger = el("button", {
-    "data-new-input-control": "add-tools-trigger",
-    "aria-expanded": "false",
-    "aria-controls": "yuanbao-tools-menu",
-  }, ["添加工具"]);
-  const paintRow = el("button", { role: "menuitemcheckbox", "aria-checked": "false" }, ["绘画"]);
-  const searchRow = el("button", { role: "menuitemcheckbox", "aria-checked": "false" }, ["搜索"]);
-  const popup = el("div", { id: "yuanbao-tools-menu", role: "menu" }, [paintRow, searchRow]);
-  for (const row of [paintRow, searchRow]) {
-    row.addEventListener("click", () => {
-      row.setAttribute("aria-checked", row.getAttribute("aria-checked") === "true" ? "false" : "true");
-    });
-  }
-  container.append(trigger);
-  document.body.append(container, popup);
-  return { trigger, popup, paintRow, searchRow };
+let selectedTool: { id: string; label: string } | null = null;
+
+function renderChip(host: HTMLElement): void {
+  host.replaceChildren();
+  if (!selectedTool) return;
+  const chip = el("div", {
+    "data-new-input-control": "selected-atomic-action",
+    "data-application-id": selectedTool.id,
+  });
+  const wrap = el("span", {});
+  const label = el("span", {}, [selectedTool.label]);
+  const remove = el("button", { "aria-label": `移除 ${selectedTool.label}` }, ["x"]);
+  remove.addEventListener("click", (event) => {
+    event.stopPropagation();
+    selectedTool = null;
+    renderChip(host);
+  });
+  wrap.append(label, remove);
+  chip.append(wrap);
+  host.append(chip);
 }
 
-describe("rowSelected", () => {
-  it("reads explicit toggle attributes before class hints", () => {
-    const row = el("button", { "aria-checked": "true" }, ["绘画"]);
-    expect(rowSelected(row)).toBe(true);
-    row.setAttribute("aria-checked", "false");
-    expect(rowSelected(row)).toBe(false);
+function installToolToolbar(): ToolFixture {
+  selectedTool = null;
+  const toolbar = el("div", {
+    "data-new-input-control": "atomic-actions",
   });
+  const writing = el("button", { "data-application-id": "AI_WRITING", "aria-label": "专业写作" });
+  const painting = el("button", { "data-application-id": "AI_PAINTING", "aria-label": "AI生图" });
+  const overflowMenu = el("div", { role: "menu", "aria-label": "工具" });
+  const overflowPainting = el("button", {
+    role: "menuitem",
+    "data-application-id": "AI_PAINTING",
+    "aria-label": "AI生图",
+  });
+  const overflow = el("button", { "aria-label": "工具", "aria-expanded": "false" });
+  const select = (id: string, label: string): void => {
+    selectedTool = { id, label };
+    renderChip(chipHost);
+  };
+  writing.addEventListener("click", () => select("AI_WRITING", "专业写作"));
+  painting.addEventListener("click", () => select("AI_PAINTING", "AI生图"));
+  overflowPainting.addEventListener("click", () => {
+    overflow.setAttribute("aria-expanded", "false");
+    overflowMenu.remove();
+    select("AI_PAINTING", "AI生图");
+  });
+  overflow.addEventListener("click", () => {
+    const open = overflow.getAttribute("aria-expanded") === "true";
+    overflow.setAttribute("aria-expanded", open ? "false" : "true");
+    if (open) overflowMenu.remove();
+    else toolbar.append(overflowMenu);
+  });
+  overflowMenu.append(overflowPainting);
+  toolbar.append(writing, painting, overflow);
+  const chipHost = el("div", {});
+  document.body.append(toolbar, chipHost);
+  return { toolbar, writing, painting, overflow, overflowMenu, overflowPainting, chipHost };
+}
 
-  it("returns null when a row exposes no selection state", () => {
-    const row = el("button", {}, ["普通按钮"]);
-    expect(rowSelected(row)).toBeNull();
+function createToolMemory(scope = createToolPopupScope()) {
+  return createToolMemoryUtils({
+    el,
+    state: createEngineState(),
+    triggerSendButton: (control) => {
+      control.click();
+      return true;
+    },
   });
-});
+}
 
 describe("createToolPopupScope", () => {
   it("registers the popup named by aria-controls and owns its rows", () => {
-    const fixture = installToolMenu();
+    const container = el("div", { "data-new-input-control": "add-tools" });
+    const trigger = el("button", {
+      "data-new-input-control": "add-tools-trigger",
+      "aria-expanded": "false",
+      "aria-controls": "yuanbao-tools-menu",
+    }, ["添加工具"]);
+    const row = el("button", { role: "menuitemcheckbox" }, ["绘画"]);
+    const popup = el("div", { id: "yuanbao-tools-menu", role: "menu" }, [row]);
+    container.append(trigger);
+    document.body.append(container, popup);
+    const fixture = { trigger, menu: popup, row };
     const scope = createToolPopupScope();
-    const popup = scope.note(fixture.trigger, new Set<Element>());
-    expect(popup).toBe(fixture.popup);
-    expect(scope.active(fixture.trigger)).toBe(fixture.popup);
-    expect(scope.isInside(fixture.paintRow)).toBe(true);
+    const resolved = scope.note(fixture.trigger, new Set<Element>());
+    expect(resolved).toBe(fixture.menu);
+    expect(scope.active(fixture.trigger)).toBe(fixture.menu);
+    expect(scope.isInside(fixture.row)).toBe(true);
     expect(scope.isInside(document.body)).toBe(false);
   });
 
@@ -168,60 +217,136 @@ describe("createToolPopupScope", () => {
 });
 
 describe("tool selection memory", () => {
-  it("records the full checked set after a row click", async () => {
-    const fixture = installToolMenu();
-    const state = createEngineState();
-    const scope = createToolPopupScope();
-    const toolMemory = createToolMemoryUtils({ el, state, toolScope: scope });
+  it("records the selected application chip after a tool click", async () => {
+    const fixture = installToolToolbar();
+    const toolMemory = createToolMemory();
     window.addEventListener("click", toolMemory.handleToolClick, true);
 
-    press(fixture.trigger);
-    await vi.advanceTimersByTimeAsync(900);
-    press(fixture.paintRow);
-    await vi.advanceTimersByTimeAsync(250);
+    press(fixture.writing);
+    await vi.advanceTimersByTimeAsync(200);
 
-    expect(readToolRecord()?.selected).toEqual(["绘画"]);
+    expect(readToolRecord()?.applicationId).toBe("AI_WRITING");
+    expect(readToolRecord()?.label).toBe("专业写作");
     window.removeEventListener("click", toolMemory.handleToolClick, true);
     toolMemory.teardown();
   });
 
-  it("drops a tool from the record when the user unchecks it", async () => {
-    const fixture = installToolMenu();
-    fixture.paintRow.setAttribute("aria-checked", "true");
-    writeToolRecord({ key: "add-tools", controlLabel: "添加工具", selected: ["绘画"], ts: Date.now() });
-    const state = createEngineState();
-    const scope = createToolPopupScope();
-    const toolMemory = createToolMemoryUtils({ el, state, toolScope: scope });
+  it("clears the record when the selected tool chip is removed", async () => {
+    const fixture = installToolToolbar();
+    selectedTool = { id: "AI_PAINTING", label: "AI生图" };
+    renderChip(fixture.chipHost);
+    writeToolRecord({
+      key: "atomic-actions",
+      controlLabel: "工具",
+      applicationId: "AI_PAINTING",
+      label: "AI生图",
+      legacyLabels: ["AI生图"],
+      ts: Date.now(),
+    });
+    const toolMemory = createToolMemory();
     window.addEventListener("click", toolMemory.handleToolClick, true);
 
-    press(fixture.trigger);
-    await vi.advanceTimersByTimeAsync(900);
-    press(fixture.paintRow);
-    await vi.advanceTimersByTimeAsync(250);
+    const remove = fixture.chipHost.querySelector("button");
+    expect(remove).not.toBeNull();
+    if (remove) press(remove);
+    await vi.advanceTimersByTimeAsync(200);
 
-    expect(readToolRecord()?.selected).toEqual([]);
+    expect(readToolRecord()).toBeNull();
     window.removeEventListener("click", toolMemory.handleToolClick, true);
     toolMemory.teardown();
   });
 
-  it("restores a saved row without reopening a popup that is already visible", async () => {
-    const fixture = installToolMenu();
-    const triggerClicks = vi.fn();
-    fixture.trigger.addEventListener("click", triggerClicks);
-    writeToolRecord({ key: "add-tools", controlLabel: "添加工具", selected: ["绘画"], ts: Date.now() });
-
-    const state = createEngineState();
-    const scope = createToolPopupScope();
-    const toolMemory = createToolMemoryUtils({ el, state, toolScope: scope });
+  it("restores an inline tool and does not click an already selected chip", async () => {
+    const fixture = installToolToolbar();
+    const clicks = vi.fn();
+    fixture.writing.addEventListener("click", clicks);
+    selectedTool = { id: "AI_WRITING", label: "专业写作" };
+    renderChip(fixture.chipHost);
+    writeToolRecord({
+      key: "atomic-actions",
+      controlLabel: "工具",
+      applicationId: "AI_WRITING",
+      label: "专业写作",
+      legacyLabels: ["专业写作"],
+      ts: Date.now(),
+    });
+    const toolMemory = createToolMemory();
     const status = el("div", {});
     toolMemory.attachStatusNode(status);
     toolMemory.maybeRestore();
-    await vi.advanceTimersByTimeAsync(600);
+    await vi.advanceTimersByTimeAsync(500);
 
-    expect(fixture.paintRow.getAttribute("aria-checked")).toBe("true");
-    expect(fixture.searchRow.getAttribute("aria-checked")).toBe("false");
-    expect(triggerClicks).not.toHaveBeenCalled();
-    expect(status.textContent).toContain("已恢复 绘画");
+    expect(clicks).not.toHaveBeenCalled();
+    expect(status.textContent).toContain("专业写作");
+    toolMemory.teardown();
+  });
+
+  it("restores a tool through the overflow menu when it is not inline", async () => {
+    const fixture = installToolToolbar();
+    fixture.painting.remove();
+    writeToolRecord({
+      key: "atomic-actions",
+      controlLabel: "工具",
+      applicationId: "AI_PAINTING",
+      label: "AI生图",
+      legacyLabels: ["AI生图"],
+      ts: Date.now(),
+    });
+    const toolMemory = createToolMemory();
+    const status = el("div", {});
+    toolMemory.attachStatusNode(status);
+    toolMemory.maybeRestore();
+    await vi.advanceTimersByTimeAsync(700);
+
+    expect(selectedTool?.id).toBe("AI_PAINTING");
+    expect(fixture.overflow.getAttribute("aria-expanded")).toBe("false");
+    expect(status.textContent).toContain("已恢复 AI生图");
+    toolMemory.teardown();
+  });
+
+  it("retries when the first click does not produce a chip", async () => {
+    const fixture = installToolToolbar();
+    let failedOnce = false;
+    fixture.painting.addEventListener("click", (event) => {
+      if (failedOnce) return;
+      failedOnce = true;
+      event.stopImmediatePropagation();
+    }, true);
+    writeToolRecord({
+      key: "atomic-actions",
+      controlLabel: "工具",
+      applicationId: "AI_PAINTING",
+      label: "AI生图",
+      legacyLabels: ["AI生图"],
+      ts: Date.now(),
+    });
+    const toolMemory = createToolMemory();
+    const status = el("div", {});
+    toolMemory.attachStatusNode(status);
+    toolMemory.maybeRestore();
+    await vi.advanceTimersByTimeAsync(2500);
+    toolMemory.maybeRestore();
+    await vi.advanceTimersByTimeAsync(1800);
+
+    expect(failedOnce).toBe(true);
+    expect(selectedTool?.id).toBe("AI_PAINTING");
+    toolMemory.teardown();
+  });
+
+  it("falls back to the saved label for records written by older versions", async () => {
+    installToolToolbar();
+    writeToolRecord({
+      key: "add-tools",
+      controlLabel: "添加工具",
+      applicationId: "",
+      label: "AI生图",
+      legacyLabels: ["AI生图"],
+      ts: Date.now(),
+    });
+    const toolMemory = createToolMemory();
+    toolMemory.maybeRestore();
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(selectedTool?.id).toBe("AI_PAINTING");
     toolMemory.teardown();
   });
 });
@@ -285,6 +410,50 @@ describe("reasoning toggle restore", () => {
     reasoning.applyReasoningMemory();
     await vi.advanceTimersByTimeAsync(1000);
     expect(fixture.clicks).toHaveBeenCalledTimes(1);
+    reasoning.clearReasoningRestoreTimer();
+  });
+});
+
+describe("yuanbao model panel restore", () => {
+  it("closes the thinking-mode panel owned by the restore flow", async () => {
+    const trigger = el("button", {
+      "data-thinking-mode-switcher-trigger": "",
+      "aria-label": "切换模型",
+      "aria-expanded": "true",
+      "aria-controls": "yb-model-menu",
+    }, ["元宝" ]);
+    const row = el("button", {
+      role: "menuitemradio",
+      "aria-checked": "true",
+    }, ["Pro"]);
+    const menu = el("div", { id: "yb-model-menu", role: "menu" }, [row]);
+    const clicks = vi.fn(() => {
+      trigger.setAttribute(
+        "aria-expanded",
+        trigger.getAttribute("aria-expanded") === "true" ? "false" : "true",
+      );
+    });
+    trigger.addEventListener("click", clicks);
+    document.body.append(trigger, menu);
+    window.localStorage.setItem(
+      "ai_turbo_reasoning_memory",
+      JSON.stringify({
+        [location.hostname]: {
+          mode: "choice",
+          key: "切换模型",
+          controlLabel: "元宝",
+          path: [],
+          option: "Pro",
+          ts: Date.now(),
+        },
+      }),
+    );
+
+    const reasoning = createReasoning();
+    reasoning.applyReasoningMemory();
+    await vi.advanceTimersByTimeAsync(1200);
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
     reasoning.clearReasoningRestoreTimer();
   });
 });
