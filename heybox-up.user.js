@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.55
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏顶部另有“刷新评论”按钮，发布或删除评论后自动从网络重读第一页，并轮询到目标评论出现或消失为止；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.56
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id 或同账号同文本轮询该页直到站点回显；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -1734,6 +1734,12 @@
     }
     return { hasMore: true, loadedGroups };
   }
+  function resolveMergedCommentProgress(input) {
+    if (input.floorTotal > 0) {
+      return { hasMore: input.loadedGroups < input.floorTotal, loadedGroups: input.loadedGroups };
+    }
+    return { hasMore: input.rawGroupCount >= RAIL_PAGE_SIZE, loadedGroups: input.loadedGroups };
+  }
   function buildArticleCommentBody(linkId, text, target) {
     return {
       is_cy: "0",
@@ -1774,6 +1780,111 @@
       if (railThreadHasComment(node.children, commentId)) return true;
     }
     return false;
+  }
+  function findRailFloorIdForComment(items, commentId) {
+    if (commentId === "") return "";
+    for (const entry of items) {
+      if (entry.id === commentId) return entry.id;
+      if (railThreadHasComment(buildRailCommentTree(entry), commentId)) return entry.id;
+    }
+    return "";
+  }
+  function mergeRailPageItems(existing, incoming) {
+    const byId = /* @__PURE__ */ new Map();
+    for (const entry of incoming) {
+      if (entry.id === "") continue;
+      byId.set(entry.id, entry);
+    }
+    const known = new Set(existing.map((entry) => entry.id));
+    const merged = [];
+    for (const entry of existing) {
+      const replacement = byId.get(entry.id);
+      merged.push(replacement === void 0 ? entry : replacement);
+    }
+    const fresh = [];
+    for (const entry of incoming) {
+      if (entry.id === "" || known.has(entry.id)) continue;
+      known.add(entry.id);
+      fresh.push(entry);
+    }
+    return fresh.concat(merged);
+  }
+  function countRailThreadNodes(nodes) {
+    let total = 0;
+    for (const node of nodes) {
+      total += 1 + countRailThreadNodes(node.children);
+    }
+    return total;
+  }
+  var RAIL_PENDING_ID_PREFIX = "pending-";
+  function createRailPendingReply(input) {
+    const text = input.text.trim();
+    const id = typeof input.commentId === "string" && input.commentId !== "" ? input.commentId : RAIL_PENDING_ID_PREFIX + input.sequence;
+    return {
+      id,
+      userId: input.userId,
+      name: "我",
+      replyName: "",
+      avatar: "",
+      text,
+      body: [{ type: "text", text }],
+      createAt: input.createAt,
+      likes: 0,
+      replies: 0,
+      rootId: input.rootId,
+      parentId: input.parentId,
+      isCy: false
+    };
+  }
+  function attachRailPendingReplies(entry, pending) {
+    if (pending.length === 0) return entry;
+    const subComments = entry.subComments.concat(pending);
+    return { ...entry, subComments, quotes: subComments };
+  }
+  function normalizeRailMatchText(value) {
+    return value.replace(/\[cube_[^\]]{1,64}\]/g, " ").replace(/\[[^\]]{1,64}\]/g, " ").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function collectRailEchoedNodes(entry) {
+    const nodes = [];
+    const collect = (branch) => {
+      for (const node of branch) {
+        if (node.id !== "" && !node.id.startsWith(RAIL_PENDING_ID_PREFIX)) nodes.push(node);
+        collect(node.children);
+      }
+    };
+    collect(buildRailCommentTree(entry));
+    return nodes;
+  }
+  function railThreadHasPendingReply(entry, pending) {
+    const wanted = normalizeRailMatchText(pending.text);
+    return collectRailEchoedNodes(entry).some((node) => {
+      if (pending.id !== "" && !pending.id.startsWith(RAIL_PENDING_ID_PREFIX) && node.id === pending.id) return true;
+      if (wanted === "") return false;
+      if (pending.userId !== "" && node.userId !== pending.userId) return false;
+      return normalizeRailMatchText(node.text) === wanted;
+    });
+  }
+  function pruneRailPendingReplies(items, pending) {
+    if (pending.length === 0) return [];
+    const echoed = items.flatMap(collectRailEchoedNodes);
+    const claimed = /* @__PURE__ */ new Set();
+    const kept = [];
+    for (const row of pending) {
+      const wanted = normalizeRailMatchText(row.text);
+      const match = echoed.find((node) => {
+        if (claimed.has(node)) return false;
+        if (row.id !== "" && !row.id.startsWith(RAIL_PENDING_ID_PREFIX) && node.id === row.id) return true;
+        if (wanted === "") return false;
+        if (row.userId !== "" && node.userId !== row.userId) return false;
+        return normalizeRailMatchText(node.text) === wanted;
+      });
+      if (match === void 0) {
+        kept.push(row);
+        continue;
+      }
+      claimed.add(match);
+    }
+    return kept;
   }
   var lastRailRequestAt = 0;
   var RAIL_PAGE_CACHE_TTL_MS = 2 * 60 * 1e3;
@@ -7305,6 +7416,7 @@
   var READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
   var READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
   var READER_PENDING_NOTICE_MS = 9e3;
+  var RAIL_MAX_INDENT_DEPTH = 4;
   var READER_ICONS = {
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
     home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 10.5 7.5-6 7.5 6"/><path d="M6.5 9.5V20h11V9.5"/><path d="M10 20v-5h4v5"/></svg>',
@@ -7928,7 +8040,7 @@
   .hbu-reader-comments-name-link:hover .hbu-reader-comments-name { color: var(--hbu-reader-link); text-decoration: underline; }
   .hbu-reader-comments-time { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-text { margin: 4px 0 0; font-size: 14px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
+  .hbu-reader-comments-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-reply { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
   .hbu-reader-comments-reply:hover { color: var(--hbu-reader-link); }
   .hbu-reader-comments-delete { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
@@ -7944,6 +8056,21 @@
   .hbu-reader-comments-reply-to { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-child .hbu-reader-comments-text { margin-top: 2px; font-size: 13px; }
   .hbu-reader-comments-child .hbu-reader-comments-meta { margin-top: 3px; }
+  .hbu-reader-comments-collapse { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-collapse:hover { color: var(--hbu-reader-link); }
+  /* A folded branch keeps a short indent and a dashed rule, so the row still
+     shows that replies are stored underneath it. */
+  .hbu-reader-comments-children--collapsed { padding-left: 6px; border-left-style: dashed; }
+  .hbu-reader-comments-child--collapsed { padding-top: 0; }
+  .hbu-reader-comments-child--collapsed::before { display: none; }
+  .hbu-reader-comments-expand { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px; border: 1px dashed var(--hbu-reader-border); border-radius: 999px; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-expand::before { content: "+"; font-weight: 700; }
+  .hbu-reader-comments-expand:hover { border-color: var(--hbu-reader-link); color: var(--hbu-reader-link); }
+  .hbu-reader-comments-syncing { flex: none; color: var(--hbu-reader-muted); font-size: 11px; opacity: .85; }
+  /* Past the depth cap the branch stops indenting, so a long reply chain can
+     never push the sheet wider than its own column. */
+  .hbu-reader-comments-children--deep { margin-top: 6px; padding-left: 0; border-left: 0; }
+  .hbu-reader-comments-children--deep > .hbu-reader-comments-child::before { display: none; }
   .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
   .hbu-reader-comments-text img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
@@ -8686,6 +8813,7 @@
     let cyStatus = null;
     let cyBusy = false;
     let articleCommentBusy = false;
+    let pendingReplySeq = 0;
     const ARTICLE_COMMENT_MAX_LENGTH = 1e3;
     const articleComposerEmojiClosers = /* @__PURE__ */ new WeakMap();
     let commentPanel = null;
@@ -8702,6 +8830,7 @@
     const COMMENT_PANEL_STALE_MS = 60 * 1e3;
     let readerAccountId = "";
     const commentDeleteBusy = /* @__PURE__ */ new Set();
+    const collapsedCommentThreads = /* @__PURE__ */ new Set();
     let readerPendingAdvanceSourceId = "";
     let readerPendingAdvanceRevision = -1;
     let readerAdvanceLocked = false;
@@ -8711,7 +8840,20 @@
     let readerPendingArticleId = "";
     let readerPendingGeneration = -1;
     function createCommentState() {
-      return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, loadedAt: 0, seq: 0 };
+      return {
+        items: [],
+        page: 0,
+        total: 0,
+        loading: false,
+        error: "",
+        hasMore: false,
+        loadedGroups: 0,
+        loaded: false,
+        loadedAt: 0,
+        seq: 0,
+        floorPages: /* @__PURE__ */ new Map(),
+        pendingReplies: []
+      };
     }
     const showToast = (message) => {
       let toast = host?.querySelector(".hbu-reader-toast") ?? null;
@@ -9734,7 +9876,8 @@
       }
     };
     const createReaderCommentDeleteButton = (comment) => {
-      if (comment.id === "" || !isOwnRailComment(comment, readerAccountId)) return null;
+      if (comment.id === "" || isPendingReplyRow(comment.id)) return null;
+      if (!isOwnRailComment(comment, readerAccountId)) return null;
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "hbu-reader-comments-delete";
@@ -9785,7 +9928,47 @@
       return link;
     };
     const filterReaderCommentThread = (nodes, hideCy) => nodes.filter((node) => !hideCy || node.isCy !== true).map((node) => ({ ...node, children: filterReaderCommentThread(node.children, hideCy) }));
-    const createReaderCommentItem = (comment) => {
+    const resolvePendingFloorId = (items, pending) => {
+      if (pending.rootId !== "" && items.some((item) => item.id === pending.rootId)) return pending.rootId;
+      return findRailFloorIdForComment(items, pending.parentId);
+    };
+    const readPendingRepliesFor = (floorId) => commentState.pendingReplies.filter((pending) => resolvePendingFloorId(commentState.items, pending) === floorId);
+    const withPendingReplies = (entry) => attachRailPendingReplies(entry, readPendingRepliesFor(entry.id));
+    const isPendingReplyRow = (commentId) => commentId.startsWith(RAIL_PENDING_ID_PREFIX) || commentState.pendingReplies.some((row) => row.id === commentId);
+    const createThreadCollapseButton = (threadId, hiddenCount) => {
+      const collapse = document.createElement("button");
+      collapse.type = "button";
+      collapse.className = "hbu-reader-comments-collapse";
+      collapse.dataset["threadId"] = threadId;
+      collapse.textContent = "收起回复";
+      collapse.setAttribute("aria-expanded", "true");
+      collapse.setAttribute("aria-label", "收起这条评论下的 " + hiddenCount + " 条回复");
+      return collapse;
+    };
+    const createCollapsedThreadRow = (threadId, hiddenCount) => {
+      const holder = document.createElement("ul");
+      holder.className = "hbu-reader-comments-children hbu-reader-comments-children--collapsed";
+      const hiddenRow = document.createElement("li");
+      hiddenRow.className = "hbu-reader-comments-child hbu-reader-comments-child--collapsed";
+      const expand = document.createElement("button");
+      expand.type = "button";
+      expand.className = "hbu-reader-comments-expand";
+      expand.dataset["threadId"] = threadId;
+      expand.textContent = hiddenCount + " 条回复已收起";
+      expand.setAttribute("aria-expanded", "false");
+      hiddenRow.append(expand);
+      holder.append(hiddenRow);
+      return holder;
+    };
+    const focusCommentThreadControl = (selector, threadId) => {
+      for (const control of commentPanelList?.querySelectorAll(selector) ?? []) {
+        if (control.dataset["threadId"] !== threadId) continue;
+        control.focus({ preventScroll: true });
+        return;
+      }
+    };
+    const createReaderCommentItem = (raw) => {
+      const comment = withPendingReplies(raw);
       const item = document.createElement("li");
       item.className = "hbu-reader-comments-item";
       item.setAttribute("role", "listitem");
@@ -9824,18 +10007,26 @@
       }));
       const deleteButton = createReaderCommentDeleteButton(comment);
       if (deleteButton !== null) meta.append(deleteButton);
-      main.append(meta);
       const visibleChildren = filterReaderCommentThread(buildRailCommentTree(comment), readHideCyPreference());
+      const hiddenCount = countRailThreadNodes(visibleChildren);
+      const collapsible = comment.id !== "" && visibleChildren.length > 0;
+      const collapsed = collapsible && collapsedCommentThreads.has(comment.id);
+      if (collapsible && !collapsed) meta.append(createThreadCollapseButton(comment.id, hiddenCount));
+      main.append(meta);
       if (visibleChildren.length > 0) {
-        const children = document.createElement("ul");
-        children.className = "hbu-reader-comments-children";
-        for (const child of visibleChildren) children.append(createReaderCommentChild(child, comment));
-        main.append(children);
+        if (collapsed) {
+          main.append(createCollapsedThreadRow(comment.id, hiddenCount));
+        } else {
+          const children = document.createElement("ul");
+          children.className = "hbu-reader-comments-children";
+          for (const child of visibleChildren) children.append(createReaderCommentChild(child, comment, 1));
+          main.append(children);
+        }
       }
       item.append(avatar, main);
       return item;
     };
-    const createReaderCommentChild = (child, parent) => {
+    const createReaderCommentChild = (child, parent, depth) => {
       const item = document.createElement("li");
       item.className = "hbu-reader-comments-child";
       item.setAttribute("role", "listitem");
@@ -9873,21 +10064,36 @@
         replies.textContent = child.replies + " 条回复";
         actions.append(replies);
       }
-      const reply = createReaderReplyButton({
-        id: child.id !== "" ? child.id : parent.id,
-        rootId: child.rootId !== "" ? child.rootId : parent.rootId !== "" ? parent.rootId : parent.id,
-        name: child.name
-      });
-      actions.append(reply);
-      const deleteButton = createReaderCommentDeleteButton(child);
-      if (deleteButton !== null) actions.append(deleteButton);
-      main.append(who, text, actions);
+      const pendingRow = isPendingReplyRow(child.id);
+      if (pendingRow) {
+        const syncing = document.createElement("span");
+        syncing.className = "hbu-reader-comments-syncing";
+        syncing.textContent = "同步中…";
+        actions.append(syncing);
+      } else {
+        actions.append(createReaderReplyButton({
+          id: child.id !== "" ? child.id : parent.id,
+          rootId: child.rootId !== "" ? child.rootId : parent.rootId !== "" ? parent.rootId : parent.id,
+          name: child.name
+        }));
+        const deleteButton = createReaderCommentDeleteButton(child);
+        if (deleteButton !== null) actions.append(deleteButton);
+      }
       const visibleChildren = filterReaderCommentThread(child.children, readHideCyPreference());
+      const collapsible = child.id !== "" && visibleChildren.length > 0;
+      const hiddenCount = collapsible ? countRailThreadNodes(visibleChildren) : 0;
+      const collapsed = collapsible && collapsedCommentThreads.has(child.id);
+      if (collapsible && !collapsed) actions.append(createThreadCollapseButton(child.id, hiddenCount));
+      main.append(who, text, actions);
       if (visibleChildren.length > 0) {
-        const children = document.createElement("ul");
-        children.className = "hbu-reader-comments-children";
-        for (const nested of visibleChildren) children.append(createReaderCommentChild(nested, child));
-        main.append(children);
+        if (collapsed) {
+          main.append(createCollapsedThreadRow(child.id, hiddenCount));
+        } else {
+          const children = document.createElement("ul");
+          children.className = "hbu-reader-comments-children" + (depth >= RAIL_MAX_INDENT_DEPTH ? " hbu-reader-comments-children--deep" : "");
+          for (const nested of visibleChildren) children.append(createReaderCommentChild(nested, child, depth + 1));
+          main.append(children);
+        }
       }
       const row = document.createElement("div");
       row.className = "hbu-reader-comments-child-row";
@@ -9959,12 +10165,17 @@
     };
     const COMMENT_VERIFY_ATTEMPTS = 4;
     const COMMENT_VERIFY_DELAY_MS = 900;
-    const matchesCommentExpectation = (page, options, loaded) => {
-      if (page !== 1) return true;
+    const matchesCommentExpectation = (options, loaded) => {
       const wantPresent = options.expectPresentId ?? "";
       const wantAbsent = options.expectAbsentId ?? "";
       if (wantPresent !== "" && !railItemsHaveComment(loaded, wantPresent)) return false;
       if (wantAbsent !== "" && railItemsHaveComment(loaded, wantAbsent)) return false;
+      const pending = options.expectPending;
+      if (pending !== void 0) {
+        const floorId = resolvePendingFloorId(loaded, pending);
+        const entry = loaded.find((item) => item.id === floorId);
+        if (entry === void 0 || !railThreadHasPendingReply(entry, pending)) return false;
+      }
       return true;
     };
     const collectReaderCommentSubtree = (nodes, commentId, removed) => {
@@ -9999,6 +10210,12 @@
       }
       return next;
     };
+    const recordFloorPages = (items, page) => {
+      for (const entry of items) {
+        if (entry.id === "") continue;
+        commentState.floorPages.set(entry.id, page);
+      }
+    };
     const loadReaderComments = async (page, options = {}) => {
       if (commentState.loading && options.force !== true) return;
       const seq = ++commentState.seq;
@@ -10009,7 +10226,9 @@
       commentLoadController = controller;
       commentState.loading = true;
       commentState.error = "";
-      const keepItems = page === 1 && (options.fresh === true || options.expectPresentId !== void 0 || options.expectAbsentId !== void 0);
+      const merge = options.merge === true;
+      const writeRefresh = options.fresh === true || options.expectPresentId !== void 0 || options.expectAbsentId !== void 0 || options.expectPending !== void 0;
+      const keepItems = merge || page === 1 && writeRefresh;
       if (page === 1 && !keepItems) {
         commentState.items = [];
         commentState.page = 0;
@@ -10017,6 +10236,7 @@
         commentState.hasMore = false;
         commentState.loadedGroups = 0;
         commentState.loaded = false;
+        commentState.floorPages.clear();
       }
       renderReaderComments();
       let stale = false;
@@ -10024,7 +10244,7 @@
         const accountId = await resolveHeyboxId(controller.signal);
         if (seq !== commentState.seq || commentLoadController !== controller) return;
         if (accountId !== readerAccountId) readerAccountId = accountId;
-        const fresh = page === 1 && (options.fresh === true || options.expectPresentId !== void 0 || options.expectAbsentId !== void 0);
+        const fresh = merge || page === 1 && writeRefresh;
         const data = await fetchRailPage(targetId, page, {
           signal: controller.signal,
           accountId,
@@ -10032,14 +10252,30 @@
           ...page === 1 ? { maxAgeMs: RAIL_PAGE_CACHE_FRESH_MS } : {}
         });
         if (seq !== commentState.seq || commentLoadController !== controller) return;
+        const incoming = withoutCommentId(data.items, options.expectAbsentId ?? "");
         const seen = new Set(commentState.items.map((item) => item.id));
-        const added = data.items.filter((item) => item.id === "" || !seen.has(item.id));
-        commentState.items = page === 1 ? withoutCommentId(data.items, options.expectAbsentId ?? "") : commentState.items.concat(added);
-        commentState.page = page;
+        const added = incoming.filter((item) => item.id === "" || !seen.has(item.id));
+        if (merge) {
+          const base = withoutCommentId(commentState.items, options.expectAbsentId ?? "");
+          commentState.items = mergeRailPageItems(base, incoming);
+          commentState.page = Math.max(commentState.page, page);
+        } else if (page === 1) {
+          commentState.items = incoming;
+          commentState.page = 1;
+        } else {
+          commentState.items = commentState.items.concat(added);
+          commentState.page = page;
+        }
+        recordFloorPages(incoming, page);
         const absentId = options.expectAbsentId ?? "";
-        const echoingDeleted = absentId !== "" && railItemsHaveComment(data.items, absentId);
+        const echoingDeleted = absentId !== "" && railItemsHaveComment(incoming, absentId);
         commentState.total = echoingDeleted ? commentState.total : data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
-        const progress = resolveCommentPageProgress({
+        commentState.pendingReplies = pruneRailPendingReplies(commentState.items, commentState.pendingReplies);
+        const progress = merge ? resolveMergedCommentProgress({
+          loadedGroups: commentState.items.length,
+          floorTotal: data.floorTotal,
+          rawGroupCount: incoming.length
+        }) : resolveCommentPageProgress({
           rawGroupCount: data.items.length,
           freshGroupCount: page === 1 ? data.items.length : added.length,
           previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
@@ -10048,13 +10284,13 @@
         commentState.loadedGroups = progress.loadedGroups;
         commentState.hasMore = progress.hasMore;
         commentState.loaded = true;
-        if (page === 1) commentState.loadedAt = Date.now();
+        if (page === 1 || merge) commentState.loadedAt = Date.now();
         if (linkState !== null && !echoingDeleted && Number.isFinite(data.total) && data.total > 0) {
           const current = Number(linkState.commentCount);
           linkState.commentCount = Math.max(Number.isFinite(current) ? current : 0, data.total);
         }
         syncActionStates();
-        stale = !matchesCommentExpectation(page, options, page === 1 ? data.items : commentState.items);
+        stale = !matchesCommentExpectation(options, commentState.items);
       } catch (error) {
         if (isAbortError(error)) return;
         if (seq !== commentState.seq || commentLoadController !== controller) return;
@@ -10068,18 +10304,19 @@
           renderReaderComments();
         }
       }
-      if (!stale || page !== 1) return;
+      if (!stale) return;
       if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
       if (seq !== commentState.seq) return;
       const attempt = (options.attempt ?? 0) + 1;
       if (attempt >= COMMENT_VERIFY_ATTEMPTS) {
-        showToast(options.expectAbsentId === void 0 ? "评论已提交，列表仍待站点同步" : "评论已删除，列表仍待站点同步");
+        if (options.expectAbsentId !== void 0) showToast("评论已删除，列表仍待站点同步");
+        else if ((options.expectPresentId ?? "") !== "") showToast("评论已提交，列表仍待站点同步");
         return;
       }
       void waitForDelay(COMMENT_VERIFY_DELAY_MS, controller.signal).then(() => {
         if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
         if (seq !== commentState.seq) return;
-        void loadReaderComments(1, { ...options, fresh: true, force: true, attempt });
+        void loadReaderComments(page, { ...options, fresh: true, force: true, merge: true, attempt });
       }).catch(() => void 0);
     };
     const readArticleComposers = () => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
@@ -10150,10 +10387,28 @@
         }
         syncActionStates();
         if (commentPanel !== null && !commentPanel.hidden) {
-          void loadReaderComments(1, {
+          const pending = reply === null ? null : createRailPendingReply({
+            parentId: reply.id,
+            rootId: reply.rootId !== "" ? reply.rootId : reply.id,
+            text,
+            userId: accountId,
+            createAt: Math.floor(Date.now() / 1e3),
+            sequence: ++pendingReplySeq,
+            ...createdId === "" ? {} : { commentId: createdId }
+          });
+          if (pending !== null) {
+            const pendingFloorId = resolvePendingFloorId(commentState.items, pending);
+            if (pendingFloorId !== "") collapsedCommentThreads.delete(pendingFloorId);
+            commentState.pendingReplies.push(pending);
+            renderReaderComments();
+          }
+          const floorId = pending === null ? "" : resolvePendingFloorId(commentState.items, pending);
+          const page = floorId === "" ? 1 : commentState.floorPages.get(floorId) ?? 1;
+          void loadReaderComments(page, {
             fresh: true,
             force: true,
-            ...createdId === "" ? {} : { expectPresentId: createdId }
+            merge: true,
+            ...pending !== null ? { expectPending: pending } : createdId === "" ? {} : { expectPresentId: createdId }
           });
         }
       } catch (error) {
@@ -10245,7 +10500,9 @@
         syncActionStates();
         showToast("评论已删除");
         if (commentPanel !== null && !commentPanel.hidden) {
-          void loadReaderComments(1, { fresh: true, force: true, expectAbsentId: commentId });
+          const floorId = owned.rootId !== "" ? owned.rootId : commentId;
+          const page = commentState.floorPages.get(floorId) ?? 1;
+          void loadReaderComments(page, { fresh: true, force: true, merge: true, expectAbsentId: commentId });
         }
       } catch (error) {
         if (articleId === targetId && readerGeneration === generation) {
@@ -10524,7 +10781,7 @@
       scrim.addEventListener("click", closeComments);
       refresh.addEventListener("click", () => {
         if (commentState.loading) return;
-        void loadReaderComments(1, { fresh: true, force: true });
+        void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
       });
       more.addEventListener("click", () => {
         if (!commentState.loading) void loadReaderComments(commentState.page + 1);
@@ -10537,6 +10794,26 @@
       list.addEventListener("click", (event) => {
         const target = event.target;
         if (!(target instanceof Element)) return;
+        const collapse = target.closest(".hbu-reader-comments-collapse");
+        if (collapse instanceof HTMLElement) {
+          const threadId = collapse.dataset["threadId"] || "";
+          if (threadId === "") return;
+          event.preventDefault();
+          collapsedCommentThreads.add(threadId);
+          renderReaderComments();
+          focusCommentThreadControl(".hbu-reader-comments-expand", threadId);
+          return;
+        }
+        const expand = target.closest(".hbu-reader-comments-expand");
+        if (expand instanceof HTMLElement) {
+          const threadId = expand.dataset["threadId"] || "";
+          if (threadId === "") return;
+          event.preventDefault();
+          collapsedCommentThreads.delete(threadId);
+          renderReaderComments();
+          focusCommentThreadControl(".hbu-reader-comments-collapse", threadId);
+          return;
+        }
         const remove = target.closest(".hbu-reader-comments-delete");
         if (remove instanceof HTMLElement) {
           const deleteId = remove.dataset["deleteId"] || "";
@@ -10580,7 +10857,7 @@
       if (!commentState.loaded) {
         void loadReaderComments(1);
       } else if (stalePanel) {
-        void loadReaderComments(1, { fresh: true, force: true });
+        void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
       }
     };
     const resetReaderComments = () => {
@@ -10588,6 +10865,7 @@
       commentLoadController = null;
       articleCommentBusy = false;
       commentDeleteBusy.clear();
+      collapsedCommentThreads.clear();
       clearArticleComposers();
       if (host !== null) host.inert = false;
       if (commentPanel !== null) {
