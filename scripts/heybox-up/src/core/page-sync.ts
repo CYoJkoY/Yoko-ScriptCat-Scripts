@@ -1,4 +1,5 @@
 import {
+  ADAPTED_ROUTES,
   PAGE_MUTATION_REGION_SELECTORS,
   PAGE_ROUTE,
   PAGE_ROUTE_RULES,
@@ -18,7 +19,7 @@ export interface PageSyncEntry {
   lastRun: number;
   lastRegionRevision: number;
   pending: boolean;
-  readonly routes: ReadonlySet<PageRoute> | null;
+  readonly routes: ReadonlySet<PageRoute>;
   readonly region: PageMutationRegion | null;
 }
 
@@ -94,7 +95,7 @@ export function readPageRoute(pathname: string = location.pathname): PageRoute {
 export function registerPageSync(
   task: PageSyncTask,
   intervalMs = 0,
-  routes: readonly PageRoute[] | null = null,
+  routes: readonly PageRoute[] = ADAPTED_ROUTES,
   region: PageMutationRegion | null = null,
 ): void {
   pageSyncTasks.set(task, {
@@ -102,7 +103,7 @@ export function registerPageSync(
     lastRun: 0,
     lastRegionRevision: -1,
     pending: false,
-    routes: Array.isArray(routes) ? new Set(routes) : null,
+    routes: new Set(routes),
     region: region,
   });
 }
@@ -117,7 +118,7 @@ export function runPageSyncTasks(): void {
   pageSyncLastRun = now;
   pageSyncRoute = route;
   for (const [task, entry] of pageSyncTasks) {
-    const routeMatches = entry.routes === null || entry.routes.has(route);
+    const routeMatches = entry.routes.has(route);
     // Route changes run every task once so the previous route can tear down its UI.
     if (!routeMatches && !forceAll) {
       entry.pending = false;
@@ -311,4 +312,20 @@ export function ensureStyleElement(id: string, css: string, appendToEnd = false)
   if (style.parentNode !== parent || (appendToEnd && parent === document.head && parent.lastElementChild !== style)) {
     parent.append(style);
   }
+}
+
+/**
+ * Removes a style registered through ensureStyleElement. Constructed sheets are
+ * un-adopted and forgotten so a later mount rebuilds them from the current CSS.
+ */
+export function removeStyleElement(id: string): void {
+  const entry = constructedStylesById.get(id);
+  if (entry !== undefined) {
+    constructedStylesById.delete(id);
+    const adopted: readonly CSSStyleSheet[] = document.adoptedStyleSheets;
+    if (adopted.includes(entry.sheet)) {
+      document.adoptedStyleSheets = adopted.filter((sheet) => sheet !== entry.sheet);
+    }
+  }
+  document.getElementById(id)?.remove();
 }

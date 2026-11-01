@@ -51,14 +51,38 @@ export function ensureHideCyStyle(): void {
 }
 
 export function applyHideCyPreference(value: boolean): void {
+  applyHideCyClass(value);
+  document.dispatchEvent(new CustomEvent(HIDE_CY_EVENT, { detail: value }));
+}
+
+function applyHideCyClass(value: boolean): void {
   ensureHideCyStyle();
   if (document.body !== null) document.body.classList.toggle(HIDE_CY_CLASS, value);
-  document.dispatchEvent(new CustomEvent(HIDE_CY_EVENT, { detail: value }));
 }
 
 export function setHideCyPreference(value: boolean): void {
   localStore.write(STORAGE_KEYS.hideCy, value ? "1" : "0");
   applyHideCyPreference(value);
+}
+
+/**
+ * Drops the CY hide class and its style sheet without touching the stored
+ * preference. Routes the script leaves alone render with the site defaults.
+ */
+export function releaseHideCy(): void {
+  document.body?.classList.remove(HIDE_CY_CLASS);
+  document.getElementById(HIDE_CY_STYLE_ID)?.remove();
+}
+
+/**
+ * Re-applies the stored CY preference when the class was released on a route
+ * the script leaves alone. A route whose class already matches stays untouched
+ * so the sync can run on every article change without extra work.
+ */
+export function syncHideCyPreference(): void {
+  const value = readHideCyPreference();
+  if ((document.body?.classList.contains(HIDE_CY_CLASS) ?? false) === value) return;
+  applyHideCyClass(value);
 }
 
 export function readCommentPreviewPreference(): boolean {
