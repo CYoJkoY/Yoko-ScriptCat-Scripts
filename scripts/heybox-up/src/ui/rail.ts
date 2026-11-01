@@ -628,6 +628,21 @@ export function resolveCommentPageProgress(input: CommentPageProgressInput): Com
   return { hasMore: true, loadedGroups: loadedGroups };
 }
 
+/**
+ * A merge keeps the floors of pages read earlier, so the group count is the
+ * list length instead of the size of the page that was just refreshed.
+ */
+export function resolveMergedCommentProgress(input: {
+  loadedGroups: number;
+  floorTotal: number;
+  rawGroupCount: number;
+}): CommentPageProgress {
+  if (input.floorTotal > 0) {
+    return { hasMore: input.loadedGroups < input.floorTotal, loadedGroups: input.loadedGroups };
+  }
+  return { hasMore: input.rawGroupCount >= RAIL_PAGE_SIZE, loadedGroups: input.loadedGroups };
+}
+
 export function buildArticleCommentBody(
   linkId: string,
   text: string,
@@ -678,6 +693,176 @@ function railThreadHasComment(nodes: readonly RailCommentThreadNode[], commentId
     if (railThreadHasComment(node.children, commentId)) return true;
   }
   return false;
+}
+
+/**
+ * Every reply the site returns lives inside the floor group it belongs to, so
+ * the floor id is what identifies the page that must be re-read after a write.
+ */
+export function findRailFloorIdForComment(items: readonly RailCommentEntry[], commentId: string): string {
+  if (commentId === "") return "";
+  for (const entry of items) {
+    if (entry.id === commentId) return entry.id;
+    if (railThreadHasComment(buildRailCommentTree(entry), commentId)) return entry.id;
+  }
+  return "";
+}
+
+/**
+ * A page-one refresh answers with the newest floors and replies, but it does
+ * not carry the floors a reader already paged in. Merging keeps the order the
+ * list had: a floor that the refreshed page returned is replaced in place, a
+ * new floor goes to the top, and floors of other pages stay where they were.
+ */
+export function mergeRailPageItems(
+  existing: readonly RailCommentEntry[],
+  incoming: readonly RailCommentEntry[],
+): RailCommentEntry[] {
+  const byId = new Map<string, RailCommentEntry>();
+  for (const entry of incoming) {
+    if (entry.id === "") continue;
+    byId.set(entry.id, entry);
+  }
+  const known = new Set<string>(existing.map((entry) => entry.id));
+  const merged: RailCommentEntry[] = [];
+  for (const entry of existing) {
+    const replacement = byId.get(entry.id);
+    merged.push(replacement === undefined ? entry : replacement);
+  }
+  // A floor the reader has not seen yet goes above the list, which is where the
+  // site puts a newly written floor.
+  const fresh: RailCommentEntry[] = [];
+  for (const entry of incoming) {
+    if (entry.id === "" || known.has(entry.id)) continue;
+    known.add(entry.id);
+    fresh.push(entry);
+  }
+  return fresh.concat(merged);
+}
+
+export function countRailThreadNodes(nodes: readonly RailCommentThreadNode[]): number {
+  let total = 0;
+  for (const node of nodes) {
+    total += 1 + countRailThreadNodes(node.children);
+  }
+  return total;
+}
+
+export const RAIL_PENDING_ID_PREFIX = "pending-";
+
+export interface RailPendingReplyInput {
+  parentId: string;
+  rootId: string;
+  text: string;
+  userId: string;
+  createAt: number;
+  /** Falls back to a local placeholder when the create call returned no id. */
+  commentId?: string;
+  sequence: number;
+}
+
+/**
+ * The create endpoint can take a while to show up in the tree, so the reply is
+ * drawn from what the reader typed until the server echoes it back.
+ */
+export function createRailPendingReply(input: RailPendingReplyInput): RailComment {
+  const text = input.text.trim();
+  const id = typeof input.commentId === "string" && input.commentId !== ""
+    ? input.commentId
+    : RAIL_PENDING_ID_PREFIX + input.sequence;
+  return {
+    id: id,
+    userId: input.userId,
+    name: "我",
+    replyName: "",
+    avatar: "",
+    text: text,
+    body: [{ type: "text", text: text }],
+    createAt: input.createAt,
+    likes: 0,
+    replies: 0,
+    rootId: input.rootId,
+    parentId: input.parentId,
+    isCy: false,
+  };
+}
+
+/** Attaches not-yet-synced replies to the floor they were posted under. */
+export function attachRailPendingReplies(
+  entry: RailCommentEntry,
+  pending: readonly RailComment[],
+): RailCommentEntry {
+  if (pending.length === 0) return entry;
+  const subComments = entry.subComments.concat(pending);
+  return { ...entry, subComments: subComments, quotes: subComments };
+}
+
+function normalizeRailMatchText(value: string): string {
+  return value
+    .replace(/\[cube_[^\]]{1,64}\]/g, " ")
+    .replace(/\[[^\]]{1,64}\]/g, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function collectRailEchoedNodes(entry: RailCommentEntry): RailCommentThreadNode[] {
+  const nodes: RailCommentThreadNode[] = [];
+  const collect = (branch: readonly RailCommentThreadNode[]): void => {
+    for (const node of branch) {
+      if (node.id !== "" && !node.id.startsWith(RAIL_PENDING_ID_PREFIX)) nodes.push(node);
+      collect(node.children);
+    }
+  };
+  collect(buildRailCommentTree(entry));
+  return nodes;
+}
+
+/**
+ * True when the server already returned this pending reply, either with the id
+ * the create call reported or with the same text written by the same account.
+ * The parent id is not part of the fallback: the tree endpoint sometimes omits
+ * it for a nested reply, and a local row must never outlive the real one.
+ */
+export function railThreadHasPendingReply(entry: RailCommentEntry, pending: RailComment): boolean {
+  const wanted = normalizeRailMatchText(pending.text);
+  return collectRailEchoedNodes(entry).some((node) => {
+    if (pending.id !== "" && !pending.id.startsWith(RAIL_PENDING_ID_PREFIX) && node.id === pending.id) return true;
+    if (wanted === "") return false;
+    if (pending.userId !== "" && node.userId !== pending.userId) return false;
+    return normalizeRailMatchText(node.text) === wanted;
+  });
+}
+
+/**
+ * Drops the pending replies the site has already echoed back and keeps the ones
+ * it has not. Matches are claimed one by one, so writing the same text twice
+ * does not make the second local row disappear before its real row arrives.
+ */
+export function pruneRailPendingReplies(
+  items: readonly RailCommentEntry[],
+  pending: readonly RailComment[],
+): RailComment[] {
+  if (pending.length === 0) return [];
+  const echoed = items.flatMap(collectRailEchoedNodes);
+  const claimed = new Set<RailCommentThreadNode>();
+  const kept: RailComment[] = [];
+  for (const row of pending) {
+    const wanted = normalizeRailMatchText(row.text);
+    const match = echoed.find((node) => {
+      if (claimed.has(node)) return false;
+      if (row.id !== "" && !row.id.startsWith(RAIL_PENDING_ID_PREFIX) && node.id === row.id) return true;
+      if (wanted === "") return false;
+      if (row.userId !== "" && node.userId !== row.userId) return false;
+      return normalizeRailMatchText(node.text) === wanted;
+    });
+    if (match === undefined) {
+      kept.push(row);
+      continue;
+    }
+    claimed.add(match);
+  }
+  return kept;
 }
 
 export let lastRailRequestAt = 0;

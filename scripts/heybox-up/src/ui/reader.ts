@@ -9,7 +9,7 @@ import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, holdRailPageCache, isOwnRailComment, railItemsHaveComment, readCreatedCommentId, resolveCommentPageProgress } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railThreadHasPendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
@@ -74,6 +74,12 @@ export const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
 export const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
 
 export const READER_PENDING_NOTICE_MS = 9000;
+
+/**
+ * Past this many nesting levels the branch stops adding indentation, so a deep
+ * reply chain can never widen the comment sheet.
+ */
+export const RAIL_MAX_INDENT_DEPTH = 4;
 
 export const READER_ICONS = {
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
@@ -699,7 +705,7 @@ export const READER_CSS = `
   .hbu-reader-comments-name-link:hover .hbu-reader-comments-name { color: var(--hbu-reader-link); text-decoration: underline; }
   .hbu-reader-comments-time { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-text { margin: 4px 0 0; font-size: 14px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
+  .hbu-reader-comments-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-reply { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
   .hbu-reader-comments-reply:hover { color: var(--hbu-reader-link); }
   .hbu-reader-comments-delete { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
@@ -715,6 +721,21 @@ export const READER_CSS = `
   .hbu-reader-comments-reply-to { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-child .hbu-reader-comments-text { margin-top: 2px; font-size: 13px; }
   .hbu-reader-comments-child .hbu-reader-comments-meta { margin-top: 3px; }
+  .hbu-reader-comments-collapse { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-collapse:hover { color: var(--hbu-reader-link); }
+  /* A folded branch keeps a short indent and a dashed rule, so the row still
+     shows that replies are stored underneath it. */
+  .hbu-reader-comments-children--collapsed { padding-left: 6px; border-left-style: dashed; }
+  .hbu-reader-comments-child--collapsed { padding-top: 0; }
+  .hbu-reader-comments-child--collapsed::before { display: none; }
+  .hbu-reader-comments-expand { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px; border: 1px dashed var(--hbu-reader-border); border-radius: 999px; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-expand::before { content: "+"; font-weight: 700; }
+  .hbu-reader-comments-expand:hover { border-color: var(--hbu-reader-link); color: var(--hbu-reader-link); }
+  .hbu-reader-comments-syncing { flex: none; color: var(--hbu-reader-muted); font-size: 11px; opacity: .85; }
+  /* Past the depth cap the branch stops indenting, so a long reply chain can
+     never push the sheet wider than its own column. */
+  .hbu-reader-comments-children--deep { margin-top: 6px; padding-left: 0; border-left: 0; }
+  .hbu-reader-comments-children--deep > .hbu-reader-comments-child::before { display: none; }
   .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
   .hbu-reader-comments-text img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
@@ -1483,6 +1504,10 @@ interface ReaderCommentState {
   /** Timestamp of the last successful page-one read, used to age out the panel. */
   loadedAt: number;
   seq: number;
+  /** Page each loaded floor came from, so a reply can re-read its own page. */
+  floorPages: Map<string, number>;
+  /** Replies written here but not echoed by the tree endpoint yet. */
+  pendingReplies: RailComment[];
 }
 
 interface ReaderCommentLoadOptions {
@@ -1496,6 +1521,16 @@ interface ReaderCommentLoadOptions {
   expectAbsentId?: string;
   /** Verification round counter for the polling loop below. */
   attempt?: number;
+  /**
+   * Reply written from this panel that the server may not have returned yet.
+   * It is matched by id or by text so a create without an id still verifies.
+   */
+  expectPending?: RailComment;
+  /**
+   * Merges the answer into the loaded list instead of replacing it, so a
+   * refresh after a write keeps the floors read from the other pages.
+   */
+  merge?: boolean;
 }
 
 interface SuspendedMediaEmbedState {
@@ -1638,6 +1673,8 @@ export function watchReader(navigation: PostNavigationController): void {
   let cyStatus: HTMLDivElement | null = null;
   let cyBusy = false;
   let articleCommentBusy = false;
+  // Distinguishes optimistic reply rows that the create call returned no id for.
+  let pendingReplySeq = 0;
   const ARTICLE_COMMENT_MAX_LENGTH = 1000;
   const articleComposerEmojiClosers: WeakMap<Element, () => void> = new WeakMap();
   let commentPanel: HTMLElement | null = null;
@@ -1658,6 +1695,10 @@ export function watchReader(navigation: PostNavigationController): void {
   // actions stay hidden until the reader can prove who is logged in.
   let readerAccountId = "";
   const commentDeleteBusy = new Set<string>();
+  // Collapsing a reply hides its whole subtree, so a deep chain can be folded
+  // away instead of widening the sheet. Keyed by comment id and kept for the
+  // article, so a refresh does not reopen what the reader folded.
+  const collapsedCommentThreads = new Set<string>();
   let readerPendingAdvanceSourceId = "";
   let readerPendingAdvanceRevision = -1;
   let readerAdvanceLocked = false;
@@ -1668,7 +1709,20 @@ export function watchReader(navigation: PostNavigationController): void {
   let readerPendingGeneration = -1;
 
   function createCommentState(): ReaderCommentState {
-    return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, loadedAt: 0, seq: 0 };
+    return {
+      items: [],
+      page: 0,
+      total: 0,
+      loading: false,
+      error: "",
+      hasMore: false,
+      loadedGroups: 0,
+      loaded: false,
+      loadedAt: 0,
+      seq: 0,
+      floorPages: new Map<string, number>(),
+      pendingReplies: [],
+    };
   }
 
   const showToast = (message: string): void => {
@@ -2811,7 +2865,10 @@ export function watchReader(navigation: PostNavigationController): void {
   };
 
   const createReaderCommentDeleteButton = (comment: RailComment): HTMLButtonElement | null => {
-    if (comment.id === "" || !isOwnRailComment(comment, readerAccountId)) return null;
+    // A row the site has not echoed back yet has no usable id, so it cannot be
+    // deleted or replied to until a refresh replaces it with the real comment.
+    if (comment.id === "" || isPendingReplyRow(comment.id)) return null;
+    if (!isOwnRailComment(comment, readerAccountId)) return null;
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "hbu-reader-comments-delete";
@@ -2876,7 +2933,72 @@ export function watchReader(navigation: PostNavigationController): void {
     .filter((node) => !hideCy || node.isCy !== true)
     .map((node) => ({ ...node, children: filterReaderCommentThread(node.children, hideCy) }));
 
-  const createReaderCommentItem = (comment: RailCommentEntry): HTMLLIElement => {
+  // A reply can carry the floor id, or only the id of the comment it answers
+  // when the site reports no root. Both resolve to the floor that owns it, so
+  // the local row is never dropped for lack of a usable root id.
+  const resolvePendingFloorId = (items: readonly RailCommentEntry[], pending: RailComment): string => {
+    if (pending.rootId !== "" && items.some((item) => item.id === pending.rootId)) return pending.rootId;
+    return findRailFloorIdForComment(items, pending.parentId);
+  };
+
+  // Replies are attached to their floor before the tree is built, so a reply
+  // that the site has not echoed back yet is still visible right after publish.
+  const readPendingRepliesFor = (floorId: string): RailComment[] => commentState.pendingReplies.filter((pending) =>
+    resolvePendingFloorId(commentState.items, pending) === floorId);
+
+  const withPendingReplies = (entry: RailCommentEntry): RailCommentEntry =>
+    attachRailPendingReplies(entry, readPendingRepliesFor(entry.id));
+
+  // A row that only lives in this panel has nothing the site can act on yet,
+  // whether the create call reported an id or not.
+  const isPendingReplyRow = (commentId: string): boolean =>
+    commentId.startsWith(RAIL_PENDING_ID_PREFIX) || commentState.pendingReplies.some((row) => row.id === commentId);
+
+  // Folding a row hides its whole subtree, so every descendant goes with the
+  // one the reader closed instead of leaving an orphaned branch behind.
+  const createThreadCollapseButton = (threadId: string, hiddenCount: number): HTMLButtonElement => {
+    const collapse = document.createElement("button");
+    collapse.type = "button";
+    collapse.className = "hbu-reader-comments-collapse";
+    collapse.dataset["threadId"] = threadId;
+    collapse.textContent = "收起回复";
+    collapse.setAttribute("aria-expanded", "true");
+    collapse.setAttribute("aria-label", "收起这条评论下的 " + hiddenCount + " 条回复");
+    return collapse;
+  };
+
+  // The placeholder keeps a short indent and a dashed rule, so a folded branch
+  // still says that replies are stored underneath it.
+  const createCollapsedThreadRow = (threadId: string, hiddenCount: number): HTMLUListElement => {
+    const holder = document.createElement("ul");
+    holder.className = "hbu-reader-comments-children hbu-reader-comments-children--collapsed";
+    const hiddenRow = document.createElement("li");
+    hiddenRow.className = "hbu-reader-comments-child hbu-reader-comments-child--collapsed";
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "hbu-reader-comments-expand";
+    expand.dataset["threadId"] = threadId;
+    expand.textContent = hiddenCount + " 条回复已收起";
+    expand.setAttribute("aria-expanded", "false");
+    hiddenRow.append(expand);
+    holder.append(hiddenRow);
+    return holder;
+  };
+
+  // Folding and unfolding redraws the list, so focus moves to the control that
+  // now represents the same branch instead of dropping back to the document.
+  const focusCommentThreadControl = (selector: string, threadId: string): void => {
+    for (const control of commentPanelList?.querySelectorAll<HTMLElement>(selector) ?? []) {
+      if (control.dataset["threadId"] !== threadId) continue;
+      control.focus({ preventScroll: true });
+      return;
+    }
+  };
+
+  const createReaderCommentItem = (raw: RailCommentEntry): HTMLLIElement => {
+    // A reply posted here is attached before the tree is built, so it shows up
+    // even while the tree endpoint still answers without it.
+    const comment = withPendingReplies(raw);
     const item = document.createElement("li");
     item.className = "hbu-reader-comments-item";
     item.setAttribute("role", "listitem");
@@ -2915,19 +3037,31 @@ export function watchReader(navigation: PostNavigationController): void {
     }));
     const deleteButton = createReaderCommentDeleteButton(comment);
     if (deleteButton !== null) meta.append(deleteButton);
-    main.append(meta);
     const visibleChildren = filterReaderCommentThread(buildRailCommentTree(comment), readHideCyPreference());
+    const hiddenCount = countRailThreadNodes(visibleChildren);
+    const collapsible = comment.id !== "" && visibleChildren.length > 0;
+    const collapsed = collapsible && collapsedCommentThreads.has(comment.id);
+    // Only the visible state owns a control: expanded rows offer "收起回复",
+    // and a folded row offers the "N 条回复已收起" placeholder instead.
+    if (collapsible && !collapsed) meta.append(createThreadCollapseButton(comment.id, hiddenCount));
+    main.append(meta);
     if (visibleChildren.length > 0) {
-      const children = document.createElement("ul");
-      children.className = "hbu-reader-comments-children";
-      for (const child of visibleChildren) children.append(createReaderCommentChild(child, comment));
-      main.append(children);
+      if (collapsed) {
+        main.append(createCollapsedThreadRow(comment.id, hiddenCount));
+      } else {
+        const children = document.createElement("ul");
+        children.className = "hbu-reader-comments-children";
+        // The floor itself sits at depth zero, so its direct replies are the
+        // first indented level.
+        for (const child of visibleChildren) children.append(createReaderCommentChild(child, comment, 1));
+        main.append(children);
+      }
     }
     item.append(avatar, main);
     return item;
   };
 
-  const createReaderCommentChild = (child: RailCommentThreadNode, parent: RailComment): HTMLLIElement => {
+  const createReaderCommentChild = (child: RailCommentThreadNode, parent: RailComment, depth: number): HTMLLIElement => {
     const item = document.createElement("li");
     item.className = "hbu-reader-comments-child";
     item.setAttribute("role", "listitem");
@@ -2967,21 +3101,41 @@ export function watchReader(navigation: PostNavigationController): void {
       replies.textContent = child.replies + " 条回复";
       actions.append(replies);
     }
-    const reply = createReaderReplyButton({
-      id: child.id !== "" ? child.id : parent.id,
-      rootId: child.rootId !== "" ? child.rootId : parent.rootId !== "" ? parent.rootId : parent.id,
-      name: child.name,
-    });
-    actions.append(reply);
-    const deleteButton = createReaderCommentDeleteButton(child);
-    if (deleteButton !== null) actions.append(deleteButton);
-    main.append(who, text, actions);
+    const pendingRow = isPendingReplyRow(child.id);
+    if (pendingRow) {
+      // The tree endpoint has not echoed this row yet. Replying to it would
+      // target a comment the server does not know, and deleting it would need
+      // an id the list cannot resolve, so it says it is syncing instead.
+      const syncing = document.createElement("span");
+      syncing.className = "hbu-reader-comments-syncing";
+      syncing.textContent = "同步中…";
+      actions.append(syncing);
+    } else {
+      actions.append(createReaderReplyButton({
+        id: child.id !== "" ? child.id : parent.id,
+        rootId: child.rootId !== "" ? child.rootId : parent.rootId !== "" ? parent.rootId : parent.id,
+        name: child.name,
+      }));
+      const deleteButton = createReaderCommentDeleteButton(child);
+      if (deleteButton !== null) actions.append(deleteButton);
+    }
     const visibleChildren = filterReaderCommentThread(child.children, readHideCyPreference());
+    // A reply with descendants can be folded away; folding it also hides every
+    // reply underneath it, so a long chain never has to be read level by level.
+    const collapsible = child.id !== "" && visibleChildren.length > 0;
+    const hiddenCount = collapsible ? countRailThreadNodes(visibleChildren) : 0;
+    const collapsed = collapsible && collapsedCommentThreads.has(child.id);
+    if (collapsible && !collapsed) actions.append(createThreadCollapseButton(child.id, hiddenCount));
+    main.append(who, text, actions);
     if (visibleChildren.length > 0) {
-      const children = document.createElement("ul");
-      children.className = "hbu-reader-comments-children";
-      for (const nested of visibleChildren) children.append(createReaderCommentChild(nested, child));
-      main.append(children);
+      if (collapsed) {
+        main.append(createCollapsedThreadRow(child.id, hiddenCount));
+      } else {
+        const children = document.createElement("ul");
+        children.className = "hbu-reader-comments-children" + (depth >= RAIL_MAX_INDENT_DEPTH ? " hbu-reader-comments-children--deep" : "");
+        for (const nested of visibleChildren) children.append(createReaderCommentChild(nested, child, depth + 1));
+        main.append(children);
+      }
     }
     const row = document.createElement("div");
     row.className = "hbu-reader-comments-child-row";
@@ -3061,13 +3215,19 @@ export function watchReader(navigation: PostNavigationController): void {
   const COMMENT_VERIFY_DELAY_MS = 900;
 
   // An empty expectation always matches: only a publish or delete asks for a
-  // specific id to appear or disappear.
-  const matchesCommentExpectation = (page: number, options: ReaderCommentLoadOptions, loaded: readonly RailCommentEntry[]): boolean => {
-    if (page !== 1) return true;
+  // specific id to appear or disappear. A pending reply with no id from the
+  // create call is matched by its text, so a publish is still verifiable.
+  const matchesCommentExpectation = (options: ReaderCommentLoadOptions, loaded: readonly RailCommentEntry[]): boolean => {
     const wantPresent = options.expectPresentId ?? "";
     const wantAbsent = options.expectAbsentId ?? "";
     if (wantPresent !== "" && !railItemsHaveComment(loaded, wantPresent)) return false;
     if (wantAbsent !== "" && railItemsHaveComment(loaded, wantAbsent)) return false;
+    const pending = options.expectPending;
+    if (pending !== undefined) {
+      const floorId = resolvePendingFloorId(loaded, pending);
+      const entry = loaded.find((item) => item.id === floorId);
+      if (entry === undefined || !railThreadHasPendingReply(entry, pending)) return false;
+    }
     return true;
   };
 
@@ -3112,6 +3272,16 @@ export function watchReader(navigation: PostNavigationController): void {
     return next;
   };
 
+  // Remembers which page a floor came from, so a reply written under a floor of
+  // page three refreshes that page instead of page one. The last page that
+  // returned a floor wins, because new comments shift floors between pages.
+  const recordFloorPages = (items: readonly RailCommentEntry[], page: number): void => {
+    for (const entry of items) {
+      if (entry.id === "") continue;
+      commentState.floorPages.set(entry.id, page);
+    }
+  };
+
   const loadReaderComments = async (page: number, options: ReaderCommentLoadOptions = {}): Promise<void> => {
     if (commentState.loading && options.force !== true) return;
     const seq = ++commentState.seq;
@@ -3122,9 +3292,11 @@ export function watchReader(navigation: PostNavigationController): void {
     commentLoadController = controller;
     commentState.loading = true;
     commentState.error = "";
+    const merge = options.merge === true;
+    const writeRefresh = options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined || options.expectPending !== undefined;
     // A refresh keeps the rendered list until the new page arrives, so the panel
     // does not flash empty while the reader is waiting for its own comment.
-    const keepItems = page === 1 && (options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined);
+    const keepItems = merge || (page === 1 && writeRefresh);
     if (page === 1 && !keepItems) {
       commentState.items = [];
       commentState.page = 0;
@@ -3132,6 +3304,7 @@ export function watchReader(navigation: PostNavigationController): void {
       commentState.hasMore = false;
       commentState.loadedGroups = 0;
       commentState.loaded = false;
+      commentState.floorPages.clear();
     }
     renderReaderComments();
     let stale = false;
@@ -3139,7 +3312,7 @@ export function watchReader(navigation: PostNavigationController): void {
       const accountId = await resolveHeyboxId(controller.signal);
       if (seq !== commentState.seq || commentLoadController !== controller) return;
       if (accountId !== readerAccountId) readerAccountId = accountId;
-      const fresh = page === 1 && (options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined);
+      const fresh = merge || (page === 1 && writeRefresh);
       const data = await fetchRailPage(targetId, page, {
         signal: controller.signal,
         accountId: accountId,
@@ -3147,29 +3320,47 @@ export function watchReader(navigation: PostNavigationController): void {
         ...(page === 1 ? { maxAgeMs: RAIL_PAGE_CACHE_FRESH_MS } : {}),
       });
       if (seq !== commentState.seq || commentLoadController !== controller) return;
+      const incoming = withoutCommentId(data.items, options.expectAbsentId ?? "");
       const seen = new Set(commentState.items.map((item) => item.id));
-      const added = data.items.filter((item) => item.id === "" || !seen.has(item.id));
-      // Page one always replaces the list with the full fresh answer: a refresh
-      // keeps the previous rows on screen only while waiting, never afterwards.
-      commentState.items = page === 1
-        ? withoutCommentId(data.items, options.expectAbsentId ?? "")
-        : commentState.items.concat(added);
-      commentState.page = page;
+      const added = incoming.filter((item) => item.id === "" || !seen.has(item.id));
+      if (merge) {
+        // A merged refresh replaces the floors it returned in place and keeps
+        // the floors of the pages read earlier, so a reply never wipes them.
+        // The deleted floor is dropped from both sides before the merge.
+        const base = withoutCommentId(commentState.items, options.expectAbsentId ?? "");
+        commentState.items = mergeRailPageItems(base, incoming);
+        commentState.page = Math.max(commentState.page, page);
+      } else if (page === 1) {
+        commentState.items = incoming;
+        commentState.page = 1;
+      } else {
+        commentState.items = commentState.items.concat(added);
+        commentState.page = page;
+      }
+      recordFloorPages(incoming, page);
       // A delete already lowered the count locally, so a page that still lists
       // the removed comment must not raise it back.
       const absentId = options.expectAbsentId ?? "";
-      const echoingDeleted = absentId !== "" && railItemsHaveComment(data.items, absentId);
+      const echoingDeleted = absentId !== "" && railItemsHaveComment(incoming, absentId);
       commentState.total = echoingDeleted ? commentState.total : data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
-      const progress = resolveCommentPageProgress({
-        rawGroupCount: data.items.length,
-        freshGroupCount: page === 1 ? data.items.length : added.length,
-        previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
-        floorTotal: data.floorTotal,
-      });
+      // A reply the site has echoed back replaces its optimistic copy.
+      commentState.pendingReplies = pruneRailPendingReplies(commentState.items, commentState.pendingReplies);
+      const progress = merge
+        ? resolveMergedCommentProgress({
+          loadedGroups: commentState.items.length,
+          floorTotal: data.floorTotal,
+          rawGroupCount: incoming.length,
+        })
+        : resolveCommentPageProgress({
+          rawGroupCount: data.items.length,
+          freshGroupCount: page === 1 ? data.items.length : added.length,
+          previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
+          floorTotal: data.floorTotal,
+        });
       commentState.loadedGroups = progress.loadedGroups;
       commentState.hasMore = progress.hasMore;
       commentState.loaded = true;
-      if (page === 1) commentState.loadedAt = Date.now();
+      if (page === 1 || merge) commentState.loadedAt = Date.now();
       // The tree endpoint can lag behind a successful publish. Keep the freshly
       // incremented count visible while still accepting a larger server total.
       if (linkState !== null && !echoingDeleted && Number.isFinite(data.total) && data.total > 0) {
@@ -3177,7 +3368,7 @@ export function watchReader(navigation: PostNavigationController): void {
         linkState.commentCount = Math.max(Number.isFinite(current) ? current : 0, data.total);
       }
       syncActionStates();
-      stale = !matchesCommentExpectation(page, options, page === 1 ? data.items : commentState.items);
+      stale = !matchesCommentExpectation(options, commentState.items);
     } catch (error) {
       if (isAbortError(error)) return;
       if (seq !== commentState.seq || commentLoadController !== controller) return;
@@ -3191,20 +3382,23 @@ export function watchReader(navigation: PostNavigationController): void {
         renderReaderComments();
       }
     }
-    if (!stale || page !== 1) return;
+    if (!stale) return;
     if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
     // A manual refresh or a second write owns the panel now, so this poll stops
     // instead of competing with the newer load.
     if (seq !== commentState.seq) return;
     const attempt = (options.attempt ?? 0) + 1;
     if (attempt >= COMMENT_VERIFY_ATTEMPTS) {
-      showToast(options.expectAbsentId === undefined ? "评论已提交，列表仍待站点同步" : "评论已删除，列表仍待站点同步");
+      // A reply kept as a local pending row is already on screen, so only an
+      // absent expectation reports a failure here.
+      if (options.expectAbsentId !== undefined) showToast("评论已删除，列表仍待站点同步");
+      else if ((options.expectPresentId ?? "") !== "") showToast("评论已提交，列表仍待站点同步");
       return;
     }
     void waitForDelay(COMMENT_VERIFY_DELAY_MS, controller.signal).then(() => {
       if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
       if (seq !== commentState.seq) return;
-      void loadReaderComments(1, { ...options, fresh: true, force: true, attempt: attempt });
+      void loadReaderComments(page, { ...options, fresh: true, force: true, merge: true, attempt: attempt });
     }).catch(() => undefined);
   };
 
@@ -3273,8 +3467,9 @@ export function watchReader(navigation: PostNavigationController): void {
       showToast("评论已发布");
       articleCommentPublishedCount += 1;
       // A write invalidates every cached page, and the tree endpoint may still
-      // answer with the pre-write payload for a moment, so page one is read
-      // again from the network and polled until the new comment appears.
+      // answer with the pre-write payload for a moment, so the page that owns
+      // the target is read again from the network and polled until the new
+      // comment appears.
       holdRailPageCache(targetId);
       if (linkState !== null) {
         linkState.commentCount = Math.max(0, Number(linkState.commentCount) || 0) + 1;
@@ -3283,10 +3478,35 @@ export function watchReader(navigation: PostNavigationController): void {
       }
       syncActionStates();
       if (commentPanel !== null && !commentPanel.hidden) {
-        void loadReaderComments(1, {
+        // A reply is drawn right away and then verified on the page that holds
+        // its floor. Re-reading page one alone used to drop the floor of a
+        // later page, which is why a nested reply vanished from the panel.
+        const pending = reply === null ? null : createRailPendingReply({
+          parentId: reply.id,
+          rootId: reply.rootId !== "" ? reply.rootId : reply.id,
+          text: text,
+          userId: accountId,
+          createAt: Math.floor(Date.now() / 1000),
+          sequence: ++pendingReplySeq,
+          ...(createdId === "" ? {} : { commentId: createdId }),
+        });
+        if (pending !== null) {
+          // A reply written under a folded branch would land out of sight, so
+          // the floor that owns it is opened before the local row is drawn.
+          const pendingFloorId = resolvePendingFloorId(commentState.items, pending);
+          if (pendingFloorId !== "") collapsedCommentThreads.delete(pendingFloorId);
+          commentState.pendingReplies.push(pending);
+          renderReaderComments();
+        }
+        const floorId = pending === null ? "" : resolvePendingFloorId(commentState.items, pending);
+        const page = floorId === "" ? 1 : commentState.floorPages.get(floorId) ?? 1;
+        void loadReaderComments(page, {
           fresh: true,
           force: true,
-          ...(createdId === "" ? {} : { expectPresentId: createdId }),
+          merge: true,
+          ...(pending !== null
+            ? { expectPending: pending }
+            : createdId === "" ? {} : { expectPresentId: createdId }),
         });
       }
     } catch (error) {
@@ -3404,7 +3624,11 @@ export function watchReader(navigation: PostNavigationController): void {
       syncActionStates();
       showToast("评论已删除");
       if (commentPanel !== null && !commentPanel.hidden) {
-        void loadReaderComments(1, { fresh: true, force: true, expectAbsentId: commentId });
+        // The removed comment can sit on any loaded page, so its own page is
+        // re-read and merged instead of replacing the list with page one.
+        const floorId = owned.rootId !== "" ? owned.rootId : commentId;
+        const page = commentState.floorPages.get(floorId) ?? 1;
+        void loadReaderComments(page, { fresh: true, force: true, merge: true, expectAbsentId: commentId });
       }
     } catch (error) {
       if (articleId === targetId && readerGeneration === generation) {
@@ -3697,7 +3921,9 @@ export function watchReader(navigation: PostNavigationController): void {
     scrim.addEventListener("click", closeComments);
     refresh.addEventListener("click", () => {
       if (commentState.loading) return;
-      void loadReaderComments(1, { fresh: true, force: true });
+      // Refreshing page one keeps the floors read from later pages, so a manual
+      // refresh cannot drop a thread the reader already paged in.
+      void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
     });
     more.addEventListener("click", () => {
       if (!commentState.loading) void loadReaderComments(commentState.page + 1);
@@ -3710,6 +3936,26 @@ export function watchReader(navigation: PostNavigationController): void {
     list.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const collapse = target.closest(".hbu-reader-comments-collapse");
+      if (collapse instanceof HTMLElement) {
+        const threadId = collapse.dataset["threadId"] || "";
+        if (threadId === "") return;
+        event.preventDefault();
+        collapsedCommentThreads.add(threadId);
+        renderReaderComments();
+        focusCommentThreadControl(".hbu-reader-comments-expand", threadId);
+        return;
+      }
+      const expand = target.closest(".hbu-reader-comments-expand");
+      if (expand instanceof HTMLElement) {
+        const threadId = expand.dataset["threadId"] || "";
+        if (threadId === "") return;
+        event.preventDefault();
+        collapsedCommentThreads.delete(threadId);
+        renderReaderComments();
+        focusCommentThreadControl(".hbu-reader-comments-collapse", threadId);
+        return;
+      }
       const remove = target.closest(".hbu-reader-comments-delete");
       if (remove instanceof HTMLElement) {
         const deleteId = remove.dataset["deleteId"] || "";
@@ -3757,7 +4003,7 @@ export function watchReader(navigation: PostNavigationController): void {
     if (!commentState.loaded) {
       void loadReaderComments(1);
     } else if (stalePanel) {
-      void loadReaderComments(1, { fresh: true, force: true });
+      void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
     }
   };
 
@@ -3766,6 +4012,7 @@ export function watchReader(navigation: PostNavigationController): void {
     commentLoadController = null;
     articleCommentBusy = false;
     commentDeleteBusy.clear();
+    collapsedCommentThreads.clear();
     clearArticleComposers();
     if (host !== null) host.inert = false;
     if (commentPanel !== null) {
