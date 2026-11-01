@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.16.2
-// @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝工具选择记忆
+// @version      0.16.3
+// @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/dist/ai-chat-turbo-engine.user.js
@@ -174,6 +174,10 @@
   var CHOICE_RADIO_SELECTOR = "[aria-checked], [aria-selected], [role='menuitemradio'], [role='radio']";
   var TOOL_TRIGGER_SELECTOR = '[data-new-input-control="add-tools-trigger"]';
   var TOOL_TRIGGER_CONTAINER_SELECTOR = '[data-new-input-control="add-tools"]';
+  var ATOMIC_ACTIONS_SELECTOR = '[data-new-input-control="atomic-actions"]';
+  var ATOMIC_TOOL_ITEM_SELECTOR = `${ATOMIC_ACTIONS_SELECTOR} [data-application-id]`;
+  var ATOMIC_TOOL_CHIP_SELECTOR = '[data-new-input-control="selected-atomic-action"][data-application-id]';
+  var ATOMIC_TOOL_MENU_SELECTOR = `${ATOMIC_ACTIONS_SELECTOR} [role='menu']`;
   var TOOL_POPUP_SELECTOR = [
     "[role='menu']",
     "[role='listbox']",
@@ -208,7 +212,7 @@
   function isToolControlElement(node) {
     if (!(node instanceof Element)) return false;
     return Boolean(
-      node.closest(TOOL_TRIGGER_SELECTOR) || node.closest(TOOL_TRIGGER_CONTAINER_SELECTOR)
+      node.closest(TOOL_TRIGGER_SELECTOR) || node.closest(TOOL_TRIGGER_CONTAINER_SELECTOR) || node.closest(ATOMIC_ACTIONS_SELECTOR) || node.closest(ATOMIC_TOOL_CHIP_SELECTOR)
     );
   }
   var BLOCK_TEXT_TAGS = /* @__PURE__ */ new Set([
@@ -2225,12 +2229,13 @@ ${CODE_FENCE}`;
     let restoreToken = 0;
     const correctedToggleAttempts = /* @__PURE__ */ new Set();
     const choiceRestoreAttempts = /* @__PURE__ */ new Map();
+    const popupCloseTimers = [];
     let conversationKey = `${location.origin}${location.pathname}`;
     let reasoningSettleTimer = 0;
     let reasoningMenuTrigger = null;
     let reasoningMenuTriggerAt = 0;
     let reasoningMenuTriggerLabel = "";
-    function isInsideTurboUI2(node) {
+    function isInsideTurboUI3(node) {
       if (!(node instanceof Element)) return false;
       return Boolean(node.closest("[id^='ai-turbo-'], .ai-turbo-code-bar"));
     }
@@ -2345,7 +2350,7 @@ ${CODE_FENCE}`;
       const label = control.getAttribute("aria-label") || "";
       return /^(open|选择|打开).{0,20}(picker|menu|mode|model)/i.test(label.trim());
     }
-    function closeOpenPopup() {
+    function dispatchEscape() {
       const esc = new KeyboardEvent("keydown", {
         key: "Escape",
         code: "Escape",
@@ -2356,6 +2361,29 @@ ${CODE_FENCE}`;
       if (document.activeElement) document.activeElement.dispatchEvent(esc);
       document.dispatchEvent(esc);
     }
+    function closeOpenPopup(control = null) {
+      dispatchEscape();
+      const trigger = control ?? reasoningMenuTrigger;
+      if (!trigger || !trigger.isConnected) return;
+      const settle = (remaining) => {
+        if (!trigger.isConnected) return;
+        if (trigger.getAttribute("aria-expanded") !== "true") return;
+        if (!clickControlOnce(trigger)) return;
+        if (remaining <= 1) return;
+        const timer2 = window.setTimeout(() => {
+          const index = popupCloseTimers.indexOf(timer2);
+          if (index >= 0) popupCloseTimers.splice(index, 1);
+          settle(remaining - 1);
+        }, 160);
+        popupCloseTimers.push(timer2);
+      };
+      const timer = window.setTimeout(() => {
+        const index = popupCloseTimers.indexOf(timer);
+        if (index >= 0) popupCloseTimers.splice(index, 1);
+        settle(3);
+      }, 120);
+      popupCloseTimers.push(timer);
+    }
     function popupRootFor(control) {
       const id = control.getAttribute("aria-controls");
       const byId = id ? document.getElementById(id) : null;
@@ -2365,7 +2393,7 @@ ${CODE_FENCE}`;
     }
     function hasVisibleMenu() {
       return Array.from(document.querySelectorAll(REASONING_MENU_SELECTOR)).some(
-        (node) => !isInsideTurboUI2(node) && nodeVisible3(node)
+        (node) => !isInsideTurboUI3(node) && nodeVisible3(node)
       );
     }
     function rowScopedText(node, selector) {
@@ -2373,7 +2401,7 @@ ${CODE_FENCE}`;
       const part = Array.from(
         node.querySelectorAll(selector)
       ).find((candidate) => {
-        if (isInsideTurboUI2(candidate) || !nodeVisible3(candidate)) return false;
+        if (isInsideTurboUI3(candidate) || !nodeVisible3(candidate)) return false;
         const owner = candidate.closest(
           "gem-menu-item, [role='menuitem'], [role='menuitemradio'], [role='option'], [role='radio']"
         );
@@ -2440,7 +2468,7 @@ ${CODE_FENCE}`;
           document.querySelectorAll("[aria-controls]")
         ).find(
           (node) => {
-            if (isInsideTurboUI2(node) || !nodeVisible3(node)) return false;
+            if (isInsideTurboUI3(node) || !nodeVisible3(node)) return false;
             if (node.getAttribute("aria-controls") !== menuId) return false;
             const popup = node.getAttribute("aria-haspopup");
             if (popup === null || popup === "false") return false;
@@ -2475,7 +2503,7 @@ ${CODE_FENCE}`;
         menu.querySelectorAll("[aria-haspopup]:not([aria-haspopup='false'])")
       ).filter((node) => {
         if (!(node instanceof HTMLElement)) return false;
-        if (isInsideTurboUI2(node) || !nodeVisible3(node)) return false;
+        if (isInsideTurboUI3(node) || !nodeVisible3(node)) return false;
         const owner = node.closest("[role='menu']");
         if (owner && owner !== menu && menu.contains(owner)) return false;
         return rowLabel(node) === label;
@@ -2488,7 +2516,7 @@ ${CODE_FENCE}`;
         menu.querySelectorAll(CHOICE_OPTION_SELECTOR)
       ).filter(
         (node) => {
-          if (isInsideTurboUI2(node) || !nodeVisible3(node)) return false;
+          if (isInsideTurboUI3(node) || !nodeVisible3(node)) return false;
           if (node.closest(REASONING_MENU_SELECTOR) !== menu) return false;
           const popup = node.getAttribute("aria-haspopup");
           if (popup !== null && popup !== "false") return false;
@@ -2551,7 +2579,7 @@ ${CODE_FENCE}`;
       const rows = Array.from(
         root.querySelectorAll(CHOICE_OPTION_SELECTOR)
       ).filter((node) => {
-        if (isInsideTurboUI2(node)) return false;
+        if (isInsideTurboUI3(node)) return false;
         const rect = node.getBoundingClientRect();
         return rect.width >= 1 && rect.height >= 1;
       });
@@ -2573,7 +2601,7 @@ ${CODE_FENCE}`;
       const menus = Array.from(
         document.querySelectorAll(REASONING_MENU_SELECTOR)
       ).filter((node) => {
-        if (isInsideTurboUI2(node) || toolScope.isInside(node)) return false;
+        if (isInsideTurboUI3(node) || toolScope.isInside(node)) return false;
         const rect = node.getBoundingClientRect();
         return rect.width >= 1 && rect.height >= 1;
       });
@@ -2589,7 +2617,7 @@ ${CODE_FENCE}`;
         root.querySelectorAll("[aria-haspopup]:not([aria-haspopup='false'])")
       ).filter((node) => {
         if (!(node instanceof HTMLElement)) return false;
-        if (isInsideTurboUI2(node)) return false;
+        if (isInsideTurboUI3(node)) return false;
         const owner = node.closest("[role='menu']");
         if (owner && owner !== root && root.contains(owner)) return false;
         const rect = node.getBoundingClientRect();
@@ -2622,7 +2650,7 @@ ${CODE_FENCE}`;
         settled = true;
         if (restoreIsStale(token)) return;
         const info = ok ? choiceRowInfo(lastRow) : null;
-        window.setTimeout(closeOpenPopup, 100);
+        window.setTimeout(() => closeOpenPopup(control), 100);
         if (info) {
           window.setTimeout(() => {
             if (control.isConnected) upgradeChoiceRecord(saved, control, info);
@@ -2683,7 +2711,7 @@ ${CODE_FENCE}`;
         }
         const fallback = Array.from(
           document.querySelectorAll(REASONING_MENU_SELECTOR)
-        ).find((node) => !isInsideTurboUI2(node) && nodeVisible3(node));
+        ).find((node) => !isInsideTurboUI3(node) && nodeVisible3(node));
         if (fallback) {
           done(fallback);
           return;
@@ -2699,7 +2727,7 @@ ${CODE_FENCE}`;
         window.setTimeout(() => {
           if (settled) return;
           if (restoreIsStale(token)) return;
-          closeOpenPopup();
+          closeOpenPopup(control);
           window.setTimeout(() => {
             if (settled) return;
             openRoot((menu) => {
@@ -2756,7 +2784,7 @@ ${CODE_FENCE}`;
         settled = true;
         if (restoreIsStale(restoreId)) return;
         const info = ok ? choiceRowInfo(lastRow) : null;
-        window.setTimeout(closeOpenPopup, 100);
+        window.setTimeout(() => closeOpenPopup(control), 100);
         if (info) {
           window.setTimeout(() => {
             if (control.isConnected) upgradeChoiceRecord(saved, control, info);
@@ -2794,7 +2822,7 @@ ${CODE_FENCE}`;
               return;
             }
             if (deep >= 6) {
-              closeOpenPopup();
+              closeOpenPopup(control);
               finish(false, true);
               return;
             }
@@ -2805,7 +2833,7 @@ ${CODE_FENCE}`;
         }
         if (attempt >= 8) {
           const menuWasOpen = hasVisibleMenu();
-          closeOpenPopup();
+          closeOpenPopup(control);
           finish(false, menuWasOpen);
           return;
         }
@@ -2817,7 +2845,7 @@ ${CODE_FENCE}`;
           finish(true);
           return;
         }
-        closeOpenPopup();
+        closeOpenPopup(control);
         window.setTimeout(() => {
           triggerSendButton(interactiveTarget(control));
           window.setTimeout(() => step(0), 350);
@@ -2908,7 +2936,7 @@ ${CODE_FENCE}`;
       if (isEngineDormant()) return;
       if (!state.rememberReasoning || applyingReasoning) return;
       const target = event.target;
-      if (!(target instanceof Element) || isInsideTurboUI2(target)) return;
+      if (!(target instanceof Element) || isInsideTurboUI3(target)) return;
       if (isToolControlElement(target) || toolScope.isInside(target)) return;
       if (pairOptionClick(target)) return;
       if (target.closest(REASONING_MENU_SELECTOR)) return;
@@ -2981,7 +3009,7 @@ ${CODE_FENCE}`;
       const visible = Array.from(
         document.querySelectorAll(REASONING_CONTROL_SELECTOR)
       ).filter(
-        (node) => !isInsideTurboUI2(node) && !toolScope.isInside(node) && !isToolControlElement(node) && nodeVisible3(node)
+        (node) => !isInsideTurboUI3(node) && !toolScope.isInside(node) && !isToolControlElement(node) && nodeVisible3(node)
       );
       if (saved.key) {
         const byKey = visible.find((node) => controlKey(node) === saved.key);
@@ -3072,6 +3100,7 @@ ${CODE_FENCE}`;
       reasoningRestoreTimer = 0;
       window.clearTimeout(reasoningSettleTimer);
       reasoningSettleTimer = 0;
+      for (const timer of popupCloseTimers.splice(0)) window.clearTimeout(timer);
       restoreToken += 1;
       applyingReasoning = false;
     }
@@ -3112,6 +3141,7 @@ ${CODE_FENCE}`;
   });
   var MAX_TOOLS = 40;
   var MAX_LABEL = 120;
+  var MAX_APPLICATION_ID = 120;
   function cleanLabel(raw) {
     if (typeof raw !== "string") return "";
     return raw.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL);
@@ -3119,22 +3149,27 @@ ${CODE_FENCE}`;
   function toToolRecord(value) {
     if (!isObjectRecord(value)) return null;
     const key = cleanLabel(value["key"]);
-    if (!key) return null;
+    const applicationId = cleanLabel(value["applicationId"]).slice(0, MAX_APPLICATION_ID);
+    const label = cleanLabel(value["label"]);
     const selectedRaw = value["selected"];
-    if (!Array.isArray(selectedRaw)) return null;
-    const selected = [];
-    for (const entry of selectedRaw) {
-      const label = cleanLabel(entry);
-      if (!label || selected.includes(label)) continue;
-      selected.push(label);
-      if (selected.length >= MAX_TOOLS) break;
+    const legacyLabels = [];
+    if (Array.isArray(selectedRaw)) {
+      for (const entry of selectedRaw) {
+        const legacy = cleanLabel(entry);
+        if (!legacy || legacyLabels.includes(legacy)) continue;
+        legacyLabels.push(legacy);
+        if (legacyLabels.length >= MAX_TOOLS) break;
+      }
     }
+    if (!key || !applicationId && !label && !legacyLabels.length) return null;
     const controlLabel = cleanLabel(value["controlLabel"]);
     const ts = value["ts"];
     return {
       key,
       controlLabel,
-      selected,
+      applicationId,
+      label: label || legacyLabels[0] || "",
+      legacyLabels,
       ts: typeof ts === "number" && Number.isFinite(ts) ? ts : 0
     };
   }
@@ -3179,15 +3214,13 @@ ${CODE_FENCE}`;
   }
 
   // scripts/ai-chat-turbo-engine/src/core/tool-memory.ts
-  var POLL_INTERVAL = 500;
-  var MAX_POLLS = 60;
-  var MAX_RESTORE_STEPS = 8;
+  var POLL_INTERVAL = 350;
+  var MAX_POLLS = 80;
   var MENU_WAIT_INTERVAL = 120;
-  var MENU_WAIT_ATTEMPTS = 10;
-  var ROW_SETTLE_DELAY = 400;
-  var ROW_RECORD_DELAY = 200;
-  var TRACK_DELAYS = [120, 350, 800];
-  var MAX_REARMS = 3;
+  var MENU_WAIT_ATTEMPTS = 12;
+  var MAX_RESTORE_ATTEMPTS = 6;
+  var RECORD_DELAYS = [120, 320, 700, 1200];
+  var VERIFY_DELAYS = [150, 400, 800, 1400];
   function cleanText(raw) {
     return raw.replace(/\s+/g, " ").trim().slice(0, 120);
   }
@@ -3195,371 +3228,346 @@ ${CODE_FENCE}`;
     const rect = node.getBoundingClientRect();
     return rect.width >= 1 && rect.height >= 1;
   }
-  function rowText(row) {
-    const line = (row.innerText || "").split("\n").find((part) => part.trim());
-    const visible = cleanText(line || row.textContent || "");
-    if (visible) return visible;
-    return cleanText(row.getAttribute("aria-label") || "");
+  function isInsideTurboUI(node) {
+    return Boolean(node.closest("[id^='ai-turbo-'], .ai-turbo-code-bar"));
   }
-  function rowSelected(row) {
-    const checked = row.getAttribute("aria-checked");
-    if (checked === "true" || checked === "false") return checked === "true";
-    const pressed = row.getAttribute("aria-pressed");
-    if (pressed === "true" || pressed === "false") return pressed === "true";
-    const selected = row.getAttribute("aria-selected");
-    if (selected === "true" || selected === "false") return selected === "true";
-    const dataState = row.getAttribute("data-state");
-    if (dataState === "checked" || dataState === "selected" || dataState === "on" || dataState === "active") {
-      return true;
+  function applicationIdOf(node) {
+    return cleanText(node.getAttribute("data-application-id") || "");
+  }
+  function toolLabel(node) {
+    const aria = cleanText(node.getAttribute("aria-label") || "");
+    if (aria) return aria;
+    const visible = node.querySelector("[data-input-label='tools']");
+    if (visible instanceof HTMLElement) {
+      const label = cleanText(visible.textContent || "");
+      if (label) return label;
     }
-    if (dataState === "unchecked" || dataState === "unselected" || dataState === "off" || dataState === "inactive") {
-      return false;
-    }
-    const toggleInput = row.querySelector(
-      'input[type="checkbox"], input[type="radio"]'
-    );
-    if (toggleInput instanceof HTMLInputElement) return toggleInput.checked;
-    if (row.matches(".selected, .checked")) return true;
-    if (row.matches(".unselected, .unchecked")) return false;
-    if (row.querySelector(
-      ".selected, .checked, [aria-label='Selected'], [aria-label='selected'], [aria-label='已选中'], [data-state='checked'], [data-mat-icon-name='check']"
-    )) {
-      return true;
+    return cleanText(node.textContent || "");
+  }
+  function chipRecord(node) {
+    if (!nodeVisible(node)) return null;
+    const applicationId = applicationIdOf(node);
+    if (!applicationId) return null;
+    const labelNode = node.querySelector("span > span");
+    const label = labelNode instanceof HTMLElement ? cleanText(labelNode.textContent || "") : "";
+    return { applicationId, label, node };
+  }
+  function currentChip() {
+    const chips = Array.from(
+      document.querySelectorAll(ATOMIC_TOOL_CHIP_SELECTOR)
+    ).filter((node) => !isInsideTurboUI(node) && nodeVisible(node));
+    for (const chip of chips) {
+      const record = chipRecord(chip);
+      if (record) return record;
     }
     return null;
   }
-  function sameLabels(left, right) {
-    if (left.length !== right.length) return false;
-    const sortedLeft = [...left].sort();
-    const sortedRight = [...right].sort();
-    return sortedLeft.every((label, index) => label === sortedRight[index]);
+  function matchesSaved(tool, saved) {
+    if (saved.applicationId) return tool.applicationId === saved.applicationId;
+    const expected = saved.label || saved.legacyLabels[0] || "";
+    return Boolean(expected) && tool.label === expected;
   }
-  function clickElement(node, scope) {
-    try {
-      node.click();
-      return true;
-    } catch (error) {
-      reportRecoverableError(scope, error);
-      return false;
+  function collectTools(nodes) {
+    const tools = [];
+    for (const node of nodes) {
+      if (isInsideTurboUI(node) || !nodeVisible(node)) continue;
+      const applicationId = applicationIdOf(node);
+      if (!applicationId) continue;
+      tools.push({ applicationId, label: toolLabel(node), node });
     }
+    return tools;
   }
-  function interactiveRow(row) {
-    if (row.matches(
-      "button, a, [role='menuitemcheckbox'], [role='menuitemradio'], [role='checkbox'], [role='option']"
-    )) {
-      return row;
-    }
-    const inner = row.querySelector(
-      "button, a, [role='menuitemcheckbox'], [role='menuitemradio'], [role='checkbox'], [role='option']"
+  function inlineTools() {
+    const items = Array.from(
+      document.querySelectorAll(ATOMIC_TOOL_ITEM_SELECTOR)
+    ).filter((node) => !node.closest("[role='menu']"));
+    return collectTools(items);
+  }
+  function menuTools() {
+    return collectTools(
+      document.querySelectorAll(
+        `${ATOMIC_TOOL_MENU_SELECTOR} [role='menuitem'][data-application-id]`
+      )
     );
-    return inner instanceof HTMLElement ? inner : row;
   }
-  function toggleRowFor(target, popup) {
-    const toggle = target.closest(TOOL_TOGGLE_ROW_SELECTOR);
-    if (toggle instanceof HTMLElement && popup.contains(toggle)) return toggle;
-    const row = target.closest(TOOL_ROW_SELECTOR);
-    return row instanceof HTMLElement && popup.contains(row) ? row : null;
+  function overflowTrigger() {
+    const actions = document.querySelectorAll(ATOMIC_ACTIONS_SELECTOR);
+    for (const action of actions) {
+      if (isInsideTurboUI(action) || !nodeVisible(action)) continue;
+      const candidates = Array.from(
+        action.querySelectorAll("button[aria-expanded]")
+      ).filter((node) => !node.hasAttribute("data-application-id"));
+      const trigger = candidates.find((node) => nodeVisible(node));
+      if (trigger) return trigger;
+    }
+    return null;
+  }
+  function atomicToolbarPresent() {
+    return Array.from(
+      document.querySelectorAll(ATOMIC_ACTIONS_SELECTOR)
+    ).some((node) => !isInsideTurboUI(node) && nodeVisible(node));
+  }
+  function findTool(tools, saved) {
+    if (saved.applicationId) {
+      const byId = tools.find((tool) => tool.applicationId === saved.applicationId);
+      if (byId) return byId;
+    }
+    const expected = saved.label || saved.legacyLabels[0] || "";
+    if (!expected) return null;
+    return tools.find((tool) => tool.label === expected) ?? null;
   }
   function createToolMemoryUtils(deps) {
-    const { el, state, toolScope } = deps;
+    const { el, state, triggerSendButton } = deps;
     let statusNode = null;
     let pollTimer = 0;
     let pollCount = 0;
     let stepTimer = 0;
-    let recordTimer = 0;
-    const trackTimers = [];
+    const recordTimers = [];
+    const verifyTimers = [];
     let restoreToken = 0;
     let restoring = false;
     let restoreDone = false;
-    let openedByUs = false;
+    let restoreAttempts = 0;
+    let openedOverflow = null;
     let actionStatus = "";
-    let restoredTriggers = /* @__PURE__ */ new WeakSet();
-    let lastRestoredTrigger = null;
-    let rearmCount = 0;
     function stopPolling() {
       window.clearInterval(pollTimer);
       pollTimer = 0;
       pollCount = 0;
     }
-    function closeOpenedMenu() {
-      if (!openedByUs) return;
-      openedByUs = false;
-      toolScope.close();
+    function clearTimers(list) {
+      for (const timer of list.splice(0)) window.clearTimeout(timer);
     }
-    function clearTimer() {
-      stopPolling();
-      window.clearTimeout(stepTimer);
-      window.clearTimeout(recordTimer);
-      for (const timer of trackTimers.splice(0)) window.clearTimeout(timer);
-      stepTimer = 0;
-      recordTimer = 0;
-      restoreToken += 1;
-      restoring = false;
-      restoreDone = false;
-      lastRestoredTrigger = null;
-      rearmCount = 0;
-      closeOpenedMenu();
-    }
-    function teardown() {
-      clearTimer();
-      statusNode = null;
-    }
-    function collectRows(popup) {
-      const candidates = Array.from(
-        popup.querySelectorAll(TOOL_ROW_SELECTOR)
-      );
-      const rows = [];
-      const seen = /* @__PURE__ */ new Set();
-      for (const row of candidates) {
-        if (row.closest(TOOL_TRIGGER_CONTAINER_SELECTOR)) continue;
-        const popupKind = row.getAttribute("aria-haspopup");
-        if (popupKind !== null && popupKind !== "false") continue;
-        if (!nodeVisible(row)) continue;
-        const selected = rowSelected(row);
-        if (selected === null) continue;
-        const label = rowText(row);
-        if (!label || seen.has(label)) continue;
-        seen.add(label);
-        rows.push({ label, selected, node: row });
+    function click(control, scope) {
+      try {
+        return triggerSendButton(control);
+      } catch (error) {
+        reportRecoverableError(scope, error);
+        return false;
       }
-      return rows;
     }
-    function selectedLabels(popup) {
-      const rows = collectRows(popup);
-      if (!rows.length) return null;
-      return rows.filter((row) => row.selected).map((row) => row.label);
-    }
-    function triggerNode() {
-      const nodes = Array.from(
-        document.querySelectorAll(TOOL_TRIGGER_SELECTOR)
-      );
-      return nodes.find((node) => nodeVisible(node)) ?? null;
-    }
-    function triggerLabel(trigger) {
-      return cleanText(
-        trigger.getAttribute("aria-label") || trigger.textContent || "add-tools"
-      );
-    }
-    function persistSelection(trigger, selected) {
-      const saved = readToolRecord();
-      if (saved && sameLabels(saved.selected, selected)) return;
-      const record = {
-        key: "add-tools",
-        controlLabel: triggerLabel(trigger),
-        selected: [...selected],
-        ts: Date.now()
-      };
-      writeToolRecord(record);
-    }
-    function recordRowClick(popup, row, trigger) {
-      const label = rowText(row);
-      if (!label) return;
-      const wasSelected = rowSelected(row);
-      const before = selectedLabels(popup);
-      if (wasSelected === null && !row.matches(TOOL_TOGGLE_ROW_SELECTOR)) return;
-      window.clearTimeout(recordTimer);
-      recordTimer = window.setTimeout(() => {
-        recordTimer = 0;
-        if (isEngineDormant() || !state.rememberTools) return;
-        stopPolling();
-        restoreToken += 1;
-        restoring = false;
-        restoreDone = true;
-        let next = popup.isConnected ? selectedLabels(popup) : null;
-        if (next === null && before !== null) {
-          if (wasSelected === true) {
-            next = before.filter((entry) => entry !== label);
-          } else if (wasSelected === false) {
-            next = before.includes(label) ? before : [...before, label];
-          } else {
-            next = before.includes(label) ? before.filter((entry) => entry !== label) : [...before, label];
-          }
-        }
-        if (next === null) return;
-        persistSelection(trigger, next);
-        actionStatus = next.length ? "已记录 " + next.join(" / ") : "当前没有选中任何工具";
-        renderStatus();
-      }, ROW_RECORD_DELAY);
-    }
-    function handleRowClick(target) {
-      if (restoring) return;
-      const popup = toolScope.popupFor(target);
-      if (!popup) return;
-      const row = toggleRowFor(target, popup);
-      if (!row) return;
-      const trigger = triggerNode();
-      if (!trigger) return;
-      recordRowClick(popup, row, trigger);
-    }
-    function handleToolClick(event) {
-      if (isEngineDormant()) return;
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (toolScope.isInside(target)) {
-        if (!state.rememberTools) return;
-        handleRowClick(target);
-        return;
-      }
-      const trigger = target.closest(TOOL_TRIGGER_SELECTOR);
-      if (trigger instanceof Element) {
-        if (restoring) return;
-        const before = toolScope.snapshot();
-        for (const delay of TRACK_DELAYS) {
-          const timer = window.setTimeout(() => {
-            const index = trackTimers.indexOf(timer);
-            if (index >= 0) trackTimers.splice(index, 1);
-            const owner = trigger.isConnected ? trigger : triggerNode();
-            if (!owner) return;
-            toolScope.note(owner, before);
-          }, delay);
-          trackTimers.push(timer);
-        }
-        return;
-      }
+    function closeOverflow() {
+      const trigger = openedOverflow;
+      openedOverflow = null;
+      if (!trigger || !trigger.isConnected) return;
+      if (trigger.getAttribute("aria-expanded") !== "true") return;
+      click(trigger, "close tool overflow menu");
     }
     function finishRestore(token, status) {
       if (token !== restoreToken) return;
       restoring = false;
       restoreDone = true;
-      stopPolling();
-      closeOpenedMenu();
+      closeOverflow();
       actionStatus = status;
       renderStatus();
     }
-    function waitForMenu(token, trigger, before, onReady, attempt) {
-      if (token !== restoreToken) return;
-      const popup = toolScope.note(trigger, before) ?? toolScope.resolve(trigger);
-      if (popup) {
-        onReady(popup);
+    function persistChip(tool) {
+      if (!tool) {
+        clearToolRecord();
+        actionStatus = "当前没有选中任何工具";
+        renderStatus();
         return;
       }
-      if (attempt >= MENU_WAIT_ATTEMPTS) {
-        finishRestore(token, "未识别到工具菜单");
+      const saved = readToolRecord();
+      if (saved && saved.applicationId === tool.applicationId && saved.label === tool.label) {
         return;
       }
-      stepTimer = window.setTimeout(() => {
-        waitForMenu(token, trigger, before, onReady, attempt + 1);
-      }, MENU_WAIT_INTERVAL);
-    }
-    function withToolMenu(token, trigger, onReady) {
-      const openPopup = toolScope.resolve(trigger);
-      if (openPopup) {
-        onReady(openPopup);
-        return;
-      }
-      const before = toolScope.snapshot();
-      if (!clickElement(trigger, "open tool menu")) {
-        finishRestore(token, "无法打开工具菜单");
-        return;
-      }
-      openedByUs = true;
-      waitForMenu(token, trigger, before, onReady, 0);
-    }
-    function restoreStep(token, trigger, record, step, attempted) {
-      if (token !== restoreToken) return;
-      if (isEngineDormant() || !state.rememberTools) {
-        finishRestore(token, "");
-        return;
-      }
-      if (step >= MAX_RESTORE_STEPS) {
-        finishRestore(token, "恢复次数已达到上限");
-        return;
-      }
-      withToolMenu(token, trigger, (popup) => {
-        if (token !== restoreToken) return;
-        const rows = collectRows(popup);
-        if (!rows.length) {
-          finishRestore(token, "当前菜单没有可读选中状态，暂不可恢复");
-          return;
-        }
-        const missing = record.selected.filter((label) => {
-          const match = rows.find((row2) => row2.label === label);
-          return !match || !match.selected;
-        });
-        if (!missing.length) {
-          const actual = rows.filter((row2) => row2.selected).map((row2) => row2.label);
-          persistSelection(trigger, actual);
-          finishRestore(
-            token,
-            actual.length ? "已恢复 " + actual.join(" / ") : "当前没有选中任何工具"
-          );
-          return;
-        }
-        const nextLabel = missing.find(
-          (label) => rows.some((row2) => row2.label === label)
-        );
-        if (!nextLabel) {
-          finishRestore(token, "找不到已记录的工具");
-          return;
-        }
-        const clicks = attempted.get(nextLabel) ?? 0;
-        if (clicks >= 2) {
-          finishRestore(token, "这些工具无法同时选中");
-          return;
-        }
-        attempted.set(nextLabel, clicks + 1);
-        const row = rows.find((entry) => entry.label === nextLabel);
-        if (!row) {
-          finishRestore(token, "找不到已记录的工具");
-          return;
-        }
-        if (!clickElement(interactiveRow(row.node), "select tool menu row")) {
-          finishRestore(token, "无法选择工具");
-          return;
-        }
-        stepTimer = window.setTimeout(() => {
-          if (token !== restoreToken) return;
-          restoreStep(token, trigger, record, step + 1, attempted);
-        }, ROW_SETTLE_DELAY);
+      writeToolRecord({
+        key: "atomic-actions",
+        controlLabel: "工具",
+        applicationId: tool.applicationId,
+        label: tool.label,
+        legacyLabels: tool.label ? [tool.label] : [],
+        ts: Date.now()
       });
+      actionStatus = tool.label ? `已记录 ${tool.label}` : `已记录 ${tool.applicationId}`;
+      renderStatus();
+    }
+    function scheduleRecordCapture(applicationId, label, removing) {
+      clearTimers(recordTimers);
+      let confirmed = false;
+      for (const [index, delay] of RECORD_DELAYS.entries()) {
+        const timer = window.setTimeout(() => {
+          const position = recordTimers.indexOf(timer);
+          if (position >= 0) recordTimers.splice(position, 1);
+          if (isEngineDormant() || !state.rememberTools || confirmed) return;
+          const chip = currentChip();
+          if (!removing && chip) {
+            if (chip.applicationId === applicationId || index === RECORD_DELAYS.length - 1) {
+              confirmed = true;
+              persistChip(chip);
+            }
+            return;
+          }
+          if (removing && !chip) {
+            confirmed = true;
+            persistChip(null);
+            return;
+          }
+          if (index === RECORD_DELAYS.length - 1) {
+            actionStatus = label ? `未确认 ${label} 的选择，已保留原记录` : "未确认工具选择，已保留原记录";
+            renderStatus();
+          }
+        }, delay);
+        recordTimers.push(timer);
+      }
+    }
+    function handleToolClick(event) {
+      if (isEngineDormant()) return;
+      const target = event.target;
+      if (!(target instanceof Element) || isInsideTurboUI(target)) return;
+      const chip = target.closest(ATOMIC_TOOL_CHIP_SELECTOR);
+      if (chip instanceof HTMLElement) {
+        if (restoring || !target.closest("button")) return;
+        const info = chipRecord(chip);
+        scheduleRecordCapture(info?.applicationId || "", info?.label || "", true);
+        return;
+      }
+      if (restoring || !state.rememberTools) return;
+      const item = target.closest(ATOMIC_TOOL_ITEM_SELECTOR);
+      if (!(item instanceof HTMLElement)) return;
+      const applicationId = applicationIdOf(item);
+      if (!applicationId) return;
+      scheduleRecordCapture(applicationId, toolLabel(item), false);
+    }
+    function verifyRestored(token, saved, attemptsLeft) {
+      clearTimers(verifyTimers);
+      for (const [index, delay] of VERIFY_DELAYS.entries()) {
+        const timer = window.setTimeout(() => {
+          const position = verifyTimers.indexOf(timer);
+          if (position >= 0) verifyTimers.splice(position, 1);
+          if (token !== restoreToken) return;
+          const chip = currentChip();
+          if (chip && matchesSaved(chip, saved)) {
+            clearTimers(verifyTimers);
+            writeToolRecord({
+              key: "atomic-actions",
+              controlLabel: "工具",
+              applicationId: chip.applicationId,
+              label: chip.label || saved.label,
+              legacyLabels: chip.label ? [chip.label] : saved.legacyLabels,
+              ts: Date.now()
+            });
+            finishRestore(
+              token,
+              `已恢复 ${chip.label || saved.label || saved.applicationId}`
+            );
+            return;
+          }
+          if (index !== VERIFY_DELAYS.length - 1) return;
+          restoring = false;
+          closeOverflow();
+          if (attemptsLeft > 1) return;
+          finishRestore(token, "未能恢复已记录的工具");
+        }, delay);
+        verifyTimers.push(timer);
+      }
+    }
+    function tryRestore(saved, token) {
+      restoreAttempts += 1;
+      const chip = currentChip();
+      if (chip && matchesSaved(chip, saved)) {
+        finishRestore(token, `已恢复 ${chip.label || saved.label || saved.applicationId}`);
+        return;
+      }
+      const attemptsLeft = MAX_RESTORE_ATTEMPTS - restoreAttempts + 1;
+      const inline = findTool(inlineTools(), saved);
+      if (inline) {
+        if (!click(inline.node, "select atomic tool")) {
+          restoring = false;
+          return;
+        }
+        verifyRestored(token, saved, attemptsLeft);
+        return;
+      }
+      const openMenuTool = findTool(menuTools(), saved);
+      if (openMenuTool) {
+        if (!click(openMenuTool.node, "select atomic overflow tool")) {
+          restoring = false;
+          return;
+        }
+        verifyRestored(token, saved, attemptsLeft);
+        return;
+      }
+      const trigger = overflowTrigger();
+      if (!trigger) {
+        restoring = false;
+        return;
+      }
+      if (trigger.getAttribute("aria-expanded") !== "true") {
+        openedOverflow = trigger;
+        if (!click(trigger, "open atomic tool overflow")) {
+          openedOverflow = null;
+          restoring = false;
+          return;
+        }
+      }
+      let attempt = 0;
+      const wait = () => {
+        stepTimer = 0;
+        if (token !== restoreToken) return;
+        const menuTool = findTool(menuTools(), saved);
+        if (menuTool) {
+          if (!click(menuTool.node, "select atomic overflow tool")) {
+            restoring = false;
+            closeOverflow();
+            return;
+          }
+          verifyRestored(token, saved, attemptsLeft);
+          return;
+        }
+        attempt += 1;
+        if (attempt >= MENU_WAIT_ATTEMPTS) {
+          restoring = false;
+          closeOverflow();
+          return;
+        }
+        stepTimer = window.setTimeout(wait, MENU_WAIT_INTERVAL);
+      };
+      stepTimer = window.setTimeout(wait, MENU_WAIT_INTERVAL);
     }
     function maybeRestore() {
-      if (restoreDone) {
-        if (!lastRestoredTrigger || lastRestoredTrigger.isConnected) return;
-        if (rearmCount >= MAX_REARMS) return;
-        rearmCount += 1;
-        restoreDone = false;
-        restoredTriggers = /* @__PURE__ */ new WeakSet();
-      }
+      if (restoreDone || restoring) return;
       if (isEngineDormant() || !state.rememberTools) {
         restoreDone = true;
         return;
       }
       const saved = readToolRecord();
-      if (!saved || !saved.selected.length) {
+      if (!saved || !saved.applicationId && !saved.label && !saved.legacyLabels.length) {
         restoreDone = true;
         return;
       }
-      const trigger = triggerNode();
-      if (!trigger) return;
-      if (restoredTriggers.has(trigger)) {
-        restoreDone = true;
+      const chip = currentChip();
+      if (chip && matchesSaved(chip, saved)) {
+        finishRestore(restoreToken, `已恢复 ${chip.label || saved.label || saved.applicationId}`);
         return;
       }
-      if (restoring) return;
-      restoredTriggers.add(trigger);
-      lastRestoredTrigger = trigger;
+      if (!chip && !atomicToolbarPresent()) return;
+      if (restoreAttempts >= MAX_RESTORE_ATTEMPTS) {
+        finishRestore(restoreToken, "找不到已记录的工具");
+        return;
+      }
       restoring = true;
       restoreToken += 1;
-      const token = restoreToken;
-      restoreStep(token, trigger, saved, 0, /* @__PURE__ */ new Map());
+      tryRestore(saved, restoreToken);
     }
-    function scheduleRestore() {
+    function clearTimer() {
       stopPolling();
       window.clearTimeout(stepTimer);
-      window.clearTimeout(recordTimer);
       stepTimer = 0;
-      recordTimer = 0;
+      clearTimers(recordTimers);
+      clearTimers(verifyTimers);
       restoreToken += 1;
       restoring = false;
-      lastRestoredTrigger = null;
-      rearmCount = 0;
-      closeOpenedMenu();
-      restoredTriggers = /* @__PURE__ */ new WeakSet();
-      if (isEngineDormant()) return;
-      if (!state.rememberTools) return;
+      restoreDone = false;
+      restoreAttempts = 0;
+      closeOverflow();
+    }
+    function scheduleRestore() {
+      clearTimer();
+      if (isEngineDormant() || !state.rememberTools) return;
       const saved = readToolRecord();
-      if (!saved || !saved.selected.length) return;
+      if (!saved) return;
       restoreDone = false;
       pollTimer = window.setInterval(() => {
         pollCount += 1;
@@ -3577,18 +3585,13 @@ ${CODE_FENCE}`;
       }
       const saved = readToolRecord();
       if (!saved) {
-        statusNode.textContent = actionStatus || "工具记忆：未记录（在工具菜单里勾选工具即可）";
+        statusNode.textContent = actionStatus || "工具记忆：未记录（在工具按钮里选择一个工具即可）";
         return;
       }
-      if (!saved.selected.length) {
-        statusNode.textContent = actionStatus || "工具记忆：当前没有选中任何工具";
-        return;
-      }
-      statusNode.textContent = "工具记忆：" + saved.selected.join(" / ") + " ";
+      const shown = saved.label || saved.applicationId || "已记录工具";
+      statusNode.textContent = "工具记忆：" + shown + " ";
       if (actionStatus) {
-        statusNode.appendChild(
-          el("span", {}, ["· " + actionStatus + " "])
-        );
+        statusNode.appendChild(el("span", {}, ["· " + actionStatus + " "]));
       }
       statusNode.appendChild(
         el(
@@ -3609,6 +3612,10 @@ ${CODE_FENCE}`;
     function attachStatusNode(node) {
       statusNode = node;
     }
+    function teardown() {
+      clearTimer();
+      statusNode = null;
+    }
     return {
       handleToolClick,
       maybeRestore,
@@ -3622,7 +3629,7 @@ ${CODE_FENCE}`;
 
   // scripts/ai-chat-turbo-engine/src/core/tool-scope.ts
   var TOOL_POPUP_TTL = 3e4;
-  function isInsideTurboUI(node) {
+  function isInsideTurboUI2(node) {
     if (!(node instanceof Element)) return false;
     return Boolean(node.closest("[id^='ai-turbo-'], .ai-turbo-code-bar"));
   }
@@ -3633,7 +3640,7 @@ ${CODE_FENCE}`;
   function visiblePopups() {
     return Array.from(
       document.querySelectorAll(TOOL_POPUP_SELECTOR)
-    ).filter((node) => !isInsideTurboUI(node) && nodeVisible2(node));
+    ).filter((node) => !isInsideTurboUI2(node) && nodeVisible2(node));
   }
   function popupOwnedByToolTrigger(popup) {
     if (popup.closest(TOOL_TRIGGER_CONTAINER_SELECTOR)) return true;
@@ -6882,7 +6889,7 @@ ${CODE_FENCE}`;
     const toolMemory = createToolMemoryUtils({
       el,
       state,
-      toolScope
+      triggerSendButton: (control) => composer.triggerSendButton(control)
     });
     const virtualFiles = createVirtualFileUtils({
       el,
