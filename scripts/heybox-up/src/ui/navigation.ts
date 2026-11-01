@@ -57,17 +57,22 @@ const NAV_SVG_OPEN =
 
 /**
  * Static icons carry no motion hooks at all. Dynamic icons mark each stroked
- * path with pathLength="1" so the hover/focus draw animation can run from a
- * fully hidden stroke to a fully painted one.
+ * path with pathLength="1" so the CSS dash flow can travel along a normalized
+ * path length, and tag the icon so the stylesheet can drive the frames.
  */
 export function navIconMarkup(id: string, animated: boolean): string {
   const glyph = NAV_GLYPHS[id];
   if (glyph === undefined) return "";
-  const paths = glyph.paths.map((d) =>
-    animated
-      ? '<path d="' + d + '" pathLength="1" class="hbu-ico-stroke"/>'
-      : '<path d="' + d + '"/>'
-  ).join("");
+  const paths = glyph.paths.map((d) => {
+    if (!animated) return '<path d="' + d + '"/>';
+    // Dynamic glyphs paint every outline twice: the base copy keeps the icon
+    // readable at all times, and the flow copy carries a short dash that the
+    // stylesheet slides along the same geometry for as long as the icon exists.
+    return (
+      '<path d="' + d + '" class="hbu-ico-base"/>' +
+      '<path d="' + d + '" pathLength="1" class="hbu-ico-flow"/>'
+    );
+  }).join("");
   const circles = (glyph.circles ?? []).map((attrs) => "<circle " + attrs + "/>").join("");
   const variant = animated ? " hbu-ico-anim" : "";
   return (
@@ -163,17 +168,48 @@ export const NAV_CSS = `
   .hbu-nav-link[data-nav="article"]:focus-visible .hbu-nav-icon.hbu-ico-anim {
     transform: rotate(-7deg) translateY(-2px) scale(1.1);
   }
-  .hbu-ico-anim path.hbu-ico-stroke {
-    stroke-dasharray: 1;
+  /* Dynamic glyphs run on their own: the base copy keeps the outline solid and
+     the flow copy sweeps a short accent dash along the same geometry, forever,
+     with no pointer or focus needed. */
+  .hbu-ico-anim path.hbu-ico-base {
+    stroke-dasharray: none;
     stroke-dashoffset: 0;
   }
-  @keyframes hbu-nav-ico-draw {
-    from { stroke-dashoffset: 1; }
-    to { stroke-dashoffset: 0; }
+  .hbu-ico-anim path.hbu-ico-flow {
+    stroke: var(--heybox-up-accent, #6f8db3);
+    stroke-dasharray: .3 .7;
+    stroke-dashoffset: 0;
+    opacity: 0;
+    animation: hbu-nav-ico-flow 3.2s ease-in-out infinite;
   }
-  .hbu-nav-link:focus-visible .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke,
-  .hbu-nav-link:active .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke {
-    animation: hbu-nav-ico-draw .52s cubic-bezier(.4, 0, .2, 1) both;
+  @keyframes hbu-nav-ico-flow {
+    0% { stroke-dashoffset: 0; opacity: 0; }
+    10% { stroke-dashoffset: -.1; opacity: .95; }
+    55% { stroke-dashoffset: -1; opacity: .95; }
+    70%, 100% { stroke-dashoffset: -1; opacity: 0; }
+  }
+  /* A very small breath keeps every mounted dynamic icon alive at rest without
+     touching the 18x18 layout box or the hover transform on the wrapper. */
+  .hbu-nav-icon.hbu-ico-anim svg {
+    transform-origin: 50% 55%;
+    animation: hbu-nav-ico-breathe 3.8s ease-in-out infinite;
+  }
+  @keyframes hbu-nav-ico-breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.04); }
+  }
+  /* Per-entry durations and negative delays keep the four icons out of lockstep. */
+  .hbu-nav-icon.hbu-ico-anim.hbu-ico-community path.hbu-ico-flow { animation-duration: 3.6s; animation-delay: -.7s; }
+  .hbu-nav-icon.hbu-ico-anim.hbu-ico-favour path.hbu-ico-flow { animation-duration: 3s; animation-delay: -1.4s; }
+  .hbu-nav-icon.hbu-ico-anim.hbu-ico-article path.hbu-ico-flow { animation-duration: 3.9s; animation-delay: -2.1s; }
+  .hbu-nav-icon.hbu-ico-anim.hbu-ico-community svg { animation-duration: 4.2s; animation-delay: -.9s; }
+  .hbu-nav-icon.hbu-ico-anim.hbu-ico-favour svg { animation-duration: 3.6s; animation-delay: -1.7s; }
+  .hbu-nav-icon.hbu-ico-anim.hbu-ico-article svg { animation-duration: 4.6s; animation-delay: -2.6s; }
+  .hbu-nav-link:focus-visible .hbu-nav-icon.hbu-ico-anim path.hbu-ico-flow {
+    animation-duration: 1.3s;
+  }
+  .hbu-nav-link:active .hbu-nav-icon.hbu-ico-anim path.hbu-ico-flow {
+    animation-duration: .9s;
   }
   /* Touch browsers keep :hover on the tapped link, which would leave the icon enlarged.
      Gate hover-only motion to devices that can hover with a precise pointer. */
@@ -185,9 +221,7 @@ export const NAV_CSS = `
     .hbu-nav-link[data-nav="article"]:hover .hbu-nav-icon.hbu-ico-anim {
       transform: rotate(-7deg) translateY(-2px) scale(1.1);
     }
-    .hbu-nav-link:hover .hbu-nav-icon.hbu-ico-anim path.hbu-ico-stroke {
-      animation: hbu-nav-ico-draw .52s cubic-bezier(.4, 0, .2, 1) both;
-    }
+    .hbu-nav-link:hover .hbu-nav-icon.hbu-ico-anim path.hbu-ico-flow { animation-duration: 1.3s; }
   }
   .hbu-nav-link:active .hbu-nav-icon.hbu-ico-anim { transform: translateY(0) scale(.9); transition-duration: .08s; }
   .hbu-nav-link[data-nav="article"]:active .hbu-nav-icon.hbu-ico-anim { transform: translateY(0) rotate(0) scale(.9); }
@@ -196,12 +230,21 @@ export const NAV_CSS = `
     transform: none !important;
     transition: none !important;
   }
+  :root.${NAV_STATIC_CLASS} .hbu-nav-icon svg {
+    animation: none !important;
+    transform: none !important;
+  }
+  :root.${NAV_STATIC_CLASS} .hbu-nav-icon path.hbu-ico-flow {
+    display: none !important;
+  }
   :root.${NAV_STATIC_CLASS} .hbu-nav-icon path {
     stroke-dasharray: none !important;
     stroke-dashoffset: 0 !important;
+    opacity: 1 !important;
   }
   @media (prefers-reduced-motion: reduce) {
     .hbu-nav-icon,
+    .hbu-nav-icon svg,
     .hbu-nav-icon path {
       animation: none !important;
       transform: none !important;
@@ -210,6 +253,10 @@ export const NAV_CSS = `
     .hbu-nav-icon path {
       stroke-dasharray: none !important;
       stroke-dashoffset: 0 !important;
+      opacity: 1 !important;
+    }
+    .hbu-nav-icon path.hbu-ico-flow {
+      display: none !important;
     }
     .hbu-nav-link::after { transition: none; }
   }
