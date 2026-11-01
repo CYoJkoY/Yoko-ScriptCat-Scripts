@@ -7,6 +7,7 @@ import {
   buildRailCommentTree,
   buildArticleCommentBody,
   buildDeleteCommentBody,
+  countRailThreadNodes,
   createRailPendingReply,
   findRailFloorIdForComment,
   isOwnRailComment,
@@ -340,6 +341,18 @@ describe("optimistic reply rows", () => {
     expect(attached.quotes).toBe(attached.subComments);
     expect(floorEntry.subComments.map((item) => item.id)).toEqual(["401"]);
     expect(attachRailPendingReplies(floorEntry, [])).toBe(floorEntry);
+  });
+
+  it("counts every hidden reply of a branch, including its descendants", () => {
+    const floorEntry = entry("600", [
+      { ...floor("601", "a"), replyid: 600 },
+      { ...floor("602", "b"), replyid: 601 },
+      { ...floor("603", "c"), replyid: 602 },
+    ]);
+    const tree = buildRailCommentTree(floorEntry);
+    expect(countRailThreadNodes(tree)).toBe(3);
+    expect(countRailThreadNodes(tree[0].children)).toBe(2);
+    expect(countRailThreadNodes([])).toBe(0);
   });
 
   it("matches a local row against the echoed row by id or by author and text", () => {

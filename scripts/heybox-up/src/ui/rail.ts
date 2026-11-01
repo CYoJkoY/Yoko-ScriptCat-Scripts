@@ -740,6 +740,14 @@ export function mergeRailPageItems(
   return fresh.concat(merged);
 }
 
+export function countRailThreadNodes(nodes: readonly RailCommentThreadNode[]): number {
+  let total = 0;
+  for (const node of nodes) {
+    total += 1 + countRailThreadNodes(node.children);
+  }
+  return total;
+}
+
 export const RAIL_PENDING_ID_PREFIX = "pending-";
 
 export interface RailPendingReplyInput {

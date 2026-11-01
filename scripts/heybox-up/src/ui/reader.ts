@@ -9,7 +9,7 @@ import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railThreadHasPendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railThreadHasPendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
@@ -74,6 +74,12 @@ export const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
 export const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
 
 export const READER_PENDING_NOTICE_MS = 9000;
+
+/**
+ * Past this many nesting levels the branch stops adding indentation, so a deep
+ * reply chain can never widen the comment sheet.
+ */
+export const RAIL_MAX_INDENT_DEPTH = 4;
 
 export const READER_ICONS = {
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
@@ -699,7 +705,7 @@ export const READER_CSS = `
   .hbu-reader-comments-name-link:hover .hbu-reader-comments-name { color: var(--hbu-reader-link); text-decoration: underline; }
   .hbu-reader-comments-time { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-text { margin: 4px 0 0; font-size: 14px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
+  .hbu-reader-comments-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-reply { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
   .hbu-reader-comments-reply:hover { color: var(--hbu-reader-link); }
   .hbu-reader-comments-delete { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
@@ -715,7 +721,21 @@ export const READER_CSS = `
   .hbu-reader-comments-reply-to { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-child .hbu-reader-comments-text { margin-top: 2px; font-size: 13px; }
   .hbu-reader-comments-child .hbu-reader-comments-meta { margin-top: 3px; }
+  .hbu-reader-comments-collapse { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-collapse:hover { color: var(--hbu-reader-link); }
+  /* A folded branch keeps a short indent and a dashed rule, so the row still
+     shows that replies are stored underneath it. */
+  .hbu-reader-comments-children--collapsed { padding-left: 6px; border-left-style: dashed; }
+  .hbu-reader-comments-child--collapsed { padding-top: 0; }
+  .hbu-reader-comments-child--collapsed::before { display: none; }
+  .hbu-reader-comments-expand { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px; border: 1px dashed var(--hbu-reader-border); border-radius: 999px; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-expand::before { content: "+"; font-weight: 700; }
+  .hbu-reader-comments-expand:hover { border-color: var(--hbu-reader-link); color: var(--hbu-reader-link); }
   .hbu-reader-comments-syncing { flex: none; color: var(--hbu-reader-muted); font-size: 11px; opacity: .85; }
+  /* Past the depth cap the branch stops indenting, so a long reply chain can
+     never push the sheet wider than its own column. */
+  .hbu-reader-comments-children--deep { margin-top: 6px; padding-left: 0; border-left: 0; }
+  .hbu-reader-comments-children--deep > .hbu-reader-comments-child::before { display: none; }
   .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
   .hbu-reader-comments-text img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
@@ -1675,6 +1695,10 @@ export function watchReader(navigation: PostNavigationController): void {
   // actions stay hidden until the reader can prove who is logged in.
   let readerAccountId = "";
   const commentDeleteBusy = new Set<string>();
+  // Collapsing a reply hides its whole subtree, so a deep chain can be folded
+  // away instead of widening the sheet. Keyed by comment id and kept for the
+  // article, so a refresh does not reopen what the reader folded.
+  const collapsedCommentThreads = new Set<string>();
   let readerPendingAdvanceSourceId = "";
   let readerPendingAdvanceRevision = -1;
   let readerAdvanceLocked = false;
@@ -2930,6 +2954,47 @@ export function watchReader(navigation: PostNavigationController): void {
   const isPendingReplyRow = (commentId: string): boolean =>
     commentId.startsWith(RAIL_PENDING_ID_PREFIX) || commentState.pendingReplies.some((row) => row.id === commentId);
 
+  // Folding a row hides its whole subtree, so every descendant goes with the
+  // one the reader closed instead of leaving an orphaned branch behind.
+  const createThreadCollapseButton = (threadId: string, hiddenCount: number): HTMLButtonElement => {
+    const collapse = document.createElement("button");
+    collapse.type = "button";
+    collapse.className = "hbu-reader-comments-collapse";
+    collapse.dataset["threadId"] = threadId;
+    collapse.textContent = "收起回复";
+    collapse.setAttribute("aria-expanded", "true");
+    collapse.setAttribute("aria-label", "收起这条评论下的 " + hiddenCount + " 条回复");
+    return collapse;
+  };
+
+  // The placeholder keeps a short indent and a dashed rule, so a folded branch
+  // still says that replies are stored underneath it.
+  const createCollapsedThreadRow = (threadId: string, hiddenCount: number): HTMLUListElement => {
+    const holder = document.createElement("ul");
+    holder.className = "hbu-reader-comments-children hbu-reader-comments-children--collapsed";
+    const hiddenRow = document.createElement("li");
+    hiddenRow.className = "hbu-reader-comments-child hbu-reader-comments-child--collapsed";
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "hbu-reader-comments-expand";
+    expand.dataset["threadId"] = threadId;
+    expand.textContent = hiddenCount + " 条回复已收起";
+    expand.setAttribute("aria-expanded", "false");
+    hiddenRow.append(expand);
+    holder.append(hiddenRow);
+    return holder;
+  };
+
+  // Folding and unfolding redraws the list, so focus moves to the control that
+  // now represents the same branch instead of dropping back to the document.
+  const focusCommentThreadControl = (selector: string, threadId: string): void => {
+    for (const control of commentPanelList?.querySelectorAll<HTMLElement>(selector) ?? []) {
+      if (control.dataset["threadId"] !== threadId) continue;
+      control.focus({ preventScroll: true });
+      return;
+    }
+  };
+
   const createReaderCommentItem = (raw: RailCommentEntry): HTMLLIElement => {
     // A reply posted here is attached before the tree is built, so it shows up
     // even while the tree endpoint still answers without it.
@@ -2973,18 +3038,30 @@ export function watchReader(navigation: PostNavigationController): void {
     const deleteButton = createReaderCommentDeleteButton(comment);
     if (deleteButton !== null) meta.append(deleteButton);
     const visibleChildren = filterReaderCommentThread(buildRailCommentTree(comment), readHideCyPreference());
+    const hiddenCount = countRailThreadNodes(visibleChildren);
+    const collapsible = comment.id !== "" && visibleChildren.length > 0;
+    const collapsed = collapsible && collapsedCommentThreads.has(comment.id);
+    // Only the visible state owns a control: expanded rows offer "收起回复",
+    // and a folded row offers the "N 条回复已收起" placeholder instead.
+    if (collapsible && !collapsed) meta.append(createThreadCollapseButton(comment.id, hiddenCount));
     main.append(meta);
     if (visibleChildren.length > 0) {
-      const children = document.createElement("ul");
-      children.className = "hbu-reader-comments-children";
-      for (const child of visibleChildren) children.append(createReaderCommentChild(child, comment));
-      main.append(children);
+      if (collapsed) {
+        main.append(createCollapsedThreadRow(comment.id, hiddenCount));
+      } else {
+        const children = document.createElement("ul");
+        children.className = "hbu-reader-comments-children";
+        // The floor itself sits at depth zero, so its direct replies are the
+        // first indented level.
+        for (const child of visibleChildren) children.append(createReaderCommentChild(child, comment, 1));
+        main.append(children);
+      }
     }
     item.append(avatar, main);
     return item;
   };
 
-  const createReaderCommentChild = (child: RailCommentThreadNode, parent: RailComment): HTMLLIElement => {
+  const createReaderCommentChild = (child: RailCommentThreadNode, parent: RailComment, depth: number): HTMLLIElement => {
     const item = document.createElement("li");
     item.className = "hbu-reader-comments-child";
     item.setAttribute("role", "listitem");
@@ -3042,13 +3119,23 @@ export function watchReader(navigation: PostNavigationController): void {
       const deleteButton = createReaderCommentDeleteButton(child);
       if (deleteButton !== null) actions.append(deleteButton);
     }
-    main.append(who, text, actions);
     const visibleChildren = filterReaderCommentThread(child.children, readHideCyPreference());
+    // A reply with descendants can be folded away; folding it also hides every
+    // reply underneath it, so a long chain never has to be read level by level.
+    const collapsible = child.id !== "" && visibleChildren.length > 0;
+    const hiddenCount = collapsible ? countRailThreadNodes(visibleChildren) : 0;
+    const collapsed = collapsible && collapsedCommentThreads.has(child.id);
+    if (collapsible && !collapsed) actions.append(createThreadCollapseButton(child.id, hiddenCount));
+    main.append(who, text, actions);
     if (visibleChildren.length > 0) {
-      const children = document.createElement("ul");
-      children.className = "hbu-reader-comments-children";
-      for (const nested of visibleChildren) children.append(createReaderCommentChild(nested, child));
-      main.append(children);
+      if (collapsed) {
+        main.append(createCollapsedThreadRow(child.id, hiddenCount));
+      } else {
+        const children = document.createElement("ul");
+        children.className = "hbu-reader-comments-children" + (depth >= RAIL_MAX_INDENT_DEPTH ? " hbu-reader-comments-children--deep" : "");
+        for (const nested of visibleChildren) children.append(createReaderCommentChild(nested, child, depth + 1));
+        main.append(children);
+      }
     }
     const row = document.createElement("div");
     row.className = "hbu-reader-comments-child-row";
@@ -3404,6 +3491,10 @@ export function watchReader(navigation: PostNavigationController): void {
           ...(createdId === "" ? {} : { commentId: createdId }),
         });
         if (pending !== null) {
+          // A reply written under a folded branch would land out of sight, so
+          // the floor that owns it is opened before the local row is drawn.
+          const pendingFloorId = resolvePendingFloorId(commentState.items, pending);
+          if (pendingFloorId !== "") collapsedCommentThreads.delete(pendingFloorId);
           commentState.pendingReplies.push(pending);
           renderReaderComments();
         }
@@ -3845,6 +3936,26 @@ export function watchReader(navigation: PostNavigationController): void {
     list.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const collapse = target.closest(".hbu-reader-comments-collapse");
+      if (collapse instanceof HTMLElement) {
+        const threadId = collapse.dataset["threadId"] || "";
+        if (threadId === "") return;
+        event.preventDefault();
+        collapsedCommentThreads.add(threadId);
+        renderReaderComments();
+        focusCommentThreadControl(".hbu-reader-comments-expand", threadId);
+        return;
+      }
+      const expand = target.closest(".hbu-reader-comments-expand");
+      if (expand instanceof HTMLElement) {
+        const threadId = expand.dataset["threadId"] || "";
+        if (threadId === "") return;
+        event.preventDefault();
+        collapsedCommentThreads.delete(threadId);
+        renderReaderComments();
+        focusCommentThreadControl(".hbu-reader-comments-collapse", threadId);
+        return;
+      }
       const remove = target.closest(".hbu-reader-comments-delete");
       if (remove instanceof HTMLElement) {
         const deleteId = remove.dataset["deleteId"] || "";
@@ -3901,6 +4012,7 @@ export function watchReader(navigation: PostNavigationController): void {
     commentLoadController = null;
     articleCommentBusy = false;
     commentDeleteBusy.clear();
+    collapsedCommentThreads.clear();
     clearArticleComposers();
     if (host !== null) host.inert = false;
     if (commentPanel !== null) {

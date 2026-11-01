@@ -306,5 +306,29 @@ describe("immersive reader theme contract", () => {
     expect(ruleFor(rules, ".hbu-reader-progress").style.getPropertyValue("height")).toBe("46px");
     expect(ruleFor(rules, ".hbu-reader-scroll").style.getPropertyValue("height")).toBe("calc(100% - 46px)");
   });
+
+  it("styles the reply folding controls from the reader tokens", () => {
+    const collapse = ruleFor(rules, ".hbu-reader-comments-collapse").style;
+    expect(collapse.getPropertyValue("color")).toBe("var(--hbu-reader-muted)");
+    expect(ruleFor(rules, ".hbu-reader-comments-collapse:hover").style.getPropertyValue("color")).toBe(
+      "var(--hbu-reader-link)",
+    );
+    const expand = ruleFor(rules, ".hbu-reader-comments-expand").style;
+    expect(expand.getPropertyValue("border")).toContain("var(--hbu-reader-border)");
+    expect(expand.getPropertyValue("color")).toBe("var(--hbu-reader-muted)");
+    // A folded branch keeps a small indent and a dashed rule, so the row still
+    // reads as "replies are stored here" without spending a full column.
+    const folded = ruleFor(rules, ".hbu-reader-comments-children--collapsed").style;
+    expect(folded.getPropertyValue("padding-left")).toBe("6px");
+    expect(folded.getPropertyValue("border-left-style")).toBe("dashed");
+    expect(ruleFor(rules, ".hbu-reader-comments-child--collapsed::before").style.getPropertyValue("display")).toBe(
+      "none",
+    );
+    // Past the depth cap the branch stops indenting, so a long chain cannot
+    // widen the sheet or run off the screen.
+    const deep = ruleFor(rules, ".hbu-reader-comments-children--deep").style;
+    expect(deep.getPropertyValue("padding-left")).toBe("0px");
+    expect(deep.getPropertyValue("border-left")).toBe("0px");
+  });
 });
 
