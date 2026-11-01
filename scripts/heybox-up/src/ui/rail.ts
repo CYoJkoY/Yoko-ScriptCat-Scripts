@@ -114,6 +114,10 @@ export interface ArticleReplyTargetPayload {
 export interface RailPageOptions {
   accountId?: string;
   signal?: AbortSignal | null;
+  /** Skips the in-memory page cache so a refresh always reads the site. */
+  bypassCache?: boolean;
+  /** Only accepts a cached page younger than this many milliseconds. */
+  maxAgeMs?: number;
 }
 
 export const RAIL_TRIGGER_SELECTOR = ".bbs-new-style-bottom__comment, .content-list__comment";
@@ -577,19 +581,80 @@ export function buildDeleteCommentBody(commentId: string): Record<string, string
   return { comment_id: commentId };
 }
 
+/** Reads the id of a freshly created comment so the reader can look for it. */
+export function readCreatedCommentId(result: unknown): string {
+  const record = asRecord(result);
+  if (record === null) return "";
+  const nested = asRecord(record["comment"]);
+  const candidates: unknown[] = [record["comment_id"], record["commentid"], record["id"]];
+  if (nested !== null) candidates.push(nested["comment_id"], nested["commentid"], nested["id"]);
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null) continue;
+    const text = String(candidate).trim();
+    if (text === "" || text === "0" || text === "-1" || text === "undefined" || text === "null") continue;
+    return text;
+  }
+  return "";
+}
+
+/** True when the loaded tree contains this floor or nested reply. */
+export function railItemsHaveComment(items: readonly RailCommentEntry[], commentId: string): boolean {
+  if (commentId === "") return false;
+  for (const entry of items) {
+    if (entry.id === commentId) return true;
+    for (const child of entry.subComments) {
+      if (child.id === commentId) return true;
+    }
+  }
+  return false;
+}
+
 export let lastRailRequestAt = 0;
 
 export const RAIL_PAGE_CACHE_TTL_MS = 2 * 60 * 1000;
+
+/** Page one drives both the counts and the panel, so it must stay recent. */
+export const RAIL_PAGE_CACHE_FRESH_MS = 15 * 1000;
+
+/** A write makes cached pages unreliable for a moment. */
+export const RAIL_PAGE_CACHE_HOLDOFF_MS = 10 * 1000;
 
 export const RAIL_PAGE_CACHE_MAX = 24;
 
 export const railPageCache: Map<string, { savedAt: number; data: RailPage }> = new Map();
 
-export function readRailPageCache(linkId: string, page: number, accountId = ""): RailPage | null {
+export const railPageCacheHoldoff: Map<string, number> = new Map();
+
+/**
+ * The tree endpoint can answer with the pre-write payload right after a create
+ * or a delete, so that stale answer must neither be served nor cached.
+ */
+export function holdRailPageCache(linkId: string, holdoffMs: number = RAIL_PAGE_CACHE_HOLDOFF_MS): void {
+  clearRailPageCache(linkId);
+  if (linkId === "") return;
+  railPageCacheHoldoff.set(linkId, Date.now() + Math.max(0, holdoffMs));
+}
+
+export function isRailPageCacheHeld(linkId: string): boolean {
+  const until = railPageCacheHoldoff.get(linkId);
+  if (until === undefined) return false;
+  if (Date.now() < until) return true;
+  railPageCacheHoldoff.delete(linkId);
+  return false;
+}
+
+export function readRailPageCache(
+  linkId: string,
+  page: number,
+  accountId = "",
+  maxAgeMs: number = RAIL_PAGE_CACHE_TTL_MS,
+): RailPage | null {
+  if (isRailPageCacheHeld(linkId)) return null;
   const key = linkId + ":" + accountId + ":" + page;
   const cached = railPageCache.get(key);
   if (cached === undefined) return null;
-  if (Date.now() - cached.savedAt > RAIL_PAGE_CACHE_TTL_MS) {
+  const limitMs = Number.isFinite(maxAgeMs) ? Math.min(Math.max(0, maxAgeMs), RAIL_PAGE_CACHE_TTL_MS) : RAIL_PAGE_CACHE_TTL_MS;
+  if (Date.now() - cached.savedAt > limitMs) {
     railPageCache.delete(key);
     return null;
   }
@@ -606,6 +671,7 @@ export function readRailPageCache(linkId: string, page: number, accountId = ""):
 }
 
 export function writeRailPageCache(linkId: string, page: number, accountId: string, data: RailPage): void {
+  if (isRailPageCacheHeld(linkId)) return;
   const key = linkId + ":" + accountId + ":" + page;
   railPageCache.delete(key);
   railPageCache.set(key, { savedAt: Date.now(), data: data });
@@ -667,7 +733,8 @@ export async function fetchRailPage(
   options: RailPageOptions = {},
 ): Promise<RailPage> {
   const accountId = typeof options.accountId === "string" ? options.accountId : getHeyboxId();
-  const cached = readRailPageCache(linkId, page, accountId);
+  const maxAgeMs = typeof options.maxAgeMs === "number" ? options.maxAgeMs : RAIL_PAGE_CACHE_TTL_MS;
+  const cached = options.bypassCache === true ? null : readRailPageCache(linkId, page, accountId, maxAgeMs);
   if (cached !== null) return cached;
   const signal = options.signal;
   const wait = Math.max(0, 700 - (Date.now() - lastRailRequestAt));

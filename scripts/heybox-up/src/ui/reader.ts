@@ -3,11 +3,11 @@ import { getHeyboxId, resolveHeyboxId } from "../core/account";
 import { LINK_HREF_PREFIX } from "../core/cy";
 import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_TRAIL_KEY, POST_TRAIL_MAX, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
 import { EMBEDDED_MEDIA_SELECTOR, EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, ensureStyleElement, registerPageSync } from "../core/page-sync";
-import { fetchWithTimeout, isAbortError } from "../core/request";
+import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
 import { asRecord } from "../core/json";
 import { parseCompactCount } from "./desktop";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, buildArticleCommentBody, buildDeleteCommentBody, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, isOwnRailComment, resolveCommentPageProgress } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, buildArticleCommentBody, buildDeleteCommentBody, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, holdRailPageCache, isOwnRailComment, railItemsHaveComment, readCreatedCommentId, resolveCommentPageProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
@@ -85,6 +85,7 @@ export const READER_ICONS = {
   share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="2.2"/><circle cx="17.5" cy="6" r="2.2"/><circle cx="17.5" cy="18" r="2.2"/><path d="m8.1 11 7.4-3.9M8.1 13l7.4 3.9"/></svg>',
   previous: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
   next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V10h-5.4"/></svg>',
 };
 
 export const READER_CSS = `
@@ -657,6 +658,12 @@ export const READER_CSS = `
   .hbu-reader-comments-heading span { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-close { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
   .hbu-reader-comments-close svg { width: 16px; height: 16px; }
+  .hbu-reader-comments-refresh { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: var(--hbu-reader-muted); cursor: pointer; }
+  .hbu-reader-comments-refresh:hover { color: inherit; border-color: var(--hbu-reader-accent); }
+  .hbu-reader-comments-refresh:disabled { opacity: .55; cursor: default; }
+  .hbu-reader-comments-refresh svg { width: 16px; height: 16px; }
+  .hbu-reader-comments-refresh[data-busy="true"] svg { animation: hbu-reader-spin .9s linear infinite; }
+  @keyframes hbu-reader-spin { to { transform: rotate(360deg); } }
   .hbu-reader-comments-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px 18px; }
   .hbu-reader-comments-list { margin: 0; padding: 0; list-style: none; }
   .hbu-reader-comments-item { display: flex; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--hbu-reader-border); }
@@ -1443,7 +1450,22 @@ interface ReaderCommentState {
   hasMore: boolean;
   loadedGroups: number;
   loaded: boolean;
+  /** Timestamp of the last successful page-one read, used to age out the panel. */
+  loadedAt: number;
   seq: number;
+}
+
+interface ReaderCommentLoadOptions {
+  /** Forces a network read of page one instead of the cached copy. */
+  fresh?: boolean;
+  /** Replaces an in-flight load instead of being ignored. */
+  force?: boolean;
+  /** Keeps polling page one until this comment id shows up in the tree. */
+  expectPresentId?: string;
+  /** Keeps polling page one until this comment id is gone from the tree. */
+  expectAbsentId?: string;
+  /** Verification round counter for the polling loop below. */
+  attempt?: number;
 }
 
 interface SuspendedMediaEmbedState {
@@ -1587,8 +1609,12 @@ export function watchReader(navigation: PostNavigationController): void {
   let commentPanelMeta: HTMLSpanElement | null = null;
   let commentPanelMore: HTMLButtonElement | null = null;
   let commentPanelClose: HTMLButtonElement | null = null;
+  let commentPanelRefresh: HTMLButtonElement | null = null;
   let articleReplyTarget: (ArticleReplyTargetPayload & { name: string }) | null = null;
   let commentState: ReaderCommentState = createCommentState();
+  // Reopening a panel whose page one is older than this refreshes from the site
+  // instead of trusting the in-memory copy.
+  const COMMENT_PANEL_STALE_MS = 60 * 1000;
   // The comment author id is only known after account discovery, so delete
   // actions stay hidden until the reader can prove who is logged in.
   let readerAccountId = "";
@@ -1603,7 +1629,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let readerPendingGeneration = -1;
 
   function createCommentState(): ReaderCommentState {
-    return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, seq: 0 };
+    return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, loadedAt: 0, seq: 0 };
   }
 
   const showToast = (message: string): void => {
@@ -2189,7 +2215,8 @@ export function watchReader(navigation: PostNavigationController): void {
       }, accountId);
       if (articleId !== targetId || readerGeneration !== generation) return;
       cyPublishedCount += 1;
-      clearRailPageCache(targetId);
+      // A CY is a comment too, so the same write invalidates cached pages.
+      holdRailPageCache(targetId);
       if (linkState !== null) {
         addPublishedActions(linkState, 1, 0);
       } else {
@@ -2492,18 +2519,60 @@ export function watchReader(navigation: PostNavigationController): void {
       commentPanelMore.disabled = commentState.loading;
       commentPanelMore.textContent = commentState.loading ? "加载中…" : "加载更多";
     }
+    if (commentPanelRefresh !== null) {
+      commentPanelRefresh.disabled = commentState.loading;
+      commentPanelRefresh.dataset["busy"] = commentState.loading ? "true" : "false";
+    }
   };
 
-  const loadReaderComments = async (page: number): Promise<void> => {
-    if (commentState.loading) return;
+  // A create or delete can be answered by the tree endpoint with the payload it
+  // built before the write landed, so page one is polled a few times until the
+  // caller's expectation is met instead of trusting the first answer.
+  const COMMENT_VERIFY_ATTEMPTS = 4;
+  const COMMENT_VERIFY_DELAY_MS = 900;
+
+  // An empty expectation always matches: only a publish or delete asks for a
+  // specific id to appear or disappear.
+  const matchesCommentExpectation = (page: number, options: ReaderCommentLoadOptions, loaded: readonly RailCommentEntry[]): boolean => {
+    if (page !== 1) return true;
+    const wantPresent = options.expectPresentId ?? "";
+    const wantAbsent = options.expectAbsentId ?? "";
+    if (wantPresent !== "" && !railItemsHaveComment(loaded, wantPresent)) return false;
+    if (wantAbsent !== "" && railItemsHaveComment(loaded, wantAbsent)) return false;
+    return true;
+  };
+
+  // A delete keeps its row off screen while page one is re-read, so the site
+  // echoing the deleted floor back for a moment does not resurrect it.
+  const withoutCommentId = (items: readonly RailCommentEntry[], commentId: string): RailCommentEntry[] => {
+    if (commentId === "") return items.slice();
+    const next: RailCommentEntry[] = [];
+    for (const entry of items) {
+      if (entry.id === commentId) continue;
+      const children = entry.subComments.filter((child) => child.id !== commentId);
+      if (children.length === entry.subComments.length) {
+        next.push(entry);
+        continue;
+      }
+      next.push({ ...entry, subComments: children, quotes: children });
+    }
+    return next;
+  };
+
+  const loadReaderComments = async (page: number, options: ReaderCommentLoadOptions = {}): Promise<void> => {
+    if (commentState.loading && options.force !== true) return;
     const seq = ++commentState.seq;
     const targetId = articleId;
+    const generationAtLoad = readerGeneration;
     commentLoadController?.abort();
     const controller = new AbortController();
     commentLoadController = controller;
     commentState.loading = true;
     commentState.error = "";
-    if (page === 1) {
+    // A refresh keeps the rendered list until the new page arrives, so the panel
+    // does not flash empty while the reader is waiting for its own comment.
+    const keepItems = page === 1 && (options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined);
+    if (page === 1 && !keepItems) {
       commentState.items = [];
       commentState.page = 0;
       commentState.total = 0;
@@ -2512,33 +2581,50 @@ export function watchReader(navigation: PostNavigationController): void {
       commentState.loaded = false;
     }
     renderReaderComments();
+    let stale = false;
     try {
       const accountId = await resolveHeyboxId(controller.signal);
       if (seq !== commentState.seq || commentLoadController !== controller) return;
       if (accountId !== readerAccountId) readerAccountId = accountId;
-      const data = await fetchRailPage(targetId, page, { signal: controller.signal, accountId: accountId });
+      const fresh = page === 1 && (options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined);
+      const data = await fetchRailPage(targetId, page, {
+        signal: controller.signal,
+        accountId: accountId,
+        bypassCache: fresh,
+        ...(page === 1 ? { maxAgeMs: RAIL_PAGE_CACHE_FRESH_MS } : {}),
+      });
       if (seq !== commentState.seq || commentLoadController !== controller) return;
       const seen = new Set(commentState.items.map((item) => item.id));
-      const fresh = data.items.filter((item) => item.id === "" || !seen.has(item.id));
-      commentState.items = page === 1 ? fresh : commentState.items.concat(fresh);
+      const added = data.items.filter((item) => item.id === "" || !seen.has(item.id));
+      // Page one always replaces the list with the full fresh answer: a refresh
+      // keeps the previous rows on screen only while waiting, never afterwards.
+      commentState.items = page === 1
+        ? withoutCommentId(data.items, options.expectAbsentId ?? "")
+        : commentState.items.concat(added);
       commentState.page = page;
-      commentState.total = data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
+      // A delete already lowered the count locally, so a page that still lists
+      // the removed comment must not raise it back.
+      const absentId = options.expectAbsentId ?? "";
+      const echoingDeleted = absentId !== "" && railItemsHaveComment(data.items, absentId);
+      commentState.total = echoingDeleted ? commentState.total : data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
       const progress = resolveCommentPageProgress({
         rawGroupCount: data.items.length,
-        freshGroupCount: fresh.length,
+        freshGroupCount: page === 1 ? data.items.length : added.length,
         previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
         floorTotal: data.floorTotal,
       });
       commentState.loadedGroups = progress.loadedGroups;
       commentState.hasMore = progress.hasMore;
       commentState.loaded = true;
+      if (page === 1) commentState.loadedAt = Date.now();
       // The tree endpoint can lag behind a successful publish. Keep the freshly
       // incremented count visible while still accepting a larger server total.
-      if (linkState !== null && Number.isFinite(data.total) && data.total > 0) {
+      if (linkState !== null && !echoingDeleted && Number.isFinite(data.total) && data.total > 0) {
         const current = Number(linkState.commentCount);
         linkState.commentCount = Math.max(Number.isFinite(current) ? current : 0, data.total);
       }
       syncActionStates();
+      stale = !matchesCommentExpectation(page, options, page === 1 ? data.items : commentState.items);
     } catch (error) {
       if (isAbortError(error)) return;
       if (seq !== commentState.seq || commentLoadController !== controller) return;
@@ -2552,6 +2638,21 @@ export function watchReader(navigation: PostNavigationController): void {
         renderReaderComments();
       }
     }
+    if (!stale || page !== 1) return;
+    if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
+    // A manual refresh or a second write owns the panel now, so this poll stops
+    // instead of competing with the newer load.
+    if (seq !== commentState.seq) return;
+    const attempt = (options.attempt ?? 0) + 1;
+    if (attempt >= COMMENT_VERIFY_ATTEMPTS) {
+      showToast(options.expectAbsentId === undefined ? "评论已提交，列表仍待站点同步" : "评论已删除，列表仍待站点同步");
+      return;
+    }
+    void waitForDelay(COMMENT_VERIFY_DELAY_MS, controller.signal).then(() => {
+      if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
+      if (seq !== commentState.seq) return;
+      void loadReaderComments(1, { ...options, fresh: true, force: true, attempt: attempt });
+    }).catch(() => undefined);
   };
 
   const readArticleComposers = (): Element[] => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
@@ -2612,19 +2713,29 @@ export function watchReader(navigation: PostNavigationController): void {
       const accountId = await resolveHeyboxId();
       if (articleId !== targetId || readerGeneration !== generation) return;
       if (accountId === "") throw new Error("请先登录小黑盒");
-      await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply), accountId);
+      const created = await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply), accountId);
       if (articleId !== targetId || readerGeneration !== generation) return;
+      const createdId = readCreatedCommentId(created);
       clearArticleComposers();
       showToast("评论已发布");
       articleCommentPublishedCount += 1;
-      clearRailPageCache(targetId);
+      // A write invalidates every cached page, and the tree endpoint may still
+      // answer with the pre-write payload for a moment, so page one is read
+      // again from the network and polled until the new comment appears.
+      holdRailPageCache(targetId);
       if (linkState !== null) {
         linkState.commentCount = Math.max(0, Number(linkState.commentCount) || 0) + 1;
       } else {
         void loadLinkState(accountId);
       }
       syncActionStates();
-      if (commentPanel !== null && !commentPanel.hidden && !commentState.loading) void loadReaderComments(1);
+      if (commentPanel !== null && !commentPanel.hidden) {
+        void loadReaderComments(1, {
+          fresh: true,
+          force: true,
+          ...(createdId === "" ? {} : { expectPresentId: createdId }),
+        });
+      }
     } catch (error) {
       // The fallback panel survives article changes, so a stale failure must not paint
       // its message into the composer of the article now being read.
@@ -2695,9 +2806,15 @@ export function watchReader(navigation: PostNavigationController): void {
       const removedCount = removeDeletedComment(commentId);
       commentState.total = Math.max(0, commentState.total - removedCount);
       if (linkState !== null) linkState.commentCount = Math.max(0, (Number(linkState.commentCount) || 0) - removedCount);
-      clearRailPageCache(targetId);
+      // Deleting invalidates every cached page, and the tree endpoint may still
+      // echo the deleted floor for a moment, so page one is read from the
+      // network again until the removed comment is gone from the answer.
+      holdRailPageCache(targetId);
       syncActionStates();
       showToast("评论已删除");
+      if (commentPanel !== null && !commentPanel.hidden) {
+        void loadReaderComments(1, { fresh: true, force: true, expectAbsentId: commentId });
+      }
     } catch (error) {
       if (articleId === targetId && readerGeneration === generation) {
         showToast(error instanceof Error ? error.message : "评论删除失败");
@@ -2911,6 +3028,7 @@ export function watchReader(navigation: PostNavigationController): void {
       commentPanelMeta = null;
       commentPanelMore = null;
       commentPanelClose = null;
+      commentPanelRefresh = null;
     }
     const panel = document.createElement("section");
     panel.className = "hbu-reader-comments-panel";
@@ -2931,12 +3049,18 @@ export function watchReader(navigation: PostNavigationController): void {
     const meta = document.createElement("span");
     meta.textContent = "";
     heading.append(title, meta);
+    const refresh = document.createElement("button");
+    refresh.type = "button";
+    refresh.className = "hbu-reader-comments-refresh";
+    refresh.setAttribute("aria-label", "刷新评论");
+    refresh.title = "刷新评论";
+    refresh.innerHTML = READER_ICONS.refresh;
     const close = document.createElement("button");
     close.type = "button";
     close.className = "hbu-reader-comments-close";
     close.setAttribute("aria-label", "关闭评论");
     close.innerHTML = READER_ICONS.close;
-    head.append(heading, close);
+    head.append(heading, refresh, close);
     const composer = createArticleComposer();
     const body = document.createElement("div");
     body.className = "hbu-reader-comments-body";
@@ -2977,8 +3101,13 @@ export function watchReader(navigation: PostNavigationController): void {
     commentPanelMeta = meta;
     commentPanelMore = more;
     commentPanelClose = close;
+    commentPanelRefresh = refresh;
     close.addEventListener("click", closeComments);
     scrim.addEventListener("click", closeComments);
+    refresh.addEventListener("click", () => {
+      if (commentState.loading) return;
+      void loadReaderComments(1, { fresh: true, force: true });
+    });
     more.addEventListener("click", () => {
       if (!commentState.loading) void loadReaderComments(commentState.page + 1);
     });
@@ -3030,7 +3159,15 @@ export function watchReader(navigation: PostNavigationController): void {
     renderReaderComments();
     commentPanelClose?.focus({ preventScroll: true });
     syncArticleComposers();
-    if (!commentState.loaded && !commentState.loading) void loadReaderComments(1);
+    if (commentState.loading) return;
+    // A panel reopened after a while can show a page that predates writes made
+    // elsewhere, so a stale page one is refreshed from the network.
+    const stalePanel = commentState.loaded && Date.now() - commentState.loadedAt > COMMENT_PANEL_STALE_MS;
+    if (!commentState.loaded) {
+      void loadReaderComments(1);
+    } else if (stalePanel) {
+      void loadReaderComments(1, { fresh: true, force: true });
+    }
   };
 
   const resetReaderComments = (): void => {
@@ -4684,6 +4821,7 @@ export function watchReader(navigation: PostNavigationController): void {
     commentPanelMeta = null;
     commentPanelMore = null;
     commentPanelClose = null;
+    commentPanelRefresh = null;
     commentState = createCommentState();
     favourPanel = null;
     favourButton = null;
