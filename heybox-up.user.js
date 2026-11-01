@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.52
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼全量展示，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换，动态图标仅在开关开启时出现；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.53
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼全量展示，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏顶部另有“刷新评论”按钮，发布或删除评论后自动从网络重读第一页，并轮询到目标评论出现或消失为止；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为首页、社区、收藏、文章四个「SVG + 文本」入口，静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换，动态图标仅在开关开启时出现；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -1697,15 +1697,56 @@
   function buildDeleteCommentBody(commentId) {
     return { comment_id: commentId };
   }
+  function readCreatedCommentId(result) {
+    const record = asRecord(result);
+    if (record === null) return "";
+    const nested = asRecord(record["comment"]);
+    const candidates = [record["comment_id"], record["commentid"], record["id"]];
+    if (nested !== null) candidates.push(nested["comment_id"], nested["commentid"], nested["id"]);
+    for (const candidate of candidates) {
+      if (candidate === void 0 || candidate === null) continue;
+      const text = String(candidate).trim();
+      if (text === "" || text === "0" || text === "-1" || text === "undefined" || text === "null") continue;
+      return text;
+    }
+    return "";
+  }
+  function railItemsHaveComment(items, commentId) {
+    if (commentId === "") return false;
+    for (const entry of items) {
+      if (entry.id === commentId) return true;
+      for (const child of entry.subComments) {
+        if (child.id === commentId) return true;
+      }
+    }
+    return false;
+  }
   var lastRailRequestAt = 0;
   var RAIL_PAGE_CACHE_TTL_MS = 2 * 60 * 1e3;
+  var RAIL_PAGE_CACHE_FRESH_MS = 15 * 1e3;
+  var RAIL_PAGE_CACHE_HOLDOFF_MS = 10 * 1e3;
   var RAIL_PAGE_CACHE_MAX = 24;
   var railPageCache = /* @__PURE__ */ new Map();
-  function readRailPageCache(linkId, page, accountId = "") {
+  var railPageCacheHoldoff = /* @__PURE__ */ new Map();
+  function holdRailPageCache(linkId, holdoffMs = RAIL_PAGE_CACHE_HOLDOFF_MS) {
+    clearRailPageCache(linkId);
+    if (linkId === "") return;
+    railPageCacheHoldoff.set(linkId, Date.now() + Math.max(0, holdoffMs));
+  }
+  function isRailPageCacheHeld(linkId) {
+    const until = railPageCacheHoldoff.get(linkId);
+    if (until === void 0) return false;
+    if (Date.now() < until) return true;
+    railPageCacheHoldoff.delete(linkId);
+    return false;
+  }
+  function readRailPageCache(linkId, page, accountId = "", maxAgeMs = RAIL_PAGE_CACHE_TTL_MS) {
+    if (isRailPageCacheHeld(linkId)) return null;
     const key = linkId + ":" + accountId + ":" + page;
     const cached = railPageCache.get(key);
     if (cached === void 0) return null;
-    if (Date.now() - cached.savedAt > RAIL_PAGE_CACHE_TTL_MS) {
+    const limitMs = Number.isFinite(maxAgeMs) ? Math.min(Math.max(0, maxAgeMs), RAIL_PAGE_CACHE_TTL_MS) : RAIL_PAGE_CACHE_TTL_MS;
+    if (Date.now() - cached.savedAt > limitMs) {
       railPageCache.delete(key);
       return null;
     }
@@ -1721,6 +1762,7 @@
     };
   }
   function writeRailPageCache(linkId, page, accountId, data) {
+    if (isRailPageCacheHeld(linkId)) return;
     const key = linkId + ":" + accountId + ":" + page;
     railPageCache.delete(key);
     railPageCache.set(key, { savedAt: Date.now(), data });
@@ -1771,7 +1813,8 @@
   }
   async function fetchRailPage(linkId, page, options = {}) {
     const accountId = typeof options.accountId === "string" ? options.accountId : getHeyboxId();
-    const cached = readRailPageCache(linkId, page, accountId);
+    const maxAgeMs = typeof options.maxAgeMs === "number" ? options.maxAgeMs : RAIL_PAGE_CACHE_TTL_MS;
+    const cached = options.bypassCache === true ? null : readRailPageCache(linkId, page, accountId, maxAgeMs);
     if (cached !== null) return cached;
     const signal = options.signal;
     const wait = Math.max(0, 700 - (Date.now() - lastRailRequestAt));
@@ -7095,7 +7138,8 @@
     comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.3a7.4 7.4 0 0 1-7.5 7.3 8.4 8.4 0 0 1-2.8-.5L5 20l1.2-3.6A7 7 0 0 1 4.8 11a7.5 7.5 0 0 1 7.7-7.2A7.4 7.4 0 0 1 20 11.3Z"/></svg>',
     share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="2.2"/><circle cx="17.5" cy="6" r="2.2"/><circle cx="17.5" cy="18" r="2.2"/><path d="m8.1 11 7.4-3.9M8.1 13l7.4 3.9"/></svg>',
     previous: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
-    next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>'
+    next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>',
+    refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V10h-5.4"/></svg>'
   };
   var READER_CSS = `
   :root {
@@ -7667,6 +7711,12 @@
   .hbu-reader-comments-heading span { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-close { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
   .hbu-reader-comments-close svg { width: 16px; height: 16px; }
+  .hbu-reader-comments-refresh { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: var(--hbu-reader-muted); cursor: pointer; }
+  .hbu-reader-comments-refresh:hover { color: inherit; border-color: var(--hbu-reader-accent); }
+  .hbu-reader-comments-refresh:disabled { opacity: .55; cursor: default; }
+  .hbu-reader-comments-refresh svg { width: 16px; height: 16px; }
+  .hbu-reader-comments-refresh[data-busy="true"] svg { animation: hbu-reader-spin .9s linear infinite; }
+  @keyframes hbu-reader-spin { to { transform: rotate(360deg); } }
   .hbu-reader-comments-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px 18px; }
   .hbu-reader-comments-list { margin: 0; padding: 0; list-style: none; }
   .hbu-reader-comments-item { display: flex; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--hbu-reader-border); }
@@ -8425,8 +8475,10 @@
     let commentPanelMeta = null;
     let commentPanelMore = null;
     let commentPanelClose = null;
+    let commentPanelRefresh = null;
     let articleReplyTarget = null;
     let commentState = createCommentState();
+    const COMMENT_PANEL_STALE_MS = 60 * 1e3;
     let readerAccountId = "";
     const commentDeleteBusy = /* @__PURE__ */ new Set();
     let readerPendingAdvanceSourceId = "";
@@ -8438,7 +8490,7 @@
     let readerPendingArticleId = "";
     let readerPendingGeneration = -1;
     function createCommentState() {
-      return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, seq: 0 };
+      return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, loadedAt: 0, seq: 0 };
     }
     const showToast = (message) => {
       let toast = host?.querySelector(".hbu-reader-toast") ?? null;
@@ -8970,7 +9022,7 @@
         }, accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
         cyPublishedCount += 1;
-        clearRailPageCache(targetId);
+        holdRailPageCache(targetId);
         if (linkState !== null) {
           addPublishedActions(linkState, 1, 0);
         } else {
@@ -9260,17 +9312,47 @@
         commentPanelMore.disabled = commentState.loading;
         commentPanelMore.textContent = commentState.loading ? "加载中…" : "加载更多";
       }
+      if (commentPanelRefresh !== null) {
+        commentPanelRefresh.disabled = commentState.loading;
+        commentPanelRefresh.dataset["busy"] = commentState.loading ? "true" : "false";
+      }
     };
-    const loadReaderComments = async (page) => {
-      if (commentState.loading) return;
+    const COMMENT_VERIFY_ATTEMPTS = 4;
+    const COMMENT_VERIFY_DELAY_MS = 900;
+    const matchesCommentExpectation = (page, options, loaded) => {
+      if (page !== 1) return true;
+      const wantPresent = options.expectPresentId ?? "";
+      const wantAbsent = options.expectAbsentId ?? "";
+      if (wantPresent !== "" && !railItemsHaveComment(loaded, wantPresent)) return false;
+      if (wantAbsent !== "" && railItemsHaveComment(loaded, wantAbsent)) return false;
+      return true;
+    };
+    const withoutCommentId = (items, commentId) => {
+      if (commentId === "") return items.slice();
+      const next = [];
+      for (const entry of items) {
+        if (entry.id === commentId) continue;
+        const children = entry.subComments.filter((child) => child.id !== commentId);
+        if (children.length === entry.subComments.length) {
+          next.push(entry);
+          continue;
+        }
+        next.push({ ...entry, subComments: children, quotes: children });
+      }
+      return next;
+    };
+    const loadReaderComments = async (page, options = {}) => {
+      if (commentState.loading && options.force !== true) return;
       const seq = ++commentState.seq;
       const targetId = articleId;
+      const generationAtLoad = readerGeneration;
       commentLoadController?.abort();
       const controller = new AbortController();
       commentLoadController = controller;
       commentState.loading = true;
       commentState.error = "";
-      if (page === 1) {
+      const keepItems = page === 1 && (options.fresh === true || options.expectPresentId !== void 0 || options.expectAbsentId !== void 0);
+      if (page === 1 && !keepItems) {
         commentState.items = [];
         commentState.page = 0;
         commentState.total = 0;
@@ -9279,31 +9361,42 @@
         commentState.loaded = false;
       }
       renderReaderComments();
+      let stale = false;
       try {
         const accountId = await resolveHeyboxId(controller.signal);
         if (seq !== commentState.seq || commentLoadController !== controller) return;
         if (accountId !== readerAccountId) readerAccountId = accountId;
-        const data = await fetchRailPage(targetId, page, { signal: controller.signal, accountId });
+        const fresh = page === 1 && (options.fresh === true || options.expectPresentId !== void 0 || options.expectAbsentId !== void 0);
+        const data = await fetchRailPage(targetId, page, {
+          signal: controller.signal,
+          accountId,
+          bypassCache: fresh,
+          ...page === 1 ? { maxAgeMs: RAIL_PAGE_CACHE_FRESH_MS } : {}
+        });
         if (seq !== commentState.seq || commentLoadController !== controller) return;
         const seen = new Set(commentState.items.map((item) => item.id));
-        const fresh = data.items.filter((item) => item.id === "" || !seen.has(item.id));
-        commentState.items = page === 1 ? fresh : commentState.items.concat(fresh);
+        const added = data.items.filter((item) => item.id === "" || !seen.has(item.id));
+        commentState.items = page === 1 ? withoutCommentId(data.items, options.expectAbsentId ?? "") : commentState.items.concat(added);
         commentState.page = page;
-        commentState.total = data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
+        const absentId = options.expectAbsentId ?? "";
+        const echoingDeleted = absentId !== "" && railItemsHaveComment(data.items, absentId);
+        commentState.total = echoingDeleted ? commentState.total : data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
         const progress = resolveCommentPageProgress({
           rawGroupCount: data.items.length,
-          freshGroupCount: fresh.length,
+          freshGroupCount: page === 1 ? data.items.length : added.length,
           previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
           floorTotal: data.floorTotal
         });
         commentState.loadedGroups = progress.loadedGroups;
         commentState.hasMore = progress.hasMore;
         commentState.loaded = true;
-        if (linkState !== null && Number.isFinite(data.total) && data.total > 0) {
+        if (page === 1) commentState.loadedAt = Date.now();
+        if (linkState !== null && !echoingDeleted && Number.isFinite(data.total) && data.total > 0) {
           const current = Number(linkState.commentCount);
           linkState.commentCount = Math.max(Number.isFinite(current) ? current : 0, data.total);
         }
         syncActionStates();
+        stale = !matchesCommentExpectation(page, options, page === 1 ? data.items : commentState.items);
       } catch (error) {
         if (isAbortError(error)) return;
         if (seq !== commentState.seq || commentLoadController !== controller) return;
@@ -9317,6 +9410,19 @@
           renderReaderComments();
         }
       }
+      if (!stale || page !== 1) return;
+      if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
+      if (seq !== commentState.seq) return;
+      const attempt = (options.attempt ?? 0) + 1;
+      if (attempt >= COMMENT_VERIFY_ATTEMPTS) {
+        showToast(options.expectAbsentId === void 0 ? "评论已提交，列表仍待站点同步" : "评论已删除，列表仍待站点同步");
+        return;
+      }
+      void waitForDelay(COMMENT_VERIFY_DELAY_MS, controller.signal).then(() => {
+        if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
+        if (seq !== commentState.seq) return;
+        void loadReaderComments(1, { ...options, fresh: true, force: true, attempt });
+      }).catch(() => void 0);
     };
     const readArticleComposers = () => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
     const clearArticleReplyTarget = (restoreFocus) => {
@@ -9372,19 +9478,26 @@
         const accountId = await resolveHeyboxId();
         if (articleId !== targetId || readerGeneration !== generation) return;
         if (accountId === "") throw new Error("请先登录小黑盒");
-        await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply), accountId);
+        const created = await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply), accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
+        const createdId = readCreatedCommentId(created);
         clearArticleComposers();
         showToast("评论已发布");
         articleCommentPublishedCount += 1;
-        clearRailPageCache(targetId);
+        holdRailPageCache(targetId);
         if (linkState !== null) {
           linkState.commentCount = Math.max(0, Number(linkState.commentCount) || 0) + 1;
         } else {
           void loadLinkState(accountId);
         }
         syncActionStates();
-        if (commentPanel !== null && !commentPanel.hidden && !commentState.loading) void loadReaderComments(1);
+        if (commentPanel !== null && !commentPanel.hidden) {
+          void loadReaderComments(1, {
+            fresh: true,
+            force: true,
+            ...createdId === "" ? {} : { expectPresentId: createdId }
+          });
+        }
       } catch (error) {
         if (articleId === targetId && readerGeneration === generation && status.isConnected) {
           status.textContent = error instanceof Error ? error.message : "评论发布失败";
@@ -9444,9 +9557,12 @@
         const removedCount = removeDeletedComment(commentId);
         commentState.total = Math.max(0, commentState.total - removedCount);
         if (linkState !== null) linkState.commentCount = Math.max(0, (Number(linkState.commentCount) || 0) - removedCount);
-        clearRailPageCache(targetId);
+        holdRailPageCache(targetId);
         syncActionStates();
         showToast("评论已删除");
+        if (commentPanel !== null && !commentPanel.hidden) {
+          void loadReaderComments(1, { fresh: true, force: true, expectAbsentId: commentId });
+        }
       } catch (error) {
         if (articleId === targetId && readerGeneration === generation) {
           showToast(error instanceof Error ? error.message : "评论删除失败");
@@ -9646,6 +9762,7 @@
         commentPanelMeta = null;
         commentPanelMore = null;
         commentPanelClose = null;
+        commentPanelRefresh = null;
       }
       const panel = document.createElement("section");
       panel.className = "hbu-reader-comments-panel";
@@ -9666,12 +9783,18 @@
       const meta = document.createElement("span");
       meta.textContent = "";
       heading.append(title, meta);
+      const refresh = document.createElement("button");
+      refresh.type = "button";
+      refresh.className = "hbu-reader-comments-refresh";
+      refresh.setAttribute("aria-label", "刷新评论");
+      refresh.title = "刷新评论";
+      refresh.innerHTML = READER_ICONS.refresh;
       const close = document.createElement("button");
       close.type = "button";
       close.className = "hbu-reader-comments-close";
       close.setAttribute("aria-label", "关闭评论");
       close.innerHTML = READER_ICONS.close;
-      head.append(heading, close);
+      head.append(heading, refresh, close);
       const composer = createArticleComposer();
       const body = document.createElement("div");
       body.className = "hbu-reader-comments-body";
@@ -9712,8 +9835,13 @@
       commentPanelMeta = meta;
       commentPanelMore = more;
       commentPanelClose = close;
+      commentPanelRefresh = refresh;
       close.addEventListener("click", closeComments);
       scrim.addEventListener("click", closeComments);
+      refresh.addEventListener("click", () => {
+        if (commentState.loading) return;
+        void loadReaderComments(1, { fresh: true, force: true });
+      });
       more.addEventListener("click", () => {
         if (!commentState.loading) void loadReaderComments(commentState.page + 1);
       });
@@ -9763,7 +9891,13 @@
       renderReaderComments();
       commentPanelClose?.focus({ preventScroll: true });
       syncArticleComposers();
-      if (!commentState.loaded && !commentState.loading) void loadReaderComments(1);
+      if (commentState.loading) return;
+      const stalePanel = commentState.loaded && Date.now() - commentState.loadedAt > COMMENT_PANEL_STALE_MS;
+      if (!commentState.loaded) {
+        void loadReaderComments(1);
+      } else if (stalePanel) {
+        void loadReaderComments(1, { fresh: true, force: true });
+      }
     };
     const resetReaderComments = () => {
       commentLoadController?.abort();
@@ -11276,6 +11410,7 @@
       commentPanelMeta = null;
       commentPanelMore = null;
       commentPanelClose = null;
+      commentPanelRefresh = null;
       commentState = createCommentState();
       favourPanel = null;
       favourButton = null;
