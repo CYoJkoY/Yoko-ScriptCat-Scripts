@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.16.4
+// @version      0.16.5
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -2336,6 +2336,9 @@ ${CODE_FENCE}`;
     let reasoningMenuTriggerAt = 0;
     let reasoningMenuTriggerLabel = "";
     let yuanbaoActionStatus = "";
+    let yuanbaoAppliedKey = "";
+    let yuanbaoAppliedAt = 0;
+    const YUANBAO_APPLIED_WINDOW_MS = 15e3;
     function setReasoningPending(value) {
       reasoningRestorePending = value;
       restoreCoordinator.setPending("reasoning", value);
@@ -2424,6 +2427,23 @@ ${CODE_FENCE}`;
         return true;
       } catch (error) {
         reportRecoverableError("restore reasoning control", error);
+        return false;
+      }
+    }
+    function hoverControlOnce(control) {
+      try {
+        const rect = control.getBoundingClientRect();
+        const init = {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2
+        };
+        control.dispatchEvent(new MouseEvent("mouseover", init));
+        control.dispatchEvent(new MouseEvent("mousemove", init));
+        return true;
+      } catch (error) {
+        reportRecoverableError("hover reasoning control", error);
         return false;
       }
     }
@@ -3199,6 +3219,21 @@ ${CODE_FENCE}`;
         document.querySelectorAll(YUANBAO_MODEL_TRIGGER_SELECTOR)
       ).find((node) => !isInsideTurboUI3(node) && nodeVisible3(node)) ?? null;
     }
+    function yuanbaoPanelOpen(trigger) {
+      return trigger.getAttribute("aria-expanded") === "true";
+    }
+    function yuanbaoSelectionKey(record) {
+      return `${conversationKey}|${record.model || ""}|${record.mode || ""}`;
+    }
+    function yuanbaoSelectionApplied(record, trigger) {
+      if (!trigger || !yuanbaoAppliedKey) return false;
+      if (yuanbaoAppliedKey !== yuanbaoSelectionKey(record)) return false;
+      if (Date.now() - yuanbaoAppliedAt > YUANBAO_APPLIED_WINDOW_MS) return false;
+      if (yuanbaoPanelOpen(trigger) || yuanbaoMainMenu() || yuanbaoModelMenu()) {
+        return false;
+      }
+      return !record.mode || selectionMatches(yuanbaoModeValue(trigger), record.mode);
+    }
     function yuanbaoMainMenu() {
       const rows = Array.from(
         document.querySelectorAll(YUANBAO_MODEL_ROW_SELECTOR)
@@ -3292,9 +3327,9 @@ ${CODE_FENCE}`;
         done();
         return;
       }
-      const menu = yuanbaoMainMenu();
-      const expanded = trigger.getAttribute("aria-expanded") === "true";
-      if (!expanded && !menu) {
+      const expanded = yuanbaoPanelOpen(trigger);
+      const mounted = yuanbaoMainMenu() !== null || yuanbaoModelMenu() !== null;
+      if (!expanded && !mounted) {
         done();
         return;
       }
@@ -3303,9 +3338,7 @@ ${CODE_FENCE}`;
         return;
       }
       if (attempt === 0) {
-        if (expanded || menu || yuanbaoModelMenu()) {
-          clickControlOnce(trigger);
-        }
+        clickControlOnce(trigger);
       } else if (attempt === 4 && expanded) {
         clickControlOnce(trigger);
       }
@@ -3361,6 +3394,23 @@ ${CODE_FENCE}`;
         () => waitYuanbaoSelection(read, expected, done, token, attempt + 1),
         160
       );
+    }
+    function openYuanbaoModelSubmenu(parent, done, token, attempt = 0) {
+      if (restoreIsStale(token)) return;
+      const opened = yuanbaoModelMenu();
+      if (opened) {
+        done(opened);
+        return;
+      }
+      if (attempt >= 8) {
+        done(null);
+        return;
+      }
+      hoverControlOnce(parent);
+      if (attempt >= 3) clickControlOnce(interactiveTarget(parent));
+      window.setTimeout(() => {
+        openYuanbaoModelSubmenu(parent, done, token, attempt + 1);
+      }, 180);
     }
     function restoreYuanbaoModel(saved, trigger, token, done) {
       if (!saved.model) {
@@ -3423,12 +3473,8 @@ ${CODE_FENCE}`;
             done(false, true);
             return;
           }
-          if (!clickControlOnce(interactiveTarget(parent))) {
-            done(false, false);
-            return;
-          }
-          waitForYuanbao(
-            yuanbaoModelMenu,
+          openYuanbaoModelSubmenu(
+            parent,
             (sub) => {
               if (restoreIsStale(token)) return;
               if (!sub) {
@@ -3509,6 +3555,11 @@ ${CODE_FENCE}`;
         releaseReasoningRestore();
         return;
       }
+      if (yuanbaoSelectionApplied(saved, trigger)) {
+        reasoningRestoreDone = true;
+        releaseReasoningRestore();
+        return;
+      }
       if (applyingReasoning) return;
       setReasoningPending(true);
       if (!trigger) {
@@ -3542,6 +3593,10 @@ ${CODE_FENCE}`;
         reasoningRestoreDone = true;
         releaseReasoningRestore();
         yuanbaoActionStatus = ok ? "已恢复模型与模式" : "未能恢复模型与模式";
+        if (ok) {
+          yuanbaoAppliedKey = yuanbaoSelectionKey(saved);
+          yuanbaoAppliedAt = Date.now();
+        }
         renderReasoningStatus();
       };
       const settleAfter = (ok, conclusive, next) => {
@@ -3597,6 +3652,8 @@ ${CODE_FENCE}`;
       };
       if (!merged.model && !merged.mode) return null;
       writeYuanbaoSelectionRecord(merged);
+      yuanbaoAppliedKey = yuanbaoSelectionKey(merged);
+      yuanbaoAppliedAt = Date.now();
       return merged;
     }
     function cancelYuanbaoRecordTimers() {
@@ -3769,10 +3826,15 @@ ${CODE_FENCE}`;
       if (!state.rememberReasoning) return;
       const yuanbaoRecord = readYuanbaoSelectionRecord();
       if (!yuanbaoRecord && !readReasoningRecord()) return;
+      if (yuanbaoRecord && isYuanbaoHost() && yuanbaoSelectionApplied(yuanbaoRecord, yuanbaoTrigger())) {
+        reasoningRestoreDone = true;
+        releaseReasoningRestore();
+        return;
+      }
       if (isYuanbaoHost() || yuanbaoRecord) setReasoningPending(true);
       reasoningRestoreTimer = window.setInterval(() => {
         reasoningRestoreAttempts += 1;
-        applyReasoningMemory();
+        if (!reasoningRestoreDone) applyReasoningMemory();
         if (reasoningRestoreDone || reasoningRestoreAttempts >= 120) {
           clearReasoningRestoreTimer();
         }
