@@ -7,8 +7,8 @@ import { fetchWithTimeout, isAbortError } from "../core/request";
 import { asRecord } from "../core/json";
 import { parseCompactCount } from "./desktop";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_SIZE, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge } from "./rail";
-import type { RailCommentEntry, RailLinkInfo, RailSegment } from "./rail";
+import { COMMENT_CREATE_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, buildArticleCommentBody, clearRailPageCache, createApiParams, createCommentRnd, fetchRailPage, formatRailAge, resolveCommentPageProgress } from "./rail";
+import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
@@ -578,10 +578,15 @@ export const READER_CSS = `
   .hbu-reader-comments-time { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-comments-text { margin: 4px 0 0; font-size: 14px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; }
   .hbu-reader-comments-meta { display: flex; gap: 12px; margin-top: 5px; color: var(--hbu-reader-muted); font-size: 11px; }
-  .hbu-reader-comments-quote { margin-top: 8px; padding: 7px 9px; border-radius: 9px; background: var(--hbu-reader-subtle); color: var(--hbu-reader-ink-2); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
-  .hbu-reader-comments-quote b { color: var(--hbu-reader-muted); font-weight: 600; }
-  .hbu-reader-comments-text .hbu-reader-comments-emoji, .hbu-reader-comments-quote .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
-  .hbu-reader-comments-text img, .hbu-reader-comments-quote img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
+  .hbu-reader-comments-reply { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .hbu-reader-comments-reply:hover { color: var(--heybox-up-accent, #8fb0cf); }
+  .hbu-reader-comments-children { margin: 9px 0 0; padding: 9px 0 0 10px; border-left: 2px solid var(--hbu-reader-border); list-style: none; }
+  .hbu-reader-comments-child { padding: 8px 0; border-top: 1px dashed var(--hbu-reader-border); }
+  .hbu-reader-comments-child:first-child { border-top: 0; padding-top: 0; }
+  .hbu-reader-comments-child .hbu-reader-comments-text { margin-top: 2px; font-size: 13px; }
+  .hbu-reader-comments-child .hbu-reader-comments-meta { margin-top: 3px; }
+  .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
+  .hbu-reader-comments-text img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
   .hbu-reader-comments-status-retry { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 16px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-comments-status-retry:hover { border-color: var(--heybox-up-accent, #8fb0cf); }
@@ -615,6 +620,10 @@ export const READER_CSS = `
   }
   .hbu-reader-composer-input::placeholder { color: var(--hbu-reader-muted); }
   .hbu-reader-composer-input:focus { border-color: var(--heybox-up-accent, #8fb0cf); }
+  .hbu-reader-composer-reply { display: flex; gap: 8px; align-items: center; min-width: 0; padding: 5px 9px; border-radius: 8px; background: var(--hbu-reader-subtle); color: var(--hbu-reader-ink-2); font-size: 11px; }
+  .hbu-reader-composer-reply[hidden] { display: none; }
+  .hbu-reader-composer-reply-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbu-reader-composer-reply-cancel { flex: none; padding: 0; border: 0; background: transparent; color: var(--heybox-up-accent, #8fb0cf); font: inherit; cursor: pointer; }
   .hbu-reader-composer-bar { display: flex; gap: 8px; align-items: center; }
   .hbu-reader-composer-emoji-toggle { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid var(--hbu-reader-border); border-radius: 8px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-composer-emoji-toggle[aria-expanded="true"] { border-color: var(--heybox-up-accent, #8fb0cf); color: var(--hbu-reader-ink); }
@@ -1339,6 +1348,7 @@ interface ReaderCommentState {
   loading: boolean;
   error: string;
   hasMore: boolean;
+  loadedGroups: number;
   loaded: boolean;
   seq: number;
 }
@@ -1484,6 +1494,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let commentPanelMeta: HTMLSpanElement | null = null;
   let commentPanelMore: HTMLButtonElement | null = null;
   let commentPanelClose: HTMLButtonElement | null = null;
+  let articleReplyTarget: (ArticleReplyTargetPayload & { name: string }) | null = null;
   let commentState: ReaderCommentState = createCommentState();
   let readerPendingAdvanceSourceId = "";
   let readerPendingAdvanceRevision = -1;
@@ -1495,7 +1506,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let readerPendingGeneration = -1;
 
   function createCommentState(): ReaderCommentState {
-    return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loaded: false, seq: 0 };
+    return { items: [], page: 0, total: 0, loading: false, error: "", hasMore: false, loadedGroups: 0, loaded: false, seq: 0 };
   }
 
   const showToast = (message: string): void => {
@@ -2248,33 +2259,78 @@ export function watchReader(navigation: PostNavigationController): void {
     text.className = "hbu-reader-comments-text";
     fillReaderCommentBody(text, comment.body);
     main.append(who, text);
-    if (comment.likes > 0 || comment.replies > 0) {
-      const meta = document.createElement("div");
-      meta.className = "hbu-reader-comments-meta";
-      if (comment.likes > 0) {
-        const likes = document.createElement("span");
-        likes.textContent = "赞 " + comment.likes;
-        meta.append(likes);
-      }
-      if (comment.replies > 0) {
-        const replies = document.createElement("span");
-        replies.textContent = comment.replies + " 条回复";
-        meta.append(replies);
-      }
-      main.append(meta);
+    const meta = document.createElement("div");
+    meta.className = "hbu-reader-comments-meta";
+    if (comment.likes > 0) {
+      const likes = document.createElement("span");
+      likes.textContent = "赞 " + comment.likes;
+      meta.append(likes);
     }
-    const quotes = Array.isArray(comment.quotes) ? comment.quotes : [];
-    for (const quote of quotes) {
-      const node = document.createElement("div");
-      node.className = "hbu-reader-comments-quote";
-      const author = document.createElement("b");
-      author.textContent = quote.name + "：";
-      node.append(author);
-      fillReaderCommentBody(node, quote.body);
-      main.append(node);
+    if (comment.replies > 0) {
+      const replies = document.createElement("span");
+      replies.textContent = comment.replies + " 条回复";
+      meta.append(replies);
+    }
+    meta.append(createReaderReplyButton({
+      id: comment.id,
+      rootId: comment.rootId !== "" ? comment.rootId : comment.id,
+      name: comment.name,
+    }));
+    main.append(meta);
+    const subComments = Array.isArray(comment.subComments) ? comment.subComments : [];
+    const hideCy = readHideCyPreference();
+    const visibleChildren = subComments.filter((child) => !hideCy || child.isCy !== true);
+    if (visibleChildren.length > 0) {
+      const children = document.createElement("ul");
+      children.className = "hbu-reader-comments-children";
+      for (const child of visibleChildren) children.append(createReaderCommentChild(child, comment));
+      main.append(children);
     }
     item.append(avatar, main);
     return item;
+  };
+
+  const createReaderCommentChild = (child: RailComment, parent: RailCommentEntry): HTMLLIElement => {
+    const item = document.createElement("li");
+    item.className = "hbu-reader-comments-child";
+    item.setAttribute("role", "listitem");
+    const who = document.createElement("div");
+    who.className = "hbu-reader-comments-who";
+    const name = document.createElement("span");
+    name.className = "hbu-reader-comments-name";
+    name.textContent = child.name;
+    who.append(name);
+    if (child.createAt > 0) {
+      const time = document.createElement("span");
+      time.className = "hbu-reader-comments-time";
+      time.textContent = formatRailAge(child.createAt);
+      who.append(time);
+    }
+    const text = document.createElement("p");
+    text.className = "hbu-reader-comments-text";
+    fillReaderCommentBody(text, child.body);
+    const actions = document.createElement("div");
+    actions.className = "hbu-reader-comments-meta";
+    const reply = createReaderReplyButton({
+      id: child.id !== "" ? child.id : parent.id,
+      rootId: child.rootId !== "" ? child.rootId : parent.id,
+      name: child.name,
+    });
+    actions.append(reply);
+    item.append(who, text, actions);
+    return item;
+  };
+
+  const createReaderReplyButton = (target: ArticleReplyTargetPayload & { name: string }): HTMLButtonElement => {
+    const reply = document.createElement("button");
+    reply.type = "button";
+    reply.className = "hbu-reader-comments-reply";
+    reply.textContent = "回复";
+    reply.setAttribute("aria-label", "回复 " + target.name);
+    reply.dataset["replyId"] = target.id;
+    reply.dataset["replyRoot"] = target.rootId;
+    reply.dataset["replyName"] = target.name;
+    return reply;
   };
 
   const renderReaderComments = (): void => {
@@ -2339,6 +2395,7 @@ export function watchReader(navigation: PostNavigationController): void {
       commentState.page = 0;
       commentState.total = 0;
       commentState.hasMore = false;
+      commentState.loadedGroups = 0;
       commentState.loaded = false;
     }
     renderReaderComments();
@@ -2352,7 +2409,14 @@ export function watchReader(navigation: PostNavigationController): void {
       commentState.items = page === 1 ? fresh : commentState.items.concat(fresh);
       commentState.page = page;
       commentState.total = data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
-      commentState.hasMore = data.items.length >= RAIL_PAGE_SIZE;
+      const progress = resolveCommentPageProgress({
+        rawGroupCount: data.items.length,
+        freshGroupCount: fresh.length,
+        previouslyLoadedGroups: page === 1 ? 0 : commentState.loadedGroups,
+        floorTotal: data.floorTotal,
+      });
+      commentState.loadedGroups = progress.loadedGroups;
+      commentState.hasMore = progress.hasMore;
       commentState.loaded = true;
       // The tree endpoint can lag behind a successful publish. Keep the freshly
       // incremented count visible while still accepting a larger server total.
@@ -2378,13 +2442,27 @@ export function watchReader(navigation: PostNavigationController): void {
 
   const readArticleComposers = (): Element[] => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
 
+  const clearArticleReplyTarget = (restoreFocus: boolean): void => {
+    if (articleReplyTarget === null) return;
+    articleReplyTarget = null;
+    syncArticleComposers();
+    if (restoreFocus) readArticleComposers()[0]?.querySelector<HTMLTextAreaElement>(".hbu-reader-composer-input")?.focus({ preventScroll: true });
+  };
+
   const syncArticleComposers = (): void => {
+    const reply = articleReplyTarget;
     for (const root of readArticleComposers()) {
       const input = root.querySelector(".hbu-reader-composer-input");
       const submit = root.querySelector(".hbu-reader-composer-submit");
       if (!(input instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) continue;
       submit.disabled = articleCommentBusy || input.value.trim() === "";
       submit.textContent = articleCommentBusy ? "发布中…" : "发布";
+      const replyBar = root.querySelector(".hbu-reader-composer-reply");
+      const replyName = root.querySelector(".hbu-reader-composer-reply-name");
+      if (replyBar instanceof HTMLElement) replyBar.hidden = reply === null;
+      if (replyName !== null) replyName.textContent = reply === null ? "" : "回复 @" + reply.name;
+      input.placeholder = reply === null ? "评论这篇文章…" : "回复 @" + reply.name + "…";
+      input.setAttribute("aria-label", reply === null ? "评论内容" : "回复 " + reply.name);
     }
   };
 
@@ -2398,6 +2476,7 @@ export function watchReader(navigation: PostNavigationController): void {
       if (status !== null) status.textContent = "";
       if (count !== null) count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
     }
+    articleReplyTarget = null;
     syncArticleComposers();
   };
 
@@ -2411,6 +2490,7 @@ export function watchReader(navigation: PostNavigationController): void {
     }
     const targetId = articleId;
     const generation = readerGeneration;
+    const reply = articleReplyTarget;
     articleCommentBusy = true;
     syncArticleComposers();
     status.textContent = "";
@@ -2418,13 +2498,7 @@ export function watchReader(navigation: PostNavigationController): void {
       const accountId = await resolveHeyboxId();
       if (articleId !== targetId || readerGeneration !== generation) return;
       if (accountId === "") throw new Error("请先登录小黑盒");
-      await postReaderApi(COMMENT_CREATE_API_PATH, {
-        is_cy: "0",
-        link_id: targetId,
-        reply_id: "-1",
-        root_id: "-1",
-        text: text,
-      }, accountId);
+      await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply), accountId);
       if (articleId !== targetId || readerGeneration !== generation) return;
       clearArticleComposers();
       showToast("评论已发布");
@@ -2563,6 +2637,17 @@ export function watchReader(navigation: PostNavigationController): void {
     const root = document.createElement("div");
     root.className = "hbu-reader-composer";
     root.dataset["hbuArticleComposer"] = "";
+    const replyBar = document.createElement("div");
+    replyBar.className = "hbu-reader-composer-reply";
+    replyBar.hidden = true;
+    const replyText = document.createElement("span");
+    replyText.className = "hbu-reader-composer-reply-name";
+    const replyCancel = document.createElement("button");
+    replyCancel.type = "button";
+    replyCancel.className = "hbu-reader-composer-reply-cancel";
+    replyCancel.textContent = "取消回复";
+    replyCancel.addEventListener("click", () => clearArticleReplyTarget(true));
+    replyBar.append(replyText, replyCancel);
     const input = document.createElement("textarea");
     input.className = "hbu-reader-composer-input";
     input.maxLength = ARTICLE_COMMENT_MAX_LENGTH;
@@ -2611,7 +2696,7 @@ export function watchReader(navigation: PostNavigationController): void {
     });
     submit.addEventListener("click", () => void submitArticleComment(input, status));
     bar.append(emojiToggle, status, count, submit);
-    root.append(input, emojiPanel, bar);
+    root.append(replyBar, input, emojiPanel, bar);
     articleComposerEmojiClosers.set(root, () => emojiPicker.close(false));
     return root;
   };
@@ -2720,6 +2805,20 @@ export function watchReader(navigation: PostNavigationController): void {
       commentPanelClose?.focus({ preventScroll: true });
       void loadReaderComments(commentState.page > 0 ? commentState.page + 1 : 1);
     });
+    list.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const reply = target.closest(".hbu-reader-comments-reply");
+      if (!(reply instanceof HTMLElement)) return;
+      const id = reply.dataset["replyId"] || "";
+      const rootId = reply.dataset["replyRoot"] || id;
+      const name = reply.dataset["replyName"] || "";
+      if (id === "") return;
+      event.preventDefault();
+      articleReplyTarget = { id: id, rootId: rootId, name: name };
+      syncArticleComposers();
+      readArticleComposers()[0]?.querySelector<HTMLTextAreaElement>(".hbu-reader-composer-input")?.focus({ preventScroll: true });
+    });
     sheet.addEventListener("keydown", trapCommentPanelTab);
     document.body.append(panel);
     return panel;
@@ -2740,6 +2839,7 @@ export function watchReader(navigation: PostNavigationController): void {
     host.inert = true;
     renderReaderComments();
     commentPanelClose?.focus({ preventScroll: true });
+    syncArticleComposers();
     if (!commentState.loaded && !commentState.loading) void loadReaderComments(1);
   };
 
@@ -4514,6 +4614,9 @@ export function watchReader(navigation: PostNavigationController): void {
       } else if (favourPanel !== null && !favourPanel.hidden) {
         event.preventDefault();
         closeFavourMenu();
+      } else if (isCommentPanelOpen() && articleReplyTarget !== null) {
+        event.preventDefault();
+        clearArticleReplyTarget(true);
       } else if (isCommentPanelOpen()) {
         event.preventDefault();
         closeComments();

@@ -61,10 +61,14 @@ export interface RailComment {
   createAt: number;
   likes: number;
   replies: number;
+  rootId: string;
+  parentId: string;
   isCy: boolean;
 }
 
 export interface RailCommentEntry extends RailComment {
+  subComments: RailComment[];
+  /** Backwards-compatible alias for subComments. */
   quotes: RailComment[];
 }
 
@@ -80,9 +84,27 @@ export interface RailLinkInfo {
 export interface RailPage {
   items: RailCommentEntry[];
   total: number;
+  floorTotal: number;
   title: string;
   link: RailLinkInfo;
   groups: unknown[];
+}
+
+export interface CommentPageProgressInput {
+  rawGroupCount: number;
+  freshGroupCount: number;
+  previouslyLoadedGroups: number;
+  floorTotal: number;
+}
+
+export interface CommentPageProgress {
+  hasMore: boolean;
+  loadedGroups: number;
+}
+
+export interface ArticleReplyTargetPayload {
+  id: string;
+  rootId: string;
 }
 
 export interface RailPageOptions {
@@ -428,8 +450,10 @@ export function normalizeRailComment(comment: unknown): RailComment {
   const user = asRecord(raw["user"]) ?? {};
   const avatar = user["avatar"] || user["avartar"] || "";
   const body = parseRailBody(raw["text"]);
+  const id = String(raw["comment_id"] || raw["commentid"] || raw["id"] || "");
+  const rawRootId = readRailRelationId(raw, ["root_id", "root_comment_id", "reply_root_id"]);
   return {
-    id: String(raw["comment_id"] || raw["commentid"] || raw["id"] || ""),
+    id: id,
     name: String(user["username"] || user["nickname"] || "匿名用户").trim(),
     avatar: typeof avatar === "string" ? avatar : "",
     text: railBodyText(body),
@@ -437,8 +461,23 @@ export function normalizeRailComment(comment: unknown): RailComment {
     createAt: Number(raw["create_at"]) || 0,
     likes: Number(raw["support_num"] || raw["support_count"]) || 0,
     replies: Number(raw["reply_count"] || raw["sub_comment_num"]) || 0,
+    // A root that points at itself is not a usable parent; the group builder
+    // falls back to the floor id instead.
+    rootId: rawRootId === id ? "" : rawRootId,
+    parentId: readRailRelationId(raw, ["parent_id", "reply_to_comment_id", "reply_comment_id", "reply_to", "to_comment_id"]),
     isCy: isCyComment(raw),
   };
+}
+
+function readRailRelationId(raw: Record<string, unknown>, keys: readonly string[]): string {
+  for (const key of keys) {
+    const value = raw[key];
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text === "" || text === "-1" || text === "0") continue;
+    return text;
+  }
+  return "";
 }
 
 export function normalizeRailGroup(group: unknown): RailCommentEntry | null {
@@ -450,8 +489,62 @@ export function normalizeRailGroup(group: unknown): RailCommentEntry | null {
   if (root === undefined) return null;
   const item = normalizeRailComment(root);
   if (item.id === "" && item.body.length === 0 && item.name === "匿名用户") return null;
-  const quotes = list.slice(1, 3).map(normalizeRailComment).filter((quote) => quote.body.length > 0);
-  return { ...item, quotes };
+  // The tree endpoint nests every child comment after the floor. Keep all of
+  // them so the reader can show and reply to the whole thread.
+  const seen = new Set<string>();
+  const subComments = list.slice(1)
+    .map(normalizeRailComment)
+    .filter((quote) => quote.body.length > 0)
+    .filter((quote) => {
+      if (quote.id === "") return true;
+      if (seen.has(quote.id)) return false;
+      seen.add(quote.id);
+      return true;
+    })
+    .map((quote) => ({
+      ...quote,
+      rootId: quote.rootId !== "" ? quote.rootId : item.id,
+      parentId: quote.parentId !== "" ? quote.parentId : item.id,
+    }));
+  return {
+    ...item,
+    rootId: item.id,
+    parentId: item.id,
+    subComments: subComments,
+    quotes: subComments,
+  };
+}
+
+export function readRailFloorTotal(result: unknown): number {
+  const value = Number(asRecord(result)?.["total_floor_num"]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+export function resolveCommentPageProgress(input: CommentPageProgressInput): CommentPageProgress {
+  const loadedGroups = input.previouslyLoadedGroups + input.rawGroupCount;
+  if (input.rawGroupCount <= 0) return { hasMore: false, loadedGroups: loadedGroups };
+  if (input.freshGroupCount <= 0) return { hasMore: false, loadedGroups: loadedGroups };
+  if (input.floorTotal > 0 && loadedGroups >= input.floorTotal) {
+    return { hasMore: false, loadedGroups: loadedGroups };
+  }
+  if (input.floorTotal <= 0 && input.rawGroupCount < RAIL_PAGE_SIZE) {
+    return { hasMore: false, loadedGroups: loadedGroups };
+  }
+  return { hasMore: true, loadedGroups: loadedGroups };
+}
+
+export function buildArticleCommentBody(
+  linkId: string,
+  text: string,
+  target: ArticleReplyTargetPayload | null,
+): Record<string, string> {
+  return {
+    is_cy: "0",
+    link_id: linkId,
+    reply_id: target === null ? "-1" : target.id,
+    root_id: target === null ? "-1" : target.rootId,
+    text: text,
+  };
 }
 
 export let lastRailRequestAt = 0;
@@ -475,6 +568,7 @@ export function readRailPageCache(linkId: string, page: number, accountId = ""):
   return {
     items: cached.data.items,
     total: cached.data.total,
+    floorTotal: cached.data.floorTotal,
     title: cached.data.title,
     link: { ...cached.data.link },
     groups: cached.data.groups,
@@ -584,6 +678,7 @@ export async function fetchRailPage(
   const normalized = {
     items: groups.map(normalizeRailGroup).filter((item) => item !== null),
     total: Number(link["comment_num"] || result["total_floor_num"]) || 0,
+    floorTotal: readRailFloorTotal(result),
     title: typeof link["title"] === "string" ? link["title"].trim() : "",
     link: {
       isAward: Number(link["is_award_link"]) === 1,
@@ -691,6 +786,7 @@ export function createCommentRail() {
     loading: boolean;
     error: string;
     hasMore: boolean;
+    loadedGroups: number;
     seq: number;
   } = {
     mode: "hidden",
@@ -702,6 +798,7 @@ export function createCommentRail() {
     loading: false,
     error: "",
     hasMore: false,
+    loadedGroups: 0,
     seq: 0,
   };
 
@@ -894,9 +991,18 @@ export function createCommentRail() {
     try {
       const data = await fetchRailPage(state.linkId, page, { signal: loadController.signal });
       if (seq !== state.seq) return;
-      state.items = page === 1 ? data.items : state.items.concat(data.items);
+      const seen = new Set(state.items.map((item) => item.id));
+      const fresh = data.items.filter((item) => item.id === "" || !seen.has(item.id));
+      state.items = page === 1 ? fresh : state.items.concat(fresh);
       state.page = page;
-      state.hasMore = data.items.length > 0;
+      const progress = resolveCommentPageProgress({
+        rawGroupCount: data.items.length,
+        freshGroupCount: fresh.length,
+        previouslyLoadedGroups: page === 1 ? 0 : state.loadedGroups,
+        floorTotal: data.floorTotal,
+      });
+      state.loadedGroups = progress.loadedGroups;
+      state.hasMore = progress.hasMore;
       if (data.total > 0) state.total = data.total;
       if (data.title !== "" && state.title === "") state.title = data.title;
     } catch (error) {
@@ -932,6 +1038,7 @@ export function createCommentRail() {
     state.page = 0;
     state.items = [];
     state.hasMore = false;
+    state.loadedGroups = 0;
     state.error = "";
     render();
     void load(1);
