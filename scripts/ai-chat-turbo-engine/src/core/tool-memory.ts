@@ -6,6 +6,10 @@ import {
 } from "../config";
 import { isEngineDormant } from "./auth";
 import { reportRecoverableError } from "./diagnostics";
+import {
+  createRestoreCoordinator,
+  type RestoreCoordinator,
+} from "./restore-coordination";
 import type { EngineState } from "../state";
 import type { ElementFactory } from "../ui/code-blocks";
 import {
@@ -27,6 +31,7 @@ export interface ToolMemoryDeps {
   el: ElementFactory;
   state: EngineState;
   triggerSendButton: (control: HTMLElement) => boolean;
+  restoreCoordinator?: RestoreCoordinator;
 }
 
 export interface ToolMemoryUtils {
@@ -161,7 +166,14 @@ function findTool(
 }
 
 export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
-  const { el, state, triggerSendButton } = deps;
+  const {
+    el,
+    state,
+    triggerSendButton,
+    restoreCoordinator: providedCoordinator,
+  } = deps;
+  const restoreCoordinator =
+    providedCoordinator ?? createRestoreCoordinator();
   let statusNode: HTMLElement | null = null;
   let pollTimer = 0;
   let pollCount = 0;
@@ -202,9 +214,15 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
     click(trigger, "close tool overflow menu");
   }
 
+  function endRestoreAttempt(): void {
+    restoring = false;
+    restoreCoordinator.setPending("tools", false);
+    restoreCoordinator.release("tools");
+  }
+
   function finishRestore(token: number, status: string): void {
     if (token !== restoreToken) return;
-    restoring = false;
+    endRestoreAttempt();
     restoreDone = true;
     closeOverflow();
     actionStatus = status;
@@ -324,7 +342,7 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
           return;
         }
         if (index !== VERIFY_DELAYS.length - 1) return;
-        restoring = false;
+        endRestoreAttempt();
         closeOverflow();
         if (attemptsLeft > 1) return;
         finishRestore(token, "未能恢复已记录的工具");
@@ -344,7 +362,7 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
     const inline = findTool(inlineTools(), saved);
     if (inline) {
       if (!click(inline.node, "select atomic tool")) {
-        restoring = false;
+        endRestoreAttempt();
         return;
       }
       verifyRestored(token, saved, attemptsLeft);
@@ -353,7 +371,7 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
     const openMenuTool = findTool(menuTools(), saved);
     if (openMenuTool) {
       if (!click(openMenuTool.node, "select atomic overflow tool")) {
-        restoring = false;
+        endRestoreAttempt();
         return;
       }
       verifyRestored(token, saved, attemptsLeft);
@@ -361,14 +379,14 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
     }
     const trigger = overflowTrigger();
     if (!trigger) {
-      restoring = false;
+      endRestoreAttempt();
       return;
     }
     if (trigger.getAttribute("aria-expanded") !== "true") {
       openedOverflow = trigger;
       if (!click(trigger, "open atomic tool overflow")) {
         openedOverflow = null;
-        restoring = false;
+        endRestoreAttempt();
         return;
       }
     }
@@ -379,7 +397,7 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
       const menuTool = findTool(menuTools(), saved);
       if (menuTool) {
         if (!click(menuTool.node, "select atomic overflow tool")) {
-          restoring = false;
+          endRestoreAttempt();
           closeOverflow();
           return;
         }
@@ -388,7 +406,7 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
       }
       attempt += 1;
       if (attempt >= MENU_WAIT_ATTEMPTS) {
-        restoring = false;
+        endRestoreAttempt();
         closeOverflow();
         return;
       }
@@ -399,6 +417,7 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
 
   function maybeRestore(): void {
     if (restoreDone || restoring) return;
+    if (restoreCoordinator.isPending("reasoning")) return;
     if (isEngineDormant() || !state.rememberTools) {
       restoreDone = true;
       return;
@@ -421,6 +440,8 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
       finishRestore(restoreToken, "找不到已记录的工具");
       return;
     }
+    if (!restoreCoordinator.tryAcquire("tools")) return;
+    restoreCoordinator.setPending("tools", true);
     restoring = true;
     restoreToken += 1;
     tryRestore(saved, restoreToken);
@@ -433,7 +454,7 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
     clearTimers(recordTimers);
     clearTimers(verifyTimers);
     restoreToken += 1;
-    restoring = false;
+    endRestoreAttempt();
     restoreDone = false;
     restoreAttempts = 0;
     closeOverflow();
@@ -446,6 +467,7 @@ export function createToolMemoryUtils(deps: ToolMemoryDeps): ToolMemoryUtils {
     if (!saved) return;
     restoreDone = false;
     pollTimer = window.setInterval(() => {
+      if (restoreCoordinator.isPending("reasoning")) return;
       pollCount += 1;
       maybeRestore();
       if (restoreDone || pollCount >= MAX_POLLS) stopPolling();

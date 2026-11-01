@@ -1,4 +1,5 @@
-import { ensureStyleElement, registerPageSync } from "../core/page-sync";
+import { ADAPTED_ROUTES, isOfficialHomePath } from "../config";
+import { ensureStyleElement, registerPageSync, removeStyleElement } from "../core/page-sync";
 import { asRecord } from "../core/json";
 
 export const NAV_ID = "heybox-up-nav";
@@ -21,7 +22,6 @@ export interface SiteRouterLike {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: "home", label: "首页", href: "/" },
   { id: "community", label: "社区", href: "/app/bbs/home" },
   { id: "favour", label: "收藏", href: "/app/user/favour/content" },
   { id: "article", label: "文章", href: "/creator/content_management/home?article_type=all" },
@@ -33,9 +33,6 @@ interface NavGlyph {
 }
 
 const NAV_GLYPHS: Readonly<Record<string, NavGlyph>> = {
-  home: {
-    paths: ["M4 11.2 12 4l8 7.2", "M6.6 9.8V20h10.8V9.8", "M10.2 20v-5.2h3.6V20"],
-  },
   community: {
     paths: ["M20.5 11.6a7.9 7.9 0 0 1-8.4 7.9 9 9 0 0 1-2.8-.4L4.5 20.5l1.3-4.1a7.8 7.8 0 0 1-1.3-4.8A7.9 7.9 0 0 1 12.4 3.7a7.9 7.9 0 0 1 8.1 7.9Z"],
     circles: [
@@ -256,10 +253,18 @@ export function ensureNavStyle(): void {
   ensureStyleElement(NAV_STYLE_ID, NAV_CSS);
 }
 
+/** Keeps the site's own nav links when the script adapters are dormant. */
+export function releaseNav(): void {
+  document.getElementById(NAV_ID)?.remove();
+  removeStyleElement(NAV_STYLE_ID);
+  document.documentElement.classList.remove(NAV_STATIC_CLASS);
+  navActiveHost = null;
+  navActiveId = "";
+}
+
 export function readNavActiveId(): string {
   const path = location.pathname;
   if (path === "/app/user/favour/content") return "favour";
-  if (path === "/") return "home";
   if (path.startsWith("/creator/")) return "article";
   if (path.startsWith("/app/bbs/")) return "community";
   return "";
@@ -398,11 +403,15 @@ export function mountTopNav(): void {
 export function watchTopNav(): void {
   if (!document.body) return;
   const sync = () => {
+    if (isOfficialHomePath(location.pathname)) {
+      releaseNav();
+      return;
+    }
     mountTopNav();
     syncNavActive();
   };
   window.addEventListener("hashchange", syncNavActive);
   window.addEventListener("popstate", syncNavActive);
-  registerPageSync(sync, 300, null, "chrome");
+  registerPageSync(sync, 300, ADAPTED_ROUTES, "chrome");
   sync();
 }

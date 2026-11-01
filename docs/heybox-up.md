@@ -2,7 +2,7 @@
 
 ![HeyBox Up 图标](./assets/heybox-up.svg)
 
-面向小黑盒 Web 端的用户脚本（UserScript）：网页收藏列表不显示“插眼”（CY）条目，但主页收藏总数会把它们算进去。本脚本单独拉取插眼收藏，在收藏页把插眼条目补到收藏列表下方，按帖子去重。社区首页（`/app/bbs/home`）移除右栏热门社区等冗余模块，改为定宽卡片信息流，并支持在右侧预览帖子评论；全站搜索页补齐搜索建议浮层的深色对比度。帖子详情页（`/app/bbs/link/*`）默认进入全屏沉浸阅读，封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；标题、正文、媒体与结尾提示避开独占 46px 栏位的底部阅读进度条。正文连续滚动，沉浸模式隐藏站点原生评论区与回复框，改用脚本自建评论侧栏：顶部可发布文章主评论，楼层与楼中楼条目都能就地回复，发送对应的 `reply_id` 与 `root_id`；支持 cube 表情、`Ctrl/⌘+Enter`、字数统计、提交锁、失败重试、取消回复与加载更多，楼中楼全量展示，列表仍可按 `is_cy` 过滤插眼评论。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时加载下一页，不再要求整页滚动。纯视频帖生成独立视频阅读页，帖子尚未渲染时显示可重试的等待页。右侧互动栏可直接点赞、收藏与发布 CY。顶部导航收敛为首页、社区、收藏、文章四个「SVG + 文本」入口，静态与动态两套 SVG 图标随“动态导航图标”开关切换，动态图标仅在开关开启时出现；帖子页纵轴中心左右两侧提供 SVG 上一篇/下一篇箭头，切换走站内路由，不整页刷新。社区页（`/app/topic/link/*`）提供只在该社区内生效的帖子搜索；宽屏社区首页改为左频道、中信息流、右热度三栏工作台。
+面向小黑盒 Web 端的用户脚本（UserScript）：网页收藏列表不显示“插眼”（CY）条目，但主页收藏总数会把它们算进去。本脚本单独拉取插眼收藏，在收藏页把插眼条目补到收藏列表下方，按帖子去重。社区首页（`/app/bbs/home`）移除右栏热门社区等冗余模块，改为定宽卡片信息流，并支持在右侧预览帖子评论；全站搜索页补齐搜索建议浮层的深色对比度。帖子详情页（`/app/bbs/link/*`）默认进入全屏沉浸阅读，封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；标题、正文、媒体与结尾提示避开独占 46px 栏位的底部阅读进度条。正文连续滚动，沉浸模式隐藏站点原生评论区与回复框，改用脚本自建评论侧栏：顶部可发布文章主评论，楼层与楼中楼条目都能就地回复，发送对应的 `reply_id` 与 `root_id`；支持 cube 表情、`Ctrl/⌘+Enter`、字数统计、提交锁、失败重试、取消回复与加载更多，楼中楼全量展示，列表仍可按 `is_cy` 过滤插眼评论。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时加载下一页，不再要求整页滚动。纯视频帖生成独立视频阅读页，帖子尚未渲染时显示可重试的等待页。右侧互动栏可直接点赞、收藏与发布 CY。顶部导航收敛为社区、收藏、文章三个「SVG + 文本」入口，静态与动态两套 SVG 图标随“动态导航图标”开关切换，动态图标仅在开关开启时出现；站点官方根首页（`/`）交给站点原样渲染，不做主题、导航与 CY 屏蔽等注入，站内回到 `/` 时撤掉此前注入的样式与节点并保留本机偏好；帖子页纵轴中心左右两侧提供 SVG 上一篇/下一篇箭头，切换走站内路由，不整页刷新。社区页（`/app/topic/link/*`）提供只在该社区内生效的帖子搜索；宽屏社区首页改为左频道、中信息流、右热度三栏工作台。
 
 - 版本：0.4.51
 - 许可：MIT
@@ -89,8 +89,8 @@ _rnd = "15:" + lowercaseHex(HMAC-SHA256(secret, message))
 
 - 收藏页 https://xiaoheihe.cn/app/user/favour/content ：脚本把插眼条目挂在收藏列表（.user-favour__list）下方，按帖子 ID 去重后全部列出，不再对照页面已渲染的同 ID 帖子做过滤。站点先渲染页面骨架、后插入收藏列表时，区块先挂在 `#page-user-favour` 的内容区末尾，列表出现后再挪到它正下方，不会因为挂载顺序而整块缺失。区块使用 Shadow DOM，样式与页面隔离。
 - 收藏与文章页右栏：收藏页、文章管理页及文章详情页的右侧只保留二维码、小黑盒加速器、黑盒语音、黑盒工坊与备案信息等推广模块；脚本将这些右栏整体隐藏，并让主列表占满内容区。
-- Top navigation: The script takes over `.nav-links` and replaces the original seven text links with four inline SVG links for Home, Community, Favorites, and Articles. Two icon sets are kept: a static one without motion hooks, and an animated one whose stroked paths carry `pathLength="1"` plus the draw animation. Only the animated set is rendered while the setting is on; turning it off or enabling the system reduced-motion preference leaves static icons with no transform, transition, animation, dash array, or dash offset. Motion is limited to devices matching `(hover: hover) and (pointer: fine)` so tapping a link on a touch screen does not leave the icon enlarged, while keyboard focus and press feedback remain available.
-- 导航状态：按 `location.pathname` 标记当前入口，社区包含 `/app/bbs/home` 与帖子详情；收藏页同时承载插眼收藏区块。视口 ≤940px 时只显示图标，保留 `aria-label` 与悬停提示。导航使用静态与动态两套 SVG：动态图标只出现在齿轮设置菜单“动态导航图标”开启时，每个描边路径带 `pathLength="1"`，悬停、键盘焦点与按下时播放约 0.52 秒的描边绘制动画；关闭开关后替换为不带动画钩子的静态图标。切换只替换图标子树，保留链接地址、文本、`aria-label`、`title`、激活态、焦点与监听。社区页左右栏的浏览入口也按当前偏好渲染，搜索图标不参与切换。图标悬停与键盘焦点使用 180ms 的位移与缩放过渡，通用入口上移 2px 并放大到 1.14 倍，文章入口额外旋转 -7°；按下时缩到 0.9 倍。悬停规则只在 `(hover: hover) and (pointer: fine)` 下生效，触屏点按后即使链接保留 `:hover`，图标也不会停留放大；键盘焦点与按压反馈在触屏上继续可用。动画只改图标自身的 `transform`、颜色与描边，不改变 18×18 的布局盒；关闭“动态导航图标”或系统启用减少动效时，变换、过渡、动画与描边虚线的偏移均清除。
+- Top navigation: The script takes over `.nav-links` and replaces the original seven text links with three inline SVG links for Community, Favorites, and Articles. The official root homepage at `/` is left to the site: no theme, navigation, feed width, or CY hiding is mounted there, and in-app navigation back to `/` removes whatever the script had mounted while keeping stored preferences. Two icon sets are kept: a static one without motion hooks, and an animated one whose stroked paths carry `pathLength="1"` plus the draw animation. Only the animated set is rendered while the setting is on; turning it off or enabling the system reduced-motion preference leaves static icons with no transform, transition, animation, dash array, or dash offset. Motion is limited to devices matching `(hover: hover) and (pointer: fine)` so tapping a link on a touch screen does not leave the icon enlarged, while keyboard focus and press feedback remain available.
+- 导航状态：只在适配路由挂载，官方根首页 `/` 不出现脚本导航；按 `location.pathname` 标记当前入口，社区包含 `/app/bbs/home` 与帖子详情；收藏页同时承载插眼收藏区块。视口 ≤940px 时只显示图标，保留 `aria-label` 与悬停提示。导航使用静态与动态两套 SVG：动态图标只出现在齿轮设置菜单“动态导航图标”开启时，每个描边路径带 `pathLength="1"`，悬停、键盘焦点与按下时播放约 0.52 秒的描边绘制动画；关闭开关后替换为不带动画钩子的静态图标。切换只替换图标子树，保留链接地址、文本、`aria-label`、`title`、激活态、焦点与监听。社区页左右栏的浏览入口也按当前偏好渲染，搜索图标不参与切换。图标悬停与键盘焦点使用 180ms 的位移与缩放过渡，通用入口上移 2px 并放大到 1.14 倍，文章入口额外旋转 -7°；按下时缩到 0.9 倍。悬停规则只在 `(hover: hover) and (pointer: fine)` 下生效，触屏点按后即使链接保留 `:hover`，图标也不会停留放大；键盘焦点与按压反馈在触屏上继续可用。动画只改图标自身的 `transform`、颜色与描边，不改变 18×18 的布局盒；关闭“动态导航图标”或系统启用减少动效时，变换、过渡、动画与描边虚线的偏移均清除。
 - 全站主题：导航栏右侧新增主题按钮和齿轮设置按钮。主题菜单只放六套预设：跟随系统、夜航（冷灰深色）、纯黑（OLED 黑底低圆角）、浅色（站点原色）、纸页（暖纸底、衬线标题、细边扁平卡片）、雾青（冷雾底、大圆角、柔和阴影）；齿轮菜单放“首页评论预览”“动态导航图标”“沉浸阅读”三个开关（后两者默认开启）、“正文行距”数字输入框（1.0–2.2 倍，步进 0.05，默认 1.7），以及“中栏宽度（占屏幕宽度）”的 40% / 48% / 56% / 64% / 72% 分段按钮和可自行输入 40–76 整数的百分比输入框：留空或填非法值恢复已存宽度，超出范围自动夹到上下限；菜单内容高于视口时自身滚动。两个菜单各自开关，打开一个会收起另一个，支持 Esc 与点击外部关闭；选中项立即生效并写入本机，当前项用强调色描边标出。
 - 深色覆盖：夜航与纯黑共用同一套深色规则，覆盖帖子页正文、原生评论区（排序标签、作者赞、时间、IP、楼中楼展开、嵌套回复块）、回复编辑器、加载动画、个人主页列表底色、消息提示，以及 Element Plus 对话框、抽屉、表格、分页、图片查看器与下拉浮层。站点用伪元素绘制页面底色与帖子分隔条（`html` 根元素、`#app > main > section`、`.hb-bbs-home__feed-splitline`、`.hb-bbs-home__splitline`、`main.list`、`.hb-cpt__moment-list-content`），这些颜色不随 CSS 变量走，需单独覆盖。登录表单保持浅色，避免第三方登录控件失去可读性。
 - 文章编辑器细节：深色主题下把“发布设置”上方 4px 浅色分隔带改为页面底色，标题栏、发布栏与工具栏的 1px 浅色分隔线改为主题描边；工具栏图标、更多组件菜单文字与分隔线同步提亮，避免深底深字和接近隐形的图标。
@@ -196,7 +196,7 @@ v0.4.30 在 1440×900 与 390×844 复核写请求与回退抽屉：mock 点赞�
 
 搜索建议面板用 1440×900 夜航主题验证：历史搜索胶囊底色 `rgb(30, 38, 48)`、文字 `rgb(220, 229, 239)`，悬停底色为 `rgb(23, 29, 36)`；搜索发现标题与热榜标签为 `rgb(180, 192, 206)`，热榜条目为 `rgb(220, 229, 239)`，条目悬停底色为 `rgb(30, 38, 48)`。v0.4.47 补充 Element Plus 自动完成浮层：popper 底色 `rgb(23, 29, 36)`、主文字 `rgb(220, 229, 239)`、关键词匹配片段 `rgb(143, 176, 207)`，输入“显卡”后下拉项不再出现浅底浅字。v0.4.48 在真实搜索页输入“原”复核站点自有建议列表：夜航面板 `rgb(23, 29, 36)`，名称 `rgb(220, 229, 239)`（13.329:1），匹配片段 `rgb(143, 176, 207)`（7.497:1），描述示例 5.413:1；纯黑面板 `rgb(8, 9, 11)`，名称 `rgb(230, 235, 242)`（16.628:1），匹配片段 10.62:1，描述示例 7.899:1。Tab 可到达建议行，`:focus-visible` 为真，夜航与纯黑焦点底色分别为 `rgb(30, 38, 48)` 与 `rgb(16, 18, 22)`，并带 2px 实线轮廓；建议面板在五套测试主题下保持 1032×656，浅色、纸页与雾青仍为白底与 `rgb(20, 25, 30)` 名称色。
 
-导航栏用 1440×900 夜航主题验证：首页、社区、收藏悬停时图标为 `scale(1.14)`、上移 2px，文章入口为 `scale(1.1)`、上移约 2px 并旋转 -7°；四个入口按压缩放均为 0.9，文章按压时旋转回 0。真实 Tab 可到达导航链接，`:focus-visible` 为真，图标同步上移缩放，链接显示 2px `rgb(143, 176, 207)` 轮廓。悬停期间图标布局盒恒为 18×18，链接 77×64、导航 314×64 均无位移；点击首页从 `/creator/content_management/home` 到 `/` 后导航宿主仍在，页面无脚本错误。静态偏好下根元素带 `heybox-up-nav-static`，减少动效环境下图标 `transform`、`transition` 与 `animation` 均为 `none`。390×844 触屏环境点按社区链接后链接仍处于 `:hover`，但图标 `transform` 为 `none`，布局盒保持 18×18，没有残留放大。
+导航栏用 1440×900 夜航主题验证：社区、收藏悬停时图标为 `scale(1.14)`、上移 2px，文章入口为 `scale(1.1)`、上移约 2px 并旋转 -7°；三个入口按压缩放均为 0.9，文章按压时旋转回 0。真实 Tab 可到达导航链接，`:focus-visible` 为真，图标同步上移缩放，链接显示 2px `rgb(143, 176, 207)` 轮廓。悬停期间图标布局盒恒为 18×18，链接 77×64、导航 314×64 均无位移；导航入口从 `/creator/content_management/home` 跳到 `/app/bbs/home` 后宿主仍在，页面无脚本错误。官方根首页的路由跳过由 `tests/heybox-up-official-home.test.ts` 的 jsdom 用例覆盖：`/` 下默认同步任务不执行，切到 `/app/bbs/home` 后恢复执行；进入 `/` 时主题样式、导航宿主与 CY 类名被移除，存储中的偏好不变。静态偏好下根元素带 `heybox-up-nav-static`，减少动效环境下图标 `transform`、`transition` 与 `animation` 均为 `none`。390×844 触屏环境点按社区链接后链接仍处于 `:hover`，但图标 `transform` 为 `none`，布局盒保持 18×18，没有残留放大。
 
 排序用合成用例验证：改写点赞数 1/9/4 与相对时间 3天前/5分钟前/1小时前 后，点赞与时间两种模式都按期望重排（order 为 2/0/1，纵坐标随之变化），切回默认清空 order；删除工具栏后 MutationObserver 在下一帧重建，选中模式与顺序保持。
 
@@ -295,6 +295,8 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 - 帖子页首次识别会额外请求评论接口；未登录或触发风控时请求失败，评论保持可见，需打开帖子或稍后重试。
 - 回复编辑器仍由站点原生逻辑管理；沉浸阅读期间它随原生评论区一起隐藏，退出沉浸后回到原来的双栏位置，原生回复、点赞与展开楼中楼都由站点处理。站点原生评论区的“加载更多”由 `#page-bbs-link .link-comment` 的滚动触发，该容器或站点的加载控件结构变化时可能失效，需要重新对齐选择器。
 - 沉浸阅读的文章主评论发送 `is_cy: 0`、`reply_id: "-1"` 与 `root_id: "-1"`；楼层回复发送该条评论 ID 与楼层 ID，楼中楼回复同样以所属楼层作为根。发布成功后清除该帖缓存、重置回复目标并重新拉取第一页，同时更新阅读栏计数。真实评论树的 `root_id` / `parent_id` 字段形态，以及回复接口对 `reply_id` / `root_id` 的接受结果仍待确认；未在登录态页面实测回复发布。
+- 官方根首页 `/` 有意不适配：站点宣传位与深浅主题之间存在明显色彩冲突，脚本在该路径不挂载主题、顶栏导航、信息流宽度与 CY 屏蔽，也不改写站点样式；若以后希望根首页也跟随主题，需要把 `PAGE_ROUTE.OFFICIAL_HOME` 加回 `ADAPTED_ROUTES`。
+- 根首页按 `location.pathname === "/"` 判断，带查询参数或 hash 的根地址同样跳过适配；站点若把官方首页迁到其他路径，需要同步 `PAGE_ROUTE_RULES`。
 - 社区首页隐藏整个右栏；若后续需要保留右栏中的其他模块，需要改为按模块隐藏。
 - 社区首页没有找到可确认的未读筛选路由或接口参数：`H` 与“社区首页”按钮只返回 `/app/bbs/home`，是否仅展示未读内容仍由站点信息流决定，待登录真实页面复核。
 - 纸页与雾青预设依赖站点现有类名着色，站点改版后可能出现未着色的新容器；深色预设同样按类名覆盖，登录表单始终保留浅色。
@@ -324,6 +326,14 @@ v0.4.34 用本地无头 Edge（CDP）与合成文章 DOM 复核，控制台错�
 - 新增 `tests/heybox-up-reader-theme.test.ts`：在 jsdom 中合成五套有效预设的令牌解析，逐项检查令牌非空、纸页与雾青不同于夜航、正文/次级文字/链接/按钮的 WCAG 对比度、控件规则引用令牌、阅读器规则内不再出现固定的夜色字面量，并保留布局断言。
 - 本版验证限于 `pnpm typecheck`、`pnpm test` 与 `pnpm build`，以及构建产物的 `node --check`；五套主题在真实页面上的视觉效果与截图对比仍待确认。
 - `@version` 与本文版本号更新为 0.4.51。
+
+### v0.4.50
+
+- 不再适配官方根首页 `/`：站点的宣传位与深浅主题存在明显色彩冲突，脚本在该路径跳过主题、顶栏导航、信息流宽度与 CY 屏蔽等注入，页面完全交给站点渲染；社区首页 `/app/bbs/home` 继续适配。
+- 站内回到 `/` 时主动清理：路由调度按 `PAGE_ROUTE.OFFICIAL_HOME` 执行 `releaseTheme()`、`releaseNav()` 与 `releaseHideCy()`，移除主题类名、`color-scheme`、导航宿主与样式、CY 类名与样式，取消进行中的主题扫描并清空入口引用。已保存的主题、导航动效与 CY 偏好保持不变，重新进入适配路由后按存储值恢复。
+- 顶部导航去掉首页入口，只保留社区、收藏、文章三项；CY 屏蔽改为在评论树同步前补齐偏好类名，避免从根首页返回后屏蔽状态丢失。
+- 本版验证以 `pnpm typecheck`、`pnpm test`（15 个文件、129 条用例，含新增 `tests/heybox-up-official-home.test.ts`）与 `pnpm build` 为准，覆盖路由分类、根路径跳过默认同步任务、切到社区首页后恢复执行、偏好保留与导航/样式卸载；尚未在登录态真实页面复核根首页往返。
+- `@version` 与本文版本号更新为 0.4.50。
 
 ### v0.4.49
 
