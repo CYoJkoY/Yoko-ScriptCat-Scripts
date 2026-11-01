@@ -1954,7 +1954,7 @@ export function createNavMotionToggle(): HTMLButtonElement {
   name.textContent = "动态导航图标";
   const hint = document.createElement("span");
   hint.className = "hint";
-  hint.textContent = "悬停时播放轻量动画";
+  hint.textContent = "图标持续描边流转，悬停时加快";
   copy.append(name, hint);
   const toggle = document.createElement("span");
   toggle.className = "switch";

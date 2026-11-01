@@ -82,27 +82,40 @@ describe("navigation icon variants", () => {
       const icon = parseMarkup(markup);
       expect(icon.classList.contains("hbu-ico-anim")).toBe(false);
       expect(icon.querySelectorAll("path").length).toBeGreaterThan(0);
+      expect(icon.querySelectorAll("svg").length).toBe(1);
       for (const path of icon.querySelectorAll("path")) {
         expect(path.hasAttribute("pathLength")).toBe(false);
-        expect(path.classList.contains("hbu-ico-stroke")).toBe(false);
+        expect(path.classList.contains("hbu-ico-base")).toBe(false);
+        expect(path.classList.contains("hbu-ico-flow")).toBe(false);
+        expect(path.getAttribute("class")).toBeNull();
+        expect(path.getAttribute("style")).toBeNull();
       }
     }
   });
 
-  it("marks every dynamic path for the draw animation", () => {
+  it("pairs a solid base path with a normalized flow path", () => {
     for (const [id, markup] of Object.entries(NAV_DYNAMIC_ICONS)) {
       const icon = parseMarkup(markup);
       expect(icon.classList.contains("hbu-ico-anim")).toBe(true);
       expect(icon.classList.contains("hbu-ico-" + id)).toBe(true);
       expect(icon.querySelectorAll("path").length).toBeGreaterThan(0);
-      for (const path of icon.querySelectorAll("path")) {
+      const basePaths = Array.from(icon.querySelectorAll("path.hbu-ico-base"));
+      const flowPaths = Array.from(icon.querySelectorAll("path.hbu-ico-flow"));
+      expect(basePaths.length).toBeGreaterThan(0);
+      expect(flowPaths).toHaveLength(basePaths.length);
+      for (const path of basePaths) {
+        expect(path.hasAttribute("pathLength")).toBe(false);
+      }
+      for (const [index, path] of flowPaths.entries()) {
         expect(path.getAttribute("pathLength")).toBe("1");
-        expect(path.classList.contains("hbu-ico-stroke")).toBe(true);
+        expect(path.getAttribute("d")).toBe(basePaths[index]?.getAttribute("d"));
       }
       for (const circle of icon.querySelectorAll("circle")) {
         expect(circle.hasAttribute("pathLength")).toBe(false);
-        expect(circle.classList.contains("hbu-ico-stroke")).toBe(false);
+        expect(circle.classList.contains("hbu-ico-flow")).toBe(false);
       }
+      // Motion lives only in the stylesheet, never in inline attributes.
+      for (const path of icon.querySelectorAll("path")) expect(path.getAttribute("style")).toBeNull();
     }
   });
 
@@ -112,8 +125,10 @@ describe("navigation icon variants", () => {
     expect(navIconMarkup("missing", true)).toBe("");
   });
 
-  it("ships the draw keyframes in the navigation CSS", () => {
-    expect(NAV_CSS).toContain("@keyframes hbu-nav-ico-draw");
+  it("ships the flow keyframes in the navigation CSS", () => {
+    expect(NAV_CSS).toContain("@keyframes hbu-nav-ico-flow");
+    expect(NAV_CSS).toContain("animation: hbu-nav-ico-flow 3.2s ease-in-out infinite");
+    expect(NAV_CSS).toContain("@keyframes hbu-nav-ico-breathe");
     expect(NAV_CSS).toContain(":root." + NAV_STATIC_CLASS + " .hbu-nav-icon");
     expect(NAV_CSS).toContain("@media (prefers-reduced-motion: reduce)");
   });
