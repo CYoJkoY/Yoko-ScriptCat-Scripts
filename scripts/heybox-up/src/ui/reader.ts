@@ -9,7 +9,7 @@ import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railThreadHasPendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
@@ -74,6 +74,42 @@ export const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
 export const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
 
 export const READER_PENDING_NOTICE_MS = 9000;
+
+/**
+ * A create or delete can be answered by the tree endpoint with the payload it
+ * built before the write landed, so the owning page is polled until the
+ * caller expectation is met instead of trusting the first answer. The first
+ * rounds are quick because the site usually echoes a reply within a second;
+ * the later rounds back off so a slow endpoint still gets a few chances.
+ */
+export const COMMENT_VERIFY_DELAYS_MS: readonly number[] = [400, 600, 900, 1200, 1500];
+
+export const COMMENT_VERIFY_ATTEMPTS = COMMENT_VERIFY_DELAYS_MS.length;
+
+/**
+ * A reply that has not been echoed by then stops saying "syncing", because a
+ * spinner that runs for half a minute reads as a broken publish. The site can
+ * still echo it much later, so a local row keeps a few sparse background
+ * checks that swap it for the real one without going back to "syncing".
+ */
+export const COMMENT_VERIFY_GRACE_DELAYS_MS: readonly number[] = [6000, 12000, 20000];
+
+/**
+ * Every delay in the schedule needs a round that waits it out. Attempt 0 is the
+ * first read right after the write, so the cap is the wait count plus one; the
+ * extra round is what keeps the last sparse check from being computed after the
+ * loop has already given up.
+ */
+export const COMMENT_VERIFY_WAIT_COUNT = COMMENT_VERIFY_DELAYS_MS.length + COMMENT_VERIFY_GRACE_DELAYS_MS.length;
+
+export const COMMENT_VERIFY_MAX_ATTEMPTS = COMMENT_VERIFY_WAIT_COUNT + 1;
+
+export const readCommentVerifyDelay = (attempt: number): number => {
+  const index = Math.max(0, attempt - 1);
+  if (index < COMMENT_VERIFY_DELAYS_MS.length) return COMMENT_VERIFY_DELAYS_MS[index];
+  const graceIndex = Math.min(index - COMMENT_VERIFY_DELAYS_MS.length, COMMENT_VERIFY_GRACE_DELAYS_MS.length - 1);
+  return COMMENT_VERIFY_GRACE_DELAYS_MS[graceIndex];
+};
 
 /**
  * Past this many nesting levels the branch stops adding indentation, so a deep
@@ -732,6 +768,7 @@ export const READER_CSS = `
   .hbu-reader-comments-expand::before { content: "+"; font-weight: 700; }
   .hbu-reader-comments-expand:hover { border-color: var(--hbu-reader-link); color: var(--hbu-reader-link); }
   .hbu-reader-comments-syncing { flex: none; color: var(--hbu-reader-muted); font-size: 11px; opacity: .85; }
+  .hbu-reader-comments-syncing--settled { opacity: .7; }
   /* Past the depth cap the branch stops indenting, so a long reply chain can
      never push the sheet wider than its own column. */
   .hbu-reader-comments-children--deep { margin-top: 6px; padding-left: 0; border-left: 0; }
@@ -1508,6 +1545,10 @@ interface ReaderCommentState {
   floorPages: Map<string, number>;
   /** Replies written here but not echoed by the tree endpoint yet. */
   pendingReplies: RailComment[];
+  /** Ids each local reply had already seen when it was written, for the diff match. */
+  pendingBaselines: Map<string, Set<string>>;
+  /** Local replies whose verification window ran out without an echo. */
+  settledReplies: Set<string>;
 }
 
 interface ReaderCommentLoadOptions {
@@ -1531,6 +1572,12 @@ interface ReaderCommentLoadOptions {
    * refresh after a write keeps the floors read from the other pages.
    */
   merge?: boolean;
+  /**
+   * Page that owns the floor a pending reply was written under. The polling
+   * loop alternates between it and page one, because a new reply can move the
+   * floor to the first page.
+   */
+  verifyPage?: number;
 }
 
 interface SuspendedMediaEmbedState {
@@ -1722,6 +1769,8 @@ export function watchReader(navigation: PostNavigationController): void {
       seq: 0,
       floorPages: new Map<string, number>(),
       pendingReplies: [],
+      pendingBaselines: new Map<string, Set<string>>(),
+      settledReplies: new Set<string>(),
     };
   }
 
@@ -2954,6 +3003,12 @@ export function watchReader(navigation: PostNavigationController): void {
   const isPendingReplyRow = (commentId: string): boolean =>
     commentId.startsWith(RAIL_PENDING_ID_PREFIX) || commentState.pendingReplies.some((row) => row.id === commentId);
 
+  // The baseline is the set of comment ids the panel had loaded when a reply
+  // was written. Any id of the same author that shows up afterwards is the
+  // echo, even when the create call and the tree endpoint disagree on ids.
+  const readPendingBaseline = (row: RailComment): ReadonlySet<string> | undefined =>
+    commentState.pendingBaselines.get(row.id);
+
   // Folding a row hides its whole subtree, so every descendant goes with the
   // one the reader closed instead of leaving an orphaned branch behind.
   const createThreadCollapseButton = (threadId: string, hiddenCount: number): HTMLButtonElement => {
@@ -3105,10 +3160,11 @@ export function watchReader(navigation: PostNavigationController): void {
     if (pendingRow) {
       // The tree endpoint has not echoed this row yet. Replying to it would
       // target a comment the server does not know, and deleting it would need
-      // an id the list cannot resolve, so it says it is syncing instead.
+      // an id the list cannot resolve, so it reports its own state instead.
       const syncing = document.createElement("span");
-      syncing.className = "hbu-reader-comments-syncing";
-      syncing.textContent = "同步中…";
+      const settled = commentState.settledReplies.has(child.id);
+      syncing.className = "hbu-reader-comments-syncing" + (settled ? " hbu-reader-comments-syncing--settled" : "");
+      syncing.textContent = settled ? "已提交" : "同步中…";
       actions.append(syncing);
     } else {
       actions.append(createReaderReplyButton({
@@ -3208,12 +3264,6 @@ export function watchReader(navigation: PostNavigationController): void {
     }
   };
 
-  // A create or delete can be answered by the tree endpoint with the payload it
-  // built before the write landed, so page one is polled a few times until the
-  // caller's expectation is met instead of trusting the first answer.
-  const COMMENT_VERIFY_ATTEMPTS = 4;
-  const COMMENT_VERIFY_DELAY_MS = 900;
-
   // An empty expectation always matches: only a publish or delete asks for a
   // specific id to appear or disappear. A pending reply with no id from the
   // create call is matched by its text, so a publish is still verifiable.
@@ -3224,9 +3274,10 @@ export function watchReader(navigation: PostNavigationController): void {
     if (wantAbsent !== "" && railItemsHaveComment(loaded, wantAbsent)) return false;
     const pending = options.expectPending;
     if (pending !== undefined) {
-      const floorId = resolvePendingFloorId(loaded, pending);
-      const entry = loaded.find((item) => item.id === floorId);
-      if (entry === undefined || !railThreadHasPendingReply(entry, pending)) return false;
+      // The reply can be echoed under any floor the panel has loaded, because a
+      // new reply lifts its floor towards the first page, so every loaded floor
+      // is searched instead of only the one that owned it before the write.
+      if (!railItemsHavePendingReply(loaded, pending, readPendingBaseline(pending))) return false;
     }
     return true;
   };
@@ -3344,7 +3395,13 @@ export function watchReader(navigation: PostNavigationController): void {
       const echoingDeleted = absentId !== "" && railItemsHaveComment(incoming, absentId);
       commentState.total = echoingDeleted ? commentState.total : data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
       // A reply the site has echoed back replaces its optimistic copy.
-      commentState.pendingReplies = pruneRailPendingReplies(commentState.items, commentState.pendingReplies);
+      const beforePrune = commentState.pendingReplies;
+      commentState.pendingReplies = pruneRailPendingReplies(commentState.items, beforePrune, readPendingBaseline);
+      for (const row of beforePrune) {
+        if (commentState.pendingReplies.includes(row)) continue;
+        commentState.pendingBaselines.delete(row.id);
+        commentState.settledReplies.delete(row.id);
+      }
       const progress = merge
         ? resolveMergedCommentProgress({
           loadedGroups: commentState.items.length,
@@ -3388,17 +3445,33 @@ export function watchReader(navigation: PostNavigationController): void {
     // instead of competing with the newer load.
     if (seq !== commentState.seq) return;
     const attempt = (options.attempt ?? 0) + 1;
-    if (attempt >= COMMENT_VERIFY_ATTEMPTS) {
-      // A reply kept as a local pending row is already on screen, so only an
-      // absent expectation reports a failure here.
+    const pending = options.expectPending;
+    // A local row gets the sparse background checks as well, so a late echo
+    // still replaces it; a delete or a plain publish stops right away.
+    const maxAttempts = pending === undefined ? COMMENT_VERIFY_ATTEMPTS : COMMENT_VERIFY_MAX_ATTEMPTS;
+    if (attempt >= maxAttempts) {
+      if (pending !== undefined) {
+        commentState.settledReplies.add(pending.id);
+        renderReaderComments();
+      }
       if (options.expectAbsentId !== undefined) showToast("评论已删除，列表仍待站点同步");
       else if ((options.expectPresentId ?? "") !== "") showToast("评论已提交，列表仍待站点同步");
       return;
     }
-    void waitForDelay(COMMENT_VERIFY_DELAY_MS, controller.signal).then(() => {
+    if (pending !== undefined && attempt === COMMENT_VERIFY_ATTEMPTS) {
+      // The row is on screen and stays there, so it stops claiming to sync
+      // while the background checks keep looking for the server copy.
+      commentState.settledReplies.add(pending.id);
+      renderReaderComments();
+    }
+    // A new reply lifts its floor towards the first page, so the first page is
+    // re-read as well instead of only the page that owned the floor before.
+    const ownedPage = options.verifyPage ?? page;
+    const nextPage = attempt % 3 === 2 && page !== 1 ? 1 : ownedPage;
+    void waitForDelay(readCommentVerifyDelay(attempt), controller.signal).then(() => {
       if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
       if (seq !== commentState.seq) return;
-      void loadReaderComments(page, { ...options, fresh: true, force: true, merge: true, attempt: attempt });
+      void loadReaderComments(nextPage, { ...options, fresh: true, force: true, merge: true, attempt: attempt });
     }).catch(() => undefined);
   };
 
@@ -3495,6 +3568,9 @@ export function watchReader(navigation: PostNavigationController): void {
           // the floor that owns it is opened before the local row is drawn.
           const pendingFloorId = resolvePendingFloorId(commentState.items, pending);
           if (pendingFloorId !== "") collapsedCommentThreads.delete(pendingFloorId);
+          // The ids already on screen are the baseline for the echo: an id the
+          // panel did not have before the write belongs to this reply.
+          commentState.pendingBaselines.set(pending.id, collectRailCommentIds(commentState.items));
           commentState.pendingReplies.push(pending);
           renderReaderComments();
         }
@@ -3504,6 +3580,7 @@ export function watchReader(navigation: PostNavigationController): void {
           fresh: true,
           force: true,
           merge: true,
+          verifyPage: page,
           ...(pending !== null
             ? { expectPending: pending }
             : createdId === "" ? {} : { expectPresentId: createdId }),
