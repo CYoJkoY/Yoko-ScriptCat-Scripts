@@ -6,9 +6,9 @@ My current collection of ScriptCat scripts is solely for quick searching and dev
 
 | Script | Install | Docs |
 | --- | --- | --- |
-| AI Chat Turbo Engine | [ai-chat-turbo-engine.user.js]([dist/ai-chat-turbo-engine.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/ai-chat-turbo-engine.user.js)) | [docs/ai-chat-turbo-engine.md](docs/ai-chat-turbo-engine.md) |
-| Gemini Quota Capsule | [gemini-quota-capsule.user.js]([dist/](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/)gemini-quota-capsule.user.js) | [docs/gemini-quota-capsule.md](docs/gemini-quota-capsule.md) |
-| HeyBox Up | [heybox-up.user.js]([dist/](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/)heybox-up.user.js) | [docs/heybox-up.md](docs/heybox-up.md) |
+| AI Chat Turbo Engine | [ai-chat-turbo-engine.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/ai-chat-turbo-engine.user.js)) | [docs/ai-chat-turbo-engine.md](docs/ai-chat-turbo-engine.md) |
+| Gemini Quota Capsule | [gemini-quota-capsule.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/)gemini-quota-capsule.user.js) | [docs/gemini-quota-capsule.md](docs/gemini-quota-capsule.md) |
+| HeyBox Up | [heybox-up.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/)heybox-up.user.js) | [docs/heybox-up.md](docs/heybox-up.md) |
 
 Every script installs from a single self-contained `dist/<script-id>.user.js` file. Source lives under `scripts/` and is written in native TypeScript; there is no runtime framework and no external module loading.
 
