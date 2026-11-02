@@ -9,6 +9,7 @@ import {
   buildDeleteCommentBody,
   countRailThreadNodes,
   createRailPendingReply,
+  collectRailCommentIds,
   findRailFloorIdForComment,
   isOwnRailComment,
   mergeRailPageItems,
@@ -17,6 +18,7 @@ import {
   readRailFloorTotal,
   readRailPageCache,
   railItemsHaveComment,
+  railItemsHavePendingReply,
   railThreadHasPendingReply,
   resolveCommentPageProgress,
   resolveMergedCommentProgress,
@@ -375,5 +377,146 @@ describe("optimistic reply rows", () => {
     expect(pruneRailPendingReplies(items, [pending, { ...pending, text: "second", id: RAIL_PENDING_ID_PREFIX + "4" }])).toHaveLength(1);
     expect(pruneRailPendingReplies([entry("400")], [pending])).toEqual([pending]);
     expect(pruneRailPendingReplies(items, [])).toEqual([]);
+  });
+
+  it("matches an echo that keeps the mention the site prepends", () => {
+    const items = [entry("400", [{ ...floor("500", "@someone hello there"), user: { username: "u", userid: 77 } }])];
+    expect(railThreadHasPendingReply(items[0], pending)).toBe(true);
+    expect(pruneRailPendingReplies(items, [pending])).toEqual([]);
+    const replyStyle = [entry("400", [{ ...floor("501", "回复 @someone：hello there"), user: { username: "u", userid: 77 } }])];
+    expect(railThreadHasPendingReply(replyStyle[0], pending)).toBe(true);
+  });
+
+  it("matches the echo by the id the floor did not carry before the write", () => {
+    const before = [entry("400", [{ ...floor("401", "earlier"), user: { username: "u", userid: 77 } }])];
+    const baseline = collectRailCommentIds(before);
+    expect(baseline.has("401")).toBe(true);
+    expect(baseline.has("402")).toBe(false);
+    // The create call reported 9001, the tree endpoint answers 402, and the
+    // echoed text was rewritten, so neither the id nor the text can match.
+    const after = [entry("400", [
+      { ...floor("401", "earlier"), user: { username: "u", userid: 77 } },
+      { ...floor("402", "hello there [cube_001]"), user: { username: "u", userid: 77 } },
+    ])];
+    const rewritten = [entry("400", [
+      { ...floor("401", "earlier"), user: { username: "u", userid: 77 } },
+      { ...floor("402", "hello there, edited by the site"), user: { username: "u", userid: 77 } },
+    ])];
+    expect(railItemsHavePendingReply(after, pending, baseline)).toBe(true);
+    expect(railItemsHavePendingReply(rewritten, pending, baseline)).toBe(true);
+    expect(pruneRailPendingReplies(after, [pending], () => baseline)).toEqual([]);
+  });
+
+  it("does not claim a new id written by another account", () => {
+    const before = [entry("400")];
+    const baseline = collectRailCommentIds(before);
+    const other = [entry("400", [{ ...floor("402", "hello there"), user: { username: "v", userid: 88 } }])];
+    expect(railItemsHavePendingReply(other, pending, baseline)).toBe(false);
+    expect(pruneRailPendingReplies(other, [pending], () => baseline)).toEqual([pending]);
+  });
+
+  it("leaves an ambiguous echo alone instead of dropping the wrong row", () => {
+    const before = [entry("400")];
+    const baseline = collectRailCommentIds(before);
+    const many = [entry("400", [
+      { ...floor("402", "first new reply"), user: { username: "u", userid: 77 } },
+      { ...floor("403", "second new reply"), user: { username: "u", userid: 77 } },
+    ])];
+    expect(railItemsHavePendingReply(many, pending, baseline)).toBe(false);
+    const onlyOne = [entry("400", [
+      { ...floor("402", "a rewritten reply"), user: { username: "u", userid: 77 } },
+      { ...floor("403", "unrelated"), user: { username: "v", userid: 88 } },
+    ])];
+    expect(railItemsHavePendingReply(onlyOne, pending, baseline)).toBe(true);
+  });
+
+  it("finds the echo even when the refreshed page returns other floors too", () => {
+    const before = [entry("300"), entry("400")];
+    const baseline = collectRailCommentIds(before);
+    // The owning page can answer with floors the panel did not ask about, so
+    // the echo has to be found under its own floor, not by position.
+    const page = [
+      entry("250", [{ ...floor("251", "unrelated"), user: { username: "v", userid: 88 } }]),
+      entry("400", [{ ...floor("500", "hello there"), user: { username: "u", userid: 77 } }]),
+    ];
+    expect(railItemsHavePendingReply(page, pending, baseline)).toBe(true);
+    expect(pruneRailPendingReplies(page, [pending], () => baseline)).toEqual([]);
+  });
+
+  it("does not borrow a new id from another floor as the echo", () => {
+    const before = [entry("300"), entry("400")];
+    const baseline = collectRailCommentIds(before);
+    // Another author replying under a different floor is not this reply, and
+    // the text does not match either, so the local row must survive.
+    const otherFloor = [entry("300", [{ ...floor("301", "someone else"), user: { username: "v", userid: 88 } }])];
+    expect(railItemsHavePendingReply(otherFloor, pending, baseline)).toBe(false);
+    expect(pruneRailPendingReplies(otherFloor, [pending], () => baseline)).toEqual([pending]);
+  });
+
+  it("claims the echoed row once when the same text was written twice", () => {
+    const before = [entry("400")];
+    const baseline = collectRailCommentIds(before);
+    const second = { ...pending, id: RAIL_PENDING_ID_PREFIX + "9" };
+    const echoedOnce = [entry("400", [{ ...floor("500", "hello there"), user: { username: "u", userid: 77 } }])];
+    expect(pruneRailPendingReplies(echoedOnce, [pending, second], () => baseline)).toEqual([second]);
+    const echoedTwice = [entry("400", [
+      { ...floor("500", "hello there"), user: { username: "u", userid: 77 } },
+      { ...floor("501", "hello there"), user: { username: "u", userid: 77 } },
+    ])];
+    expect(pruneRailPendingReplies(echoedTwice, [pending, second], () => baseline)).toEqual([]);
+  });
+
+  it("resolves the owning floor from the answered comment when the root is nested", () => {
+    const before = [entry("400", [{ ...floor("500", "answered reply"), user: { username: "u", userid: 77 } }])];
+    const baseline = collectRailCommentIds(before);
+    // Some payloads report the answered nested comment as the root, so the
+    // root id is not a floor id and the parent chain has to decide instead.
+    const nestedRoot = { ...pending, rootId: "500" };
+    const after = [entry("400", [
+      { ...floor("500", "answered reply"), user: { username: "u", userid: 77 } },
+      { ...floor("501", "rewritten by the site"), user: { username: "u", userid: 77 } },
+    ])];
+    expect(railItemsHavePendingReply(after, nestedRoot, baseline)).toBe(true);
+    expect(pruneRailPendingReplies(after, [nestedRoot], () => baseline)).toEqual([]);
+  });
+
+  it("scopes the id diff to the floor even when the root names another floor", () => {
+    const before = [entry("300", [{ ...floor("301", "earlier"), user: { username: "u", userid: 77 } }]), entry("400")];
+    const baseline = collectRailCommentIds(before);
+    // The same account writes under floor 300 while this reply is pending; that
+    // id belongs to the other thread and must not stand in for the echo.
+    const elsewhere = [entry("300", [
+      { ...floor("301", "earlier"), user: { username: "u", userid: 77 } },
+      { ...floor("302", "another thread"), user: { username: "u", userid: 77 } },
+    ])];
+    expect(railItemsHavePendingReply(elsewhere, pending, baseline)).toBe(false);
+    expect(pruneRailPendingReplies(elsewhere, [pending], () => baseline)).toEqual([pending]);
+  });
+
+  it("does not borrow a new id from another floor of the same account", () => {
+    const before = [entry("300", [{ ...floor("301", "earlier"), user: { username: "u", userid: 77 } }]), entry("400")];
+    const baseline = collectRailCommentIds(before);
+    const otherFloor = [entry("300", [
+      { ...floor("301", "earlier"), user: { username: "u", userid: 77 } },
+      { ...floor("302", "another thread"), user: { username: "u", userid: 77 } },
+    ])];
+    expect(railItemsHavePendingReply(otherFloor, pending, baseline)).toBe(false);
+    expect(pruneRailPendingReplies(otherFloor, [pending], () => baseline)).toEqual([pending]);
+  });
+
+  it("keeps the id diff on the owning floor only", () => {
+    const before = [entry("300"), entry("400", [{ ...floor("500", "answered reply"), user: { username: "u", userid: 77 } }])];
+    const baseline = collectRailCommentIds(before);
+    // With no root id the answered comment decides the floor, and a new id the
+    // same account wrote under a different floor is not this reply's echo.
+    const noRoot = { ...pending, rootId: "" };
+    const elsewhere = [entry("300", [{ ...floor("302", "another thread"), user: { username: "u", userid: 77 } }])];
+    expect(railItemsHavePendingReply(elsewhere, noRoot, baseline)).toBe(false);
+    expect(pruneRailPendingReplies(elsewhere, [noRoot], () => baseline)).toEqual([noRoot]);
+    const owning = [entry("400", [
+      { ...floor("500", "answered reply"), user: { username: "u", userid: 77 } },
+      { ...floor("501", "rewritten by the site"), user: { username: "u", userid: 77 } },
+    ])];
+    expect(railItemsHavePendingReply(owning, noRoot, baseline)).toBe(true);
   });
 });

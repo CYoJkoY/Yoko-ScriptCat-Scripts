@@ -797,13 +797,47 @@ export function attachRailPendingReplies(
   return { ...entry, subComments: subComments, quotes: subComments };
 }
 
-function normalizeRailMatchText(value: string): string {
+/** The tree endpoint can put the author being answered in front of the text. */
+const RAIL_ECHO_MENTION = /^(?:回复\s*)?@[^\s@:：,，]{1,32}[\s:：,，]+/;
+
+function stripRailEchoMentions(value: string): string {
+  let text = value;
+  for (let guard = 0; guard < 4; guard += 1) {
+    const next = text.replace(RAIL_ECHO_MENTION, "");
+    if (next === text) return text;
+    text = next;
+  }
+  return text;
+}
+
+/** Drops markup and emoji tokens so two renderings of one text compare equal. */
+function flattenRailMatchText(value: string): string {
   return value
     .replace(/\[cube_[^\]]{1,64}\]/g, " ")
     .replace(/\[[^\]]{1,64}\]/g, " ")
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * The echoed text may keep the mention the site shows in its own comment list,
+ * so a prefix made of mentions is ignored before the comparison.
+ */
+function railEchoTextMatches(pendingText: string, echoText: string): boolean {
+  const wanted = flattenRailMatchText(pendingText);
+  if (wanted === "") return false;
+  return stripRailEchoMentions(flattenRailMatchText(echoText)) === wanted;
+}
+
+/** Every comment id the loaded floors carry, used as the pre-write baseline. */
+export function collectRailCommentIds(items: readonly RailCommentEntry[]): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of items) {
+    if (entry.id !== "") ids.add(entry.id);
+    for (const node of collectRailEchoedNodes(entry)) ids.add(node.id);
+  }
+  return ids;
 }
 
 function collectRailEchoedNodes(entry: RailCommentEntry): RailCommentThreadNode[] {
@@ -819,19 +853,86 @@ function collectRailEchoedNodes(entry: RailCommentEntry): RailCommentThreadNode[
 }
 
 /**
- * True when the server already returned this pending reply, either with the id
- * the create call reported or with the same text written by the same account.
- * The parent id is not part of the fallback: the tree endpoint sometimes omits
- * it for a nested reply, and a local row must never outlive the real one.
+ * Resolves the server row that already carries a pending reply. The id the
+ * create call reported is tried first, then the text written by the same
+ * account. When neither matches, a comment id that was not in the floor before
+ * the write is the echo: the create call and the tree endpoint do not always
+ * share an id space, and the echoed text can be rewritten by the site.
+ * The parent id is not part of the match: the tree endpoint sometimes omits it
+ * for a nested reply, and a local row must never outlive the real one.
  */
-export function railThreadHasPendingReply(entry: RailCommentEntry, pending: RailComment): boolean {
-  const wanted = normalizeRailMatchText(pending.text);
-  return collectRailEchoedNodes(entry).some((node) => {
-    if (pending.id !== "" && !pending.id.startsWith(RAIL_PENDING_ID_PREFIX) && node.id === pending.id) return true;
-    if (wanted === "") return false;
-    if (pending.userId !== "" && node.userId !== pending.userId) return false;
-    return normalizeRailMatchText(node.text) === wanted;
-  });
+function findRailPendingEcho(
+  nodes: readonly RailCommentThreadNode[],
+  pending: RailComment,
+  claimedIds: ReadonlySet<string>,
+  freshIds?: ReadonlySet<string>,
+): RailCommentThreadNode | null {
+  // Claims are tracked by id, because each call rebuilds the tree and the node
+  // objects are new every time.
+  const free = nodes.filter((node) => !claimedIds.has(node.id));
+  const sameAuthor = (node: RailCommentThreadNode): boolean =>
+    pending.userId === "" || node.userId === "" || node.userId === pending.userId;
+  if (pending.id !== "" && !pending.id.startsWith(RAIL_PENDING_ID_PREFIX)) {
+    const byId = free.find((node) => node.id === pending.id);
+    if (byId !== undefined) return byId;
+  }
+  if (flattenRailMatchText(pending.text) === "") return null;
+  const byText = free.find((node) => sameAuthor(node) && railEchoTextMatches(pending.text, node.text));
+  if (byText !== undefined) return byText;
+  if (freshIds === undefined) return null;
+  // The create call and the tree endpoint do not always share an id space, so
+  // an id that appeared under this floor after the write is the echo. Only the
+  // signed-in account counts here, otherwise a reply written by someone else at
+  // the same moment would be mistaken for the local row.
+  if (pending.userId === "") return null;
+  const fresh = free.filter((node) => node.userId === pending.userId && freshIds.has(node.id));
+  if (fresh.length === 1) return fresh[0];
+  const freshWithText = fresh.filter((node) => railEchoTextMatches(pending.text, node.text));
+  return freshWithText.length === 1 ? freshWithText[0] : null;
+}
+
+/**
+ * The ids this floor gained since the baseline was taken. The diff is scoped to
+ * the floor that owns the reply, so an unrelated comment loaded from another
+ * floor can never stand in for the echo.
+ */
+function readRailFreshIds(
+  items: readonly RailCommentEntry[],
+  entry: RailCommentEntry,
+  pending: RailComment,
+  knownIds: ReadonlySet<string>,
+): ReadonlySet<string> | undefined {
+  // The root id names the floor, unless it is one the loaded list does not
+  // carry; the answered comment still leads back to the floor that owns it.
+  const rootLoaded = pending.rootId !== "" && items.some((item) => item.id === pending.rootId);
+  const owns = rootLoaded
+    ? entry.id === pending.rootId
+    : findRailFloorIdForComment(items, pending.parentId) === entry.id;
+  if (!owns) return undefined;
+  return new Set(collectRailEchoedNodes(entry).map((node) => node.id).filter((id) => !knownIds.has(id)));
+}
+
+/** True when the server already returned this pending reply. */
+export function railThreadHasPendingReply(
+  entry: RailCommentEntry,
+  pending: RailComment,
+  knownIds?: ReadonlySet<string>,
+): boolean {
+  const freshIds = knownIds === undefined ? undefined : readRailFreshIds([entry], entry, pending, knownIds);
+  return findRailPendingEcho(collectRailEchoedNodes(entry), pending, new Set<string>(), freshIds) !== null;
+}
+
+/**
+ * True when any loaded floor already carries this pending reply. Every floor is
+ * searched because the echo can arrive under a different one than the floor
+ * that owned the reply before the write.
+ */
+export function railItemsHavePendingReply(
+  items: readonly RailCommentEntry[],
+  pending: RailComment,
+  knownIds?: ReadonlySet<string>,
+): boolean {
+  return items.some((entry) => railThreadHasPendingReply(entry, pending, knownIds));
 }
 
 /**
@@ -842,25 +943,25 @@ export function railThreadHasPendingReply(entry: RailCommentEntry, pending: Rail
 export function pruneRailPendingReplies(
   items: readonly RailCommentEntry[],
   pending: readonly RailComment[],
+  /** Baseline ids captured before each row was written, used for the id diff. */
+  baselineFor?: (row: RailComment) => ReadonlySet<string> | undefined,
 ): RailComment[] {
   if (pending.length === 0) return [];
-  const echoed = items.flatMap(collectRailEchoedNodes);
-  const claimed = new Set<RailCommentThreadNode>();
+  const claimedIds = new Set<string>();
   const kept: RailComment[] = [];
   for (const row of pending) {
-    const wanted = normalizeRailMatchText(row.text);
-    const match = echoed.find((node) => {
-      if (claimed.has(node)) return false;
-      if (row.id !== "" && !row.id.startsWith(RAIL_PENDING_ID_PREFIX) && node.id === row.id) return true;
-      if (wanted === "") return false;
-      if (row.userId !== "" && node.userId !== row.userId) return false;
-      return normalizeRailMatchText(node.text) === wanted;
-    });
-    if (match === undefined) {
+    const baseline = baselineFor?.(row);
+    let match: RailCommentThreadNode | null = null;
+    for (const entry of items) {
+      const freshIds = baseline === undefined ? undefined : readRailFreshIds(items, entry, row, baseline);
+      match = findRailPendingEcho(collectRailEchoedNodes(entry), row, claimedIds, freshIds);
+      if (match !== null) break;
+    }
+    if (match === null) {
       kept.push(row);
       continue;
     }
-    claimed.add(match);
+    claimedIds.add(match.id);
   }
   return kept;
 }
