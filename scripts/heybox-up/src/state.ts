@@ -3,6 +3,7 @@ import {
   FEED_WIDTH_MIN,
   FEED_WIDTH_STEP,
   PREFERENCE_DEFAULTS,
+  READER_HISTORY_LIMIT_UNLIMITED,
   READER_LINE_HEIGHT_MAX,
   READER_LINE_HEIGHT_MIN,
   READER_LINE_HEIGHT_STEP,
@@ -34,6 +35,7 @@ export const COMMENT_PREVIEW_EVENT = "heybox-up:comment-preview";
 export const NAV_MOTION_EVENT = "heybox-up:nav-motion";
 export const READER_EVENT = "heybox-up:reader";
 export const READER_TIMELINE_EVENT = "heybox-up:reader-timeline";
+export const READER_HISTORY_LIMIT_EVENT = "heybox-up:reader-history-limit";
 
 const HIDE_CY_STYLE_ID = "heybox-up-cy-style";
 const HIDE_CY_CLASS = "heybox-up-hide-cy";
@@ -120,6 +122,39 @@ export function readReaderTimelinePreference(): boolean {
 export function setReaderTimelinePreference(value: boolean): void {
   localStore.write(STORAGE_KEYS.readerTimeline, value ? "1" : "0");
   document.dispatchEvent(new CustomEvent(READER_TIMELINE_EVENT, { detail: value }));
+}
+
+/**
+ * How many visited posts the timeline keeps. Zero means unlimited, so the
+ * value is only rejected when it is not a non-negative safe integer.
+ */
+export function normalizeReaderHistoryLimit(value: string | number | null | undefined): number {
+  if (value === null || value === undefined || value === "") return PREFERENCE_DEFAULTS.readerHistoryLimit;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < READER_HISTORY_LIMIT_UNLIMITED) {
+    return PREFERENCE_DEFAULTS.readerHistoryLimit;
+  }
+  return parsed;
+}
+
+export function parseReaderHistoryLimitInput(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (text === "") return null;
+  const parsed = Number(text);
+  if (!Number.isSafeInteger(parsed) || parsed < READER_HISTORY_LIMIT_UNLIMITED) return null;
+  return parsed;
+}
+
+export function readReaderHistoryLimit(): number {
+  return normalizeReaderHistoryLimit(localStore.read(STORAGE_KEYS.readerHistoryLimit));
+}
+
+export function setReaderHistoryLimitPreference(value: number): number {
+  const limit = normalizeReaderHistoryLimit(value);
+  localStore.write(STORAGE_KEYS.readerHistoryLimit, String(limit));
+  document.dispatchEvent(new CustomEvent(READER_HISTORY_LIMIT_EVENT, { detail: limit }));
+  return limit;
 }
 
 export function normalizeFeedWidth(value: string | number | null | undefined): number {

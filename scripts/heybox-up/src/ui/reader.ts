@@ -1,7 +1,7 @@
 import { PAGE_ROUTE, READER_LINE_HEIGHT_DEFAULT, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
 import { getHeyboxId, resolveHeyboxId } from "../core/account";
 import { LINK_HREF_PREFIX } from "../core/cy";
-import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_HISTORY_CURSOR_KEY, POST_HISTORY_TITLES_KEY, POST_TRAIL_KEY, POST_TRAIL_MAX, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
+import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_HISTORY_CURSOR_KEY, POST_HISTORY_TITLES_KEY, POST_TRAIL_KEY, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
 import { EMBEDDED_MEDIA_SELECTOR, EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, ensureStyleElement, registerPageSync } from "../core/page-sync";
 import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
 import { asRecord } from "../core/json";
@@ -9,10 +9,10 @@ import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_NAMES, RAIL_EMOJI_PACKS, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, applyRailEmojiStyle, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railEmojiSheetSize, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
-import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_NAMES, RAIL_HEYGIRL_NAMES, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, applyRailEmojiStyle, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress, resolveRailEmoji } from "./rail";
+import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailEmojiPack, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
-import { HIDE_CY_EVENT, READER_EVENT, READER_TIMELINE_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderLineHeightPreference } from "../state";
+import { HIDE_CY_EVENT, READER_EVENT, READER_HISTORY_LIMIT_EVENT, READER_TIMELINE_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderLineHeightPreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
 
 export interface RelatedPostLink {
@@ -82,6 +82,53 @@ export const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
 export const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
 
 export const READER_PENDING_NOTICE_MS = 9000;
+
+/** Ratio above which a picture counts as a long, scroll-through image. */
+export const LIGHTBOX_LONG_IMAGE_RATIO = 1.6;
+
+/** Long pictures open at about half the viewport width, never upscaled. */
+export const LIGHTBOX_LONG_IMAGE_WIDTH_RATIO = 0.5;
+
+export const LIGHTBOX_ZOOM_MAX = 2;
+
+/**
+ * Base width of the lightbox picture. Ordinary photos are contained inside the
+ * viewport, while a long picture opens at roughly half the screen width so its
+ * text and detail stay readable and the reader scrolls instead of squinting.
+ */
+export function computeLightboxBaseWidth(
+  naturalWidth: number,
+  naturalHeight: number,
+  viewportWidth: number,
+  viewportHeight: number = 0,
+): number {
+  const width = Number.isFinite(naturalWidth) && naturalWidth > 0 ? naturalWidth : 0;
+  const height = Number.isFinite(naturalHeight) && naturalHeight > 0 ? naturalHeight : 0;
+  const screenWidth = Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : 0;
+  if (width === 0 || screenWidth === 0) return 0;
+  const ratio = height === 0 ? 1 : height / width;
+  if (ratio > LIGHTBOX_LONG_IMAGE_RATIO) {
+    const target = Math.round(screenWidth * LIGHTBOX_LONG_IMAGE_WIDTH_RATIO);
+    return Math.max(1, Math.min(width, target));
+  }
+  const byWidth = screenWidth * 0.92;
+  const byHeight = height > 0 && Number.isFinite(viewportHeight) && viewportHeight > 0
+    ? viewportHeight * 0.84 * (width / height)
+    : byWidth;
+  return Math.max(1, Math.round(Math.min(width, byWidth, byHeight)));
+}
+
+/** Width for one zoom step, capped so the picture never stretches past its source. */
+export function computeLightboxZoomWidth(baseWidth: number, naturalWidth: number, step: number): number {
+  const base = Number.isFinite(baseWidth) && baseWidth > 0 ? baseWidth : 0;
+  if (base === 0) return 0;
+  // Zoom may go past the source size a little for detail work, but the base
+  // width is never exceeded by more than the zoom ceiling.
+  const natural = Number.isFinite(naturalWidth) && naturalWidth > 0 ? naturalWidth : 0;
+  const cap = Math.max(natural, base * 2.4);
+  const scale = Math.pow(1.55, Math.max(0, Math.min(LIGHTBOX_ZOOM_MAX, Number.isFinite(step) ? step : 0)));
+  return Math.round(Math.min(cap, base * scale));
+}
 
 /**
  * A create or delete can be answered by the tree endpoint with the payload it
@@ -447,10 +494,11 @@ export const READER_CSS = `
   .hbu-reader-rich blockquote :is(p, .text) {
     color: var(--hbu-reader-ink-2) !important;
   }
-  /* Media pages keep their own breathing room above the dedicated progress band. */
-  .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 32px 20px 64px; background: #05070a; }
-  .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: 32px 20px 64px; background: #05070a; }
-  .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: 32px 20px 64px; background: #05070a; }
+  /* Media pages start below the translucent head gradient, so the top of a
+     user-uploaded picture is never dimmed by the overlay. */
+  .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: calc(84px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
+  .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: calc(84px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
+  .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: calc(84px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
   .hbu-reader-page[data-kind="notice"] { justify-content: center; padding: 32px 24px 72px; background: var(--hbu-reader-page); }
   .hbu-reader-notice {
     width: min(520px, 100%);
@@ -545,7 +593,9 @@ export const READER_CSS = `
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, rgba(0, 0, 0, .52), transparent 24%);
+    /* Only a short scrim keeps the translucent head readable; a deep wash would
+       dim the top of the photo the reader came to look at. */
+    background: linear-gradient(180deg, rgba(0, 0, 0, .28), transparent 14%);
   }
   .hbu-reader-page[data-kind="hero"][data-cover="none"] { justify-content: center; }
   .hbu-reader-cover-nav {
@@ -737,7 +787,18 @@ export const READER_CSS = `
   .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 236px; max-width: calc(100vw - 84px); max-height: min(360px, 62dvh); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
   .hbu-reader-history-menu[hidden] { display: none; }
   .hbu-reader-history-label { flex: none; font-size: 12px; font-weight: 650; color: var(--hbu-reader-float-ink); }
-  .hbu-reader-history-list { display: flex; flex-direction: column; gap: 1px; min-height: 0; margin: 0; padding: 0 0 0 2px; overflow-y: auto; list-style: none; }
+  /* The feed-style rail on the right of the menu: a fixed-height track with one
+     draggable thumb that prints the current position as x/n. */
+  .hbu-reader-history-body { display: flex; flex: 1 1 auto; gap: 8px; align-items: stretch; min-height: 120px; max-height: min(240px, 46dvh); }
+  .hbu-reader-history-rail { position: relative; flex: none; width: 52px; touch-action: none; user-select: none; }
+  .hbu-reader-history-track { position: absolute; top: 8px; bottom: 8px; left: 50%; width: 2px; margin-left: -1px; border-radius: 99px; background: var(--hbu-reader-float-border); cursor: pointer; }
+  .hbu-reader-history-tick { position: absolute; left: calc(50% - 2px); width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-thumb { position: absolute; top: 0; left: 50%; display: grid; place-items: center; min-width: 42px; height: 22px; padding: 0 6px; translate: -50% -50%; border: 1px solid var(--hbu-reader-accent); border-radius: 99px; background: var(--hbu-reader-float); color: var(--hbu-reader-accent); font: inherit; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; cursor: grab; box-shadow: 0 6px 16px rgba(0, 0, 0, .28); touch-action: none; }
+  .hbu-reader-history-thumb[data-dragging="true"] { cursor: grabbing; }
+  .hbu-reader-history-thumb:focus-visible { outline: 2px solid var(--hbu-reader-accent); outline-offset: 2px; }
+  .hbu-reader-history-thumb[data-preview="true"] { border-color: var(--hbu-reader-float-ink); color: var(--hbu-reader-float-ink); }
+  .hbu-reader-history-peek { flex: none; min-height: 15px; overflow: hidden; color: var(--hbu-reader-float-muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .hbu-reader-history-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: 1px; min-height: 0; margin: 0; padding: 0 0 0 2px; overflow-y: auto; list-style: none; }
   .hbu-reader-history-item { position: relative; display: flex; padding-left: 13px; }
   /* A single continuous rule carries the visit order between rows. */
   .hbu-reader-history-item::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--hbu-reader-float-border); }
@@ -834,6 +895,8 @@ export const READER_CSS = `
   .hbu-reader-comments-children--deep > .hbu-reader-comments-child::before { display: none; }
   .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 323px; }
   .hbu-reader-comments-text img, .hbu-reader-comments-text .hbu-reader-comments-image { display: block; max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
+  /* Comment pictures open the shared viewer on click, matching article photos. */
+  .hbu-reader-comments-text .hbu-reader-comments-image { cursor: zoom-in; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
   .hbu-reader-comments-status-retry { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 16px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-comments-status-retry:hover { border-color: var(--hbu-reader-accent); }
@@ -876,16 +939,30 @@ export const READER_CSS = `
   .hbu-reader-composer-emoji-toggle[aria-expanded="true"] { border-color: var(--hbu-reader-accent); color: var(--hbu-reader-ink); }
   .hbu-reader-composer-emoji { max-height: 196px; padding: 8px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--hbu-reader-border); border-radius: 10px; background: var(--hbu-reader-subtle); }
   .hbu-reader-composer-emoji[hidden] { display: none; }
+  .hbu-reader-composer-emoji-groups { display: flex; flex-direction: column; gap: 10px; }
+  .hbu-reader-composer-emoji-label { margin: 0 0 5px 2px; color: var(--hbu-reader-muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
   .hbu-reader-composer-emoji-grid { display: grid; grid-template-columns: repeat(6, 26px); gap: 6px; justify-content: center; }
   .hbu-reader-composer-emoji-grid button { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
   .hbu-reader-composer-emoji-grid button:hover, .hbu-reader-composer-emoji-grid button:focus-visible { background: var(--hbu-reader-page); }
+  /* The inline sprite style owns the sheet size, so only the repeat policy is
+     set here; a contain fit would shift every cell offset. */
   .hbu-reader-composer-emoji-grid span { display: block; width: 22px; height: 22px; background-repeat: no-repeat; }
   .hbu-reader-composer-status { min-width: 0; flex: 1 1 auto; color: var(--hbu-reader-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
   .hbu-reader-composer-count { flex: none; color: var(--hbu-reader-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .hbu-reader-composer-submit { flex: none; min-height: 30px; padding: 0 13px; border: 1px solid transparent; border-radius: 8px; background: var(--hbu-reader-accent); color: var(--hbu-reader-on-accent); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
   .hbu-reader-composer-submit:disabled { opacity: .55; cursor: default; }
-  .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: grid; place-items: center; padding: 24px; border: 0; background: rgba(2, 4, 7, .94); cursor: zoom-out; }
-  .hbu-reader-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  /* The lightbox is a scrollable stage: a very long picture keeps its reading
+     width and grows downward instead of being squeezed into the viewport. The
+     width itself is measured in JS so zoom steps stay exact. */
+  .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: flex; flex-direction: column; align-items: center; padding: 52px 12px 20px; overflow: auto; border: 0; background: rgba(2, 4, 7, .95); color: #e9eef5; font: inherit; }
+  .hbu-reader-lightbox-stage { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: center; width: 100%; }
+  .hbu-reader-lightbox img { display: block; max-width: none; height: auto; margin: 0 auto; border-radius: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, .55); cursor: zoom-in; transition: width .16s ease; }
+  .hbu-reader-lightbox img[data-zoom="0"] { cursor: zoom-in; }
+  .hbu-reader-lightbox img:not([data-zoom="0"]) { cursor: zoom-out; }
+  .hbu-reader-lightbox-bar { position: fixed; top: 0; right: 0; left: 0; display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: linear-gradient(180deg, rgba(2, 4, 7, .92), transparent); }
+  .hbu-reader-lightbox-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; color: rgba(233, 238, 245, .72); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .hbu-reader-lightbox-close { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid rgba(255, 255, 255, .22); border-radius: 50%; background: rgba(12, 16, 22, .6); color: inherit; cursor: pointer; }
+  .hbu-reader-lightbox-close svg { width: 17px; height: 17px; }
   .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border: 1px solid var(--hbu-reader-float-border); border-radius: 99px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, .18); opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
   .hbu-reader-toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
   .hbu-reader-toast--fixed { position: fixed; bottom: 58px; z-index: 4060; }
@@ -925,9 +1002,9 @@ export const READER_CSS = `
     .hbu-reader-page[data-kind="hero"] { padding: 0; }
     .hbu-reader-page[data-kind="text"] { padding: 0 64px 0 24px; }
     .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
-    .hbu-reader-page[data-kind="media"] { padding: 20px 16px 62px; }
-    .hbu-reader-page[data-kind="embed"] { padding: 20px 16px 62px; }
-    .hbu-reader-page[data-kind="video"] { padding: 20px 16px 62px; }
+    .hbu-reader-page[data-kind="media"] { padding: calc(72px + env(safe-area-inset-top)) 16px 62px; }
+    .hbu-reader-page[data-kind="embed"] { padding: calc(72px + env(safe-area-inset-top)) 16px 62px; }
+    .hbu-reader-page[data-kind="video"] { padding: calc(72px + env(safe-area-inset-top)) 16px 62px; }
     .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
     .hbu-reader-rich { font-size: 17px; }
@@ -1131,9 +1208,54 @@ export function visitPostTrail(id: string): string[] {
   const cursor = readPostHistoryCursor();
   if (cursor >= 0 && cursor < trail.length - 1) trail.splice(cursor + 1);
   trail.push(id);
-  while (trail.length > POST_TRAIL_MAX) trail.shift();
+  const dropped = trimPostTrail(trail, readReaderHistoryLimit());
   writeSessionValue(POST_TRAIL_KEY, trail);
   writePostHistoryCursor(trail.length - 1);
+  prunePostHistoryExtras(dropped);
+  return trail;
+}
+
+/**
+ * Trims the oldest visits in place so the trail honours the configured limit.
+ * A limit of zero means unlimited. Returns the ids that left the trail so their
+ * cached labels and scroll marks can be dropped with them.
+ */
+export function trimPostTrail(trail: string[], limit: number): string[] {
+  const dropped: string[] = [];
+  if (!Number.isSafeInteger(limit) || limit <= 0) return dropped;
+  while (trail.length > limit) {
+    const removed = trail.shift();
+    if (removed !== undefined) dropped.push(removed);
+  }
+  return dropped;
+}
+
+/** Keeps the timeline to tiny `{ id: title }` nodes and nothing else. */
+export function prunePostHistoryExtras(dropped: readonly string[]): void {
+  if (dropped.length === 0) return;
+  const stored = readSessionRecord(POST_HISTORY_TITLES_KEY);
+  let changed = false;
+  for (const id of dropped) {
+    if (Object.prototype.hasOwnProperty.call(stored, id)) {
+      delete stored[id];
+      changed = true;
+    }
+    sessionStore.remove(READER_SCROLL_KEY + id);
+    sessionStore.remove(READER_RATIO_KEY + id);
+  }
+  if (changed) writeSessionValue(POST_HISTORY_TITLES_KEY, stored);
+}
+
+/** Applies a lowered limit at once, keeping the newest entries. */
+export function applyPostHistoryLimit(limit: number): string[] {
+  const trail = readPostTrail();
+  const cursor = readPostHistoryCursor();
+  const dropped = trimPostTrail(trail, limit);
+  if (dropped.length === 0) return trail;
+  writeSessionValue(POST_TRAIL_KEY, trail);
+  const nextCursor = cursor < 0 ? cursor : Math.max(0, cursor - dropped.length);
+  writePostHistoryCursor(nextCursor);
+  prunePostHistoryExtras(dropped);
   return trail;
 }
 
@@ -1796,7 +1918,11 @@ interface ReaderData {
 export function watchReader(navigation: PostNavigationController): void {
   if (!document.body) return;
   let host: HTMLElement | null = null;
-  let lightbox: HTMLButtonElement | null = null;
+  let lightbox: HTMLElement | null = null;
+  let lightboxImage: HTMLImageElement | null = null;
+  let lightboxZoom = 0;
+  let lightboxBaseWidth = 0;
+  let lightboxNatural = { width: 0, height: 0 };
   let favourPanel: HTMLDivElement | null = null;
   let favourButton: HTMLButtonElement | null = null;
   let spacingPanel: HTMLDivElement | null = null;
@@ -1805,6 +1931,11 @@ export function watchReader(navigation: PostNavigationController): void {
   let historyPanel: HTMLDivElement | null = null;
   let historyButton: HTMLButtonElement | null = null;
   let historyList: HTMLOListElement | null = null;
+  let historyRail: HTMLDivElement | null = null;
+  let historyThumb: HTMLButtonElement | null = null;
+  let historyPeek: HTMLDivElement | null = null;
+  /** Visit number the thumb is previewing while dragged; 0 follows the post on screen. */
+  let historyPreviewX = 0;
   let articleId = "";
   let dismissedArticleId = "";
   let signature = "";
@@ -2482,8 +2613,9 @@ export function watchReader(navigation: PostNavigationController): void {
    * through the reading session.
    */
   const renderHistoryPanel = (): void => {
-    if (historyList === null) return;
+    if (historyList === null || historyRail === null || historyThumb === null) return;
     const status = navigation.readStatus();
+    const total = status.history.length;
     historyList.textContent = "";
     // Newest first reads as a timeline that grows downward toward the post in
     // front of the reader, which is where the eye already is.
@@ -2520,6 +2652,138 @@ export function watchReader(navigation: PostNavigationController): void {
       empty.textContent = "读完几篇后，这里会留下访问顺序。";
       historyList.append(empty);
     }
+    const currentIndex = Math.max(0, status.history.findIndex((entry) => entry.current));
+    historyPreviewX = currentIndex;
+    renderHistoryRail(currentIndex, total);
+    historyThumb.setAttribute("data-preview", "false");
+  };
+
+  /** Places the thumb and its ticks so the rail matches the stored visit order. */
+  const renderHistoryRail = (index: number, total: number): void => {
+    if (historyRail === null || historyThumb === null) return;
+    const track = historyRail.querySelector<HTMLElement>(".hbu-reader-history-track");
+    if (track === null) return;
+    for (const tick of Array.from(track.querySelectorAll(".hbu-reader-history-tick"))) tick.remove();
+    // One dot per visit, capped so a very long trail does not turn into a blur.
+    const tickCount = total > 1 && total <= 30 ? total : 0;
+    for (let i = 0; i < tickCount; i += 1) {
+      const tick = document.createElement("span");
+      tick.className = "hbu-reader-history-tick";
+      tick.style.top = historyRailOffset(i, total) * 100 + "%";
+      track.append(tick);
+    }
+    historyThumb.style.top = historyRailOffset(index, total) * 100 + "%";
+    historyThumb.textContent = total === 0 ? "0/0" : index + 1 + "/" + total;
+    historyThumb.setAttribute("aria-valuemin", total === 0 ? "0" : "1");
+    historyThumb.setAttribute("aria-valuemax", String(total));
+    historyThumb.setAttribute("aria-valuenow", String(total === 0 ? 0 : index + 1));
+    historyThumb.setAttribute("aria-valuetext", total === 0 ? "暂无记录" : "第 " + (index + 1) + " 篇，共 " + total + " 篇");
+    historyThumb.disabled = total === 0;
+    historyRail.hidden = total === 0;
+    if (historyPeek !== null) {
+      const entry = navigation.readStatus().history[index];
+      historyPeek.textContent = entry === undefined || entry.title === "" ? "" : entry.title;
+      historyPeek.hidden = historyPeek.textContent === "";
+    }
+  };
+
+  /** The rail mirrors the list above it: the newest visit sits at the top. */
+  const historyRailOffset = (index: number, total: number): number => {
+    if (total <= 1) return 0;
+    return (total - 1 - index) / (total - 1);
+  };
+
+  const historyIndexFromRatio = (ratio: number, total: number): number => {
+    if (total <= 0) return 0;
+    const clamped = Number.isFinite(ratio) ? Math.min(1, Math.max(0, ratio)) : 0;
+    return total - 1 - Math.round(clamped * (total - 1));
+  };
+
+  /** Moves the thumb to a visit number without leaving the post on screen. */
+  const previewHistoryIndex = (index: number): number => {
+    const total = navigation.readStatus().history.length;
+    const next = Math.min(Math.max(0, index), Math.max(0, total - 1));
+    historyPreviewX = next;
+    renderHistoryRail(next, total);
+    historyThumb?.setAttribute("data-preview", "true");
+    return next;
+  };
+
+  const commitHistoryIndex = (index: number): void => {
+    const entry = navigation.readStatus().history[index];
+    if (entry === undefined || entry.current) {
+      renderHistoryPanel();
+      return;
+    }
+    closeHistoryPanel();
+    openReaderArticle(entry.id);
+  };
+
+  /**
+   * Binds drag, track clicks and arrow keys to the rail. Every gesture previews
+   * the target visit in the thumb and only opens the post once the pointer is
+   * released, so a long drag never fires a burst of navigations.
+   */
+  const bindHistoryRail = (railBody: HTMLDivElement, track: HTMLElement, thumb: HTMLButtonElement): void => {
+    let dragging = false;
+    const ratioAt = (clientY: number): number => {
+      const rect = railBody.getBoundingClientRect();
+      if (rect.height <= 0) return 0;
+      return (clientY - rect.top) / rect.height;
+    };
+    const moveTo = (clientY: number): number => {
+      const total = navigation.readStatus().history.length;
+      return previewHistoryIndex(historyIndexFromRatio(ratioAt(clientY), total));
+    };
+    const endDrag = (event: PointerEvent): void => {
+      if (!dragging) return;
+      dragging = false;
+      thumb.dataset["dragging"] = "false";
+      if (thumb.hasPointerCapture(event.pointerId)) thumb.releasePointerCapture(event.pointerId);
+      commitHistoryIndex(historyPreviewX);
+    };
+    thumb.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      dragging = true;
+      thumb.dataset["dragging"] = "true";
+      thumb.setPointerCapture(event.pointerId);
+      moveTo(event.clientY);
+    });
+    thumb.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      moveTo(event.clientY);
+    });
+    thumb.addEventListener("pointerup", endDrag);
+    thumb.addEventListener("pointercancel", (event) => {
+      if (!dragging) return;
+      dragging = false;
+      thumb.dataset["dragging"] = "false";
+      if (thumb.hasPointerCapture(event.pointerId)) thumb.releasePointerCapture(event.pointerId);
+      renderHistoryPanel();
+    });
+    track.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      commitHistoryIndex(moveTo(event.clientY));
+    });
+    thumb.addEventListener("keydown", (event) => {
+      const total = navigation.readStatus().history.length;
+      if (total === 0) return;
+      let next = historyPreviewX;
+      // Up walks toward the newer visits at the top, down toward older ones.
+      if (event.key === "ArrowUp" || event.key === "ArrowRight") next += 1;
+      else if (event.key === "ArrowDown" || event.key === "ArrowLeft") next -= 1;
+      else if (event.key === "Home") next = total - 1;
+      else if (event.key === "End") next = 0;
+      else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        commitHistoryIndex(historyPreviewX);
+        return;
+      } else return;
+      event.preventDefault();
+      previewHistoryIndex(next);
+    });
   };
 
   const openHistoryPanel = (rail: HTMLElement, button: HTMLButtonElement): void => {
@@ -2538,11 +2802,36 @@ export function watchReader(navigation: PostNavigationController): void {
       const label = document.createElement("div");
       label.className = "hbu-reader-history-label";
       label.textContent = "阅读时间轴";
+      const body = document.createElement("div");
+      body.className = "hbu-reader-history-body";
       const list = document.createElement("ol");
       list.className = "hbu-reader-history-list";
-      panel.append(label, list);
+      const railTrack = document.createElement("div");
+      railTrack.className = "hbu-reader-history-track";
+      const thumb = document.createElement("button");
+      thumb.type = "button";
+      thumb.className = "hbu-reader-history-thumb";
+      thumb.setAttribute("role", "slider");
+      thumb.setAttribute("aria-label", "阅读时间轴位置");
+      thumb.setAttribute("aria-orientation", "vertical");
+      thumb.setAttribute("aria-valuemin", "0");
+      thumb.setAttribute("aria-valuemax", "0");
+      thumb.setAttribute("aria-valuenow", "0");
+      thumb.title = "拖动快速跳转，点击跳回当前篇";
+      const railBody = document.createElement("div");
+      railBody.className = "hbu-reader-history-rail";
+      railBody.append(railTrack, thumb);
+      const peek = document.createElement("div");
+      peek.className = "hbu-reader-history-peek";
+      peek.hidden = true;
+      body.append(list, railBody);
+      panel.append(label, body, peek);
       historyPanel = panel;
       historyList = list;
+      historyRail = railBody;
+      historyThumb = thumb;
+      historyPeek = peek;
+      bindHistoryRail(railBody, railTrack, thumb);
     }
     historyButton = button;
     if (historyPanel.parentNode !== rail) rail.append(historyPanel);
@@ -3175,6 +3464,8 @@ export function watchReader(navigation: PostNavigationController): void {
       image.loading = "lazy";
       image.referrerPolicy = "no-referrer";
       image.src = segment.src;
+      image.alt = "评论图片";
+      image.addEventListener("click", () => openLightbox(segment.src));
       node.append(image);
     }
   };
@@ -3990,7 +4281,7 @@ export function watchReader(navigation: PostNavigationController): void {
     panel: HTMLDivElement,
   ): { close: (restoreFocus: boolean) => void } => {
     const grid = document.createElement("div");
-    grid.className = "hbu-reader-composer-emoji-grid";
+    grid.className = "hbu-reader-composer-emoji-groups";
     let isOpen = false;
     let outsideBound = false;
     const detachOutside = () => {
@@ -4015,8 +4306,8 @@ export function watchReader(navigation: PostNavigationController): void {
       if (buttons.length === 0) return;
       buttons[Math.min(buttons.length - 1, Math.max(0, index))].focus({ preventScroll: true });
     };
-    const insert = (name: string): void => {
-      const token = "[cube_" + name + "]";
+    const insert = (pack: RailEmojiPack, name: string): void => {
+      const token = "[" + pack + "_" + name + "]";
       const original = input.value;
       const start = input.selectionStart ?? original.length;
       const end = input.selectionEnd ?? start;
@@ -4039,21 +4330,37 @@ export function watchReader(navigation: PostNavigationController): void {
       outsideBound = true;
       focusAt(0);
     };
-    const buttons: HTMLButtonElement[] = RAIL_EMOJI_NAMES.map((name, index) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.setAttribute("aria-label", name);
-      button.title = name;
-      const glyph = document.createElement("span");
-      const sheet = railEmojiSheetSize("cube", 22);
-      glyph.style.backgroundImage = 'url("' + RAIL_EMOJI_PACKS.cube.sprite + '")';
-      glyph.style.backgroundSize = sheet.width + "px " + sheet.height + "px";
-      glyph.style.backgroundPosition = "-" + (index % 6) * 22 + "px -" + Math.floor(index / 6) * 22 + "px";
-      button.append(glyph);
-      button.addEventListener("click", () => insert(name));
-      grid.append(button);
-      return button;
-    });
+    // Both sprite packs the site itself accepts are offered here. The cube pack
+    // is the historical default, and heygirl previously had no way to be sent.
+    const buttons: HTMLButtonElement[] = [];
+    for (const pack of ["cube", "heygirl"] as const) {
+      const names = pack === "cube" ? RAIL_EMOJI_NAMES : RAIL_HEYGIRL_NAMES;
+      const group = document.createElement("div");
+      group.className = "hbu-reader-composer-emoji-group";
+      group.dataset["pack"] = pack;
+      const label = document.createElement("div");
+      label.className = "hbu-reader-composer-emoji-label";
+      label.textContent = pack === "cube" ? "盒表情" : "黑盒娘";
+      const sectionGrid = document.createElement("div");
+      sectionGrid.className = "hbu-reader-composer-emoji-grid";
+      for (const name of names) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset["pack"] = pack;
+        button.dataset["name"] = name;
+        button.setAttribute("aria-label", (pack === "cube" ? "盒表情 " : "黑盒娘 ") + name);
+        button.title = name;
+        const glyph = document.createElement("span");
+        const emoji = resolveRailEmoji(pack, name);
+        if (emoji !== null) applyRailEmojiStyle(glyph, emoji, 22);
+        button.append(glyph);
+        button.addEventListener("click", () => insert(pack, name));
+        sectionGrid.append(button);
+        buttons.push(button);
+      }
+      group.append(label, sectionGrid);
+      grid.append(group);
+    }
     panel.append(grid);
     panel.addEventListener("keydown", (event) => {
       const active = document.activeElement;
@@ -4382,23 +4689,110 @@ export function watchReader(navigation: PostNavigationController): void {
     host?.querySelector<HTMLElement>('[data-action="comment"]')?.focus({ preventScroll: true });
   };
 
+  const closeLightbox = (): void => {
+    lightbox?.remove();
+    lightbox = null;
+    lightboxImage = null;
+    lightboxZoom = 0;
+    lightboxBaseWidth = 0;
+    lightboxNatural = { width: 0, height: 0 };
+  };
+
+  /** Applies the current zoom step to the open picture without reopening it. */
+  const applyLightboxZoom = (): void => {
+    if (lightboxImage === null) return;
+    const width = computeLightboxZoomWidth(lightboxBaseWidth, lightboxNatural.width, lightboxZoom);
+    if (width <= 0) return;
+    lightboxImage.style.width = width + "px";
+    lightboxImage.dataset["zoom"] = String(lightboxZoom);
+    const hint = lightbox?.querySelector<HTMLElement>(".hbu-reader-lightbox-hint");
+    if (hint !== null && hint !== undefined) {
+      hint.textContent = lightboxZoom === 0
+        ? "左键放大 · 右键缩小 · 滚轮或拖动查看长图"
+        : "左键放大 · 右键缩小 · 已放大 " + Math.round((width / Math.max(1, lightboxBaseWidth)) * 100) + "%";
+    }
+  };
+
+  /**
+   * Sole image viewer. Left click steps the picture up, right click steps it
+   * back down, and a long picture opens at roughly half the screen width so it
+   * can be read by scrolling instead of by squinting.
+   */
   const openLightbox = (source: string): void => {
     if (source === "") return;
     if (lightbox === null) {
-      lightbox = document.createElement("button");
-      lightbox.type = "button";
-      lightbox.className = "hbu-reader-lightbox";
-      lightbox.setAttribute("aria-label", "关闭大图");
+      const overlay = document.createElement("div");
+      overlay.className = "hbu-reader-lightbox";
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-modal", "true");
+      overlay.setAttribute("aria-label", "查看大图");
+      overlay.tabIndex = -1;
+
+      const bar = document.createElement("div");
+      bar.className = "hbu-reader-lightbox-bar";
+      const hint = document.createElement("div");
+      hint.className = "hbu-reader-lightbox-hint";
+      hint.textContent = "左键放大 · 右键缩小 · 滚轮或拖动查看长图";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "hbu-reader-lightbox-close";
+      close.setAttribute("aria-label", "关闭大图");
+      close.title = "关闭大图";
+      close.innerHTML = READER_ICONS.close;
+      close.addEventListener("click", closeLightbox);
+      bar.append(hint, close);
+
+      const stage = document.createElement("div");
+      stage.className = "hbu-reader-lightbox-stage";
       const img = document.createElement("img");
-      lightbox.append(img);
-      lightbox.addEventListener("click", () => {
-        lightbox?.remove();
-        lightbox = null;
+      img.alt = "";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      img.dataset["zoom"] = "0";
+      // A left click zooms in one step, a right click steps back out, and a
+      // double click keeps the familiar browser shortcut to the base size.
+      img.addEventListener("click", (event) => {
+        event.stopPropagation();
+        lightboxZoom = Math.min(LIGHTBOX_ZOOM_MAX, lightboxZoom + 1);
+        applyLightboxZoom();
       });
-      document.body.append(lightbox);
+      img.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        lightboxZoom = Math.max(0, lightboxZoom - 1);
+        applyLightboxZoom();
+      });
+      img.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        lightboxZoom = 0;
+        applyLightboxZoom();
+      });
+      img.addEventListener("load", () => {
+        lightboxNatural = { width: img.naturalWidth, height: img.naturalHeight };
+        lightboxBaseWidth = computeLightboxBaseWidth(img.naturalWidth, img.naturalHeight, window.innerWidth, window.innerHeight);
+        applyLightboxZoom();
+      });
+      stage.append(img);
+      // The picture swallows its own clicks; anywhere else on the backdrop closes.
+      overlay.addEventListener("click", closeLightbox);
+      overlay.append(bar, stage);
+      document.body.append(overlay);
+      lightbox = overlay;
+      lightboxImage = img;
     }
-    const img = lightbox.querySelector<HTMLImageElement>("img");
-    if (img !== null) img.src = source;
+    const img = lightboxImage;
+    if (img === null) return;
+    lightboxZoom = 0;
+    lightboxBaseWidth = 0;
+    lightboxNatural = { width: 0, height: 0 };
+    img.dataset["zoom"] = "0";
+    img.style.width = "";
+    img.src = source;
+    // A cached picture may already be complete, so the load event never fires.
+    if (img.complete && img.naturalWidth > 0) {
+      lightboxNatural = { width: img.naturalWidth, height: img.naturalHeight };
+      lightboxBaseWidth = computeLightboxBaseWidth(img.naturalWidth, img.naturalHeight, window.innerWidth, window.innerHeight);
+      applyLightboxZoom();
+    }
     lightbox.focus({ preventScroll: true });
   };
 
@@ -6022,10 +6416,13 @@ export function watchReader(navigation: PostNavigationController): void {
     historyPanel = null;
     historyButton = null;
     historyList = null;
+    historyRail = null;
+    historyThumb = null;
+    historyPeek = null;
+    historyPreviewX = 0;
     host?.remove();
     host = null;
-    lightbox?.remove();
-    lightbox = null;
+    closeLightbox();
     signature = "";
     pageCount = 0;
     activeIndex = 0;
@@ -6129,10 +6526,22 @@ export function watchReader(navigation: PostNavigationController): void {
     syncHistoryAction();
   });
 
+  document.addEventListener(READER_HISTORY_LIMIT_EVENT, (event) => {
+    const detail = event instanceof CustomEvent ? event.detail : undefined;
+    const limit = typeof detail === "number" && Number.isSafeInteger(detail) && detail >= 0 ? detail : readReaderHistoryLimit();
+    applyPostHistoryLimit(limit);
+    if (historyPanel !== null && !historyPanel.hidden) renderHistoryPanel();
+    if (host !== null) syncReaderEndActions();
+  });
+
   document.addEventListener("keydown", (event) => {
     if (host === null || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape") {
-      if (cyDialog !== null) {
+      // The lightbox sits above every reader surface, so it owns Escape first.
+      if (lightbox !== null) {
+        event.preventDefault();
+        closeLightbox();
+      } else if (cyDialog !== null) {
         event.preventDefault();
         closeCyDialog();
       } else if (spacingPanel !== null && !spacingPanel.hidden) {
@@ -6151,10 +6560,6 @@ export function watchReader(navigation: PostNavigationController): void {
       } else if (isCommentPanelOpen()) {
         event.preventDefault();
         closeComments();
-      } else if (lightbox !== null) {
-        event.preventDefault();
-        lightbox.remove();
-        lightbox = null;
       } else if (isSiteAlertOpen()) {
         // The site confirmation dialog sits above the reader, so let it own this Escape.
         return;

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  RAIL_EMOJI_NAMES,
+  RAIL_HEYGIRL_NAMES,
   RAIL_PAGE_SIZE,
   RAIL_PENDING_ID_PREFIX,
   attachRailPendingReplies,
@@ -26,6 +28,8 @@ import {
   railItemsHavePendingReply,
   railThreadHasPendingReply,
   resolveRailEmojiRef,
+  resolveRailEmoji,
+  resolveRailEmojiFontLabel,
   resolveCommentPageProgress,
   resolveMergedCommentProgress,
   writeRailPageCache,
@@ -578,6 +582,49 @@ describe("comment media", () => {
   it("ignores sprite sheet images inside the DOM body", () => {
     const body = parseRailBody('<img src="https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v34.png">');
     expect(body).toEqual([]);
+  });
+
+  it("parses the legacy icon font emoji form", () => {
+    const body = parseRailBody('<i class="cube cube-e012"></i><i class="heygirl heygirl-e019"></i>');
+    expect(body).toEqual([
+      { type: "emoji", pack: "cube", id: "11" },
+      { type: "emoji", pack: "heygirl", id: "11" },
+    ]);
+  });
+
+  it("parses an emoji marker carried by an img tag", () => {
+    const body = parseRailBody('<img data-emoji="cube_11" src="https://a.example/emoji.webp">');
+    expect(body).toEqual([{ type: "emoji", pack: "cube", id: "11" }]);
+  });
+
+  it("keeps an unknown emoji marker readable instead of dropping it", () => {
+    const body = parseRailBody('<span data-emoji="cube_future"></span>');
+    expect(body).toEqual([{ type: "text", text: "[cube_future]" }]);
+  });
+
+  it("keeps an unknown icon font class out of the emoji list", () => {
+    expect(resolveRailEmojiFontLabel("cube cube-e0ff")).toBeNull();
+    expect(resolveRailEmojiFontLabel("avatar avatar-1")).toBeNull();
+    expect(resolveRailEmojiFontLabel("cube cube-e012")).toEqual({ type: "emoji", pack: "cube", id: "11" });
+  });
+
+  it("labels every emoji pack with the full site vocabulary", () => {
+    expect(RAIL_EMOJI_NAMES).toHaveLength(109);
+    expect(RAIL_HEYGIRL_NAMES).toHaveLength(24);
+    for (const [index, name] of RAIL_EMOJI_NAMES.entries()) {
+      expect(resolveRailEmoji("cube", name), "cube " + name).toEqual({
+        type: "emoji",
+        pack: "cube",
+        id: String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1),
+      });
+    }
+    for (const [index, name] of RAIL_HEYGIRL_NAMES.entries()) {
+      expect(resolveRailEmoji("heygirl", name), "heygirl " + name).toEqual({
+        type: "emoji",
+        pack: "heygirl",
+        id: String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1),
+      });
+    }
   });
 
   it("appends the imgs field after the parsed text", () => {

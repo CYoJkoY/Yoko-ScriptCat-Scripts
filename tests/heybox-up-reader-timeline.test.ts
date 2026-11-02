@@ -112,4 +112,67 @@ describe("reader history timeline", () => {
     setReaderTimelinePreference(true);
     expect(host.querySelector('[data-action="history"]')).not.toBeNull();
   });
+
+  it("prints the visit position as x/n on the draggable thumb", () => {
+    const host = mountReader();
+    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+    const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
+    expect(thumb?.textContent).toBe("2/2");
+    expect(thumb?.getAttribute("role")).toBe("slider");
+    expect(thumb?.getAttribute("aria-orientation")).toBe("vertical");
+    expect(thumb?.getAttribute("aria-valuemin")).toBe("1");
+    expect(thumb?.getAttribute("aria-valuemax")).toBe("2");
+    expect(thumb?.getAttribute("aria-valuenow")).toBe("2");
+    expect(thumb?.getAttribute("aria-valuetext")).toBe("第 2 篇，共 2 篇");
+    // The newest visit sits at the top of the rail.
+    expect(thumb?.style.top).toBe("0%");
+  });
+
+  it("previews another visit with the arrow keys without leaving the post", () => {
+    const host = mountReader();
+    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+    const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
+    if (thumb === null) throw new Error("Expected the rail thumb");
+    const peek = host.querySelector<HTMLElement>(".hbu-reader-history-peek");
+    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true }));
+    expect(thumb.textContent).toBe("2/2");
+    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+    expect(thumb.textContent).toBe("1/2");
+    expect(thumb.style.top).toBe("100%");
+    expect(thumb.getAttribute("data-preview")).toBe("true");
+    expect(peek?.textContent).toBe("Earlier post");
+    expect(peek?.hidden).toBe(false);
+
+    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+    expect(thumb.textContent).toBe("2/2");
+    // Previewing never navigates on its own.
+    expect(location.pathname).toBe("/app/bbs/link/123456");
+  });
+
+  it("tracks the pointer while the thumb is dragged", () => {
+    const host = mountReader();
+    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+    const body = host.querySelector<HTMLElement>(".hbu-reader-history-rail");
+    const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
+    if (body === null || thumb === null) throw new Error("Expected the timeline rail");
+    body.getBoundingClientRect = () => ({
+      x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 200, width: 52, height: 200,
+      toJSON: () => ({}),
+    } as DOMRect);
+    thumb.setPointerCapture = (): void => undefined;
+    thumb.releasePointerCapture = (): void => undefined;
+    thumb.hasPointerCapture = (): boolean => true;
+
+    thumb.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientY: 0 }));
+    expect(thumb.getAttribute("data-dragging")).toBe("true");
+    expect(thumb.textContent).toBe("2/2");
+
+    thumb.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 200 }));
+    expect(thumb.textContent).toBe("1/2");
+    expect(thumb.style.top).toBe("100%");
+
+    thumb.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 0 }));
+    expect(thumb.textContent).toBe("2/2");
+    expect(thumb.style.top).toBe("0%");
+  });
 });
