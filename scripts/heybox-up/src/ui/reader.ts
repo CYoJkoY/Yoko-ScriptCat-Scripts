@@ -9,7 +9,7 @@ import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_NAMES, RAIL_EMOJI_PACKS, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, applyRailEmojiStyle, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railEmojiSheetSize, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, READER_TIMELINE_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderLineHeightPreference } from "../state";
@@ -832,8 +832,8 @@ export const READER_CSS = `
      never push the sheet wider than its own column. */
   .hbu-reader-comments-children--deep { margin-top: 6px; padding-left: 0; border-left: 0; }
   .hbu-reader-comments-children--deep > .hbu-reader-comments-child::before { display: none; }
-  .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
-  .hbu-reader-comments-text img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
+  .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 323px; }
+  .hbu-reader-comments-text img, .hbu-reader-comments-text .hbu-reader-comments-image { display: block; max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
   .hbu-reader-comments-status-retry { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 16px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-comments-status-retry:hover { border-color: var(--hbu-reader-accent); }
@@ -3165,14 +3165,12 @@ export function watchReader(navigation: PostNavigationController): void {
         emoji.className = "hbu-reader-comments-emoji";
         emoji.setAttribute("role", "img");
         emoji.setAttribute("aria-label", "表情");
-        const column = (Number(segment.id) % 10) - 1;
-        const row = Math.floor(Number(segment.id) / 10) - 1;
-        emoji.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
-        emoji.style.backgroundPosition = "-" + column * RAIL_EMOJI_CELL + "px -" + row * RAIL_EMOJI_CELL + "px";
+        applyRailEmojiStyle(emoji, segment);
         node.append(emoji);
         continue;
       }
       const image = document.createElement("img");
+      image.className = "hbu-reader-comments-image";
       image.alt = "";
       image.loading = "lazy";
       image.referrerPolicy = "no-referrer";
@@ -4047,9 +4045,9 @@ export function watchReader(navigation: PostNavigationController): void {
       button.setAttribute("aria-label", name);
       button.title = name;
       const glyph = document.createElement("span");
-      const scale = 22 / RAIL_EMOJI_CELL;
-      glyph.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
-      glyph.style.backgroundSize = 102 * scale + "px " + 306 * scale + "px";
+      const sheet = railEmojiSheetSize("cube", 22);
+      glyph.style.backgroundImage = 'url("' + RAIL_EMOJI_PACKS.cube.sprite + '")';
+      glyph.style.backgroundSize = sheet.width + "px " + sheet.height + "px";
       glyph.style.backgroundPosition = "-" + (index % 6) * 22 + "px -" + Math.floor(index / 6) * 22 + "px";
       button.append(glyph);
       button.addEventListener("click", () => insert(name));
@@ -5756,7 +5754,9 @@ export function watchReader(navigation: PostNavigationController): void {
     for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) node.addEventListener(type, stop, { once: true, passive: true });
     const images = Array.from(node.querySelectorAll<HTMLImageElement>("img"));
     const settle = Promise.race([
-      Promise.allSettled(images.map((image) => image.decode())),
+      // decode() is missing in some embedded webviews; a rejected or absent
+      // decode must not leave the restore flag stuck and block later restores.
+      Promise.allSettled(images.map((image) => typeof image.decode === "function" ? image.decode() : Promise.resolve())),
       new Promise<void>((resolve) => window.setTimeout(resolve, 1200)),
     ]);
     settle.then(() => {
