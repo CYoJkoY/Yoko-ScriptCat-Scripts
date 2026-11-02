@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.57
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.58
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -7860,7 +7860,18 @@
     background: var(--hbu-reader-page);
     color: var(--hbu-reader-ink);
   }
-  .hbu-reader-cover { position: relative; inset: auto; flex: 1 1 auto; min-height: 240px; overflow: hidden; background: #05070a; }
+  /* The cover is a stage plus a pager band: the band always owns its own row under the photo. */
+  .hbu-reader-cover {
+    position: relative;
+    inset: auto;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 240px;
+    overflow: hidden;
+    background: #05070a;
+  }
+  .hbu-reader-cover-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   .hbu-reader-cover-glow { position: absolute; inset: -48px; background-position: center; background-size: cover; filter: blur(42px) brightness(.5); transform: scale(1.1); }
   .hbu-reader-cover img {
     position: absolute;
@@ -7873,7 +7884,7 @@
     pointer-events: none;
   }
   .hbu-reader-cover img[data-active="true"] { opacity: 1; pointer-events: auto; }
-  .hbu-reader-cover::after {
+  .hbu-reader-cover-stage::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -7899,9 +7910,30 @@
   .hbu-reader-cover-nav[data-side="prev"] { left: 16px; }
   .hbu-reader-cover-nav[data-side="next"] { right: 16px; }
   .hbu-reader-cover-nav[hidden] { display: none; }
-  .hbu-reader-cover-dots { position: absolute; top: 80px; left: 50%; z-index: 2; display: flex; gap: 0; transform: translateX(-50%); }
-  .hbu-reader-cover-dots button { position: relative; width: 36px; height: 36px; padding: 0; border: 0; background: transparent; cursor: pointer; }
-  .hbu-reader-cover-dots button::after { content: ""; position: absolute; top: 16px; right: 8px; left: 8px; height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .38); }
+  /* A blank strip below the photo holds the pager, so a dot never covers the picture. */
+  .hbu-reader-cover-progress {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    background: #05070a;
+  }
+  .hbu-reader-cover-progress[hidden] { display: none; }
+  .hbu-reader-cover-dots {
+    display: flex;
+    gap: 0;
+    align-items: center;
+    max-width: 100%;
+    height: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .hbu-reader-cover-dots::-webkit-scrollbar { display: none; }
+  .hbu-reader-cover-dots button { position: relative; width: 36px; height: 32px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+  .hbu-reader-cover-dots button::after { content: ""; position: absolute; top: 50%; right: 8px; left: 8px; height: 3px; margin-top: -1.5px; border-radius: 99px; background: rgba(255, 255, 255, .38); }
   .hbu-reader-cover-dots button[aria-current="true"]::after { background: #fff; }
   .hbu-reader-caption {
     position: relative;
@@ -10929,7 +10961,7 @@
       if (commentState.loading) return;
       const stalePanel = commentState.loaded && Date.now() - commentState.loadedAt > COMMENT_PANEL_STALE_MS;
       if (!commentState.loaded) {
-        void loadReaderComments(1);
+        void loadReaderComments(1, { fresh: true, force: true });
       } else if (stalePanel) {
         void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
       }
@@ -11811,11 +11843,34 @@
     const createHeroCover = (page, data, sources, kind) => {
       const cover = document.createElement("div");
       cover.className = "hbu-reader-cover";
+      const stage = document.createElement("div");
+      stage.className = "hbu-reader-cover-stage";
+      const progress = document.createElement("div");
+      progress.className = "hbu-reader-cover-progress";
+      progress.hidden = true;
       const glow = document.createElement("div");
       glow.className = "hbu-reader-cover-glow";
       const capturedArticleId = articleId;
       const capturedGeneration = readerGeneration;
       const images = [];
+      const renderCoverPager = () => {
+        const nav = stage.querySelectorAll(".hbu-reader-cover-nav");
+        for (const node of nav) node.hidden = coverTotal < 2;
+        progress.textContent = "";
+        progress.hidden = coverTotal < 2;
+        if (coverTotal < 2) return;
+        const row = document.createElement("div");
+        row.className = "hbu-reader-cover-dots";
+        images.forEach((image, dotIndex) => {
+          const dot = document.createElement("button");
+          dot.type = "button";
+          dot.setAttribute("aria-label", "封面 " + (dotIndex + 1));
+          dot.setAttribute("aria-current", String(dotIndex === coverIndex));
+          dot.addEventListener("click", () => setCover(dotIndex));
+          row.append(dot);
+        });
+        progress.append(row);
+      };
       const dropFailedCover = (failed) => {
         if (host === null || !host.isConnected) return;
         if (articleId !== capturedArticleId || readerGeneration !== capturedGeneration) return;
@@ -11837,26 +11892,10 @@
           return;
         }
         page.dataset["cover"] = kind;
-        const nav = cover.querySelectorAll(".hbu-reader-cover-nav");
-        for (const node of nav) node.hidden = coverTotal < 2;
-        const dots = cover.querySelector(".hbu-reader-cover-dots");
-        if (dots !== null) dots.remove();
-        if (coverTotal > 1) {
-          const row = document.createElement("div");
-          row.className = "hbu-reader-cover-dots";
-          images.forEach((image, dotIndex) => {
-            const dot = document.createElement("button");
-            dot.type = "button";
-            dot.setAttribute("aria-label", "封面 " + (dotIndex + 1));
-            dot.setAttribute("aria-current", String(dotIndex === coverIndex));
-            dot.addEventListener("click", () => setCover(dotIndex));
-            row.append(dot);
-          });
-          cover.append(row);
-        }
+        renderCoverPager();
         setCover(coverIndex);
       };
-      cover.append(glow);
+      stage.append(glow);
       sources.forEach((source, index) => {
         const img = document.createElement("img");
         img.alt = index === 0 ? data.title : "封面 " + (index + 1);
@@ -11868,7 +11907,7 @@
           dropFailedCover(img);
         }, { once: true });
         img.addEventListener("click", () => openLightbox(readImageSource(img)));
-        cover.append(img);
+        stage.append(img);
         images.push(img);
         img.src = source;
       });
@@ -11891,18 +11930,10 @@
         next.setAttribute("aria-label", "下一张封面");
         next.innerHTML = READER_ICONS.next;
         next.addEventListener("click", () => setCover(coverIndex + 1));
-        const dots = document.createElement("div");
-        dots.className = "hbu-reader-cover-dots";
-        sources.forEach((source, index) => {
-          const dot = document.createElement("button");
-          dot.type = "button";
-          dot.setAttribute("aria-label", "封面 " + (index + 1));
-          dot.setAttribute("aria-current", String(index === 0));
-          dot.addEventListener("click", () => setCover(index));
-          dots.append(dot);
-        });
-        cover.append(prev, next, dots);
+        stage.append(prev, next);
       }
+      renderCoverPager();
+      cover.append(stage, progress);
       page.prepend(cover);
     };
     const createHero = (data) => {
