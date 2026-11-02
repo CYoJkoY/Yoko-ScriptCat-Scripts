@@ -4078,7 +4078,12 @@ export function watchReader(navigation: PostNavigationController): void {
     // elsewhere, so a stale page one is refreshed from the network.
     const stalePanel = commentState.loaded && Date.now() - commentState.loadedAt > COMMENT_PANEL_STALE_MS;
     if (!commentState.loaded) {
-      void loadReaderComments(1);
+      // The first page is read from the network on open. The site itself keeps a
+      // cache of the tree and only prepends a freshly written floor there, so a
+      // cached copy taken before the write (for example by the link state read
+      // during render) would hide the reader's own new comment after leaving and
+      // re-entering the post.
+      void loadReaderComments(1, { fresh: true, force: true });
     } else if (stalePanel) {
       void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
     }
