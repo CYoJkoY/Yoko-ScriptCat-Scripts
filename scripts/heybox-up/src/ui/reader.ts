@@ -12,7 +12,7 @@ import { navigateToPath } from "./navigation";
 import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
-import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
+import { HIDE_CY_EVENT, READER_EVENT, READER_TIMELINE_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderLineHeightPreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
 
 export interface RelatedPostLink {
@@ -137,6 +137,7 @@ export const READER_ICONS = {
   share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="2.2"/><circle cx="17.5" cy="6" r="2.2"/><circle cx="17.5" cy="18" r="2.2"/><path d="m8.1 11 7.4-3.9M8.1 13l7.4 3.9"/></svg>',
   previous: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
   next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>',
+  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.6V12l3.1 1.9"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V10h-5.4"/></svg>',
 };
 
@@ -731,6 +732,24 @@ export const READER_CSS = `
   .hbu-reader-spacing-unit { font-size: 12px; color: var(--hbu-reader-float-muted); }
   .hbu-reader-spacing-reset { height: 32px; margin-left: auto; padding: 0 9px; border: 1px solid var(--hbu-reader-float-border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-spacing-reset:hover { background: var(--hbu-reader-float-hover); }
+  /* The timeline mirrors the spacing popover, but its rows are full-width
+     targets so a long history stays easy to hit while reading. */
+  .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 236px; max-width: calc(100vw - 84px); max-height: min(360px, 62dvh); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
+  .hbu-reader-history-menu[hidden] { display: none; }
+  .hbu-reader-history-label { flex: none; font-size: 12px; font-weight: 650; color: var(--hbu-reader-float-ink); }
+  .hbu-reader-history-list { display: flex; flex-direction: column; gap: 1px; min-height: 0; margin: 0; padding: 0 0 0 2px; overflow-y: auto; list-style: none; }
+  .hbu-reader-history-item { position: relative; display: flex; padding-left: 13px; }
+  /* A single continuous rule carries the visit order between rows. */
+  .hbu-reader-history-item::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-item:first-child::before { top: 50%; }
+  .hbu-reader-history-item:last-child::before { bottom: 50%; }
+  .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-row { display: flex; align-items: center; width: 100%; min-height: 30px; padding: 5px 7px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.45; text-align: left; cursor: pointer; }
+  .hbu-reader-history-row:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-history-title { display: -webkit-box; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .hbu-reader-history-row[aria-current="true"] { color: var(--hbu-reader-accent); font-weight: 650; }
+  .hbu-reader-history-item[data-current="true"] .hbu-reader-history-dot { background: var(--hbu-reader-accent); }
+  .hbu-reader-history-empty { padding: 6px 8px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
   .hbu-reader-cy-dialog { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--hbu-reader-scrim); backdrop-filter: blur(4px); }
   .hbu-reader-cy-dialog[hidden] { display: none; }
   .hbu-reader-cy-card { width: min(520px, 100%); padding: 20px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); box-shadow: var(--hbu-reader-shadow); }
@@ -1783,6 +1802,9 @@ export function watchReader(navigation: PostNavigationController): void {
   let spacingPanel: HTMLDivElement | null = null;
   let spacingButton: HTMLButtonElement | null = null;
   let spacingInput: HTMLInputElement | null = null;
+  let historyPanel: HTMLDivElement | null = null;
+  let historyButton: HTMLButtonElement | null = null;
+  let historyList: HTMLOListElement | null = null;
   let articleId = "";
   let dismissedArticleId = "";
   let signature = "";
@@ -2440,6 +2462,131 @@ export function watchReader(navigation: PostNavigationController): void {
     syncNumberInput(readerLineHeightInput, value);
   };
 
+  const closeHistoryPanel = (returnFocus: boolean = false): void => {
+    if (historyPanel === null) return;
+    if (historyPanel.hidden) return;
+    historyPanel.hidden = true;
+    historyButton?.setAttribute("aria-expanded", "false");
+    if (returnFocus) historyButton?.focus({ preventScroll: true });
+  };
+  document.addEventListener("pointerdown", (event) => {
+    if (historyPanel === null || historyPanel.hidden) return;
+    const target = event.target instanceof Node ? event.target : null;
+    if (historyPanel.contains(target) || historyButton?.contains(target)) return;
+    closeHistoryPanel();
+  }, true);
+
+  /**
+   * Rebuilds the visit list. The current entry is highlighted and every other
+   * row jumps straight to that post, so the timeline works as a shortcut back
+   * through the reading session.
+   */
+  const renderHistoryPanel = (): void => {
+    if (historyList === null) return;
+    const status = navigation.readStatus();
+    historyList.textContent = "";
+    // Newest first reads as a timeline that grows downward toward the post in
+    // front of the reader, which is where the eye already is.
+    const ordered = status.history.slice().reverse();
+    for (const entry of ordered) {
+      const item = document.createElement("li");
+      item.className = "hbu-reader-history-item";
+      if (entry.current) item.dataset["current"] = "true";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "hbu-reader-history-row";
+      button.dataset["id"] = entry.id;
+      if (entry.current) button.setAttribute("aria-current", "true");
+      const marker = document.createElement("span");
+      marker.className = "hbu-reader-history-dot";
+      const label = document.createElement("span");
+      label.className = "hbu-reader-history-title";
+      label.textContent = entry.title === "" ? "帖子 " + entry.id : entry.title;
+      button.append(marker, label);
+      button.addEventListener("click", () => {
+        if (entry.current) {
+          closeHistoryPanel(true);
+          return;
+        }
+        closeHistoryPanel();
+        openReaderArticle(entry.id);
+      });
+      item.append(button);
+      historyList.append(item);
+    }
+    if (ordered.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "hbu-reader-history-empty";
+      empty.textContent = "读完几篇后，这里会留下访问顺序。";
+      historyList.append(empty);
+    }
+  };
+
+  const openHistoryPanel = (rail: HTMLElement, button: HTMLButtonElement): void => {
+    if (historyPanel !== null && !historyPanel.hidden) {
+      closeHistoryPanel(true);
+      return;
+    }
+    closeFavourMenu();
+    closeSpacingMenu();
+    if (historyPanel === null) {
+      const panel = document.createElement("div");
+      panel.className = "hbu-reader-history-menu";
+      panel.hidden = true;
+      panel.setAttribute("role", "group");
+      panel.setAttribute("aria-label", "阅读时间轴");
+      const label = document.createElement("div");
+      label.className = "hbu-reader-history-label";
+      label.textContent = "阅读时间轴";
+      const list = document.createElement("ol");
+      list.className = "hbu-reader-history-list";
+      panel.append(label, list);
+      historyPanel = panel;
+      historyList = list;
+    }
+    historyButton = button;
+    if (historyPanel.parentNode !== rail) rail.append(historyPanel);
+    renderHistoryPanel();
+    historyPanel.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    historyPanel.querySelector<HTMLButtonElement>(".hbu-reader-history-row[aria-current='true']")?.focus({ preventScroll: true });
+  };
+
+  const createHistoryAction = (rail: HTMLElement): HTMLButtonElement => {
+    const history = document.createElement("button");
+    history.type = "button";
+    history.className = "hbu-reader-action";
+    history.dataset["action"] = "history";
+    history.setAttribute("aria-label", "阅读时间轴");
+    history.setAttribute("aria-haspopup", "true");
+    history.setAttribute("aria-expanded", "false");
+    history.title = "阅读时间轴";
+    history.innerHTML = READER_ICONS.history;
+    history.addEventListener("click", () => openHistoryPanel(rail, history));
+    return history;
+  };
+
+  const syncHistoryAction = (): void => {
+    if (host === null) return;
+    const rail = host.querySelector<HTMLElement>(".hbu-reader-rail");
+    if (rail === null) return;
+    const existing = rail.querySelector<HTMLButtonElement>('[data-action="history"]');
+    if (!readReaderTimelinePreference()) {
+      closeHistoryPanel();
+      existing?.remove();
+      historyPanel?.remove();
+      historyPanel = null;
+      historyList = null;
+      historyButton = null;
+      return;
+    }
+    if (existing !== null) return;
+    const spacing = rail.querySelector<HTMLElement>('[data-action="spacing"]');
+    const history = createHistoryAction(rail);
+    if (spacing === null) rail.append(history);
+    else rail.insertBefore(history, spacing);
+  };
+
   const openSpacingMenu = (rail: HTMLElement, button: HTMLButtonElement): void => {
     if (spacingPanel !== null && !spacingPanel.hidden) {
       closeSpacingMenu();
@@ -2447,6 +2594,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     closeFavourMenu();
+    closeHistoryPanel();
     if (spacingPanel === null) {
       const panel = document.createElement("div");
       panel.className = "hbu-reader-spacing-menu";
@@ -2835,6 +2983,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     closeSpacingMenu();
+    closeHistoryPanel();
     const targetId = articleId;
     const generation = readerGeneration;
     favourMenuBusy = true;
@@ -5178,6 +5327,11 @@ export function watchReader(navigation: PostNavigationController): void {
     spacing.innerHTML = SETTINGS_ICON;
     spacing.addEventListener("click", () => openSpacingMenu(rail, spacing));
     rail.append(avatar, like, favour, cy, comment, share, spacing);
+    if (readReaderTimelinePreference()) {
+      // The timeline button sits above the settings gear, inside the same rail,
+      // so it keeps the 48px touch target the other actions use.
+      rail.insertBefore(createHistoryAction(rail), spacing);
+    }
     return rail;
   };
 
@@ -5665,6 +5819,9 @@ export function watchReader(navigation: PostNavigationController): void {
     spacingPanel = null;
     spacingButton = null;
     spacingInput = null;
+    historyPanel = null;
+    historyButton = null;
+    historyList = null;
     coverIndex = 0;
     coverTotal = 0;
     activeIndex = 0;
@@ -5862,6 +6019,9 @@ export function watchReader(navigation: PostNavigationController): void {
     spacingPanel = null;
     spacingButton = null;
     spacingInput = null;
+    historyPanel = null;
+    historyButton = null;
+    historyList = null;
     host?.remove();
     host = null;
     lightbox?.remove();
@@ -5938,6 +6098,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     syncReaderEndActions();
+    if (historyPanel !== null && !historyPanel.hidden) renderHistoryPanel();
     if (readerPendingAdvanceSourceId === "") return;
     if (status.currentId !== readerPendingAdvanceSourceId || status.revision !== readerPendingAdvanceRevision) {
       clearPendingReaderAdvance();
@@ -5964,6 +6125,10 @@ export function watchReader(navigation: PostNavigationController): void {
     sync();
   });
 
+  document.addEventListener(READER_TIMELINE_EVENT, () => {
+    syncHistoryAction();
+  });
+
   document.addEventListener("keydown", (event) => {
     if (host === null || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape") {
@@ -5974,6 +6139,9 @@ export function watchReader(navigation: PostNavigationController): void {
         event.preventDefault();
         closeSpacingMenu();
         spacingButton?.focus({ preventScroll: true });
+      } else if (historyPanel !== null && !historyPanel.hidden) {
+        event.preventDefault();
+        closeHistoryPanel(true);
       } else if (favourPanel !== null && !favourPanel.hidden) {
         event.preventDefault();
         closeFavourMenu(true);

@@ -1,6 +1,6 @@
 import { ADAPTED_ROUTES, FEED_WIDTH_MAX, FEED_WIDTH_MIN, FEED_WIDTH_STEP, isOfficialHomePath, PAGE_ROUTE, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
 import { ensureStyleElement, registerPageSync, removeStyleElement } from "../core/page-sync";
-import { localStore, parseFeedWidthInput, parseReaderLineHeightInput, readCommentPreviewPreference, readFeedWidth, readNavMotionPreference, readReaderLineHeight, readReaderPreference, setCommentPreviewPreference, setFeedWidthPreference, setNavMotionPreference, setReaderLineHeightPreference, setReaderPreference } from "../state";
+import { localStore, parseFeedWidthInput, parseReaderLineHeightInput, readCommentPreviewPreference, readFeedWidth, readNavMotionPreference, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, setCommentPreviewPreference, setFeedWidthPreference, setNavMotionPreference, setReaderLineHeightPreference, setReaderPreference, setReaderTimelinePreference } from "../state";
 
 export const THEME_CLASS = "heybox-up-theme";
 
@@ -69,6 +69,8 @@ export let previewToggle: HTMLButtonElement | null = null;
 export let navMotionToggle: HTMLButtonElement | null = null;
 
 export let readerToggle: HTMLButtonElement | null = null;
+
+export let readerTimelineToggle: HTMLButtonElement | null = null;
 
 export let feedWidthChips: Element[] = [];
 
@@ -1741,6 +1743,7 @@ export function updateThemeEntry(): void {
   if (previewToggle) previewToggle.setAttribute("aria-checked", String(readCommentPreviewPreference()));
   if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
   if (readerToggle) readerToggle.setAttribute("aria-checked", String(readReaderPreference()));
+  if (readerTimelineToggle) readerTimelineToggle.setAttribute("aria-checked", String(readReaderTimelinePreference()));
   syncFeedWidthControls(readFeedWidth());
   syncNumberInput(readerLineHeightInput, readReaderLineHeight());
 }
@@ -1845,6 +1848,7 @@ export function createThemeEntry(): void {
     createCommentPreviewToggle(),
     createNavMotionToggle(),
     createReaderToggle(),
+    createReaderTimelineToggle(),
     createReaderLineHeightControl(),
     createThemeMenuSeparator(),
     createFeedWidthControl()
@@ -1992,6 +1996,33 @@ export function createReaderToggle(): HTMLButtonElement {
     setReaderPreference(next);
   });
   readerToggle = node;
+  return node;
+}
+
+export function createReaderTimelineToggle(): HTMLButtonElement {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = "item toggle";
+  node.setAttribute("role", "menuitemcheckbox");
+  node.setAttribute("aria-checked", String(readReaderTimelinePreference()));
+  const copy = document.createElement("span");
+  copy.className = "copy";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = "阅读时间轴";
+  const hint = document.createElement("span");
+  hint.className = "hint";
+  hint.textContent = "沉浸阅读右侧保留访问历史，可一键跳回";
+  copy.append(name, hint);
+  const toggle = document.createElement("span");
+  toggle.className = "switch";
+  node.append(copy, toggle);
+  node.addEventListener("click", () => {
+    const next = !(node.getAttribute("aria-checked") === "true");
+    node.setAttribute("aria-checked", String(next));
+    setReaderTimelinePreference(next);
+  });
+  readerTimelineToggle = node;
   return node;
 }
 

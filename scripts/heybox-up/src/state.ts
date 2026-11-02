@@ -33,6 +33,7 @@ export const HIDE_CY_EVENT = "heybox-up:hide-cy";
 export const COMMENT_PREVIEW_EVENT = "heybox-up:comment-preview";
 export const NAV_MOTION_EVENT = "heybox-up:nav-motion";
 export const READER_EVENT = "heybox-up:reader";
+export const READER_TIMELINE_EVENT = "heybox-up:reader-timeline";
 
 const HIDE_CY_STYLE_ID = "heybox-up-cy-style";
 const HIDE_CY_CLASS = "heybox-up-hide-cy";
@@ -110,6 +111,15 @@ export function readReaderPreference(): boolean {
 export function setReaderPreference(value: boolean): void {
   localStore.write(STORAGE_KEYS.reader, value ? "1" : "0");
   document.dispatchEvent(new CustomEvent(READER_EVENT, { detail: value }));
+}
+
+export function readReaderTimelinePreference(): boolean {
+  return localStore.read(STORAGE_KEYS.readerTimeline) !== "0";
+}
+
+export function setReaderTimelinePreference(value: boolean): void {
+  localStore.write(STORAGE_KEYS.readerTimeline, value ? "1" : "0");
+  document.dispatchEvent(new CustomEvent(READER_TIMELINE_EVENT, { detail: value }));
 }
 
 export function normalizeFeedWidth(value: string | number | null | undefined): number {
