@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.59
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏提供“阅读时间轴”按钮，按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，可在齿轮设置中单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.60
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube 表情选择（109 个，含 191 号抱拳），评论里的 cube 与 heygirl（24 个）表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏提供“阅读时间轴”按钮，按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，可在齿轮设置中单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -1323,11 +1323,13 @@
     margin: 0 1px;
     vertical-align: -3px;
     background-repeat: no-repeat;
-    background-size: 102px 306px;
+    background-size: 102px 323px;
   }
   .text .pic, .quote .pic {
+    display: block;
     max-width: 100%;
     max-height: 160px;
+    margin-top: 6px;
     border-radius: 6px;
     object-fit: contain;
     vertical-align: top;
@@ -1414,9 +1416,15 @@
     return String(value === void 0 || value === null ? "" : value).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 400);
   }
   var RAIL_BODY_MAX = 4e3;
-  var RAIL_EMOJI_SPRITE = "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v33.png";
+  var RAIL_SEGMENT_MAX = 80;
+  var RAIL_EMOJI_PACKS = {
+    // v34 keeps the first 18 rows of v33 and adds row 19 for 抱拳 (191).
+    cube: { sprite: "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v34.png", columns: 6, rows: 19 },
+    heygirl: { sprite: "https://cdn.max-c.com/heybox_web/emoji/cube2/cube2_emoji.png", columns: 6, rows: 4 }
+  };
   var RAIL_EMOJI_CELL = 17;
-  var RAIL_EMOJI_TOKEN = /\[cube_([^\]]{1,64})\]/g;
+  var RAIL_EMOJI_SPRITE = RAIL_EMOJI_PACKS.cube.sprite;
+  var RAIL_EMOJI_TOKEN = /\[([a-z0-9]{1,16})_([^\]]{1,64})\]/i;
   var RAIL_EMOJI_NAMES = [
     "哭泣",
     "酷",
@@ -1525,23 +1533,133 @@
     "傲娇助手",
     "认真记录",
     "鳄鱼",
-    "星乐蒂"
+    "星乐蒂",
+    "抱拳"
+  ];
+  var RAIL_HEYGIRL_NAMES = [
+    "诶嘿",
+    "哭",
+    "白嫖怪",
+    "疑问",
+    "痴",
+    "喜欢",
+    "捏脸",
+    "害羞",
+    "苦酒入喉",
+    "秃",
+    "rua!",
+    "吃瓜",
+    "茄化",
+    "无语",
+    "这…",
+    "敲开心",
+    "开可乐",
+    "哈哈",
+    "滑稽",
+    "偷看",
+    "喝奶茶",
+    "惊",
+    "记下来",
+    "挨刀"
   ];
   var RAIL_EMOJI_NAME_IDS = new Map(
     RAIL_EMOJI_NAMES.map((name, index) => [name, String((Math.floor(index / 6) + 1) * 10 + index % 6 + 1)])
   );
-  function isRailEmojiId(value) {
+  var RAIL_HEYGIRL_NAME_IDS = new Map(
+    RAIL_HEYGIRL_NAMES.map((name, index) => [name, String((Math.floor(index / 6) + 1) * 10 + index % 6 + 1)])
+  );
+  var RAIL_EMOJI_IDS_BY_PACK = {
+    cube: RAIL_EMOJI_NAME_IDS,
+    heygirl: RAIL_HEYGIRL_NAME_IDS
+  };
+  function isRailEmojiPack(value) {
+    return value === "cube" || value === "heygirl";
+  }
+  function isRailEmojiId(value, pack = "cube") {
+    const config = RAIL_EMOJI_PACKS[pack];
     const id = Number(value);
-    if (!Number.isInteger(id) || id < 11 || id > 186) return false;
+    if (!Number.isInteger(id) || id < 11) return false;
     const unit = id % 10;
     const row = Math.floor(id / 10);
-    return unit >= 1 && unit <= 6 && row >= 1 && row <= 18;
+    return unit >= 1 && unit <= config.columns && row >= 1 && row <= config.rows;
   }
-  function resolveRailEmojiId(value) {
+  function resolveRailEmojiId(value, pack = "cube") {
     const raw = String(value === void 0 || value === null ? "" : value).trim();
-    const candidate = raw.startsWith("cube_") ? raw.slice(5) : raw;
-    if (isRailEmojiId(candidate)) return String(Number(candidate));
-    return RAIL_EMOJI_NAME_IDS.get(candidate) || "";
+    const prefix = pack + "_";
+    const candidate = raw.toLowerCase().startsWith(prefix) ? raw.slice(prefix.length) : raw;
+    if (isRailEmojiId(candidate, pack)) return String(Number(candidate));
+    return RAIL_EMOJI_IDS_BY_PACK[pack].get(candidate) || "";
+  }
+  function resolveRailEmoji(pack, value) {
+    const id = resolveRailEmojiId(value, pack);
+    return id === "" ? null : { type: "emoji", pack, id };
+  }
+  function resolveRailEmojiRef(value) {
+    const raw = String(value === void 0 || value === null ? "" : value).trim();
+    if (raw === "") return null;
+    const match = /^([a-z0-9]{1,16})_(.+)$/i.exec(raw);
+    if (match === null) return resolveRailEmoji("cube", raw);
+    const pack = match[1].toLowerCase();
+    if (!isRailEmojiPack(pack)) return null;
+    return resolveRailEmoji(pack, match[2]);
+  }
+  function railEmojiSheetSize(pack, cell = RAIL_EMOJI_CELL) {
+    const config = RAIL_EMOJI_PACKS[pack];
+    const unit = cell > 0 ? cell : RAIL_EMOJI_CELL;
+    return { width: config.columns * unit, height: config.rows * unit };
+  }
+  function railEmojiOffset(id, cell = RAIL_EMOJI_CELL) {
+    const numeric = Number(id);
+    return { x: (numeric % 10 - 1) * cell, y: (Math.floor(numeric / 10) - 1) * cell };
+  }
+  function applyRailEmojiStyle(node, emoji, cell = RAIL_EMOJI_CELL) {
+    const config = RAIL_EMOJI_PACKS[emoji.pack];
+    const size = railEmojiSheetSize(emoji.pack, cell);
+    const offset = railEmojiOffset(emoji.id, cell);
+    node.style.backgroundImage = 'url("' + config.sprite + '")';
+    node.style.backgroundSize = size.width + "px " + size.height + "px";
+    node.style.backgroundPosition = "-" + offset.x + "px -" + offset.y + "px";
+  }
+  function createRailEmojiElement(emoji, className, cell = RAIL_EMOJI_CELL) {
+    const node = document.createElement("span");
+    node.className = className;
+    node.setAttribute("role", "img");
+    node.setAttribute("aria-label", "表情");
+    applyRailEmojiStyle(node, emoji, cell);
+    return node;
+  }
+  function normalizeRailImageUrl(value) {
+    const raw = String(value === void 0 || value === null ? "" : value).trim();
+    if (raw === "" || /\s/.test(raw)) return "";
+    const candidate = raw.startsWith("//") ? "https:" + raw : raw;
+    return /^https?:\/\/[^\s]+$/i.test(candidate) ? candidate : "";
+  }
+  function readRailEmojiSpriteUrl(src) {
+    return /\/heybox_web\/emoji\//i.test(src);
+  }
+  function pushRailTextSegment(segments, value) {
+    const collapsed = String(value).replace(/\s+/g, " ");
+    if (collapsed.trim() === "") return;
+    segments.push({ type: "text", text: collapsed });
+  }
+  function pushRailTextSegments(segments, value) {
+    const source = String(value);
+    const pattern = new RegExp(RAIL_EMOJI_TOKEN.source, "gi");
+    let cursor = 0;
+    for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
+      pushRailTextSegment(segments, source.slice(cursor, match.index));
+      const emoji = resolveRailEmojiRef(match[1] + "_" + match[2]);
+      if (emoji === null) pushRailTextSegment(segments, match[0]);
+      else segments.push(emoji);
+      cursor = match.index + match[0].length;
+    }
+    pushRailTextSegment(segments, source.slice(cursor));
+  }
+  function parseRailTextBody(value) {
+    const source = String(value === void 0 || value === null ? "" : value).slice(0, RAIL_BODY_MAX);
+    const segments = [];
+    pushRailTextSegments(segments, source);
+    return segments.slice(0, RAIL_SEGMENT_MAX);
   }
   function parseRailBody(value) {
     const source = String(value === void 0 || value === null ? "" : value).slice(0, RAIL_BODY_MAX);
@@ -1549,19 +1667,16 @@
     const template = document.createElement("template");
     template.innerHTML = source;
     const segments = [];
-    const pushText = (value2) => {
-      const parts = String(value2).split(RAIL_EMOJI_TOKEN);
-      for (let index = 0; index < parts.length; index += 1) {
-        if (index % 2 === 1) {
-          const emojiId = resolveRailEmojiId(parts[index]);
-          if (emojiId !== "") segments.push({ type: "emoji", id: emojiId });
-          else segments.push({ type: "text", text: "[cube_" + parts[index] + "]" });
-          continue;
-        }
-        const collapsed = parts[index].replace(/\s+/g, " ");
-        if (collapsed.trim() === "") continue;
-        segments.push({ type: "text", text: collapsed });
+    const pushText = (value2) => pushRailTextSegments(segments, String(value2 === void 0 || value2 === null ? "" : value2));
+    const readEmojiElement = (element) => {
+      const match = /hb-emoji-([a-z0-9]{1,16})_([^\s"]{1,64})/i.exec(String(element.className || ""));
+      if (match !== null) {
+        const fromClass = resolveRailEmojiRef(match[1] + "_" + match[2]);
+        if (fromClass !== null) return fromClass;
       }
+      const dataEmoji = element.getAttribute("data-emoji");
+      if (dataEmoji === null || dataEmoji.trim() === "") return null;
+      return resolveRailEmojiRef(dataEmoji);
     };
     const walk = (node) => {
       for (const child of node.childNodes) {
@@ -1571,22 +1686,26 @@
         }
         if (child.nodeType !== Node.ELEMENT_NODE || !(child instanceof Element)) continue;
         const element = child;
-        const emoji = element.getAttribute("data-emoji");
-        if (emoji !== null && emoji !== "") {
-          const match = /(?:^|\s)hb-emoji-cube_([^\s]+)/.exec(String(element.className || ""));
-          const candidates = [match === null ? "" : match[1], emoji];
-          const id = candidates.map(resolveRailEmojiId).find((item) => item !== "") || "";
-          if (id !== "") segments.push({ type: "emoji", id });
-          else segments.push({ type: "text", text: "[" + emoji + "]" });
-          continue;
-        }
         if (element.tagName === "IMG") {
-          const src = element.getAttribute("src");
-          if (src !== null && /^https?:\/\//i.test(src)) segments.push({ type: "image", src });
+          const raw = element.getAttribute("src") ?? "";
+          if (!readRailEmojiSpriteUrl(raw)) {
+            const src = normalizeRailImageUrl(raw);
+            if (src !== "") segments.push({ type: "image", src });
+          }
           continue;
         }
         if (element.tagName === "BR") {
           pushText(" ");
+          continue;
+        }
+        const emoji = readEmojiElement(element);
+        if (emoji !== null) {
+          segments.push(emoji);
+          continue;
+        }
+        const dataEmoji = element.getAttribute("data-emoji");
+        if (dataEmoji !== null && dataEmoji.trim() !== "") {
+          pushText("[" + dataEmoji.trim() + "]");
           continue;
         }
         walk(element);
@@ -1599,7 +1718,46 @@
       const last = segments[segments.length - 1];
       if (last.type === "text") last.text = last.text.replace(/\s+$/, "");
     }
-    return segments.filter((segment) => segment.type !== "text" || segment.text !== "").slice(0, 80);
+    return segments.filter((segment) => segment.type !== "text" || segment.text !== "").slice(0, RAIL_SEGMENT_MAX);
+  }
+  function mergeRailImages(body, value) {
+    const segments = body.slice();
+    const seen = /* @__PURE__ */ new Set();
+    for (const segment of segments) {
+      if (segment.type === "image") seen.add(segment.src);
+    }
+    const images = [];
+    for (const entry of readRailImageEntries(value)) {
+      if (images.length >= RAIL_SEGMENT_MAX) break;
+      const src = normalizeRailImageUrl(entry);
+      if (src === "" || seen.has(src)) continue;
+      seen.add(src);
+      images.push({ type: "image", src });
+    }
+    if (images.length === 0) return segments;
+    const room = Math.max(0, RAIL_SEGMENT_MAX - images.length);
+    return segments.slice(0, room).concat(images);
+  }
+  function readRailImageEntries(value) {
+    if (typeof value === "string") return value === "" ? [] : value.split(";");
+    if (!Array.isArray(value)) return [];
+    const entries = [];
+    for (const item of value) {
+      if (typeof item === "string") {
+        entries.push(item);
+        continue;
+      }
+      const record = asRecord(item);
+      if (record === null) continue;
+      for (const key of ["url", "thumb", "src"]) {
+        const candidate = record[key];
+        if (typeof candidate === "string" && candidate.trim() !== "") {
+          entries.push(candidate);
+          break;
+        }
+      }
+    }
+    return entries;
   }
   function railBodyText(segments) {
     return segments.filter((segment) => segment.type === "text").map((segment) => segment.text).join(" ").trim();
@@ -1608,7 +1766,7 @@
     const raw = asRecord(comment) ?? {};
     const user = asRecord(raw["user"]) ?? {};
     const avatar = user["avatar"] || user["avartar"] || "";
-    const body = parseRailBody(raw["text"]);
+    const body = mergeRailImages(parseRailBody(raw["text"]), raw["imgs"]);
     const id = String(raw["comment_id"] || raw["commentid"] || raw["id"] || "");
     const rawRootId = readRailRelationId(raw, ["root_id", "root_comment_id", "reply_root_id"]);
     return {
@@ -1837,7 +1995,8 @@
       replyName: "",
       avatar: "",
       text,
-      body: [{ type: "text", text }],
+      // The composer inserts emoji tokens, so the local echo must show them too.
+      body: parseRailTextBody(text),
       createAt: input.createAt,
       likes: 0,
       replies: 0,
@@ -2198,17 +2357,7 @@
       tab.setAttribute("aria-expanded", String(state.mode === "open"));
       if (document.body) document.body.classList.toggle("heybox-up-rail-open", state.mode === "open");
     };
-    const createEmoji = (id) => {
-      const node = document.createElement("span");
-      node.className = "emoji";
-      node.setAttribute("role", "img");
-      node.setAttribute("aria-label", "表情");
-      const column = Number(id) % 10 - 1;
-      const row = Math.floor(Number(id) / 10) - 1;
-      node.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
-      node.style.backgroundPosition = "-" + column * RAIL_EMOJI_CELL + "px -" + row * RAIL_EMOJI_CELL + "px";
-      return node;
-    };
+    const createEmoji = (segment) => createRailEmojiElement(segment, "emoji");
     const createImage = (src) => {
       const node = document.createElement("img");
       node.className = "pic";
@@ -2225,7 +2374,7 @@
       }
       for (const segment of segments) {
         if (segment.type === "text") node.append(document.createTextNode(segment.text));
-        else if (segment.type === "emoji") node.append(createEmoji(segment.id));
+        else if (segment.type === "emoji") node.append(createEmoji(segment));
         else node.append(createImage(segment.src));
       }
     };
@@ -8222,8 +8371,8 @@
      never push the sheet wider than its own column. */
   .hbu-reader-comments-children--deep { margin-top: 6px; padding-left: 0; border-left: 0; }
   .hbu-reader-comments-children--deep > .hbu-reader-comments-child::before { display: none; }
-  .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 306px; }
-  .hbu-reader-comments-text img { max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
+  .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 323px; }
+  .hbu-reader-comments-text img, .hbu-reader-comments-text .hbu-reader-comments-image { display: block; max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   .hbu-reader-comments-status { display: grid; justify-items: center; gap: 10px; padding: 32px 12px; color: var(--hbu-reader-muted); font-size: 13px; text-align: center; }
   .hbu-reader-comments-status-retry { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 16px; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-comments-status-retry:hover { border-color: var(--hbu-reader-accent); }
@@ -10186,14 +10335,12 @@
           emoji.className = "hbu-reader-comments-emoji";
           emoji.setAttribute("role", "img");
           emoji.setAttribute("aria-label", "表情");
-          const column = Number(segment.id) % 10 - 1;
-          const row = Math.floor(Number(segment.id) / 10) - 1;
-          emoji.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
-          emoji.style.backgroundPosition = "-" + column * RAIL_EMOJI_CELL + "px -" + row * RAIL_EMOJI_CELL + "px";
+          applyRailEmojiStyle(emoji, segment);
           node.append(emoji);
           continue;
         }
         const image = document.createElement("img");
+        image.className = "hbu-reader-comments-image";
         image.alt = "";
         image.loading = "lazy";
         image.referrerPolicy = "no-referrer";
@@ -10914,9 +11061,9 @@
         button.setAttribute("aria-label", name);
         button.title = name;
         const glyph = document.createElement("span");
-        const scale = 22 / RAIL_EMOJI_CELL;
-        glyph.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
-        glyph.style.backgroundSize = 102 * scale + "px " + 306 * scale + "px";
+        const sheet = railEmojiSheetSize("cube", 22);
+        glyph.style.backgroundImage = 'url("' + RAIL_EMOJI_PACKS.cube.sprite + '")';
+        glyph.style.backgroundSize = sheet.width + "px " + sheet.height + "px";
         glyph.style.backgroundPosition = "-" + index % 6 * 22 + "px -" + Math.floor(index / 6) * 22 + "px";
         button.append(glyph);
         button.addEventListener("click", () => insert(name));
@@ -12469,7 +12616,9 @@
       for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) node.addEventListener(type, stop, { once: true, passive: true });
       const images = Array.from(node.querySelectorAll("img"));
       const settle = Promise.race([
-        Promise.allSettled(images.map((image) => image.decode())),
+        // decode() is missing in some embedded webviews; a rejected or absent
+        // decode must not leave the restore flag stuck and block later restores.
+        Promise.allSettled(images.map((image) => typeof image.decode === "function" ? image.decode() : Promise.resolve())),
         new Promise((resolve) => window.setTimeout(resolve, 1200))
       ]);
       settle.then(() => {
