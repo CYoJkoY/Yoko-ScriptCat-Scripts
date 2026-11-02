@@ -142,17 +142,17 @@ describe("navigation motion contract", () => {
     const staticFlow = rules.find((rule) => rule.selector === ":root.heybox-up-nav-static .hbu-nav-icon path.hbu-ico-flow");
     expect(staticFlow?.style.getPropertyValue("display")).toBe("none");
     const reduced = rules.find((rule) => rule.media === "(prefers-reduced-motion: reduce)"
-      && rule.selector.includes(".hbu-nav-icon"));
+      && rule.selector.startsWith(":root:not(.heybox-up-nav-anim) .hbu-nav-icon,"));
     expect(reduced).toBeDefined();
     expect(reduced?.style.getPropertyValue("transform")).toBe("none");
     expect(reduced?.style.getPropertyValue("transition")).toBe("none");
     expect(reduced?.style.getPropertyValue("animation")).toBe("none");
     const reducedStroke = rules.find((rule) => rule.media === "(prefers-reduced-motion: reduce)"
-      && rule.selector === ".hbu-nav-icon path");
+      && rule.selector === ":root:not(.heybox-up-nav-anim) .hbu-nav-icon path");
     expect(reducedStroke?.style.getPropertyValue("stroke-dasharray")).toBe("none");
     expect(reducedStroke?.style.getPropertyValue("stroke-dashoffset")).toBe("0");
     const reducedFlow = rules.find((rule) => rule.media === "(prefers-reduced-motion: reduce)"
-      && rule.selector === ".hbu-nav-icon path.hbu-ico-flow");
+      && rule.selector === ":root:not(.heybox-up-nav-anim) .hbu-nav-icon path.hbu-ico-flow");
     expect(reducedFlow?.style.getPropertyValue("display")).toBe("none");
     expect(NAV_CSS).toContain("@keyframes hbu-nav-ico-flow");
   });

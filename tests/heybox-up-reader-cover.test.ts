@@ -32,7 +32,7 @@ import { READER_ID, watchReader } from "../scripts/heybox-up/src/ui/reader";
 
 const navigation = {
   sync: (): void => undefined,
-  readStatus: () => ({ currentId: "1", revision: 0, prev: null, next: null, discovering: false, error: "", exhausted: true }),
+  readStatus: () => ({ currentId: "1", revision: 0, prev: null, next: null, discovering: false, error: "", exhausted: true, history: [] }),
   takeNext: () => null,
   discover: async (): Promise<void> => undefined,
   subscribe: () => (): void => undefined,

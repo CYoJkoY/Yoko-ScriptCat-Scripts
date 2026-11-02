@@ -1,7 +1,7 @@
 import { PAGE_ROUTE, READER_LINE_HEIGHT_DEFAULT, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
 import { getHeyboxId, resolveHeyboxId } from "../core/account";
 import { LINK_HREF_PREFIX } from "../core/cy";
-import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_TRAIL_KEY, POST_TRAIL_MAX, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
+import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_HISTORY_CURSOR_KEY, POST_HISTORY_TITLES_KEY, POST_TRAIL_KEY, POST_TRAIL_MAX, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
 import { EMBEDDED_MEDIA_SELECTOR, EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, ensureStyleElement, registerPageSync } from "../core/page-sync";
 import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
 import { asRecord } from "../core/json";
@@ -12,7 +12,7 @@ import { navigateToPath } from "./navigation";
 import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_EMOJI_CELL, RAIL_EMOJI_NAMES, RAIL_EMOJI_SPRITE, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentRnd, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, resolveCommentPageProgress, resolveMergedCommentProgress } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
-import { HIDE_CY_EVENT, READER_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, sessionStore, setReaderLineHeightPreference } from "../state";
+import { HIDE_CY_EVENT, READER_EVENT, READER_TIMELINE_EVENT, parseReaderLineHeightInput, readHideCyPreference, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderLineHeightPreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
 
 export interface RelatedPostLink {
@@ -38,9 +38,17 @@ export interface PostPagerStatus {
   revision: number;
   prev: { id: string; title: string } | null;
   next: { id: string; title: string; source?: string } | null;
+  /** Visit order, oldest first, with the entry the reader is looking at marked. */
+  history: PostHistoryEntry[];
   discovering: boolean;
   error: string;
   exhausted: boolean;
+}
+
+export interface PostHistoryEntry {
+  id: string;
+  title: string;
+  current: boolean;
 }
 
 export interface PostNavigationController {
@@ -129,6 +137,7 @@ export const READER_ICONS = {
   share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="2.2"/><circle cx="17.5" cy="6" r="2.2"/><circle cx="17.5" cy="18" r="2.2"/><path d="m8.1 11 7.4-3.9M8.1 13l7.4 3.9"/></svg>',
   previous: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
   next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>',
+  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.6V12l3.1 1.9"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V10h-5.4"/></svg>',
 };
 
@@ -723,6 +732,24 @@ export const READER_CSS = `
   .hbu-reader-spacing-unit { font-size: 12px; color: var(--hbu-reader-float-muted); }
   .hbu-reader-spacing-reset { height: 32px; margin-left: auto; padding: 0 9px; border: 1px solid var(--hbu-reader-float-border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-spacing-reset:hover { background: var(--hbu-reader-float-hover); }
+  /* The timeline mirrors the spacing popover, but its rows are full-width
+     targets so a long history stays easy to hit while reading. */
+  .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 236px; max-width: calc(100vw - 84px); max-height: min(360px, 62dvh); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
+  .hbu-reader-history-menu[hidden] { display: none; }
+  .hbu-reader-history-label { flex: none; font-size: 12px; font-weight: 650; color: var(--hbu-reader-float-ink); }
+  .hbu-reader-history-list { display: flex; flex-direction: column; gap: 1px; min-height: 0; margin: 0; padding: 0 0 0 2px; overflow-y: auto; list-style: none; }
+  .hbu-reader-history-item { position: relative; display: flex; padding-left: 13px; }
+  /* A single continuous rule carries the visit order between rows. */
+  .hbu-reader-history-item::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-item:first-child::before { top: 50%; }
+  .hbu-reader-history-item:last-child::before { bottom: 50%; }
+  .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-row { display: flex; align-items: center; width: 100%; min-height: 30px; padding: 5px 7px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.45; text-align: left; cursor: pointer; }
+  .hbu-reader-history-row:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-history-title { display: -webkit-box; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .hbu-reader-history-row[aria-current="true"] { color: var(--hbu-reader-accent); font-weight: 650; }
+  .hbu-reader-history-item[data-current="true"] .hbu-reader-history-dot { background: var(--hbu-reader-accent); }
+  .hbu-reader-history-empty { padding: 6px 8px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
   .hbu-reader-cy-dialog { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--hbu-reader-scrim); backdrop-filter: blur(4px); }
   .hbu-reader-cy-dialog[hidden] { display: none; }
   .hbu-reader-cy-card { width: min(520px, 100%); padding: 20px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); box-shadow: var(--hbu-reader-shadow); }
@@ -961,6 +988,13 @@ export function readSessionArray(key: string): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+/** Reads a session JSON object without trusting its shape. */
+export function readSessionRecord(key: string): Record<string, unknown> {
+  const value = sessionStore.readJson(key, {});
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
 export function writeSessionValue(key: string, value: unknown): boolean {
   return sessionStore.writeJson(key, value);
 }
@@ -1059,20 +1093,77 @@ export function readPostTrail(): string[] {
   return readSessionArray(POST_TRAIL_KEY).filter((id): id is string => typeof id === "string" && /^\d+$/.test(id));
 }
 
+/** Reads the stored visit cursor, or -1 when it has not been written yet. */
+export function readPostHistoryCursor(): number {
+  const raw = sessionStore.read(POST_HISTORY_CURSOR_KEY);
+  if (raw === null || raw === "") return -1;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : -1;
+}
+
+export function writePostHistoryCursor(index: number): void {
+  if (!Number.isSafeInteger(index) || index < 0) return;
+  sessionStore.write(POST_HISTORY_CURSOR_KEY, String(index));
+}
+
 export function readVisitedPostIds(currentId: string): Set<string> {
   const visited = new Set(readPostTrail());
   if (currentId !== "") visited.add(currentId);
   return visited;
 }
 
-export function pushPostTrail(id: string): void {
+/**
+ * Records a visit and moves the history cursor. Re-entering a post that is
+ * already in the trail selects that entry instead of appending a duplicate, so
+ * "previous" keeps walking the older direction after a step back.
+ */
+export function visitPostTrail(id: string): string[] {
   const trail = readPostTrail();
-  if (trail[trail.length - 1] === id) return;
-  const seenAt = trail.lastIndexOf(id);
-  if (seenAt !== -1) trail.splice(seenAt, 1);
+  if (id === "") return trail;
+  const existing = trail.lastIndexOf(id);
+  if (existing !== -1) {
+    writePostHistoryCursor(existing);
+    return trail;
+  }
+  // Opening a new post after stepping back drops the abandoned forward branch,
+  // the way browser history does, so "previous" always means the post that was
+  // actually on screen before this one.
+  const cursor = readPostHistoryCursor();
+  if (cursor >= 0 && cursor < trail.length - 1) trail.splice(cursor + 1);
   trail.push(id);
   while (trail.length > POST_TRAIL_MAX) trail.shift();
   writeSessionValue(POST_TRAIL_KEY, trail);
+  writePostHistoryCursor(trail.length - 1);
+  return trail;
+}
+
+/**
+ * Title lookup for the history panel. Titles come from the recent metadata the
+ * reader already records, so the timeline never needs an extra request.
+ */
+export function readPostHistoryEntryTitle(id: string): string {
+  const recent = readFeedRecent();
+  const found = recent.find((item) => item.id === id);
+  if (found !== undefined && found.title !== "") return found.title;
+  // Older visits eventually fall out of the twelve entry recent list, so the
+  // timeline keeps its own label cache.
+  const stored = readSessionRecord(POST_HISTORY_TITLES_KEY);
+  const value = stored[id];
+  return typeof value === "string" ? value : "";
+}
+
+export function writePostHistoryTitle(id: string, title: string): void {
+  if (id === "" || title === "") return;
+  const stored = readSessionRecord(POST_HISTORY_TITLES_KEY);
+  if (stored[id] === title) return;
+  stored[id] = title;
+  const trail = readPostTrail();
+  const kept: Record<string, string> = {};
+  for (const trailId of trail) {
+    const value = stored[trailId];
+    if (typeof value === "string") kept[trailId] = value;
+  }
+  writeSessionValue(POST_HISTORY_TITLES_KEY, kept);
 }
 
 export function readFeedQueue(accountId: string = getHeyboxId()): FeedCandidate[] {
@@ -1166,11 +1257,23 @@ export function createPostNavigationController(): PostNavigationController {
   const readStatus = (): PostPagerStatus => {
     const trail = readPostTrail();
     let prev: { id: string; title: string } | null = null;
-    if (currentId !== "") {
-      const at = trail.lastIndexOf(currentId);
-      const prevId = at > 0 ? trail[at - 1] : at === -1 && trail.length > 0 ? trail[trail.length - 1] : "";
-      if (prevId !== "" && prevId !== currentId) prev = { id: prevId, title: "" };
+    const cursor = readPostHistoryCursor();
+    const at = currentId === "" ? -1 : trail.lastIndexOf(currentId);
+    // The cursor is the authority. It only points at the visited entry, so
+    // stepping back twice keeps moving toward older posts instead of bouncing
+    // between two ids that overwrote each other.
+    const position = at === -1 ? -1 : cursor >= 0 && trail[cursor] === currentId ? cursor : at;
+    if (position > 0) {
+      const prevId = trail[position - 1];
+      if (prevId !== undefined && prevId !== currentId) {
+        prev = { id: prevId, title: readPostHistoryEntryTitle(prevId) };
+      }
     }
+    const history: PostHistoryEntry[] = trail.map((id, index) => ({
+      id: id,
+      title: readPostHistoryEntryTitle(id),
+      current: index === position,
+    }));
     let next: { id: string; title: string; source?: string } | null = null;
     if (currentId !== "") {
       const picked = selectNextFeedCandidate({
@@ -1189,6 +1292,7 @@ export function createPostNavigationController(): PostNavigationController {
       revision: revision,
       prev: prev,
       next: next,
+      history: history,
       discovering: discovering,
       error: discoveryError,
       exhausted: exhausted,
@@ -1202,6 +1306,7 @@ export function createPostNavigationController(): PostNavigationController {
       String(status.revision),
       status.prev === null ? "" : status.prev.id,
       status.next === null ? "" : status.next.id,
+      status.history.map((entry) => (entry.current ? "*" : "") + entry.id).join(","),
       status.discovering ? "1" : "0",
       status.error,
       status.exhausted ? "1" : "0",
@@ -1236,7 +1341,7 @@ export function createPostNavigationController(): PostNavigationController {
     currentId = nextId;
     if (changed) {
       revision += 1;
-      pushPostTrail(nextId);
+      visitPostTrail(nextId);
       discoveryError = "";
       exhausted = false;
       if (queue.some((item) => item.id === nextId)) {
@@ -1251,6 +1356,7 @@ export function createPostNavigationController(): PostNavigationController {
     }
     const incoming = normalizeFeedCandidate(meta !== null && typeof meta === "object" ? { ...meta, id: nextId } : { id: nextId });
     if (incoming !== null) {
+      writePostHistoryTitle(nextId, incoming.title);
       const merged = mergeRecentMetadata(recent, incoming);
       const key = readFeedRecentSignature(merged);
       if (key !== recentKey) {
@@ -1696,6 +1802,9 @@ export function watchReader(navigation: PostNavigationController): void {
   let spacingPanel: HTMLDivElement | null = null;
   let spacingButton: HTMLButtonElement | null = null;
   let spacingInput: HTMLInputElement | null = null;
+  let historyPanel: HTMLDivElement | null = null;
+  let historyButton: HTMLButtonElement | null = null;
+  let historyList: HTMLOListElement | null = null;
   let articleId = "";
   let dismissedArticleId = "";
   let signature = "";
@@ -2353,6 +2462,131 @@ export function watchReader(navigation: PostNavigationController): void {
     syncNumberInput(readerLineHeightInput, value);
   };
 
+  const closeHistoryPanel = (returnFocus: boolean = false): void => {
+    if (historyPanel === null) return;
+    if (historyPanel.hidden) return;
+    historyPanel.hidden = true;
+    historyButton?.setAttribute("aria-expanded", "false");
+    if (returnFocus) historyButton?.focus({ preventScroll: true });
+  };
+  document.addEventListener("pointerdown", (event) => {
+    if (historyPanel === null || historyPanel.hidden) return;
+    const target = event.target instanceof Node ? event.target : null;
+    if (historyPanel.contains(target) || historyButton?.contains(target)) return;
+    closeHistoryPanel();
+  }, true);
+
+  /**
+   * Rebuilds the visit list. The current entry is highlighted and every other
+   * row jumps straight to that post, so the timeline works as a shortcut back
+   * through the reading session.
+   */
+  const renderHistoryPanel = (): void => {
+    if (historyList === null) return;
+    const status = navigation.readStatus();
+    historyList.textContent = "";
+    // Newest first reads as a timeline that grows downward toward the post in
+    // front of the reader, which is where the eye already is.
+    const ordered = status.history.slice().reverse();
+    for (const entry of ordered) {
+      const item = document.createElement("li");
+      item.className = "hbu-reader-history-item";
+      if (entry.current) item.dataset["current"] = "true";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "hbu-reader-history-row";
+      button.dataset["id"] = entry.id;
+      if (entry.current) button.setAttribute("aria-current", "true");
+      const marker = document.createElement("span");
+      marker.className = "hbu-reader-history-dot";
+      const label = document.createElement("span");
+      label.className = "hbu-reader-history-title";
+      label.textContent = entry.title === "" ? "帖子 " + entry.id : entry.title;
+      button.append(marker, label);
+      button.addEventListener("click", () => {
+        if (entry.current) {
+          closeHistoryPanel(true);
+          return;
+        }
+        closeHistoryPanel();
+        openReaderArticle(entry.id);
+      });
+      item.append(button);
+      historyList.append(item);
+    }
+    if (ordered.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "hbu-reader-history-empty";
+      empty.textContent = "读完几篇后，这里会留下访问顺序。";
+      historyList.append(empty);
+    }
+  };
+
+  const openHistoryPanel = (rail: HTMLElement, button: HTMLButtonElement): void => {
+    if (historyPanel !== null && !historyPanel.hidden) {
+      closeHistoryPanel(true);
+      return;
+    }
+    closeFavourMenu();
+    closeSpacingMenu();
+    if (historyPanel === null) {
+      const panel = document.createElement("div");
+      panel.className = "hbu-reader-history-menu";
+      panel.hidden = true;
+      panel.setAttribute("role", "group");
+      panel.setAttribute("aria-label", "阅读时间轴");
+      const label = document.createElement("div");
+      label.className = "hbu-reader-history-label";
+      label.textContent = "阅读时间轴";
+      const list = document.createElement("ol");
+      list.className = "hbu-reader-history-list";
+      panel.append(label, list);
+      historyPanel = panel;
+      historyList = list;
+    }
+    historyButton = button;
+    if (historyPanel.parentNode !== rail) rail.append(historyPanel);
+    renderHistoryPanel();
+    historyPanel.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    historyPanel.querySelector<HTMLButtonElement>(".hbu-reader-history-row[aria-current='true']")?.focus({ preventScroll: true });
+  };
+
+  const createHistoryAction = (rail: HTMLElement): HTMLButtonElement => {
+    const history = document.createElement("button");
+    history.type = "button";
+    history.className = "hbu-reader-action";
+    history.dataset["action"] = "history";
+    history.setAttribute("aria-label", "阅读时间轴");
+    history.setAttribute("aria-haspopup", "true");
+    history.setAttribute("aria-expanded", "false");
+    history.title = "阅读时间轴";
+    history.innerHTML = READER_ICONS.history;
+    history.addEventListener("click", () => openHistoryPanel(rail, history));
+    return history;
+  };
+
+  const syncHistoryAction = (): void => {
+    if (host === null) return;
+    const rail = host.querySelector<HTMLElement>(".hbu-reader-rail");
+    if (rail === null) return;
+    const existing = rail.querySelector<HTMLButtonElement>('[data-action="history"]');
+    if (!readReaderTimelinePreference()) {
+      closeHistoryPanel();
+      existing?.remove();
+      historyPanel?.remove();
+      historyPanel = null;
+      historyList = null;
+      historyButton = null;
+      return;
+    }
+    if (existing !== null) return;
+    const spacing = rail.querySelector<HTMLElement>('[data-action="spacing"]');
+    const history = createHistoryAction(rail);
+    if (spacing === null) rail.append(history);
+    else rail.insertBefore(history, spacing);
+  };
+
   const openSpacingMenu = (rail: HTMLElement, button: HTMLButtonElement): void => {
     if (spacingPanel !== null && !spacingPanel.hidden) {
       closeSpacingMenu();
@@ -2360,6 +2594,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     closeFavourMenu();
+    closeHistoryPanel();
     if (spacingPanel === null) {
       const panel = document.createElement("div");
       panel.className = "hbu-reader-spacing-menu";
@@ -2748,6 +2983,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     closeSpacingMenu();
+    closeHistoryPanel();
     const targetId = articleId;
     const generation = readerGeneration;
     favourMenuBusy = true;
@@ -5091,6 +5327,11 @@ export function watchReader(navigation: PostNavigationController): void {
     spacing.innerHTML = SETTINGS_ICON;
     spacing.addEventListener("click", () => openSpacingMenu(rail, spacing));
     rail.append(avatar, like, favour, cy, comment, share, spacing);
+    if (readReaderTimelinePreference()) {
+      // The timeline button sits above the settings gear, inside the same rail,
+      // so it keeps the 48px touch target the other actions use.
+      rail.insertBefore(createHistoryAction(rail), spacing);
+    }
     return rail;
   };
 
@@ -5578,6 +5819,9 @@ export function watchReader(navigation: PostNavigationController): void {
     spacingPanel = null;
     spacingButton = null;
     spacingInput = null;
+    historyPanel = null;
+    historyButton = null;
+    historyList = null;
     coverIndex = 0;
     coverTotal = 0;
     activeIndex = 0;
@@ -5775,6 +6019,9 @@ export function watchReader(navigation: PostNavigationController): void {
     spacingPanel = null;
     spacingButton = null;
     spacingInput = null;
+    historyPanel = null;
+    historyButton = null;
+    historyList = null;
     host?.remove();
     host = null;
     lightbox?.remove();
@@ -5851,6 +6098,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     syncReaderEndActions();
+    if (historyPanel !== null && !historyPanel.hidden) renderHistoryPanel();
     if (readerPendingAdvanceSourceId === "") return;
     if (status.currentId !== readerPendingAdvanceSourceId || status.revision !== readerPendingAdvanceRevision) {
       clearPendingReaderAdvance();
@@ -5877,6 +6125,10 @@ export function watchReader(navigation: PostNavigationController): void {
     sync();
   });
 
+  document.addEventListener(READER_TIMELINE_EVENT, () => {
+    syncHistoryAction();
+  });
+
   document.addEventListener("keydown", (event) => {
     if (host === null || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape") {
@@ -5887,6 +6139,9 @@ export function watchReader(navigation: PostNavigationController): void {
         event.preventDefault();
         closeSpacingMenu();
         spacingButton?.focus({ preventScroll: true });
+      } else if (historyPanel !== null && !historyPanel.hidden) {
+        event.preventDefault();
+        closeHistoryPanel(true);
       } else if (favourPanel !== null && !favourPanel.hidden) {
         event.preventDefault();
         closeFavourMenu(true);

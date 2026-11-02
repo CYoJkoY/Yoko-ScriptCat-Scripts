@@ -7,6 +7,7 @@ export const STORAGE_KEYS = Object.freeze({
   commentPreview: "heybox-up.commentPreview.v1",
   navMotion: "heybox-up.navMotion.v1",
   reader: "heybox-up.reader.v1",
+  readerTimeline: "heybox-up.readerTimeline.v1",
   feedWidth: "heybox-up.feedWidth.v1",
   readerLineHeight: "heybox-up.readerLineHeight.v1",
   theme: "heybox-up.theme.v1",
@@ -17,6 +18,7 @@ export const PREFERENCE_DEFAULTS = Object.freeze({
   commentPreview: true,
   navMotion: true,
   reader: true,
+  readerTimeline: true,
   feedWidth: 56,
   readerLineHeight: 1.7,
 });
