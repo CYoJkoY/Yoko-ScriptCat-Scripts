@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.56
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id 或同账号同文本轮询该页直到站点回显；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.57
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -1841,8 +1841,31 @@
     const subComments = entry.subComments.concat(pending);
     return { ...entry, subComments, quotes: subComments };
   }
-  function normalizeRailMatchText(value) {
+  var RAIL_ECHO_MENTION = /^(?:回复\s*)?@[^\s@:：,，]{1,32}[\s:：,，]+/;
+  function stripRailEchoMentions(value) {
+    let text = value;
+    for (let guard = 0; guard < 4; guard += 1) {
+      const next = text.replace(RAIL_ECHO_MENTION, "");
+      if (next === text) return text;
+      text = next;
+    }
+    return text;
+  }
+  function flattenRailMatchText(value) {
     return value.replace(/\[cube_[^\]]{1,64}\]/g, " ").replace(/\[[^\]]{1,64}\]/g, " ").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function railEchoTextMatches(pendingText, echoText) {
+    const wanted = flattenRailMatchText(pendingText);
+    if (wanted === "") return false;
+    return stripRailEchoMentions(flattenRailMatchText(echoText)) === wanted;
+  }
+  function collectRailCommentIds(items) {
+    const ids = /* @__PURE__ */ new Set();
+    for (const entry of items) {
+      if (entry.id !== "") ids.add(entry.id);
+      for (const node of collectRailEchoedNodes(entry)) ids.add(node.id);
+    }
+    return ids;
   }
   function collectRailEchoedNodes(entry) {
     const nodes = [];
@@ -1855,34 +1878,53 @@
     collect(buildRailCommentTree(entry));
     return nodes;
   }
-  function railThreadHasPendingReply(entry, pending) {
-    const wanted = normalizeRailMatchText(pending.text);
-    return collectRailEchoedNodes(entry).some((node) => {
-      if (pending.id !== "" && !pending.id.startsWith(RAIL_PENDING_ID_PREFIX) && node.id === pending.id) return true;
-      if (wanted === "") return false;
-      if (pending.userId !== "" && node.userId !== pending.userId) return false;
-      return normalizeRailMatchText(node.text) === wanted;
-    });
+  function findRailPendingEcho(nodes, pending, claimedIds, freshIds) {
+    const free = nodes.filter((node) => !claimedIds.has(node.id));
+    const sameAuthor = (node) => pending.userId === "" || node.userId === "" || node.userId === pending.userId;
+    if (pending.id !== "" && !pending.id.startsWith(RAIL_PENDING_ID_PREFIX)) {
+      const byId = free.find((node) => node.id === pending.id);
+      if (byId !== void 0) return byId;
+    }
+    if (flattenRailMatchText(pending.text) === "") return null;
+    const byText = free.find((node) => sameAuthor(node) && railEchoTextMatches(pending.text, node.text));
+    if (byText !== void 0) return byText;
+    if (freshIds === void 0) return null;
+    if (pending.userId === "") return null;
+    const fresh = free.filter((node) => node.userId === pending.userId && freshIds.has(node.id));
+    if (fresh.length === 1) return fresh[0];
+    const freshWithText = fresh.filter((node) => railEchoTextMatches(pending.text, node.text));
+    return freshWithText.length === 1 ? freshWithText[0] : null;
   }
-  function pruneRailPendingReplies(items, pending) {
+  function readRailFreshIds(items, entry, pending, knownIds) {
+    const rootLoaded = pending.rootId !== "" && items.some((item) => item.id === pending.rootId);
+    const owns = rootLoaded ? entry.id === pending.rootId : findRailFloorIdForComment(items, pending.parentId) === entry.id;
+    if (!owns) return void 0;
+    return new Set(collectRailEchoedNodes(entry).map((node) => node.id).filter((id) => !knownIds.has(id)));
+  }
+  function railThreadHasPendingReply(entry, pending, knownIds) {
+    const freshIds = knownIds === void 0 ? void 0 : readRailFreshIds([entry], entry, pending, knownIds);
+    return findRailPendingEcho(collectRailEchoedNodes(entry), pending, /* @__PURE__ */ new Set(), freshIds) !== null;
+  }
+  function railItemsHavePendingReply(items, pending, knownIds) {
+    return items.some((entry) => railThreadHasPendingReply(entry, pending, knownIds));
+  }
+  function pruneRailPendingReplies(items, pending, baselineFor) {
     if (pending.length === 0) return [];
-    const echoed = items.flatMap(collectRailEchoedNodes);
-    const claimed = /* @__PURE__ */ new Set();
+    const claimedIds = /* @__PURE__ */ new Set();
     const kept = [];
     for (const row of pending) {
-      const wanted = normalizeRailMatchText(row.text);
-      const match = echoed.find((node) => {
-        if (claimed.has(node)) return false;
-        if (row.id !== "" && !row.id.startsWith(RAIL_PENDING_ID_PREFIX) && node.id === row.id) return true;
-        if (wanted === "") return false;
-        if (row.userId !== "" && node.userId !== row.userId) return false;
-        return normalizeRailMatchText(node.text) === wanted;
-      });
-      if (match === void 0) {
+      const baseline = baselineFor?.(row);
+      let match = null;
+      for (const entry of items) {
+        const freshIds = baseline === void 0 ? void 0 : readRailFreshIds(items, entry, row, baseline);
+        match = findRailPendingEcho(collectRailEchoedNodes(entry), row, claimedIds, freshIds);
+        if (match !== null) break;
+      }
+      if (match === null) {
         kept.push(row);
         continue;
       }
-      claimed.add(match);
+      claimedIds.add(match.id);
     }
     return kept;
   }
@@ -7416,6 +7458,17 @@
   var READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
   var READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
   var READER_PENDING_NOTICE_MS = 9e3;
+  var COMMENT_VERIFY_DELAYS_MS = [400, 600, 900, 1200, 1500];
+  var COMMENT_VERIFY_ATTEMPTS = COMMENT_VERIFY_DELAYS_MS.length;
+  var COMMENT_VERIFY_GRACE_DELAYS_MS = [6e3, 12e3, 2e4];
+  var COMMENT_VERIFY_WAIT_COUNT = COMMENT_VERIFY_DELAYS_MS.length + COMMENT_VERIFY_GRACE_DELAYS_MS.length;
+  var COMMENT_VERIFY_MAX_ATTEMPTS = COMMENT_VERIFY_WAIT_COUNT + 1;
+  var readCommentVerifyDelay = (attempt) => {
+    const index = Math.max(0, attempt - 1);
+    if (index < COMMENT_VERIFY_DELAYS_MS.length) return COMMENT_VERIFY_DELAYS_MS[index];
+    const graceIndex = Math.min(index - COMMENT_VERIFY_DELAYS_MS.length, COMMENT_VERIFY_GRACE_DELAYS_MS.length - 1);
+    return COMMENT_VERIFY_GRACE_DELAYS_MS[graceIndex];
+  };
   var RAIL_MAX_INDENT_DEPTH = 4;
   var READER_ICONS = {
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
@@ -8067,6 +8120,7 @@
   .hbu-reader-comments-expand::before { content: "+"; font-weight: 700; }
   .hbu-reader-comments-expand:hover { border-color: var(--hbu-reader-link); color: var(--hbu-reader-link); }
   .hbu-reader-comments-syncing { flex: none; color: var(--hbu-reader-muted); font-size: 11px; opacity: .85; }
+  .hbu-reader-comments-syncing--settled { opacity: .7; }
   /* Past the depth cap the branch stops indenting, so a long reply chain can
      never push the sheet wider than its own column. */
   .hbu-reader-comments-children--deep { margin-top: 6px; padding-left: 0; border-left: 0; }
@@ -8852,7 +8906,9 @@
         loadedAt: 0,
         seq: 0,
         floorPages: /* @__PURE__ */ new Map(),
-        pendingReplies: []
+        pendingReplies: [],
+        pendingBaselines: /* @__PURE__ */ new Map(),
+        settledReplies: /* @__PURE__ */ new Set()
       };
     }
     const showToast = (message) => {
@@ -9935,6 +9991,7 @@
     const readPendingRepliesFor = (floorId) => commentState.pendingReplies.filter((pending) => resolvePendingFloorId(commentState.items, pending) === floorId);
     const withPendingReplies = (entry) => attachRailPendingReplies(entry, readPendingRepliesFor(entry.id));
     const isPendingReplyRow = (commentId) => commentId.startsWith(RAIL_PENDING_ID_PREFIX) || commentState.pendingReplies.some((row) => row.id === commentId);
+    const readPendingBaseline = (row) => commentState.pendingBaselines.get(row.id);
     const createThreadCollapseButton = (threadId, hiddenCount) => {
       const collapse = document.createElement("button");
       collapse.type = "button";
@@ -10067,8 +10124,9 @@
       const pendingRow = isPendingReplyRow(child.id);
       if (pendingRow) {
         const syncing = document.createElement("span");
-        syncing.className = "hbu-reader-comments-syncing";
-        syncing.textContent = "同步中…";
+        const settled = commentState.settledReplies.has(child.id);
+        syncing.className = "hbu-reader-comments-syncing" + (settled ? " hbu-reader-comments-syncing--settled" : "");
+        syncing.textContent = settled ? "已提交" : "同步中…";
         actions.append(syncing);
       } else {
         actions.append(createReaderReplyButton({
@@ -10163,8 +10221,6 @@
         commentPanelRefresh.dataset["busy"] = commentState.loading ? "true" : "false";
       }
     };
-    const COMMENT_VERIFY_ATTEMPTS = 4;
-    const COMMENT_VERIFY_DELAY_MS = 900;
     const matchesCommentExpectation = (options, loaded) => {
       const wantPresent = options.expectPresentId ?? "";
       const wantAbsent = options.expectAbsentId ?? "";
@@ -10172,9 +10228,7 @@
       if (wantAbsent !== "" && railItemsHaveComment(loaded, wantAbsent)) return false;
       const pending = options.expectPending;
       if (pending !== void 0) {
-        const floorId = resolvePendingFloorId(loaded, pending);
-        const entry = loaded.find((item) => item.id === floorId);
-        if (entry === void 0 || !railThreadHasPendingReply(entry, pending)) return false;
+        if (!railItemsHavePendingReply(loaded, pending, readPendingBaseline(pending))) return false;
       }
       return true;
     };
@@ -10270,7 +10324,13 @@
         const absentId = options.expectAbsentId ?? "";
         const echoingDeleted = absentId !== "" && railItemsHaveComment(incoming, absentId);
         commentState.total = echoingDeleted ? commentState.total : data.total > 0 ? data.total : Math.max(commentState.total, commentState.items.length);
-        commentState.pendingReplies = pruneRailPendingReplies(commentState.items, commentState.pendingReplies);
+        const beforePrune = commentState.pendingReplies;
+        commentState.pendingReplies = pruneRailPendingReplies(commentState.items, beforePrune, readPendingBaseline);
+        for (const row of beforePrune) {
+          if (commentState.pendingReplies.includes(row)) continue;
+          commentState.pendingBaselines.delete(row.id);
+          commentState.settledReplies.delete(row.id);
+        }
         const progress = merge ? resolveMergedCommentProgress({
           loadedGroups: commentState.items.length,
           floorTotal: data.floorTotal,
@@ -10308,15 +10368,27 @@
       if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
       if (seq !== commentState.seq) return;
       const attempt = (options.attempt ?? 0) + 1;
-      if (attempt >= COMMENT_VERIFY_ATTEMPTS) {
+      const pending = options.expectPending;
+      const maxAttempts = pending === void 0 ? COMMENT_VERIFY_ATTEMPTS : COMMENT_VERIFY_MAX_ATTEMPTS;
+      if (attempt >= maxAttempts) {
+        if (pending !== void 0) {
+          commentState.settledReplies.add(pending.id);
+          renderReaderComments();
+        }
         if (options.expectAbsentId !== void 0) showToast("评论已删除，列表仍待站点同步");
         else if ((options.expectPresentId ?? "") !== "") showToast("评论已提交，列表仍待站点同步");
         return;
       }
-      void waitForDelay(COMMENT_VERIFY_DELAY_MS, controller.signal).then(() => {
+      if (pending !== void 0 && attempt === COMMENT_VERIFY_ATTEMPTS) {
+        commentState.settledReplies.add(pending.id);
+        renderReaderComments();
+      }
+      const ownedPage = options.verifyPage ?? page;
+      const nextPage = attempt % 3 === 2 && page !== 1 ? 1 : ownedPage;
+      void waitForDelay(readCommentVerifyDelay(attempt), controller.signal).then(() => {
         if (articleId !== targetId || readerGeneration !== generationAtLoad) return;
         if (seq !== commentState.seq) return;
-        void loadReaderComments(page, { ...options, fresh: true, force: true, merge: true, attempt });
+        void loadReaderComments(nextPage, { ...options, fresh: true, force: true, merge: true, attempt });
       }).catch(() => void 0);
     };
     const readArticleComposers = () => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
@@ -10399,6 +10471,7 @@
           if (pending !== null) {
             const pendingFloorId = resolvePendingFloorId(commentState.items, pending);
             if (pendingFloorId !== "") collapsedCommentThreads.delete(pendingFloorId);
+            commentState.pendingBaselines.set(pending.id, collectRailCommentIds(commentState.items));
             commentState.pendingReplies.push(pending);
             renderReaderComments();
           }
@@ -10408,6 +10481,7 @@
             fresh: true,
             force: true,
             merge: true,
+            verifyPage: page,
             ...pending !== null ? { expectPending: pending } : createdId === "" ? {} : { expectPresentId: createdId }
           });
         }
