@@ -21,6 +21,7 @@ vi.hoisted(() => {
 import { COMMUNITY_SEARCH_ICONS } from "../scripts/heybox-up/src/ui/community-search";
 import { createDesktopLeftRail, createDesktopRightRail } from "../scripts/heybox-up/src/ui/desktop";
 import {
+  NAV_ANIM_CLASS,
   NAV_CSS,
   NAV_DYNAMIC_ICONS,
   NAV_ID,
@@ -150,6 +151,7 @@ describe("navigation icon preference", () => {
 
     applyNavMotionPreference(false);
     expect(document.documentElement.classList.contains(NAV_STATIC_CLASS)).toBe(true);
+    expect(document.documentElement.classList.contains(NAV_ANIM_CLASS)).toBe(false);
     const staticIcon = link.querySelector(".hbu-nav-icon");
     expect(staticIcon?.classList.contains("hbu-ico-anim")).toBe(false);
     expect(link.getAttribute("href")).toBe("/app/bbs/home");
@@ -164,6 +166,7 @@ describe("navigation icon preference", () => {
 
     applyNavMotionPreference(true);
     expect(document.documentElement.classList.contains(NAV_STATIC_CLASS)).toBe(false);
+    expect(document.documentElement.classList.contains(NAV_ANIM_CLASS)).toBe(true);
     expect(link.querySelector(".hbu-nav-icon")?.classList.contains("hbu-ico-anim")).toBe(true);
     expect(link.querySelectorAll(".hbu-nav-icon")).toHaveLength(1);
   });

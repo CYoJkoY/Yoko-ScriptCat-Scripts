@@ -8,6 +8,13 @@ export const NAV_STYLE_ID = "heybox-up-nav-style";
 
 export const NAV_STATIC_CLASS = "heybox-up-nav-static";
 
+/**
+ * Set while the reader has explicitly asked for motion. It outranks the
+ * system reduce-motion query, because the settings switch is a direct choice
+ * and a stored "on" would otherwise render every glyph static.
+ */
+export const NAV_ANIM_CLASS = "heybox-up-nav-anim";
+
 export const CY_HASH = "#heybox-up-cy";
 
 export interface NavItem {
@@ -240,19 +247,19 @@ export const NAV_CSS = `
     opacity: 1 !important;
   }
   @media (prefers-reduced-motion: reduce) {
-    .hbu-nav-icon,
-    .hbu-nav-icon svg,
-    .hbu-nav-icon path {
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon,
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon svg,
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon path {
       animation: none !important;
       transform: none !important;
       transition: none !important;
     }
-    .hbu-nav-icon path {
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon path {
       stroke-dasharray: none !important;
       stroke-dashoffset: 0 !important;
       opacity: 1 !important;
     }
-    .hbu-nav-icon path.hbu-ico-flow {
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon path.hbu-ico-flow {
       display: none !important;
     }
     .hbu-nav-link::after { transition: none; }
@@ -268,8 +275,13 @@ export const NAV_CSS = `
 `;
 
 export function applyNavMotionPreference(value: boolean): void {
-  document.documentElement.classList.toggle(NAV_STATIC_CLASS, value === false);
-  syncNavIconVariant(value === true);
+  const animated = value === true;
+  const root = document.documentElement;
+  root.classList.toggle(NAV_STATIC_CLASS, animated === false);
+  // The explicit choice also lifts the system reduce-motion fallback, so an
+  // enabled switch really animates instead of silently rendering static glyphs.
+  root.classList.toggle(NAV_ANIM_CLASS, animated);
+  syncNavIconVariant(animated);
 }
 
 /**
@@ -305,6 +317,7 @@ export function releaseNav(): void {
   document.getElementById(NAV_ID)?.remove();
   removeStyleElement(NAV_STYLE_ID);
   document.documentElement.classList.remove(NAV_STATIC_CLASS);
+  document.documentElement.classList.remove(NAV_ANIM_CLASS);
   navActiveHost = null;
   navActiveId = "";
 }
