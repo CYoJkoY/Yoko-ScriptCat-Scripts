@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.58
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关或系统启用减少动效时退回完全静止的静态 SVG；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.4.59
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持表情选择、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏提供“阅读时间轴”按钮，按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，可在齿轮设置中单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -25,6 +25,7 @@
     commentPreview: "heybox-up.commentPreview.v1",
     navMotion: "heybox-up.navMotion.v1",
     reader: "heybox-up.reader.v1",
+    readerTimeline: "heybox-up.readerTimeline.v1",
     feedWidth: "heybox-up.feedWidth.v1",
     readerLineHeight: "heybox-up.readerLineHeight.v1",
     theme: "heybox-up.theme.v1"
@@ -34,6 +35,7 @@
     commentPreview: true,
     navMotion: true,
     reader: true,
+    readerTimeline: true,
     feedWidth: 56,
     readerLineHeight: 1.7
   });
@@ -437,6 +439,7 @@
   var COMMENT_PREVIEW_EVENT = "heybox-up:comment-preview";
   var NAV_MOTION_EVENT = "heybox-up:nav-motion";
   var READER_EVENT = "heybox-up:reader";
+  var READER_TIMELINE_EVENT = "heybox-up:reader-timeline";
   var HIDE_CY_STYLE_ID = "heybox-up-cy-style";
   var HIDE_CY_CLASS = "heybox-up-hide-cy";
   function readHideCyPreference() {
@@ -490,6 +493,13 @@
   function setReaderPreference(value) {
     localStore.write(STORAGE_KEYS.reader, value ? "1" : "0");
     document.dispatchEvent(new CustomEvent(READER_EVENT, { detail: value }));
+  }
+  function readReaderTimelinePreference() {
+    return localStore.read(STORAGE_KEYS.readerTimeline) !== "0";
+  }
+  function setReaderTimelinePreference(value) {
+    localStore.write(STORAGE_KEYS.readerTimeline, value ? "1" : "0");
+    document.dispatchEvent(new CustomEvent(READER_TIMELINE_EVENT, { detail: value }));
   }
   function normalizeFeedWidth(value) {
     if (value === null || value === void 0 || value === "") return PREFERENCE_DEFAULTS.feedWidth;
@@ -2810,6 +2820,7 @@
   var NAV_ID = "heybox-up-nav";
   var NAV_STYLE_ID = "heybox-up-nav-style";
   var NAV_STATIC_CLASS = "heybox-up-nav-static";
+  var NAV_ANIM_CLASS = "heybox-up-nav-anim";
   var CY_HASH = "#heybox-up-cy";
   var NAV_ITEMS = [
     { id: "community", label: "社区", href: "/app/bbs/home" },
@@ -2998,19 +3009,19 @@
     opacity: 1 !important;
   }
   @media (prefers-reduced-motion: reduce) {
-    .hbu-nav-icon,
-    .hbu-nav-icon svg,
-    .hbu-nav-icon path {
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon,
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon svg,
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon path {
       animation: none !important;
       transform: none !important;
       transition: none !important;
     }
-    .hbu-nav-icon path {
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon path {
       stroke-dasharray: none !important;
       stroke-dashoffset: 0 !important;
       opacity: 1 !important;
     }
-    .hbu-nav-icon path.hbu-ico-flow {
+    :root:not(.${NAV_ANIM_CLASS}) .hbu-nav-icon path.hbu-ico-flow {
       display: none !important;
     }
     .hbu-nav-link::after { transition: none; }
@@ -3025,8 +3036,11 @@
   }
 `;
   function applyNavMotionPreference(value) {
-    document.documentElement.classList.toggle(NAV_STATIC_CLASS, value === false);
-    syncNavIconVariant(value === true);
+    const animated = value === true;
+    const root = document.documentElement;
+    root.classList.toggle(NAV_STATIC_CLASS, animated === false);
+    root.classList.toggle(NAV_ANIM_CLASS, animated);
+    syncNavIconVariant(animated);
   }
   function syncNavIconVariant(animated) {
     for (const link of Array.from(document.querySelectorAll("a[data-nav], a[data-route]"))) {
@@ -3053,6 +3067,7 @@
     document.getElementById(NAV_ID)?.remove();
     removeStyleElement(NAV_STYLE_ID);
     document.documentElement.classList.remove(NAV_STATIC_CLASS);
+    document.documentElement.classList.remove(NAV_ANIM_CLASS);
     navActiveHost = null;
     navActiveId = "";
   }
@@ -4735,6 +4750,8 @@
   var PAGER_ID = "heybox-up-post-pager";
   var FEED_ORDER_KEY = "heybox-up.feedOrder.v1";
   var POST_TRAIL_KEY = "heybox-up.postTrail.v1";
+  var POST_HISTORY_CURSOR_KEY = "heybox-up.postHistoryCursor.v1";
+  var POST_HISTORY_TITLES_KEY = "heybox-up.postHistoryTitles.v1";
   var POST_TRAIL_MAX = 40;
   var FEED_ORDER_MAX = 600;
   var FEED_QUEUE_KEY = "heybox-up.feedQueue.v1";
@@ -5232,6 +5249,7 @@
   var previewToggle = null;
   var navMotionToggle = null;
   var readerToggle = null;
+  var readerTimelineToggle = null;
   var feedWidthChips = [];
   var feedWidthInput = null;
   var readerLineHeightInput = null;
@@ -6893,6 +6911,7 @@
     if (previewToggle) previewToggle.setAttribute("aria-checked", String(readCommentPreviewPreference()));
     if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
     if (readerToggle) readerToggle.setAttribute("aria-checked", String(readReaderPreference()));
+    if (readerTimelineToggle) readerTimelineToggle.setAttribute("aria-checked", String(readReaderTimelinePreference()));
     syncFeedWidthControls(readFeedWidth());
     syncNumberInput(readerLineHeightInput, readReaderLineHeight());
   }
@@ -6994,6 +7013,7 @@
       createCommentPreviewToggle(),
       createNavMotionToggle(),
       createReaderToggle(),
+      createReaderTimelineToggle(),
       createReaderLineHeightControl(),
       createThemeMenuSeparator(),
       createFeedWidthControl()
@@ -7133,6 +7153,32 @@
       setReaderPreference(next);
     });
     readerToggle = node;
+    return node;
+  }
+  function createReaderTimelineToggle() {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "item toggle";
+    node.setAttribute("role", "menuitemcheckbox");
+    node.setAttribute("aria-checked", String(readReaderTimelinePreference()));
+    const copy = document.createElement("span");
+    copy.className = "copy";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = "阅读时间轴";
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "沉浸阅读右侧保留访问历史，可一键跳回";
+    copy.append(name, hint);
+    const toggle = document.createElement("span");
+    toggle.className = "switch";
+    node.append(copy, toggle);
+    node.addEventListener("click", () => {
+      const next = !(node.getAttribute("aria-checked") === "true");
+      node.setAttribute("aria-checked", String(next));
+      setReaderTimelinePreference(next);
+    });
+    readerTimelineToggle = node;
     return node;
   }
   var FEED_WIDTH_STEPS = [40, 48, 56, 64, 72];
@@ -7482,6 +7528,7 @@
     share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="2.2"/><circle cx="17.5" cy="6" r="2.2"/><circle cx="17.5" cy="18" r="2.2"/><path d="m8.1 11 7.4-3.9M8.1 13l7.4 3.9"/></svg>',
     previous: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>',
     next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>',
+    history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.6V12l3.1 1.9"/></svg>',
     refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V10h-5.4"/></svg>'
   };
   var READER_CSS = `
@@ -8075,6 +8122,24 @@
   .hbu-reader-spacing-unit { font-size: 12px; color: var(--hbu-reader-float-muted); }
   .hbu-reader-spacing-reset { height: 32px; margin-left: auto; padding: 0 9px; border: 1px solid var(--hbu-reader-float-border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-spacing-reset:hover { background: var(--hbu-reader-float-hover); }
+  /* The timeline mirrors the spacing popover, but its rows are full-width
+     targets so a long history stays easy to hit while reading. */
+  .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 236px; max-width: calc(100vw - 84px); max-height: min(360px, 62dvh); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
+  .hbu-reader-history-menu[hidden] { display: none; }
+  .hbu-reader-history-label { flex: none; font-size: 12px; font-weight: 650; color: var(--hbu-reader-float-ink); }
+  .hbu-reader-history-list { display: flex; flex-direction: column; gap: 1px; min-height: 0; margin: 0; padding: 0 0 0 2px; overflow-y: auto; list-style: none; }
+  .hbu-reader-history-item { position: relative; display: flex; padding-left: 13px; }
+  /* A single continuous rule carries the visit order between rows. */
+  .hbu-reader-history-item::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-item:first-child::before { top: 50%; }
+  .hbu-reader-history-item:last-child::before { bottom: 50%; }
+  .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-row { display: flex; align-items: center; width: 100%; min-height: 30px; padding: 5px 7px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.45; text-align: left; cursor: pointer; }
+  .hbu-reader-history-row:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-history-title { display: -webkit-box; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .hbu-reader-history-row[aria-current="true"] { color: var(--hbu-reader-accent); font-weight: 650; }
+  .hbu-reader-history-item[data-current="true"] .hbu-reader-history-dot { background: var(--hbu-reader-accent); }
+  .hbu-reader-history-empty { padding: 6px 8px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
   .hbu-reader-cy-dialog { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--hbu-reader-scrim); backdrop-filter: blur(4px); }
   .hbu-reader-cy-dialog[hidden] { display: none; }
   .hbu-reader-cy-card { width: min(520px, 100%); padding: 20px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); box-shadow: var(--hbu-reader-shadow); }
@@ -8309,6 +8374,11 @@
     const value = sessionStore.readJson(key, []);
     return Array.isArray(value) ? value : [];
   }
+  function readSessionRecord(key) {
+    const value = sessionStore.readJson(key, {});
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+    return value;
+  }
   function writeSessionValue(key, value) {
     return sessionStore.writeJson(key, value);
   }
@@ -8396,19 +8466,57 @@
   function readPostTrail() {
     return readSessionArray(POST_TRAIL_KEY).filter((id) => typeof id === "string" && /^\d+$/.test(id));
   }
+  function readPostHistoryCursor() {
+    const raw = sessionStore.read(POST_HISTORY_CURSOR_KEY);
+    if (raw === null || raw === "") return -1;
+    const value = Number(raw);
+    return Number.isSafeInteger(value) && value >= 0 ? value : -1;
+  }
+  function writePostHistoryCursor(index) {
+    if (!Number.isSafeInteger(index) || index < 0) return;
+    sessionStore.write(POST_HISTORY_CURSOR_KEY, String(index));
+  }
   function readVisitedPostIds(currentId) {
     const visited = new Set(readPostTrail());
     if (currentId !== "") visited.add(currentId);
     return visited;
   }
-  function pushPostTrail(id) {
+  function visitPostTrail(id) {
     const trail = readPostTrail();
-    if (trail[trail.length - 1] === id) return;
-    const seenAt = trail.lastIndexOf(id);
-    if (seenAt !== -1) trail.splice(seenAt, 1);
+    if (id === "") return trail;
+    const existing = trail.lastIndexOf(id);
+    if (existing !== -1) {
+      writePostHistoryCursor(existing);
+      return trail;
+    }
+    const cursor = readPostHistoryCursor();
+    if (cursor >= 0 && cursor < trail.length - 1) trail.splice(cursor + 1);
     trail.push(id);
     while (trail.length > POST_TRAIL_MAX) trail.shift();
     writeSessionValue(POST_TRAIL_KEY, trail);
+    writePostHistoryCursor(trail.length - 1);
+    return trail;
+  }
+  function readPostHistoryEntryTitle(id) {
+    const recent = readFeedRecent();
+    const found = recent.find((item) => item.id === id);
+    if (found !== void 0 && found.title !== "") return found.title;
+    const stored = readSessionRecord(POST_HISTORY_TITLES_KEY);
+    const value = stored[id];
+    return typeof value === "string" ? value : "";
+  }
+  function writePostHistoryTitle(id, title) {
+    if (id === "" || title === "") return;
+    const stored = readSessionRecord(POST_HISTORY_TITLES_KEY);
+    if (stored[id] === title) return;
+    stored[id] = title;
+    const trail = readPostTrail();
+    const kept = {};
+    for (const trailId of trail) {
+      const value = stored[trailId];
+      if (typeof value === "string") kept[trailId] = value;
+    }
+    writeSessionValue(POST_HISTORY_TITLES_KEY, kept);
   }
   function readFeedQueue(accountId = getHeyboxId()) {
     return mergeFeedQueue(readSessionArray(buildFeedStateKey(FEED_QUEUE_KEY, accountId)), []);
@@ -8484,11 +8592,20 @@
     const readStatus = () => {
       const trail = readPostTrail();
       let prev = null;
-      if (currentId !== "") {
-        const at = trail.lastIndexOf(currentId);
-        const prevId = at > 0 ? trail[at - 1] : at === -1 && trail.length > 0 ? trail[trail.length - 1] : "";
-        if (prevId !== "" && prevId !== currentId) prev = { id: prevId, title: "" };
+      const cursor2 = readPostHistoryCursor();
+      const at = currentId === "" ? -1 : trail.lastIndexOf(currentId);
+      const position = at === -1 ? -1 : cursor2 >= 0 && trail[cursor2] === currentId ? cursor2 : at;
+      if (position > 0) {
+        const prevId = trail[position - 1];
+        if (prevId !== void 0 && prevId !== currentId) {
+          prev = { id: prevId, title: readPostHistoryEntryTitle(prevId) };
+        }
       }
+      const history2 = trail.map((id, index) => ({
+        id,
+        title: readPostHistoryEntryTitle(id),
+        current: index === position
+      }));
       let next = null;
       if (currentId !== "") {
         const picked = selectNextFeedCandidate({
@@ -8507,6 +8624,7 @@
         revision,
         prev,
         next,
+        history: history2,
         discovering,
         error: discoveryError,
         exhausted
@@ -8519,6 +8637,7 @@
         String(status.revision),
         status.prev === null ? "" : status.prev.id,
         status.next === null ? "" : status.next.id,
+        status.history.map((entry) => (entry.current ? "*" : "") + entry.id).join(","),
         status.discovering ? "1" : "0",
         status.error,
         status.exhausted ? "1" : "0"
@@ -8551,7 +8670,7 @@
       currentId = nextId;
       if (changed) {
         revision += 1;
-        pushPostTrail(nextId);
+        visitPostTrail(nextId);
         discoveryError = "";
         exhausted = false;
         if (queue.some((item) => item.id === nextId)) {
@@ -8566,6 +8685,7 @@
       }
       const incoming = normalizeFeedCandidate(meta !== null && typeof meta === "object" ? { ...meta, id: nextId } : { id: nextId });
       if (incoming !== null) {
+        writePostHistoryTitle(nextId, incoming.title);
         const merged = mergeRecentMetadata(recent, incoming);
         const key = readFeedRecentSignature(merged);
         if (key !== recentKey) {
@@ -8845,6 +8965,9 @@
     let spacingPanel = null;
     let spacingButton = null;
     let spacingInput = null;
+    let historyPanel = null;
+    let historyButton = null;
+    let historyList = null;
     let articleId = "";
     let dismissedArticleId = "";
     let signature = "";
@@ -9395,6 +9518,119 @@
       spacingInput.value = String(value);
       syncNumberInput(readerLineHeightInput, value);
     };
+    const closeHistoryPanel = (returnFocus = false) => {
+      if (historyPanel === null) return;
+      if (historyPanel.hidden) return;
+      historyPanel.hidden = true;
+      historyButton?.setAttribute("aria-expanded", "false");
+      if (returnFocus) historyButton?.focus({ preventScroll: true });
+    };
+    document.addEventListener("pointerdown", (event) => {
+      if (historyPanel === null || historyPanel.hidden) return;
+      const target = event.target instanceof Node ? event.target : null;
+      if (historyPanel.contains(target) || historyButton?.contains(target)) return;
+      closeHistoryPanel();
+    }, true);
+    const renderHistoryPanel = () => {
+      if (historyList === null) return;
+      const status = navigation.readStatus();
+      historyList.textContent = "";
+      const ordered = status.history.slice().reverse();
+      for (const entry of ordered) {
+        const item = document.createElement("li");
+        item.className = "hbu-reader-history-item";
+        if (entry.current) item.dataset["current"] = "true";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "hbu-reader-history-row";
+        button.dataset["id"] = entry.id;
+        if (entry.current) button.setAttribute("aria-current", "true");
+        const marker = document.createElement("span");
+        marker.className = "hbu-reader-history-dot";
+        const label = document.createElement("span");
+        label.className = "hbu-reader-history-title";
+        label.textContent = entry.title === "" ? "帖子 " + entry.id : entry.title;
+        button.append(marker, label);
+        button.addEventListener("click", () => {
+          if (entry.current) {
+            closeHistoryPanel(true);
+            return;
+          }
+          closeHistoryPanel();
+          openReaderArticle(entry.id);
+        });
+        item.append(button);
+        historyList.append(item);
+      }
+      if (ordered.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "hbu-reader-history-empty";
+        empty.textContent = "读完几篇后，这里会留下访问顺序。";
+        historyList.append(empty);
+      }
+    };
+    const openHistoryPanel = (rail, button) => {
+      if (historyPanel !== null && !historyPanel.hidden) {
+        closeHistoryPanel(true);
+        return;
+      }
+      closeFavourMenu();
+      closeSpacingMenu();
+      if (historyPanel === null) {
+        const panel = document.createElement("div");
+        panel.className = "hbu-reader-history-menu";
+        panel.hidden = true;
+        panel.setAttribute("role", "group");
+        panel.setAttribute("aria-label", "阅读时间轴");
+        const label = document.createElement("div");
+        label.className = "hbu-reader-history-label";
+        label.textContent = "阅读时间轴";
+        const list = document.createElement("ol");
+        list.className = "hbu-reader-history-list";
+        panel.append(label, list);
+        historyPanel = panel;
+        historyList = list;
+      }
+      historyButton = button;
+      if (historyPanel.parentNode !== rail) rail.append(historyPanel);
+      renderHistoryPanel();
+      historyPanel.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      historyPanel.querySelector(".hbu-reader-history-row[aria-current='true']")?.focus({ preventScroll: true });
+    };
+    const createHistoryAction = (rail) => {
+      const history2 = document.createElement("button");
+      history2.type = "button";
+      history2.className = "hbu-reader-action";
+      history2.dataset["action"] = "history";
+      history2.setAttribute("aria-label", "阅读时间轴");
+      history2.setAttribute("aria-haspopup", "true");
+      history2.setAttribute("aria-expanded", "false");
+      history2.title = "阅读时间轴";
+      history2.innerHTML = READER_ICONS.history;
+      history2.addEventListener("click", () => openHistoryPanel(rail, history2));
+      return history2;
+    };
+    const syncHistoryAction = () => {
+      if (host === null) return;
+      const rail = host.querySelector(".hbu-reader-rail");
+      if (rail === null) return;
+      const existing = rail.querySelector('[data-action="history"]');
+      if (!readReaderTimelinePreference()) {
+        closeHistoryPanel();
+        existing?.remove();
+        historyPanel?.remove();
+        historyPanel = null;
+        historyList = null;
+        historyButton = null;
+        return;
+      }
+      if (existing !== null) return;
+      const spacing = rail.querySelector('[data-action="spacing"]');
+      const history2 = createHistoryAction(rail);
+      if (spacing === null) rail.append(history2);
+      else rail.insertBefore(history2, spacing);
+    };
     const openSpacingMenu = (rail, button) => {
       if (spacingPanel !== null && !spacingPanel.hidden) {
         closeSpacingMenu();
@@ -9402,6 +9638,7 @@
         return;
       }
       closeFavourMenu();
+      closeHistoryPanel();
       if (spacingPanel === null) {
         const panel = document.createElement("div");
         panel.className = "hbu-reader-spacing-menu";
@@ -9778,6 +10015,7 @@
         return;
       }
       closeSpacingMenu();
+      closeHistoryPanel();
       const targetId = articleId;
       const generation = readerGeneration;
       favourMenuBusy = true;
@@ -11838,6 +12076,9 @@
       spacing.innerHTML = SETTINGS_ICON;
       spacing.addEventListener("click", () => openSpacingMenu(rail, spacing));
       rail.append(avatar, like, favour, cy, comment, share, spacing);
+      if (readReaderTimelinePreference()) {
+        rail.insertBefore(createHistoryAction(rail), spacing);
+      }
       return rail;
     };
     const createHeroCover = (page, data, sources, kind) => {
@@ -12289,6 +12530,9 @@
       spacingPanel = null;
       spacingButton = null;
       spacingInput = null;
+      historyPanel = null;
+      historyButton = null;
+      historyList = null;
       coverIndex = 0;
       coverTotal = 0;
       activeIndex = 0;
@@ -12478,6 +12722,9 @@
       spacingPanel = null;
       spacingButton = null;
       spacingInput = null;
+      historyPanel = null;
+      historyButton = null;
+      historyList = null;
       host?.remove();
       host = null;
       lightbox?.remove();
@@ -12551,6 +12798,7 @@
         return;
       }
       syncReaderEndActions();
+      if (historyPanel !== null && !historyPanel.hidden) renderHistoryPanel();
       if (readerPendingAdvanceSourceId === "") return;
       if (status.currentId !== readerPendingAdvanceSourceId || status.revision !== readerPendingAdvanceRevision) {
         clearPendingReaderAdvance();
@@ -12575,6 +12823,9 @@
       signature = "";
       sync();
     });
+    document.addEventListener(READER_TIMELINE_EVENT, () => {
+      syncHistoryAction();
+    });
     document.addEventListener("keydown", (event) => {
       if (host === null || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === "Escape") {
@@ -12585,6 +12836,9 @@
           event.preventDefault();
           closeSpacingMenu();
           spacingButton?.focus({ preventScroll: true });
+        } else if (historyPanel !== null && !historyPanel.hidden) {
+          event.preventDefault();
+          closeHistoryPanel(true);
         } else if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
           closeFavourMenu(true);
