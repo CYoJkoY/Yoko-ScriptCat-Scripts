@@ -26,6 +26,13 @@ vi.hoisted(() => {
       takeRecords(): unknown[] { return []; }
     },
   });
+  // jsdom does not implement image decoding, and the reader awaits it before
+  // restoring the scroll position once reader images settle.
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    writable: true,
+    value: (): Promise<void> => Promise.resolve(),
+  });
 });
 
 import { READER_ID, watchReader } from "../scripts/heybox-up/src/ui/reader";
@@ -113,5 +120,44 @@ describe("reader comment panel first open", () => {
     const list = host.ownerDocument.querySelector(".hbu-reader-comments-list");
     expect(calls.some((url) => url.includes("link_id=123456") && url.includes("page=1"))).toBe(true);
     expect(list?.textContent ?? "").toContain("fresh floor");
+  });
+
+  it("renders comment images, cube emoji and heygirl emoji", async () => {
+    const mediaPayload = {
+      status: "ok",
+      result: {
+        comments: [
+          {
+            comment: [
+              {
+                comment_id: "9100",
+                text: "<p>看图[cube_酷][heygirl_诶嘿]</p>",
+                imgs: [{ url: "https://imgheybox1.max-c.com/bbs/2026/10/13/a.webp", thumb: "https://imgheybox1.max-c.com/bbs/2026/10/13/a-thumb.webp", width: 734, height: 1024 }],
+                user: { username: "me", userid: 42 },
+              },
+            ],
+          },
+        ],
+        link: { comment_num: 1, title: "t" },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(mediaPayload),
+    })));
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const image = host.ownerDocument.querySelector<HTMLImageElement>(".hbu-reader-comments-image");
+    expect(image).not.toBeNull();
+    expect(image?.getAttribute("src")).toBe("https://imgheybox1.max-c.com/bbs/2026/10/13/a.webp");
+    const emoji = Array.from(host.ownerDocument.querySelectorAll<HTMLElement>(".hbu-reader-comments-emoji"));
+    expect(emoji).toHaveLength(2);
+    expect(emoji[0].style.backgroundImage).toContain("cube_emoji_v34.png");
+    expect(emoji[0].style.backgroundPosition).toBe("-17px 0px");
+    expect(emoji[0].style.backgroundSize).toBe("102px 323px");
+    expect(emoji[1].style.backgroundImage).toContain("cube2_emoji.png");
+    expect(emoji[1].style.backgroundSize).toBe("102px 68px");
   });
 });

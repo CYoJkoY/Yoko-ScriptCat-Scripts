@@ -13,13 +13,19 @@ import {
   findRailFloorIdForComment,
   isOwnRailComment,
   mergeRailPageItems,
+  mergeRailImages,
+  normalizeRailComment,
   normalizeRailGroup,
+  normalizeRailImageUrl,
+  parseRailBody,
+  parseRailTextBody,
   pruneRailPendingReplies,
   readRailFloorTotal,
   readRailPageCache,
   railItemsHaveComment,
   railItemsHavePendingReply,
   railThreadHasPendingReply,
+  resolveRailEmojiRef,
   resolveCommentPageProgress,
   resolveMergedCommentProgress,
   writeRailPageCache,
@@ -336,6 +342,25 @@ describe("optimistic reply rows", () => {
     expect(pending.body).toEqual([{ type: "text", text: "hello there" }]);
   });
 
+  it("renders emoji in the local echo of a not yet synced reply", () => {
+    const local = createRailPendingReply({
+      parentId: "500",
+      rootId: "400",
+      text: "好耶[cube_酷]",
+      userId: "77",
+      createAt: 1_700_000_000,
+      sequence: 4,
+    });
+    expect(local.body).toEqual([
+      { type: "text", text: "好耶" },
+      { type: "emoji", pack: "cube", id: "12" },
+    ]);
+  });
+
+  it("keeps typed markup literal when tokenizing plain text", () => {
+    expect(parseRailTextBody("<b>hi</b>")).toEqual([{ type: "text", text: "<b>hi</b>" }]);
+  });
+
   it("attaches the local row under its floor without touching the server rows", () => {
     const floorEntry = entry("400", [floor("401", "existing")]);
     const attached = attachRailPendingReplies(floorEntry, [pending]);
@@ -518,5 +543,79 @@ describe("optimistic reply rows", () => {
       { ...floor("501", "rewritten by the site"), user: { username: "u", userid: 77 } },
     ])];
     expect(railItemsHavePendingReply(owning, noRoot, baseline)).toBe(true);
+  });
+});
+
+describe("comment media", () => {
+  it("keeps cube emoji and heygirl emoji as distinct packs", () => {
+    const body = parseRailBody("a[cube_哭泣]b[heygirl_诶嘿]c");
+    expect(body.filter((segment) => segment.type === "emoji")).toEqual([
+      { type: "emoji", pack: "cube", id: "11" },
+      { type: "emoji", pack: "heygirl", id: "11" },
+    ]);
+  });
+
+  it("resolves the newest cube emoji in row 19", () => {
+    expect(resolveRailEmojiRef("cube_抱拳")).toEqual({ type: "emoji", pack: "cube", id: "191" });
+    expect(resolveRailEmojiRef("cube_191")).toEqual({ type: "emoji", pack: "cube", id: "191" });
+    expect(resolveRailEmojiRef("heygirl_挨刀")).toEqual({ type: "emoji", pack: "heygirl", id: "46" });
+    expect(resolveRailEmojiRef("heygirl_不存在")).toBeNull();
+  });
+
+  it("keeps unknown emoji tokens readable as text", () => {
+    const body = parseRailBody("看这个[cube_未来表情]和[heygirl_未来]");
+    expect(body.every((segment) => segment.type === "text")).toBe(true);
+  });
+
+  it("parses emoji spans from the site DOM", () => {
+    const body = parseRailBody('<span data-emoji="cube_11" class="hb-emoji hb-emoji-cube_11"></span><span class="hb-emoji hb-emoji-heygirl_12"></span>');
+    expect(body.filter((segment) => segment.type === "emoji")).toEqual([
+      { type: "emoji", pack: "cube", id: "11" },
+      { type: "emoji", pack: "heygirl", id: "12" },
+    ]);
+  });
+
+  it("ignores sprite sheet images inside the DOM body", () => {
+    const body = parseRailBody('<img src="https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v34.png">');
+    expect(body).toEqual([]);
+  });
+
+  it("appends the imgs field after the parsed text", () => {
+    const body = mergeRailImages(parseRailBody("如图[cube_开心]"), [
+      { url: "https://imgheybox1.max-c.com/bbs/a.webp", thumb: "https://imgheybox1.max-c.com/bbs/a-thumb.webp", width: 734 },
+    ]);
+    expect(body).toEqual([
+      { type: "text", text: "如图" },
+      { type: "emoji", pack: "cube", id: "21" },
+      { type: "image", src: "https://imgheybox1.max-c.com/bbs/a.webp" },
+    ]);
+  });
+
+  it("accepts string, semicolon and object image lists", () => {
+    expect(mergeRailImages([], ["https://a.example/1.png"])).toEqual([{ type: "image", src: "https://a.example/1.png" }]);
+    expect(mergeRailImages([], "https://a.example/1.png;https://a.example/2.png")).toHaveLength(2);
+    expect(mergeRailImages([], [{ src: "https://a.example/3.png" }])).toEqual([{ type: "image", src: "https://a.example/3.png" }]);
+  });
+
+  it("normalizes protocol relative urls and rejects unsafe ones", () => {
+    expect(normalizeRailImageUrl("//imgheybox1.max-c.com/bbs/a.webp")).toBe("https://imgheybox1.max-c.com/bbs/a.webp");
+    expect(normalizeRailImageUrl("javascript:alert(1)")).toBe("");
+    expect(normalizeRailImageUrl("data:image/png;base64,AAAA")).toBe("");
+    expect(normalizeRailImageUrl("https://a.example/1.png javascript:alert(1)")).toBe("");
+  });
+
+  it("deduplicates inline images against the imgs field", () => {
+    const body = mergeRailImages([{ type: "image", src: "https://a.example/1.png" }], ["https://a.example/1.png", "https://a.example/2.png"]);
+    expect(body).toEqual([
+      { type: "image", src: "https://a.example/1.png" },
+      { type: "image", src: "https://a.example/2.png" },
+    ]);
+  });
+
+  it("keeps an image only comment through normalization", () => {
+    const comment = normalizeRailComment({ comment_id: "55", text: "", imgs: [{ url: "https://a.example/9.png" }], user: { username: "u" } });
+    expect(comment.body).toEqual([{ type: "image", src: "https://a.example/9.png" }]);
+    const entry = normalizeRailGroup(group({ comment_id: "55", text: "", imgs: [{ url: "https://a.example/9.png" }], user: { username: "u" } }, []));
+    expect(entry?.body).toEqual([{ type: "image", src: "https://a.example/9.png" }]);
   });
 });

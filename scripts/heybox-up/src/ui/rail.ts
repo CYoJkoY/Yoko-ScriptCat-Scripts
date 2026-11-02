@@ -44,6 +44,8 @@ export interface RailTextSegment {
 
 export interface RailEmojiSegment {
   type: "emoji";
+  /** Sprite sheet the id belongs to. */
+  pack: RailEmojiPack;
   id: string;
 }
 
@@ -244,11 +246,13 @@ export const RAIL_CSS = `
     margin: 0 1px;
     vertical-align: -3px;
     background-repeat: no-repeat;
-    background-size: 102px 306px;
+    background-size: 102px 323px;
   }
   .text .pic, .quote .pic {
+    display: block;
     max-width: 100%;
     max-height: 160px;
+    margin-top: 6px;
     border-radius: 6px;
     object-fit: contain;
     vertical-align: top;
@@ -351,11 +355,34 @@ export function normalizeRailText(value: unknown): string {
 
 export const RAIL_BODY_MAX = 4000;
 
-export const RAIL_EMOJI_SPRITE = "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v33.png";
+/** Upper bound for one parsed body, so a hostile payload cannot flood the list. */
+export const RAIL_SEGMENT_MAX = 80;
+
+/** Sprite sheets the site uses for comment emoji. */
+export type RailEmojiPack = "cube" | "heygirl";
+
+export interface RailEmojiPackConfig {
+  readonly sprite: string;
+  readonly columns: number;
+  readonly rows: number;
+}
+
+/**
+ * Every cell in these sheets is square, so a sheet scales to
+ * columns × cell by rows × cell and the cell offset is a multiple of one cell.
+ */
+export const RAIL_EMOJI_PACKS: Readonly<Record<RailEmojiPack, RailEmojiPackConfig>> = {
+  // v34 keeps the first 18 rows of v33 and adds row 19 for 抱拳 (191).
+  cube: { sprite: "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v34.png", columns: 6, rows: 19 },
+  heygirl: { sprite: "https://cdn.max-c.com/heybox_web/emoji/cube2/cube2_emoji.png", columns: 6, rows: 4 },
+};
 
 export const RAIL_EMOJI_CELL = 17;
 
-export const RAIL_EMOJI_TOKEN = /\[cube_([^\]]{1,64})\]/g;
+export const RAIL_EMOJI_SPRITE = RAIL_EMOJI_PACKS.cube.sprite;
+
+/** The comment API returns both `[cube_name]` and `[heygirl_name]` tokens. */
+export const RAIL_EMOJI_TOKEN = /\[([a-z0-9]{1,16})_([^\]]{1,64})\]/i;
 
 export const RAIL_EMOJI_NAMES = [
   "哭泣", "酷", "doge", "喜欢", "黑人问号", "惊讶",
@@ -376,25 +403,146 @@ export const RAIL_EMOJI_NAMES = [
   "+1", "-1", "点赞", "盒十", "耶", "鼓掌",
   "碰拳", "马年吉祥", "红包", "炒菜", "山姆无奈", "洛的点赞",
   "灵光一闪", "露莉亚", "傲娇助手", "认真记录", "鳄鱼", "星乐蒂",
+  "抱拳",
+];
+
+export const RAIL_HEYGIRL_NAMES = [
+  "诶嘿", "哭", "白嫖怪", "疑问", "痴", "喜欢",
+  "捏脸", "害羞", "苦酒入喉", "秃", "rua!", "吃瓜",
+  "茄化", "无语", "这…", "敲开心", "开可乐", "哈哈",
+  "滑稽", "偷看", "喝奶茶", "惊", "记下来", "挨刀",
 ];
 
 export const RAIL_EMOJI_NAME_IDS = new Map(
   RAIL_EMOJI_NAMES.map((name, index) => [name, String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1)])
 );
 
-export function isRailEmojiId(value: unknown): boolean {
-  const id = Number(value);
-  if (!Number.isInteger(id) || id < 11 || id > 186) return false;
-  const unit = id % 10;
-  const row = Math.floor(id / 10);
-  return unit >= 1 && unit <= 6 && row >= 1 && row <= 18;
+export const RAIL_HEYGIRL_NAME_IDS = new Map(
+  RAIL_HEYGIRL_NAMES.map((name, index) => [name, String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1)])
+);
+
+const RAIL_EMOJI_IDS_BY_PACK: Readonly<Record<RailEmojiPack, ReadonlyMap<string, string>>> = {
+  cube: RAIL_EMOJI_NAME_IDS,
+  heygirl: RAIL_HEYGIRL_NAME_IDS,
+};
+
+export interface RailEmojiRef {
+  type: "emoji";
+  pack: RailEmojiPack;
+  id: string;
 }
 
-export function resolveRailEmojiId(value: unknown): string {
+export function isRailEmojiPack(value: unknown): value is RailEmojiPack {
+  return value === "cube" || value === "heygirl";
+}
+
+export function isRailEmojiId(value: unknown, pack: RailEmojiPack = "cube"): boolean {
+  const config = RAIL_EMOJI_PACKS[pack];
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 11) return false;
+  const unit = id % 10;
+  const row = Math.floor(id / 10);
+  return unit >= 1 && unit <= config.columns && row >= 1 && row <= config.rows;
+}
+
+export function resolveRailEmojiId(value: unknown, pack: RailEmojiPack = "cube"): string {
   const raw = String(value === undefined || value === null ? "" : value).trim();
-  const candidate = raw.startsWith("cube_") ? raw.slice(5) : raw;
-  if (isRailEmojiId(candidate)) return String(Number(candidate));
-  return RAIL_EMOJI_NAME_IDS.get(candidate) || "";
+  const prefix = pack + "_";
+  const candidate = raw.toLowerCase().startsWith(prefix) ? raw.slice(prefix.length) : raw;
+  if (isRailEmojiId(candidate, pack)) return String(Number(candidate));
+  return RAIL_EMOJI_IDS_BY_PACK[pack].get(candidate) || "";
+}
+
+/** Resolves one id or display name inside a single pack. */
+export function resolveRailEmoji(pack: RailEmojiPack, value: unknown): RailEmojiRef | null {
+  const id = resolveRailEmojiId(value, pack);
+  return id === "" ? null : { type: "emoji", pack: pack, id: id };
+}
+
+/** Resolves `cube_11`, `heygirl_11` or a bare id/name that defaults to cube. */
+export function resolveRailEmojiRef(value: unknown): RailEmojiRef | null {
+  const raw = String(value === undefined || value === null ? "" : value).trim();
+  if (raw === "") return null;
+  const match = /^([a-z0-9]{1,16})_(.+)$/i.exec(raw);
+  if (match === null) return resolveRailEmoji("cube", raw);
+  const pack = match[1].toLowerCase();
+  if (!isRailEmojiPack(pack)) return null;
+  return resolveRailEmoji(pack, match[2]);
+}
+
+export function railEmojiSheetSize(pack: RailEmojiPack, cell: number = RAIL_EMOJI_CELL): { width: number; height: number } {
+  const config = RAIL_EMOJI_PACKS[pack];
+  const unit = cell > 0 ? cell : RAIL_EMOJI_CELL;
+  return { width: config.columns * unit, height: config.rows * unit };
+}
+
+export function railEmojiOffset(id: string, cell: number = RAIL_EMOJI_CELL): { x: number; y: number } {
+  const numeric = Number(id);
+  // The tens digit is the sprite row and the ones digit the column; negative
+  // offsets clip one cell out of the non-repeating sheet.
+  return { x: ((numeric % 10) - 1) * cell, y: (Math.floor(numeric / 10) - 1) * cell };
+}
+
+/** Applies sprite, sheet size and cell offset for one pack to a node. */
+export function applyRailEmojiStyle(node: HTMLElement, emoji: RailEmojiRef, cell: number = RAIL_EMOJI_CELL): void {
+  const config = RAIL_EMOJI_PACKS[emoji.pack];
+  const size = railEmojiSheetSize(emoji.pack, cell);
+  const offset = railEmojiOffset(emoji.id, cell);
+  node.style.backgroundImage = 'url("' + config.sprite + '")';
+  node.style.backgroundSize = size.width + "px " + size.height + "px";
+  node.style.backgroundPosition = "-" + offset.x + "px -" + offset.y + "px";
+}
+
+export function createRailEmojiElement(emoji: RailEmojiRef, className: string, cell: number = RAIL_EMOJI_CELL): HTMLSpanElement {
+  const node = document.createElement("span");
+  node.className = className;
+  node.setAttribute("role", "img");
+  node.setAttribute("aria-label", "表情");
+  applyRailEmojiStyle(node, emoji, cell);
+  return node;
+}
+
+/** Turns a stored image reference into an absolute http(s) URL, or "" when unusable. */
+export function normalizeRailImageUrl(value: unknown): string {
+  const raw = String(value === undefined || value === null ? "" : value).trim();
+  if (raw === "" || /\s/.test(raw)) return "";
+  const candidate = raw.startsWith("//") ? "https:" + raw : raw;
+  return /^https?:\/\/[^\s]+$/i.test(candidate) ? candidate : "";
+}
+
+function readRailEmojiSpriteUrl(src: string): boolean {
+  return /\/heybox_web\/emoji\//i.test(src);
+}
+
+function pushRailTextSegment(segments: RailSegment[], value: string): void {
+  const collapsed = String(value).replace(/\s+/g, " ");
+  if (collapsed.trim() === "") return;
+  segments.push({ type: "text", text: collapsed });
+}
+
+function pushRailTextSegments(segments: RailSegment[], value: string): void {
+  const source = String(value);
+  const pattern = new RegExp(RAIL_EMOJI_TOKEN.source, "gi");
+  let cursor = 0;
+  for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
+    pushRailTextSegment(segments, source.slice(cursor, match.index));
+    const emoji = resolveRailEmojiRef(match[1] + "_" + match[2]);
+    if (emoji === null) pushRailTextSegment(segments, match[0]);
+    else segments.push(emoji);
+    cursor = match.index + match[0].length;
+  }
+  pushRailTextSegment(segments, source.slice(cursor));
+}
+
+/**
+ * Tokenizes plain text that was never HTML, such as our own optimistic row, so
+ * an emoji typed into the composer shows up before the site echoes it back.
+ */
+export function parseRailTextBody(value: unknown): RailSegment[] {
+  const source = String(value === undefined || value === null ? "" : value).slice(0, RAIL_BODY_MAX);
+  const segments: RailSegment[] = [];
+  pushRailTextSegments(segments, source);
+  return segments.slice(0, RAIL_SEGMENT_MAX);
 }
 
 export function parseRailBody(value: unknown): RailSegment[] {
@@ -403,19 +551,18 @@ export function parseRailBody(value: unknown): RailSegment[] {
   const template = document.createElement("template");
   template.innerHTML = source;
   const segments: RailSegment[] = [];
-  const pushText = (value: unknown): void => {
-    const parts = String(value).split(RAIL_EMOJI_TOKEN);
-    for (let index = 0; index < parts.length; index += 1) {
-      if (index % 2 === 1) {
-        const emojiId = resolveRailEmojiId(parts[index]);
-        if (emojiId !== "") segments.push({ type: "emoji", id: emojiId });
-        else segments.push({ type: "text", text: "[cube_" + parts[index] + "]" });
-        continue;
-      }
-      const collapsed = parts[index].replace(/\s+/g, " ");
-      if (collapsed.trim() === "") continue;
-      segments.push({ type: "text", text: collapsed });
+  const pushText = (value: unknown): void => pushRailTextSegments(segments, String(value === undefined || value === null ? "" : value));
+  // The site renders emoji as <span class="hb-emoji hb-emoji-cube_11">, and
+  // sometimes also as an <img> pointing at the sprite sheet.
+  const readEmojiElement = (element: Element): RailEmojiRef | null => {
+    const match = /hb-emoji-([a-z0-9]{1,16})_([^\s"]{1,64})/i.exec(String(element.className || ""));
+    if (match !== null) {
+      const fromClass = resolveRailEmojiRef(match[1] + "_" + match[2]);
+      if (fromClass !== null) return fromClass;
     }
+    const dataEmoji = element.getAttribute("data-emoji");
+    if (dataEmoji === null || dataEmoji.trim() === "") return null;
+    return resolveRailEmojiRef(dataEmoji);
   };
   const walk = (node: ParentNode): void => {
     for (const child of node.childNodes) {
@@ -425,22 +572,27 @@ export function parseRailBody(value: unknown): RailSegment[] {
       }
       if (child.nodeType !== Node.ELEMENT_NODE || !(child instanceof Element)) continue;
       const element = child;
-      const emoji = element.getAttribute("data-emoji");
-      if (emoji !== null && emoji !== "") {
-        const match = /(?:^|\s)hb-emoji-cube_([^\s]+)/.exec(String(element.className || ""));
-        const candidates = [match === null ? "" : match[1], emoji];
-        const id = candidates.map(resolveRailEmojiId).find((item) => item !== "") || "";
-        if (id !== "") segments.push({ type: "emoji", id: id });
-        else segments.push({ type: "text", text: "[" + emoji + "]" });
-        continue;
-      }
       if (element.tagName === "IMG") {
-        const src = element.getAttribute("src");
-        if (src !== null && /^https?:\/\//i.test(src)) segments.push({ type: "image", src });
+        const raw = element.getAttribute("src") ?? "";
+        if (!readRailEmojiSpriteUrl(raw)) {
+          const src = normalizeRailImageUrl(raw);
+          if (src !== "") segments.push({ type: "image", src: src });
+        }
         continue;
       }
       if (element.tagName === "BR") {
         pushText(" ");
+        continue;
+      }
+      const emoji = readEmojiElement(element);
+      if (emoji !== null) {
+        segments.push(emoji);
+        continue;
+      }
+      const dataEmoji = element.getAttribute("data-emoji");
+      if (dataEmoji !== null && dataEmoji.trim() !== "") {
+        // An emoji the local pack tables do not know yet stays readable text.
+        pushText("[" + dataEmoji.trim() + "]");
         continue;
       }
       walk(element);
@@ -453,7 +605,53 @@ export function parseRailBody(value: unknown): RailSegment[] {
     const last = segments[segments.length - 1];
     if (last.type === "text") last.text = last.text.replace(/\s+$/, "");
   }
-  return segments.filter((segment) => segment.type !== "text" || segment.text !== "").slice(0, 80);
+  return segments.filter((segment) => segment.type !== "text" || segment.text !== "").slice(0, RAIL_SEGMENT_MAX);
+}
+
+/**
+ * Comment images live in a separate `imgs` field instead of the text body.
+ * They are appended after the text, deduplicated against inline images, and the
+ * segment budget is trimmed from the text side so pictures are never dropped.
+ */
+export function mergeRailImages(body: readonly RailSegment[], value: unknown): RailSegment[] {
+  const segments: RailSegment[] = body.slice();
+  const seen = new Set<string>();
+  for (const segment of segments) {
+    if (segment.type === "image") seen.add(segment.src);
+  }
+  const images: RailSegment[] = [];
+  for (const entry of readRailImageEntries(value)) {
+    if (images.length >= RAIL_SEGMENT_MAX) break;
+    const src = normalizeRailImageUrl(entry);
+    if (src === "" || seen.has(src)) continue;
+    seen.add(src);
+    images.push({ type: "image", src: src });
+  }
+  if (images.length === 0) return segments;
+  const room = Math.max(0, RAIL_SEGMENT_MAX - images.length);
+  return segments.slice(0, room).concat(images);
+}
+
+function readRailImageEntries(value: unknown): string[] {
+  if (typeof value === "string") return value === "" ? [] : value.split(";");
+  if (!Array.isArray(value)) return [];
+  const entries: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      entries.push(item);
+      continue;
+    }
+    const record = asRecord(item);
+    if (record === null) continue;
+    for (const key of ["url", "thumb", "src"]) {
+      const candidate = record[key];
+      if (typeof candidate === "string" && candidate.trim() !== "") {
+        entries.push(candidate);
+        break;
+      }
+    }
+  }
+  return entries;
 }
 
 export function railBodyText(segments: readonly RailSegment[]): string {
@@ -464,7 +662,7 @@ export function normalizeRailComment(comment: unknown): RailComment {
   const raw = asRecord(comment) ?? {};
   const user = asRecord(raw["user"]) ?? {};
   const avatar = user["avatar"] || user["avartar"] || "";
-  const body = parseRailBody(raw["text"]);
+  const body = mergeRailImages(parseRailBody(raw["text"]), raw["imgs"]);
   const id = String(raw["comment_id"] || raw["commentid"] || raw["id"] || "");
   const rawRootId = readRailRelationId(raw, ["root_id", "root_comment_id", "reply_root_id"]);
   return {
@@ -777,7 +975,8 @@ export function createRailPendingReply(input: RailPendingReplyInput): RailCommen
     replyName: "",
     avatar: "",
     text: text,
-    body: [{ type: "text", text: text }],
+    // The composer inserts emoji tokens, so the local echo must show them too.
+    body: parseRailTextBody(text),
     createAt: input.createAt,
     likes: 0,
     replies: 0,
@@ -1285,19 +1484,7 @@ export function createCommentRail() {
     if (document.body) document.body.classList.toggle("heybox-up-rail-open", state.mode === "open");
   };
 
-  const createEmoji = (id: string): HTMLSpanElement => {
-    const node = document.createElement("span");
-    node.className = "emoji";
-    node.setAttribute("role", "img");
-    node.setAttribute("aria-label", "表情");
-    // The tens digit is the sprite row and the ones digit the column. Negative
-    // offsets clip the cell; the site wraps positive offsets with background-repeat.
-    const column = (Number(id) % 10) - 1;
-    const row = Math.floor(Number(id) / 10) - 1;
-    node.style.backgroundImage = 'url("' + RAIL_EMOJI_SPRITE + '")';
-    node.style.backgroundPosition = "-" + column * RAIL_EMOJI_CELL + "px -" + row * RAIL_EMOJI_CELL + "px";
-    return node;
-  };
+  const createEmoji = (segment: RailEmojiRef): HTMLSpanElement => createRailEmojiElement(segment, "emoji");
 
   const createImage = (src: string): HTMLImageElement => {
     const node = document.createElement("img");
@@ -1316,7 +1503,7 @@ export function createCommentRail() {
     }
     for (const segment of segments) {
       if (segment.type === "text") node.append(document.createTextNode(segment.text));
-      else if (segment.type === "emoji") node.append(createEmoji(segment.id));
+      else if (segment.type === "emoji") node.append(createEmoji(segment));
       else node.append(createImage(segment.src));
     }
   };
