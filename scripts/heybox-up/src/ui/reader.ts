@@ -508,7 +508,18 @@ export const READER_CSS = `
     background: var(--hbu-reader-page);
     color: var(--hbu-reader-ink);
   }
-  .hbu-reader-cover { position: relative; inset: auto; flex: 1 1 auto; min-height: 240px; overflow: hidden; background: #05070a; }
+  /* The cover is a stage plus a pager band: the band always owns its own row under the photo. */
+  .hbu-reader-cover {
+    position: relative;
+    inset: auto;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 240px;
+    overflow: hidden;
+    background: #05070a;
+  }
+  .hbu-reader-cover-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   .hbu-reader-cover-glow { position: absolute; inset: -48px; background-position: center; background-size: cover; filter: blur(42px) brightness(.5); transform: scale(1.1); }
   .hbu-reader-cover img {
     position: absolute;
@@ -521,7 +532,7 @@ export const READER_CSS = `
     pointer-events: none;
   }
   .hbu-reader-cover img[data-active="true"] { opacity: 1; pointer-events: auto; }
-  .hbu-reader-cover::after {
+  .hbu-reader-cover-stage::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -547,9 +558,30 @@ export const READER_CSS = `
   .hbu-reader-cover-nav[data-side="prev"] { left: 16px; }
   .hbu-reader-cover-nav[data-side="next"] { right: 16px; }
   .hbu-reader-cover-nav[hidden] { display: none; }
-  .hbu-reader-cover-dots { position: absolute; top: 80px; left: 50%; z-index: 2; display: flex; gap: 0; transform: translateX(-50%); }
-  .hbu-reader-cover-dots button { position: relative; width: 36px; height: 36px; padding: 0; border: 0; background: transparent; cursor: pointer; }
-  .hbu-reader-cover-dots button::after { content: ""; position: absolute; top: 16px; right: 8px; left: 8px; height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .38); }
+  /* A blank strip below the photo holds the pager, so a dot never covers the picture. */
+  .hbu-reader-cover-progress {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    background: #05070a;
+  }
+  .hbu-reader-cover-progress[hidden] { display: none; }
+  .hbu-reader-cover-dots {
+    display: flex;
+    gap: 0;
+    align-items: center;
+    max-width: 100%;
+    height: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .hbu-reader-cover-dots::-webkit-scrollbar { display: none; }
+  .hbu-reader-cover-dots button { position: relative; width: 36px; height: 32px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+  .hbu-reader-cover-dots button::after { content: ""; position: absolute; top: 50%; right: 8px; left: 8px; height: 3px; margin-top: -1.5px; border-radius: 99px; background: rgba(255, 255, 255, .38); }
   .hbu-reader-cover-dots button[aria-current="true"]::after { background: #fff; }
   .hbu-reader-caption {
     position: relative;
@@ -5065,11 +5097,36 @@ export function watchReader(navigation: PostNavigationController): void {
   const createHeroCover = (page: HTMLElement, data: ReaderData, sources: string[], kind: string): void => {
     const cover = document.createElement("div");
     cover.className = "hbu-reader-cover";
+    // The photo and its pager live in separate rows, so the pager never paints
+    // over the picture. The band stays blank except for the dots themselves.
+    const stage = document.createElement("div");
+    stage.className = "hbu-reader-cover-stage";
+    const progress = document.createElement("div");
+    progress.className = "hbu-reader-cover-progress";
+    progress.hidden = true;
     const glow = document.createElement("div");
     glow.className = "hbu-reader-cover-glow";
     const capturedArticleId = articleId;
     const capturedGeneration = readerGeneration;
     const images: HTMLImageElement[] = [];
+    const renderCoverPager = (): void => {
+      const nav = stage.querySelectorAll<HTMLElement>(".hbu-reader-cover-nav");
+      for (const node of nav) node.hidden = coverTotal < 2;
+      progress.textContent = "";
+      progress.hidden = coverTotal < 2;
+      if (coverTotal < 2) return;
+      const row = document.createElement("div");
+      row.className = "hbu-reader-cover-dots";
+      images.forEach((image, dotIndex) => {
+        const dot = document.createElement("button");
+        dot.type = "button";
+        dot.setAttribute("aria-label", "封面 " + (dotIndex + 1));
+        dot.setAttribute("aria-current", String(dotIndex === coverIndex));
+        dot.addEventListener("click", () => setCover(dotIndex));
+        row.append(dot);
+      });
+      progress.append(row);
+    };
     const dropFailedCover = (failed: HTMLImageElement): void => {
       // Error and zero-size load events can arrive before the cover is inserted.
       // Article identity and reader generation are sufficient stale-event guards.
@@ -5097,26 +5154,10 @@ export function watchReader(navigation: PostNavigationController): void {
         return;
       }
       page.dataset["cover"] = kind;
-      const nav = cover.querySelectorAll<HTMLElement>(".hbu-reader-cover-nav");
-      for (const node of nav) node.hidden = coverTotal < 2;
-      const dots = cover.querySelector<HTMLElement>(".hbu-reader-cover-dots");
-      if (dots !== null) dots.remove();
-      if (coverTotal > 1) {
-        const row = document.createElement("div");
-        row.className = "hbu-reader-cover-dots";
-        images.forEach((image, dotIndex) => {
-          const dot = document.createElement("button");
-          dot.type = "button";
-          dot.setAttribute("aria-label", "封面 " + (dotIndex + 1));
-          dot.setAttribute("aria-current", String(dotIndex === coverIndex));
-          dot.addEventListener("click", () => setCover(dotIndex));
-          row.append(dot);
-        });
-        cover.append(row);
-      }
+      renderCoverPager();
       setCover(coverIndex);
     };
-    cover.append(glow);
+    stage.append(glow);
     sources.forEach((source, index) => {
       const img = document.createElement("img");
       img.alt = index === 0 ? data.title : "封面 " + (index + 1);
@@ -5128,7 +5169,7 @@ export function watchReader(navigation: PostNavigationController): void {
         dropFailedCover(img);
       }, { once: true });
       img.addEventListener("click", () => openLightbox(readImageSource(img)));
-      cover.append(img);
+      stage.append(img);
       images.push(img);
       img.src = source;
     });
@@ -5151,18 +5192,10 @@ export function watchReader(navigation: PostNavigationController): void {
       next.setAttribute("aria-label", "下一张封面");
       next.innerHTML = READER_ICONS.next;
       next.addEventListener("click", () => setCover(coverIndex + 1));
-      const dots = document.createElement("div");
-      dots.className = "hbu-reader-cover-dots";
-      sources.forEach((source, index) => {
-        const dot = document.createElement("button");
-        dot.type = "button";
-        dot.setAttribute("aria-label", "封面 " + (index + 1));
-        dot.setAttribute("aria-current", String(index === 0));
-        dot.addEventListener("click", () => setCover(index));
-        dots.append(dot);
-      });
-      cover.append(prev, next, dots);
+      stage.append(prev, next);
     }
+    renderCoverPager();
+    cover.append(stage, progress);
     // Prepending keeps a late body-image fallback above the caption it already rendered after.
     page.prepend(cover);
   };
