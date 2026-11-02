@@ -1,7 +1,7 @@
 import { PAGE_ROUTE, READER_LINE_HEIGHT_DEFAULT, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
 import { getHeyboxId, resolveHeyboxId } from "../core/account";
 import { LINK_HREF_PREFIX } from "../core/cy";
-import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_TRAIL_KEY, POST_TRAIL_MAX, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
+import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_HISTORY_CURSOR_KEY, POST_HISTORY_TITLES_KEY, POST_TRAIL_KEY, POST_TRAIL_MAX, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
 import { EMBEDDED_MEDIA_SELECTOR, EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, ensureStyleElement, registerPageSync } from "../core/page-sync";
 import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
 import { asRecord } from "../core/json";
@@ -38,9 +38,17 @@ export interface PostPagerStatus {
   revision: number;
   prev: { id: string; title: string } | null;
   next: { id: string; title: string; source?: string } | null;
+  /** Visit order, oldest first, with the entry the reader is looking at marked. */
+  history: PostHistoryEntry[];
   discovering: boolean;
   error: string;
   exhausted: boolean;
+}
+
+export interface PostHistoryEntry {
+  id: string;
+  title: string;
+  current: boolean;
 }
 
 export interface PostNavigationController {
@@ -961,6 +969,13 @@ export function readSessionArray(key: string): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+/** Reads a session JSON object without trusting its shape. */
+export function readSessionRecord(key: string): Record<string, unknown> {
+  const value = sessionStore.readJson(key, {});
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
 export function writeSessionValue(key: string, value: unknown): boolean {
   return sessionStore.writeJson(key, value);
 }
@@ -1059,20 +1074,77 @@ export function readPostTrail(): string[] {
   return readSessionArray(POST_TRAIL_KEY).filter((id): id is string => typeof id === "string" && /^\d+$/.test(id));
 }
 
+/** Reads the stored visit cursor, or -1 when it has not been written yet. */
+export function readPostHistoryCursor(): number {
+  const raw = sessionStore.read(POST_HISTORY_CURSOR_KEY);
+  if (raw === null || raw === "") return -1;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : -1;
+}
+
+export function writePostHistoryCursor(index: number): void {
+  if (!Number.isSafeInteger(index) || index < 0) return;
+  sessionStore.write(POST_HISTORY_CURSOR_KEY, String(index));
+}
+
 export function readVisitedPostIds(currentId: string): Set<string> {
   const visited = new Set(readPostTrail());
   if (currentId !== "") visited.add(currentId);
   return visited;
 }
 
-export function pushPostTrail(id: string): void {
+/**
+ * Records a visit and moves the history cursor. Re-entering a post that is
+ * already in the trail selects that entry instead of appending a duplicate, so
+ * "previous" keeps walking the older direction after a step back.
+ */
+export function visitPostTrail(id: string): string[] {
   const trail = readPostTrail();
-  if (trail[trail.length - 1] === id) return;
-  const seenAt = trail.lastIndexOf(id);
-  if (seenAt !== -1) trail.splice(seenAt, 1);
+  if (id === "") return trail;
+  const existing = trail.lastIndexOf(id);
+  if (existing !== -1) {
+    writePostHistoryCursor(existing);
+    return trail;
+  }
+  // Opening a new post after stepping back drops the abandoned forward branch,
+  // the way browser history does, so "previous" always means the post that was
+  // actually on screen before this one.
+  const cursor = readPostHistoryCursor();
+  if (cursor >= 0 && cursor < trail.length - 1) trail.splice(cursor + 1);
   trail.push(id);
   while (trail.length > POST_TRAIL_MAX) trail.shift();
   writeSessionValue(POST_TRAIL_KEY, trail);
+  writePostHistoryCursor(trail.length - 1);
+  return trail;
+}
+
+/**
+ * Title lookup for the history panel. Titles come from the recent metadata the
+ * reader already records, so the timeline never needs an extra request.
+ */
+export function readPostHistoryEntryTitle(id: string): string {
+  const recent = readFeedRecent();
+  const found = recent.find((item) => item.id === id);
+  if (found !== undefined && found.title !== "") return found.title;
+  // Older visits eventually fall out of the twelve entry recent list, so the
+  // timeline keeps its own label cache.
+  const stored = readSessionRecord(POST_HISTORY_TITLES_KEY);
+  const value = stored[id];
+  return typeof value === "string" ? value : "";
+}
+
+export function writePostHistoryTitle(id: string, title: string): void {
+  if (id === "" || title === "") return;
+  const stored = readSessionRecord(POST_HISTORY_TITLES_KEY);
+  if (stored[id] === title) return;
+  stored[id] = title;
+  const trail = readPostTrail();
+  const kept: Record<string, string> = {};
+  for (const trailId of trail) {
+    const value = stored[trailId];
+    if (typeof value === "string") kept[trailId] = value;
+  }
+  writeSessionValue(POST_HISTORY_TITLES_KEY, kept);
 }
 
 export function readFeedQueue(accountId: string = getHeyboxId()): FeedCandidate[] {
@@ -1166,11 +1238,23 @@ export function createPostNavigationController(): PostNavigationController {
   const readStatus = (): PostPagerStatus => {
     const trail = readPostTrail();
     let prev: { id: string; title: string } | null = null;
-    if (currentId !== "") {
-      const at = trail.lastIndexOf(currentId);
-      const prevId = at > 0 ? trail[at - 1] : at === -1 && trail.length > 0 ? trail[trail.length - 1] : "";
-      if (prevId !== "" && prevId !== currentId) prev = { id: prevId, title: "" };
+    const cursor = readPostHistoryCursor();
+    const at = currentId === "" ? -1 : trail.lastIndexOf(currentId);
+    // The cursor is the authority. It only points at the visited entry, so
+    // stepping back twice keeps moving toward older posts instead of bouncing
+    // between two ids that overwrote each other.
+    const position = at === -1 ? -1 : cursor >= 0 && trail[cursor] === currentId ? cursor : at;
+    if (position > 0) {
+      const prevId = trail[position - 1];
+      if (prevId !== undefined && prevId !== currentId) {
+        prev = { id: prevId, title: readPostHistoryEntryTitle(prevId) };
+      }
     }
+    const history: PostHistoryEntry[] = trail.map((id, index) => ({
+      id: id,
+      title: readPostHistoryEntryTitle(id),
+      current: index === position,
+    }));
     let next: { id: string; title: string; source?: string } | null = null;
     if (currentId !== "") {
       const picked = selectNextFeedCandidate({
@@ -1189,6 +1273,7 @@ export function createPostNavigationController(): PostNavigationController {
       revision: revision,
       prev: prev,
       next: next,
+      history: history,
       discovering: discovering,
       error: discoveryError,
       exhausted: exhausted,
@@ -1202,6 +1287,7 @@ export function createPostNavigationController(): PostNavigationController {
       String(status.revision),
       status.prev === null ? "" : status.prev.id,
       status.next === null ? "" : status.next.id,
+      status.history.map((entry) => (entry.current ? "*" : "") + entry.id).join(","),
       status.discovering ? "1" : "0",
       status.error,
       status.exhausted ? "1" : "0",
@@ -1236,7 +1322,7 @@ export function createPostNavigationController(): PostNavigationController {
     currentId = nextId;
     if (changed) {
       revision += 1;
-      pushPostTrail(nextId);
+      visitPostTrail(nextId);
       discoveryError = "";
       exhausted = false;
       if (queue.some((item) => item.id === nextId)) {
@@ -1251,6 +1337,7 @@ export function createPostNavigationController(): PostNavigationController {
     }
     const incoming = normalizeFeedCandidate(meta !== null && typeof meta === "object" ? { ...meta, id: nextId } : { id: nextId });
     if (incoming !== null) {
+      writePostHistoryTitle(nextId, incoming.title);
       const merged = mergeRecentMetadata(recent, incoming);
       const key = readFeedRecentSignature(merged);
       if (key !== recentKey) {

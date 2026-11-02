@@ -15,6 +15,16 @@ export const FEED_ORDER_KEY = "heybox-up.feedOrder.v1";
 
 export const POST_TRAIL_KEY = "heybox-up.postTrail.v1";
 
+/**
+ * Position inside the visit trail. The trail keeps the order posts were first
+ * opened in; this cursor only moves, so stepping back follows real history
+ * instead of rewriting the previous entry.
+ */
+export const POST_HISTORY_CURSOR_KEY = "heybox-up.postHistoryCursor.v1";
+
+/** Titles captured while reading, so older timeline rows keep their labels. */
+export const POST_HISTORY_TITLES_KEY = "heybox-up.postHistoryTitles.v1";
+
 export const POST_TRAIL_MAX = 40;
 
 export const FEED_ORDER_MAX = 600;

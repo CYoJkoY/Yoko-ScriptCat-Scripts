@@ -33,7 +33,7 @@ import { clearRailPageCache, writeRailPageCache } from "../scripts/heybox-up/src
 
 const navigation = {
   sync: (): void => undefined,
-  readStatus: () => ({ currentId: "1", revision: 0, prev: null, next: null, discovering: false, error: "", exhausted: true }),
+  readStatus: () => ({ currentId: "1", revision: 0, prev: null, next: null, discovering: false, error: "", exhausted: true, history: [] }),
   takeNext: () => null,
   discover: async (): Promise<void> => undefined,
   subscribe: () => (): void => undefined,
