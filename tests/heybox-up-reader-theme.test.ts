@@ -250,6 +250,23 @@ describe("immersive reader theme contract", () => {
     expect(toast.getPropertyValue("color")).toBe("var(--hbu-reader-float-ink)");
   });
 
+  it("protects uploaded media, related titles, and rich inline content from clipping", () => {
+    const media = ruleFor(rules, '.hbu-reader-page[data-kind="media"]');
+    expect(media.style.padding).toContain("112px");
+    const related = ruleFor(rules, ".hbu-reader-related a").style;
+    expect(related.getPropertyValue("overflow-wrap")).toBe("anywhere");
+    expect(related.getPropertyValue("word-break")).toBe("break-word");
+    const rich = ruleFor(rules, ".hbu-reader-rich").style;
+    expect(rich.getPropertyValue("white-space")).toBe("normal");
+    expect(rich.getPropertyValue("overflow-wrap")).toBe("anywhere");
+    expect(ruleFor(rules, '.hbu-reader-rich img[class*="emoji"], .hbu-reader-rich [class*="emoji"] img').style.width).toBe("1.2em");
+  });
+
+  it("includes controls for existing timeline preferences in the reader settings panel", () => {
+    expect(readerCss).toContain("hbu-reader-setting-switch");
+    expect(readerCss).toContain("hbu-reader-setting-line input[type=\"number\"]");
+  });
+
   it("uses the reader accent and ink for accent surfaces", () => {
     const accentSelectors = [
       ".hbu-reader-notice a",

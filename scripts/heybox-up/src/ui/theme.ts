@@ -1567,16 +1567,43 @@ export const THEME_CSS = `
   #page-creator-content-management .scroll-list__no-more-desc {
     display: none !important;
   }
-  /* 收藏与文章页：右栏只剩二维码、推广与备案信息，移除后让主列表占满内容区。 */
-  :is(#page-user-favour, #page-creator-content-management, #page-creator-content-management-detail)
+  /* Topic, editor, favourites, and article pages have only promotional right rails. */
+  :is(#page-user-favour, #page-creator-content-management, #page-creator-content-management-detail, #page-topic-link, #page-creator-editor)
     .cpt-right-side.right {
     display: none !important;
   }
-  :is(#page-user-favour, #page-creator-content-management, #page-creator-content-management-detail)
+  #page-topic-link .topic__aside-miniprogram {
+    display: none !important;
+  }
+  :is(#page-user-favour, #page-creator-content-management, #page-creator-content-management-detail, #page-topic-link, #page-creator-editor)
     .content > .list {
     flex: 1 1 auto !important;
     width: auto !important;
     max-width: none !important;
+  }
+  #page-topic-link .topic-link__main,
+  #page-creator-editor > .content > .list {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+  /* Preserve the native engagement glyphs beside article statistics. */
+  #page-creator-content-management .creator-content-item__data-item .hb-icon,
+  #page-creator-content-management .creator-content-item__data-item svg {
+    display: inline-flex !important;
+    visibility: visible !important;
+    flex: none !important;
+  }
+  /* Keep route content on the selected theme while the SPA swaps page nodes. */
+  :root.heybox-up-theme #page-creator-content-management,
+  :root.heybox-up-theme #page-creator-content-management-detail {
+    background-color: var(--heybox-up-bg) !important;
+    transition: none !important;
+  }
+  :root.heybox-up-theme #page-creator-content-management > .content,
+  :root.heybox-up-theme #page-creator-content-management-detail > .content {
+    background-color: var(--heybox-up-bg) !important;
   }
   /* Global search page: right rail holds only hot searches, a QR code, app links and ICP text. */
   #page-bbs-list .cpt-right-side.right {

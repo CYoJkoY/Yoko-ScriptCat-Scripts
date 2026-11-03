@@ -229,8 +229,8 @@ describe("reader lightbox layering", () => {
 
 describe("reader media page clearance", () => {
   it("keeps the media page below the fading head", () => {
-    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: calc(84px + env(safe-area-inset-top)) 20px 64px;');
-    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { padding: calc(72px + env(safe-area-inset-top)) 16px 62px; }');
+    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px;');
+    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }');
   });
 
   it("keeps the cover scrim short and light", () => {
