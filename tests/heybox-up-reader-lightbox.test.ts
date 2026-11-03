@@ -200,6 +200,33 @@ describe("reader lightbox interaction", () => {
   });
 });
 
+describe("reader lightbox layering", () => {
+  const layers = new Map<string, number>();
+  const style = document.createElement("style");
+  style.textContent = READER_CSS;
+  document.head.append(style);
+  const sheet = style.sheet;
+  if (sheet === null) throw new Error("Expected the reader style sheet");
+  for (const rule of sheet.cssRules) {
+    if (!(rule instanceof CSSStyleRule)) continue;
+    const zIndex = Number.parseInt(rule.style.getPropertyValue("z-index"), 10);
+    if (Number.isFinite(zIndex)) layers.set(rule.selectorText, zIndex);
+  }
+  style.remove();
+
+  it("paints the viewer above the comment sheet it is opened from", () => {
+    const panel = layers.get(".hbu-reader-comments-panel");
+    const lightbox = layers.get(".hbu-reader-lightbox");
+    expect(panel).toBe(4065);
+    expect(lightbox).toBeDefined();
+    expect(lightbox ?? 0).toBeGreaterThan(panel ?? 0);
+  });
+
+  it("stays below the site alert so a login prompt is never covered", () => {
+    expect(layers.get(".hbu-reader-lightbox") ?? 0).toBeLessThan(4100);
+  });
+});
+
 describe("reader media page clearance", () => {
   it("keeps the media page below the fading head", () => {
     expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: calc(84px + env(safe-area-inset-top)) 20px 64px;');

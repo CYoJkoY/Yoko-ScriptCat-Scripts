@@ -238,6 +238,38 @@ describe("comment payload helpers", () => {
   it("builds a delete body with only the comment id", () => {
     expect(buildDeleteCommentBody("123")).toEqual({ comment_id: "123" });
   });
+
+  it("joins uploaded pictures into the imgs field", () => {
+    expect(buildArticleCommentBody("888", "", null, [
+      "https://imgheybox1.max-c.com/bbs/a.webp",
+      "//imgheybox1.max-c.com/bbs/b.webp",
+    ])).toEqual({
+      is_cy: "0",
+      link_id: "888",
+      reply_id: "-1",
+      root_id: "-1",
+      text: "",
+      imgs: "https://imgheybox1.max-c.com/bbs/a.webp;https://imgheybox1.max-c.com/bbs/b.webp",
+    });
+  });
+
+  it("drops unusable picture references and omits the field when empty", () => {
+    const body = buildArticleCommentBody("888", "hi", null, ["javascript:alert(1)", "  ", "https://img/a.webp"]);
+    expect(body["imgs"]).toBe("https://img/a.webp");
+    expect(buildArticleCommentBody("888", "hi", null, ["data:image/png;base64,AA"])).toEqual({
+      is_cy: "0",
+      link_id: "888",
+      reply_id: "-1",
+      root_id: "-1",
+      text: "hi",
+    });
+    expect("imgs" in buildArticleCommentBody("888", "hi", null)).toBe(false);
+  });
+
+  it("keeps uploaded pictures on a reply body too", () => {
+    const body = buildArticleCommentBody("888", "", { id: "10", rootId: "10" }, ["https://img/a.webp"]);
+    expect(body).toMatchObject({ reply_id: "10", root_id: "10", imgs: "https://img/a.webp" });
+  });
 });
 
 describe("comment ownership", () => {

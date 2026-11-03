@@ -906,14 +906,22 @@ export function buildArticleCommentBody(
   linkId: string,
   text: string,
   target: ArticleReplyTargetPayload | null,
+  imageUrls: readonly string[] = [],
 ): Record<string, string> {
-  return {
+  const body: Record<string, string> = {
     is_cy: "0",
     link_id: linkId,
     reply_id: target === null ? "-1" : target.id,
     root_id: target === null ? "-1" : target.rootId,
     text: text,
   };
+  // The site stores comment pictures as one `;` separated field of CDN URLs and
+  // omits the field entirely when a comment carries no picture.
+  const images = imageUrls
+    .map((url) => normalizeRailImageUrl(url))
+    .filter((url) => url !== "");
+  if (images.length > 0) body["imgs"] = images.join(";");
+  return body;
 }
 
 export function buildDeleteCommentBody(commentId: string): Record<string, string> {
@@ -1018,6 +1026,8 @@ export interface RailPendingReplyInput {
   /** Falls back to a local placeholder when the create call returned no id. */
   commentId?: string;
   sequence: number;
+  /** Uploaded picture URLs, so the local echo shows them before the site does. */
+  imageUrls?: readonly string[];
 }
 
 /**
@@ -1029,6 +1039,7 @@ export function createRailPendingReply(input: RailPendingReplyInput): RailCommen
   const id = typeof input.commentId === "string" && input.commentId !== ""
     ? input.commentId
     : RAIL_PENDING_ID_PREFIX + input.sequence;
+  const images = input.imageUrls ?? [];
   return {
     id: id,
     userId: input.userId,
@@ -1036,8 +1047,9 @@ export function createRailPendingReply(input: RailPendingReplyInput): RailCommen
     replyName: "",
     avatar: "",
     text: text,
-    // The composer inserts emoji tokens, so the local echo must show them too.
-    body: parseRailTextBody(text),
+    // The composer inserts emoji tokens and can attach pictures, so the local
+    // echo must show both before the site echoes the comment back.
+    body: mergeRailImages(parseRailTextBody(text), images),
     createAt: input.createAt,
     likes: 0,
     replies: 0,
