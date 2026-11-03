@@ -97,9 +97,40 @@ describe("reader history timeline", () => {
     host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
     const panel = host.querySelector<HTMLElement>(".hbu-reader-history-menu");
     expect(panel?.hidden).toBe(false);
+    expect(panel?.querySelector(".hbu-reader-history-meta")?.textContent).toBe("共 2 篇 · 正在阅读第 2 篇");
     const rows = Array.from(panel?.querySelectorAll(".hbu-reader-history-row") ?? []);
     expect(rows.map((row) => row.getAttribute("data-id"))).toEqual(["123456", "100"]);
     expect(rows[0]?.getAttribute("aria-current")).toBe("true");
+    expect(rows[0]?.getAttribute("aria-label")).toBe("第 2 篇，共 2 篇：Title，正在阅读");
+    expect(rows[1]?.getAttribute("aria-label")).toBe("第 1 篇，共 2 篇：Earlier post");
+    expect(rows[0]?.querySelector(".hbu-reader-history-current")?.textContent).toBe("正在阅读");
+  });
+
+  it("closes on Escape and returns focus to the timeline action", () => {
+    const host = mountReader();
+    const action = host.querySelector<HTMLButtonElement>('[data-action="history"]');
+    action?.click();
+    const panel = host.querySelector<HTMLElement>(".hbu-reader-history-menu");
+    const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
+    if (panel === null || thumb === null) throw new Error("Expected the open timeline");
+    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(panel.hidden).toBe(true);
+    expect(action?.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(action);
+  });
+
+  it("scrolls the current visit into view when the timeline opens", () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    try {
+      const host = mountReader();
+      host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    } finally {
+      if (original === undefined) delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      else Object.defineProperty(HTMLElement.prototype, "scrollIntoView", original);
+    }
   });
 
   it("removes the action and panel when the switch turns off", () => {
@@ -129,24 +160,42 @@ describe("reader history timeline", () => {
   });
 
   it("previews another visit with the arrow keys without leaving the post", () => {
-    const host = mountReader();
-    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
-    const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
-    if (thumb === null) throw new Error("Expected the rail thumb");
-    const peek = host.querySelector<HTMLElement>(".hbu-reader-history-peek");
-    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true }));
-    expect(thumb.textContent).toBe("2/2");
-    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
-    expect(thumb.textContent).toBe("1/2");
-    expect(thumb.style.top).toBe("100%");
-    expect(thumb.getAttribute("data-preview")).toBe("true");
-    expect(peek?.textContent).toBe("Earlier post");
-    expect(peek?.hidden).toBe(false);
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    try {
+      const host = mountReader();
+      host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+      const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
+      if (thumb === null) throw new Error("Expected the rail thumb");
+      const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".hbu-reader-history-row"));
+      const peek = host.querySelector<HTMLElement>(".hbu-reader-history-peek");
+      expect(peek?.getAttribute("role")).toBe("status");
+      expect(peek?.getAttribute("aria-live")).toBe("polite");
+      expect(peek?.getAttribute("aria-atomic")).toBe("true");
+      thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true }));
+      expect(thumb.textContent).toBe("2/2");
+      thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+      expect(thumb.textContent).toBe("1/2");
+      expect(thumb.style.top).toBe("100%");
+      expect(thumb.getAttribute("data-preview")).toBe("true");
+      expect(peek?.textContent).toBe("Earlier post");
+      expect(peek?.hidden).toBe(false);
+      expect(rows[1]?.getAttribute("data-preview")).toBe("true");
+      expect(rows[0]?.getAttribute("data-preview")).toBeNull();
+      expect(rows[0]?.getAttribute("aria-current")).toBe("true");
+      expect(rows[1]?.getAttribute("aria-current")).toBeNull();
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+      expect(scrollIntoView.mock.contexts.at(-1)).toBe(rows[1]);
 
-    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
-    expect(thumb.textContent).toBe("2/2");
-    // Previewing never navigates on its own.
-    expect(location.pathname).toBe("/app/bbs/link/123456");
+      thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+      expect(thumb.textContent).toBe("2/2");
+      // Previewing never navigates on its own.
+      expect(location.pathname).toBe("/app/bbs/link/123456");
+    } finally {
+      if (original === undefined) delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      else Object.defineProperty(HTMLElement.prototype, "scrollIntoView", original);
+    }
   });
 
   it("tracks the pointer while the thumb is dragged", () => {
