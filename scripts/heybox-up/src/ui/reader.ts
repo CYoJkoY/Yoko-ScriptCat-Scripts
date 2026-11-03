@@ -5,6 +5,7 @@ import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, F
 import { EMBEDDED_MEDIA_SELECTOR, EMBEDDED_MEDIA_SOURCE_ATTRIBUTES, ensureStyleElement, registerPageSync } from "../core/page-sync";
 import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
 import { asRecord } from "../core/json";
+import { MAX_COMMENT_IMAGES, uploadCommentImage } from "../core/upload";
 import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
@@ -49,6 +50,23 @@ export interface PostHistoryEntry {
   id: string;
   title: string;
   current: boolean;
+}
+
+/** One picture picked for a comment, kept until the composer is cleared. */
+interface ComposerImage {
+  readonly id: number;
+  readonly name: string;
+  readonly file: File;
+  /** Blob preview URL; empty when the webview refuses blob URLs. */
+  previewUrl: string;
+  status: "pending" | "ready" | "failed";
+  /** CDN preview URL returned once the upload settles. */
+  url: string;
+  /** Chinese reason shown on a failed upload. */
+  error: string;
+  /** Set when the reader removes or clears the picture mid-upload. */
+  removed: boolean;
+  readonly controller: AbortController;
 }
 
 export interface PostNavigationController {
@@ -935,8 +953,21 @@ export const READER_CSS = `
   .hbu-reader-composer-reply-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hbu-reader-composer-reply-cancel { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-link); font: inherit; cursor: pointer; }
   .hbu-reader-composer-bar { display: flex; gap: 8px; align-items: center; }
-  .hbu-reader-composer-emoji-toggle { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid var(--hbu-reader-border); border-radius: 8px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
+  .hbu-reader-composer-emoji-toggle, .hbu-reader-composer-image-toggle { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid var(--hbu-reader-border); border-radius: 8px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-composer-emoji-toggle[aria-expanded="true"] { border-color: var(--hbu-reader-accent); color: var(--hbu-reader-ink); }
+  .hbu-reader-composer-emoji-toggle:disabled, .hbu-reader-composer-image-toggle:disabled { opacity: .55; cursor: default; }
+  /* Picked pictures keep a square thumbnail so a nine picture row wraps instead
+     of pushing the panel wider than its column. */
+  .hbu-reader-composer-images { display: flex; flex-wrap: wrap; gap: 9px; }
+  .hbu-reader-composer-images[hidden] { display: none; }
+  .hbu-reader-composer-image { position: relative; width: 62px; height: 62px; margin: 0; }
+  .hbu-reader-composer-image-frame { position: relative; display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: var(--hbu-reader-subtle); }
+  .hbu-reader-composer-image-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .hbu-reader-composer-image-placeholder { color: var(--hbu-reader-muted); font-size: 11px; }
+  .hbu-reader-composer-image-state { position: absolute; right: 0; bottom: 0; left: 0; padding: 1px 0; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 10px; text-align: center; }
+  .hbu-reader-composer-image[data-status="failed"] .hbu-reader-composer-image-frame { border-color: var(--hbu-reader-danger); }
+  .hbu-reader-composer-image-remove { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
+  .hbu-reader-composer-file { display: none; }
   .hbu-reader-composer-emoji { max-height: 196px; padding: 8px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--hbu-reader-border); border-radius: 10px; background: var(--hbu-reader-subtle); }
   .hbu-reader-composer-emoji[hidden] { display: none; }
   .hbu-reader-composer-emoji-groups { display: flex; flex-direction: column; gap: 10px; }
@@ -953,8 +984,11 @@ export const READER_CSS = `
   .hbu-reader-composer-submit:disabled { opacity: .55; cursor: default; }
   /* The lightbox is a scrollable stage: a very long picture keeps its reading
      width and grows downward instead of being squeezed into the viewport. The
-     width itself is measured in JS so zoom steps stay exact. */
-  .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: flex; flex-direction: column; align-items: center; padding: 52px 12px 20px; overflow: auto; border: 0; background: rgba(2, 4, 7, .95); color: #e9eef5; font: inherit; }
+     width itself is measured in JS so zoom steps stay exact. The viewer opens
+     from inside the comment sheet as well as from the article, so it paints
+     above every reader overlay: the panel sits at 4065 and the toast at 4060,
+     while the site alert stays at 4100. */
+  .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4070; display: flex; flex-direction: column; align-items: center; padding: 52px 12px 20px; overflow: auto; border: 0; background: rgba(2, 4, 7, .95); color: #e9eef5; font: inherit; }
   .hbu-reader-lightbox-stage { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: center; width: 100%; }
   .hbu-reader-lightbox img { display: block; max-width: none; height: auto; margin: 0 auto; border-radius: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, .55); cursor: zoom-in; transition: width .16s ease; }
   .hbu-reader-lightbox img[data-zoom="0"] { cursor: zoom-in; }
@@ -1996,6 +2030,10 @@ export function watchReader(navigation: PostNavigationController): void {
   let pendingReplySeq = 0;
   const ARTICLE_COMMENT_MAX_LENGTH = 1000;
   const articleComposerEmojiClosers: WeakMap<Element, () => void> = new WeakMap();
+  // Pictures picked for the composer live next to the element they belong to,
+  // so closing or resetting the panel cannot leave an upload behind.
+  const articleComposerImages: WeakMap<Element, ComposerImage[]> = new WeakMap();
+  let articleComposerImageSeq = 0;
   let commentPanel: HTMLElement | null = null;
   let commentPanelList: HTMLOListElement | null = null;
   let commentPanelStatus: HTMLDivElement | null = null;
@@ -4034,11 +4072,194 @@ export function watchReader(navigation: PostNavigationController): void {
 
   const readArticleComposers = (): Element[] => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
 
+  const readComposerImages = (root: Element): ComposerImage[] => articleComposerImages.get(root) ?? [];
+
+  const createComposerPreviewUrl = (file: File): string => {
+    if (typeof URL.createObjectURL !== "function") return "";
+    try {
+      return URL.createObjectURL(file);
+    } catch {
+      // A webview that exposes the API but refuses blob URLs still uploads.
+      return "";
+    }
+  };
+
+  const revokeComposerPreviewUrl = (url: string): void => {
+    if (url === "" || typeof URL.revokeObjectURL !== "function") return;
+    URL.revokeObjectURL(url);
+  };
+
+  const readComposerStatus = (root: Element): HTMLElement | null => {
+    const status = root.querySelector(".hbu-reader-composer-status");
+    return status instanceof HTMLElement ? status : null;
+  };
+
+  /**
+   * Draws the picked pictures and the add button. The strip is rebuilt from the
+   * state instead of patched in place, so a removed or failed picture can never
+   * leave a stale thumbnail behind.
+   */
+  const renderComposerImages = (root: Element): void => {
+    const strip = root.querySelector(".hbu-reader-composer-images");
+    if (!(strip instanceof HTMLElement)) return;
+    const images = readComposerImages(root);
+    strip.textContent = "";
+    strip.hidden = images.length === 0;
+    for (const image of images) {
+      const item = document.createElement("figure");
+      item.className = "hbu-reader-composer-image";
+      item.dataset["status"] = image.status;
+      item.dataset["imageId"] = String(image.id);
+      const frame = document.createElement("div");
+      frame.className = "hbu-reader-composer-image-frame";
+      if (image.previewUrl !== "") {
+        const preview = document.createElement("img");
+        preview.alt = image.name;
+        preview.decoding = "async";
+        preview.src = image.previewUrl;
+        frame.append(preview);
+      } else {
+        const placeholder = document.createElement("span");
+        placeholder.className = "hbu-reader-composer-image-placeholder";
+        placeholder.textContent = "图片";
+        frame.append(placeholder);
+      }
+      if (image.status !== "ready") {
+        const state = document.createElement("span");
+        state.className = "hbu-reader-composer-image-state";
+        state.textContent = image.status === "pending" ? "上传中…" : "上传失败";
+        frame.append(state);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "hbu-reader-composer-image-remove";
+      remove.textContent = "×";
+      remove.title = "移除图片";
+      remove.setAttribute("aria-label", "移除图片 " + image.name);
+      remove.addEventListener("click", () => removeComposerImage(root, image.id));
+      item.append(frame, remove);
+      strip.append(item);
+    }
+  };
+
+  const uploadComposerImage = (root: Element, image: ComposerImage): void => {
+    void (async () => {
+      try {
+        const accountId = await resolveHeyboxId(image.controller.signal);
+        if (image.removed) return;
+        if (accountId === "") throw new Error("请先登录小黑盒");
+        const uploaded = await uploadCommentImage(image.file, accountId, image.controller.signal);
+        if (image.removed) return;
+        image.status = "ready";
+        image.url = uploaded.url;
+      } catch (error) {
+        if (image.removed || isAbortError(error)) return;
+        image.status = "failed";
+        image.error = error instanceof Error ? error.message : "图片上传失败";
+      }
+      if (image.removed) return;
+      renderComposerImages(root);
+      if (image.status === "failed") {
+        const status = readComposerStatus(root);
+        if (status !== null) status.textContent = image.name + " 上传失败" + (image.error === "" ? "" : "：" + image.error);
+      }
+      syncArticleComposers();
+    })();
+  };
+
+  function removeComposerImage(root: Element, id: number): void {
+    const kept: ComposerImage[] = [];
+    for (const image of readComposerImages(root)) {
+      if (image.id !== id) {
+        kept.push(image);
+        continue;
+      }
+      image.removed = true;
+      image.controller.abort();
+      revokeComposerPreviewUrl(image.previewUrl);
+      image.previewUrl = "";
+    }
+    articleComposerImages.set(root, kept);
+    const status = readComposerStatus(root);
+    if (status !== null) status.textContent = "";
+    renderComposerImages(root);
+    syncArticleComposers();
+  }
+
+  function clearComposerImages(root: Element): void {
+    for (const image of readComposerImages(root)) {
+      image.removed = true;
+      image.controller.abort();
+      revokeComposerPreviewUrl(image.previewUrl);
+      image.previewUrl = "";
+    }
+    articleComposerImages.delete(root);
+    renderComposerImages(root);
+  }
+
+  const addComposerImages = (root: Element, files: readonly File[]): void => {
+    const status = readComposerStatus(root);
+    const images = readComposerImages(root);
+    const room = MAX_COMMENT_IMAGES - images.length;
+    if (room <= 0) {
+      if (status !== null) status.textContent = "最多选择 " + MAX_COMMENT_IMAGES + " 张图片";
+      return;
+    }
+    // The site's own picker only forwards image files, so a non-image choice is
+    // rejected here instead of failing later on the upload call.
+    const picked = files.filter((file) => file.type.startsWith("image/"));
+    if (picked.length === 0) {
+      if (status !== null) status.textContent = "仅支持选择图片文件";
+      return;
+    }
+    const chosen = picked.slice(0, room);
+    if (status !== null) status.textContent = picked.length > room ? "最多选择 " + MAX_COMMENT_IMAGES + " 张图片" : "";
+    const next = images.slice();
+    const added: ComposerImage[] = [];
+    for (const file of chosen) {
+      articleComposerImageSeq += 1;
+      const image: ComposerImage = {
+        id: articleComposerImageSeq,
+        name: file.name,
+        file: file,
+        previewUrl: createComposerPreviewUrl(file),
+        status: "pending",
+        url: "",
+        error: "",
+        removed: false,
+        controller: new AbortController(),
+      };
+      next.push(image);
+      added.push(image);
+    }
+    articleComposerImages.set(root, next);
+    renderComposerImages(root);
+    syncArticleComposers();
+    for (const image of added) uploadComposerImage(root, image);
+  };
+
   const clearArticleReplyTarget = (restoreFocus: boolean): void => {
     if (articleReplyTarget === null) return;
     articleReplyTarget = null;
     syncArticleComposers();
     if (restoreFocus) readArticleComposers()[0]?.querySelector<HTMLTextAreaElement>(".hbu-reader-composer-input")?.focus({ preventScroll: true });
+  };
+
+  /**
+   * Enters reply mode. The site's own composer hides picture picking while a
+   * reply is addressed, so pictures already picked for a new floor comment are
+   * dropped here instead of being silently attached to the reply.
+   */
+  const beginArticleReply = (target: { id: string; rootId: string; name: string }): void => {
+    for (const root of readArticleComposers()) {
+      if (readComposerImages(root).length === 0) continue;
+      clearComposerImages(root);
+      const status = readComposerStatus(root);
+      if (status !== null) status.textContent = "回复暂不支持图片，已移除所选图片";
+    }
+    articleReplyTarget = target;
+    syncArticleComposers();
+    readArticleComposers()[0]?.querySelector<HTMLTextAreaElement>(".hbu-reader-composer-input")?.focus({ preventScroll: true });
   };
 
   const syncArticleComposers = (): void => {
@@ -4047,8 +4268,18 @@ export function watchReader(navigation: PostNavigationController): void {
       const input = root.querySelector(".hbu-reader-composer-input");
       const submit = root.querySelector(".hbu-reader-composer-submit");
       if (!(input instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) continue;
-      submit.disabled = articleCommentBusy || input.value.trim() === "";
+      const images = readComposerImages(root);
+      const uploading = images.some((image) => image.status === "pending");
+      const ready = images.filter((image) => image.status === "ready").length;
+      // A picture-only comment is valid on the site, so the button unlocks as
+      // soon as one upload settles; an in-flight upload keeps it locked.
+      submit.disabled = articleCommentBusy || uploading || (input.value.trim() === "" && ready === 0);
       submit.textContent = articleCommentBusy ? "发布中…" : "发布";
+      const imageToggle = root.querySelector(".hbu-reader-composer-image-toggle");
+      if (imageToggle instanceof HTMLButtonElement) {
+        imageToggle.disabled = articleCommentBusy || reply !== null || images.length >= MAX_COMMENT_IMAGES;
+        imageToggle.title = reply === null ? "添加图片" : "回复暂不支持图片";
+      }
       const replyBar = root.querySelector(".hbu-reader-composer-reply");
       const replyName = root.querySelector(".hbu-reader-composer-reply-name");
       if (replyBar instanceof HTMLElement) replyBar.hidden = reply === null;
@@ -4064,9 +4295,12 @@ export function watchReader(navigation: PostNavigationController): void {
       const input = root.querySelector(".hbu-reader-composer-input");
       const status = root.querySelector(".hbu-reader-composer-status");
       const count = root.querySelector(".hbu-reader-composer-count");
+      const file = root.querySelector(".hbu-reader-composer-file");
       if (input instanceof HTMLTextAreaElement) input.value = "";
+      if (file instanceof HTMLInputElement) file.value = "";
       if (status !== null) status.textContent = "";
       if (count !== null) count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
+      clearComposerImages(root);
     }
     articleReplyTarget = null;
     syncArticleComposers();
@@ -4074,8 +4308,15 @@ export function watchReader(navigation: PostNavigationController): void {
 
   const submitArticleComment = async (input: HTMLTextAreaElement, status: HTMLElement): Promise<void> => {
     if (articleCommentBusy) return;
+    const root = input.closest("[data-hbu-article-composer]");
+    const images = root === null ? [] : readComposerImages(root);
+    if (images.some((image) => image.status === "pending")) {
+      status.textContent = "图片上传中，请稍候";
+      return;
+    }
+    const imageUrls = images.filter((image) => image.status === "ready" && image.url !== "").map((image) => image.url);
     const text = input.value.trim();
-    if (text === "") {
+    if (text === "" && imageUrls.length === 0) {
       status.textContent = "请输入评论内容";
       input.focus({ preventScroll: true });
       return;
@@ -4090,7 +4331,7 @@ export function watchReader(navigation: PostNavigationController): void {
       const accountId = await resolveHeyboxId();
       if (articleId !== targetId || readerGeneration !== generation) return;
       if (accountId === "") throw new Error("请先登录小黑盒");
-      const created = await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply), accountId);
+      const created = await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply, imageUrls), accountId);
       if (articleId !== targetId || readerGeneration !== generation) return;
       const createdId = readCreatedCommentId(created);
       clearArticleComposers();
@@ -4118,6 +4359,7 @@ export function watchReader(navigation: PostNavigationController): void {
           userId: accountId,
           createAt: Math.floor(Date.now() / 1000),
           sequence: ++pendingReplySeq,
+          imageUrls: imageUrls,
           ...(createdId === "" ? {} : { commentId: createdId }),
         });
         if (pending !== null) {
@@ -4443,6 +4685,32 @@ export function watchReader(navigation: PostNavigationController): void {
     emojiPanel.setAttribute("role", "group");
     emojiPanel.setAttribute("aria-label", "表情列表");
     const emojiPicker = createComposerEmojiPicker(input, status, emojiToggle, emojiPanel);
+    const imageToggle = document.createElement("button");
+    imageToggle.type = "button";
+    imageToggle.className = "hbu-reader-composer-image-toggle";
+    imageToggle.textContent = "图片";
+    imageToggle.title = "添加图片";
+    imageToggle.setAttribute("aria-label", "添加图片");
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.className = "hbu-reader-composer-file";
+    fileInput.accept = "image/*";
+    fileInput.multiple = true;
+    fileInput.tabIndex = -1;
+    fileInput.setAttribute("aria-hidden", "true");
+    const strip = document.createElement("div");
+    strip.className = "hbu-reader-composer-images";
+    strip.hidden = true;
+    strip.setAttribute("role", "group");
+    strip.setAttribute("aria-label", "已选图片");
+    // The hidden file input keeps the keyboard focus on the visible button.
+    imageToggle.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      const files = fileInput.files === null ? [] : Array.from(fileInput.files);
+      // Clearing the value lets the same file be picked again after a removal.
+      fileInput.value = "";
+      addComposerImages(root, files);
+    });
     root.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || emojiPanel.hidden) return;
       event.preventDefault();
@@ -4451,7 +4719,7 @@ export function watchReader(navigation: PostNavigationController): void {
     }, true);
     input.addEventListener("input", () => {
       count.textContent = input.value.length + "/" + ARTICLE_COMMENT_MAX_LENGTH;
-      submit.disabled = articleCommentBusy || input.value.trim() === "";
+      syncArticleComposers();
     });
     input.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return;
@@ -4459,8 +4727,8 @@ export function watchReader(navigation: PostNavigationController): void {
       if (!submit.disabled) void submitArticleComment(input, status);
     });
     submit.addEventListener("click", () => void submitArticleComment(input, status));
-    bar.append(emojiToggle, status, count, submit);
-    root.append(replyBar, input, emojiPanel, bar);
+    bar.append(emojiToggle, imageToggle, status, count, submit);
+    root.append(replyBar, input, emojiPanel, strip, fileInput, bar);
     articleComposerEmojiClosers.set(root, () => emojiPicker.close(false));
     return root;
   };
@@ -4621,9 +4889,7 @@ export function watchReader(navigation: PostNavigationController): void {
       const name = reply.dataset["replyName"] || "";
       if (id === "") return;
       event.preventDefault();
-      articleReplyTarget = { id: id, rootId: rootId, name: name };
-      syncArticleComposers();
-      readArticleComposers()[0]?.querySelector<HTMLTextAreaElement>(".hbu-reader-composer-input")?.focus({ preventScroll: true });
+      beginArticleReply({ id: id, rootId: rootId, name: name });
     });
     sheet.addEventListener("keydown", trapCommentPanelTab);
     document.body.append(panel);
