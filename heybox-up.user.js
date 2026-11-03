@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.4.61
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；用户上传的图片页顶部另留出渐变高度，图片最上沿不会被顶栏压暗，首屏渐变也收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论图片可点开大图，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏提供“阅读时间轴”按钮，按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.5.0
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；用户上传的图片页顶部另留出渐变高度，图片最上沿不会被顶栏压暗，首屏渐变也收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏提供“阅读时间轴”按钮，按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -649,6 +649,13 @@
   }
   function asRecord(value) {
     return isRecord(value) ? value : null;
+  }
+  function asUnknownArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+  function readStringField(record, key) {
+    const value = record[key];
+    return typeof value === "string" ? value : "";
   }
   function readFiniteNumber(value) {
     const parsed = typeof value === "number" ? value : Number(value);
@@ -2047,14 +2054,17 @@
     }
     return { hasMore: input.rawGroupCount >= RAIL_PAGE_SIZE, loadedGroups: input.loadedGroups };
   }
-  function buildArticleCommentBody(linkId, text, target) {
-    return {
+  function buildArticleCommentBody(linkId, text, target, imageUrls = []) {
+    const body = {
       is_cy: "0",
       link_id: linkId,
       reply_id: target === null ? "-1" : target.id,
       root_id: target === null ? "-1" : target.rootId,
       text
     };
+    const images = imageUrls.map((url) => normalizeRailImageUrl(url)).filter((url) => url !== "");
+    if (images.length > 0) body["imgs"] = images.join(";");
+    return body;
   }
   function buildDeleteCommentBody(commentId) {
     return { comment_id: commentId };
@@ -2127,6 +2137,7 @@
   function createRailPendingReply(input) {
     const text = input.text.trim();
     const id = typeof input.commentId === "string" && input.commentId !== "" ? input.commentId : RAIL_PENDING_ID_PREFIX + input.sequence;
+    const images = input.imageUrls ?? [];
     return {
       id,
       userId: input.userId,
@@ -2134,8 +2145,9 @@
       replyName: "",
       avatar: "",
       text,
-      // The composer inserts emoji tokens, so the local echo must show them too.
-      body: parseRailTextBody(text),
+      // The composer inserts emoji tokens and can attach pictures, so the local
+      // echo must show both before the site echoes the comment back.
+      body: mergeRailImages(parseRailTextBody(text), images),
       createAt: input.createAt,
       likes: 0,
       replies: 0,
@@ -5502,6 +5514,311 @@
   @media (prefers-reduced-motion: reduce) { .btn, .btn svg { transition: none; } }
 `;
 
+  // scripts/heybox-up/src/core/upload.ts
+  var UPLOAD_API_BASE = "https://api.xiaoheihe.cn";
+  var UPLOAD_INFO_PATH = "/bbs/app/api/qcloud/cos/upload/info/v2";
+  var UPLOAD_TOKEN_PATH = "/bbs/app/api/qcloud/cos/upload/token/v2";
+  var UPLOAD_CALLBACK_PATH = "/bbs/app/api/qcloud/cos/upload/callback/v2";
+  var MAX_COMMENT_IMAGES = 9;
+  var COS_DEFAULT_REGION = "ap-shanghai";
+  var UPLOAD_TIMEOUT_MS = 12e4;
+  var IMAGE_SIZE_TIMEOUT_MS = 3e3;
+  var SHA1_INITIAL = [1732584193, 4023233417, 2562383102, 271733878, 3285377520];
+  function pushBytes(target, source) {
+    for (const byte of source) target.push(byte & 255);
+  }
+  function sha1Words(bytes) {
+    const message = [];
+    pushBytes(message, bytes);
+    const bitLength = message.length * 8;
+    message.push(128);
+    while (message.length % 64 !== 56) message.push(0);
+    const high = Math.floor(bitLength / 4294967296) >>> 0;
+    const low = bitLength >>> 0;
+    for (const word of [high, low]) {
+      message.push(word >>> 24 & 255, word >>> 16 & 255, word >>> 8 & 255, word & 255);
+    }
+    let h0 = SHA1_INITIAL[0] ?? 0;
+    let h1 = SHA1_INITIAL[1] ?? 0;
+    let h2 = SHA1_INITIAL[2] ?? 0;
+    let h3 = SHA1_INITIAL[3] ?? 0;
+    let h4 = SHA1_INITIAL[4] ?? 0;
+    const schedule = new Array(80).fill(0);
+    for (let offset = 0; offset < message.length; offset += 64) {
+      for (let index = 0; index < 16; index += 1) {
+        const base = offset + index * 4;
+        schedule[index] = ((message[base] ?? 0) << 24 | (message[base + 1] ?? 0) << 16 | (message[base + 2] ?? 0) << 8 | (message[base + 3] ?? 0)) >>> 0;
+      }
+      for (let index = 16; index < 80; index += 1) {
+        const value = (schedule[index - 3] ?? 0) ^ (schedule[index - 8] ?? 0) ^ (schedule[index - 14] ?? 0) ^ (schedule[index - 16] ?? 0);
+        schedule[index] = (value << 1 | value >>> 31) >>> 0;
+      }
+      let a = h0;
+      let b = h1;
+      let c = h2;
+      let d = h3;
+      let e = h4;
+      for (let index = 0; index < 80; index += 1) {
+        let mix;
+        let constant;
+        if (index < 20) {
+          mix = b & c | ~b & d;
+          constant = 1518500249;
+        } else if (index < 40) {
+          mix = b ^ c ^ d;
+          constant = 1859775393;
+        } else if (index < 60) {
+          mix = b & c | b & d | c & d;
+          constant = 2400959708;
+        } else {
+          mix = b ^ c ^ d;
+          constant = 3395469782;
+        }
+        const sum = (a << 5 | a >>> 27) + mix + e + constant + (schedule[index] ?? 0) >>> 0;
+        e = d;
+        d = c;
+        c = (b << 30 | b >>> 2) >>> 0;
+        b = a;
+        a = sum;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4];
+  }
+  function sha1Hex(bytes) {
+    let hex = "";
+    for (const word of sha1Words(bytes)) {
+      for (let index = 3; index >= 0; index -= 1) {
+        hex += (word >>> index * 8 & 255).toString(16).padStart(2, "0");
+      }
+    }
+    return hex;
+  }
+  function sha1TextHex(text) {
+    return sha1Hex(toUtf8Bytes(text));
+  }
+  function sha1Bytes(bytes) {
+    const result = [];
+    for (const word of sha1Words(bytes)) {
+      result.push(word >>> 24 & 255, word >>> 16 & 255, word >>> 8 & 255, word & 255);
+    }
+    return result;
+  }
+  var HMAC_BLOCK_SIZE = 64;
+  function hmacSha1Hex(key, message) {
+    let keyBytes = toUtf8Bytes(key);
+    if (keyBytes.length > HMAC_BLOCK_SIZE) keyBytes = sha1Bytes(keyBytes);
+    const inner = [];
+    const outer = [];
+    for (let index = 0; index < HMAC_BLOCK_SIZE; index += 1) {
+      const byte = keyBytes[index] ?? 0;
+      inner.push(byte ^ 54);
+      outer.push(byte ^ 92);
+    }
+    pushBytes(inner, toUtf8Bytes(message));
+    pushBytes(outer, sha1Bytes(inner));
+    return sha1Hex(outer);
+  }
+  function camSafeEncode(value) {
+    return encodeURIComponent(value).replace(/!/g, "%21").replace(/'/g, "%27").replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/\*/g, "%2A");
+  }
+  function formatCosHost(bucket, region) {
+    return bucket + ".cos." + (region === "" ? COS_DEFAULT_REGION : region) + ".myqcloud.com";
+  }
+  function encodeCosObjectPath(key) {
+    return camSafeEncode(key).replace(/%2F/g, "/");
+  }
+  function createCosAuthorization(input) {
+    const { credentials } = input;
+    const headerList = "host";
+    const paramList = "";
+    const keyTime = credentials.startTime + ";" + credentials.expiredTime;
+    const signHost = formatCosHost(input.bucket, input.region);
+    const signKey = hmacSha1Hex(credentials.secretKey, keyTime);
+    const httpString = [
+      input.method.toLowerCase(),
+      "/" + input.key,
+      "",
+      "host=" + signHost,
+      ""
+    ].join("\n");
+    const stringToSign = ["sha1", keyTime, sha1TextHex(httpString), ""].join("\n");
+    const signature = hmacSha1Hex(signKey, stringToSign);
+    return [
+      "q-sign-algorithm=sha1",
+      "q-ak=" + credentials.secretId,
+      "q-sign-time=" + keyTime,
+      "q-key-time=" + keyTime,
+      "q-header-list=" + headerList,
+      "q-url-param-list=" + paramList,
+      "q-signature=" + signature
+    ].join("&");
+  }
+  function readErrorMessage(data, fallback) {
+    const sbe = asRecord(asRecord(data["result"])?.["sbe"]);
+    const userMessage = sbe === null ? "" : readStringField(sbe, "user_message");
+    if (userMessage !== "") return userMessage;
+    const msg = readStringField(data, "msg");
+    return msg === "" ? fallback : msg;
+  }
+  function readCosUploadInfo(value, fallback) {
+    const result = asRecord(value);
+    const keys = result === null ? [] : asUnknownArray(result["keys"]).map((entry) => String(entry ?? "").trim());
+    const key = keys[0] ?? "";
+    const bucket = result === null ? "" : readStringField(result, "bucket");
+    if (key === "" || bucket === "") throw new Error(fallback);
+    const region = result === null ? "" : readStringField(result, "region");
+    return { key, bucket, region: region === "" ? COS_DEFAULT_REGION : region };
+  }
+  function readCosCredentials(value, fallback) {
+    const result = asRecord(value);
+    const credentials = result === null ? null : asRecord(result["credentials"]);
+    const secretId = credentials === null ? "" : readStringField(credentials, "tmpSecretId");
+    const secretKey = credentials === null ? "" : readStringField(credentials, "tmpSecretKey");
+    const sessionToken = credentials === null ? "" : readStringField(credentials, "sessionToken");
+    const startTime = result === null ? null : readFiniteNumber(result["startTime"]);
+    const expiredTime = result === null ? null : readFiniteNumber(result["expiredTime"]);
+    if (secretId === "" || secretKey === "" || sessionToken === "" || startTime === null || expiredTime === null) {
+      throw new Error(fallback);
+    }
+    return { secretId, secretKey, sessionToken, startTime, expiredTime };
+  }
+  function readCosPreviewUrl(value) {
+    const result = asRecord(value);
+    const previews = result === null ? [] : asUnknownArray(result["preview_urls"]);
+    const thumbs = result === null ? [] : asUnknownArray(result["thumbs"]);
+    const url = String(previews[0] ?? "").trim();
+    if (url === "") throw new Error("确认 CDN 上传结果失败");
+    return { url, thumb: String(thumbs[0] ?? "").trim() };
+  }
+  function formBody(values) {
+    return new URLSearchParams(values).toString();
+  }
+  async function postUploadApi(path, body, accountId, query, fallback, signal) {
+    if (accountId === "") throw new Error("请先登录小黑盒");
+    const params = new URLSearchParams({
+      ...createApiParams(path),
+      ...query,
+      heybox_id: accountId,
+      target: "heybox_app"
+    });
+    const response = await fetchWithTimeout(UPLOAD_API_BASE + path + "?" + params.toString(), {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+      body: formBody(body),
+      ...signal === void 0 ? {} : { signal }
+    });
+    if (!response.ok) throw new Error("接口返回 HTTP " + response.status);
+    const payload = await response.json();
+    const data = asRecord(payload) ?? {};
+    if (data["status"] === "login") throw new Error("请先登录小黑盒");
+    if (data["status"] !== "ok") throw new Error(readErrorMessage(data, fallback));
+    return data["result"];
+  }
+  function createObjectUrl(file) {
+    if (typeof URL.createObjectURL !== "function") return "";
+    try {
+      return URL.createObjectURL(file);
+    } catch (error) {
+      return "";
+    }
+  }
+  function revokeObjectUrl(url) {
+    if (url === "" || typeof URL.revokeObjectURL !== "function") return;
+    URL.revokeObjectURL(url);
+  }
+  async function readImageSize(file, signal) {
+    const source = createObjectUrl(file);
+    if (source === "") return { width: 0, height: 0 };
+    try {
+      return await new Promise((resolve, reject) => {
+        const image = new Image();
+        let settled = false;
+        let timer = 0;
+        const finish = (size, error) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          revokeObjectUrl(source);
+          if (error !== null) reject(error);
+          else resolve(size ?? { width: 0, height: 0 });
+        };
+        const onAbort = () => finish(null, signal?.reason ?? new DOMException("请求已取消", "AbortError"));
+        timer = window.setTimeout(() => finish({ width: 0, height: 0 }, null), IMAGE_SIZE_TIMEOUT_MS);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        image.onload = () => finish({ width: image.naturalWidth, height: image.naturalHeight }, null);
+        image.onerror = () => finish(null, new Error("图片无法读取"));
+        image.src = source;
+      });
+    } finally {
+      revokeObjectUrl(source);
+    }
+  }
+  async function uploadCommentImage(file, accountId, signal) {
+    const mimetype = file.type;
+    if (!mimetype.startsWith("image/")) throw new Error("仅支持选择图片文件");
+    const size = await readImageSize(file, signal);
+    const info = readCosUploadInfo(await postUploadApi(UPLOAD_INFO_PATH, {
+      file_infos: JSON.stringify([{
+        name: file.name,
+        mimetype,
+        fsize: file.size,
+        width: size.width,
+        height: size.height
+      }]),
+      scope: "bbs",
+      need_cache: "0"
+    }, accountId, {}, "获取 CDN 上传信息失败", signal), "获取 CDN 上传信息失败");
+    const credentials = readCosCredentials(
+      // The site hands this call the object record its uploader keeps per key, so
+      // the bucket, key and mimetype travel in the form body while the query
+      // carries only the signed common parameters.
+      await postUploadApi(UPLOAD_TOKEN_PATH, {
+        bucket: info.bucket,
+        keys: JSON.stringify([info.key]),
+        mimetypes: JSON.stringify([mimetype]),
+        is_multipart_upload: "0"
+      }, accountId, {}, "获取 CDN 上传凭证失败", signal),
+      "获取 CDN 上传凭证失败"
+    );
+    const authorization = createCosAuthorization({
+      method: "PUT",
+      key: info.key,
+      bucket: info.bucket,
+      region: info.region,
+      credentials
+    });
+    const target = "https://" + formatCosHost(info.bucket, info.region) + "/" + encodeCosObjectPath(info.key);
+    const stored = await fetchWithTimeout(target, {
+      method: "PUT",
+      mode: "cors",
+      cache: "no-store",
+      headers: {
+        authorization,
+        "x-cos-security-token": credentials.sessionToken,
+        "content-type": mimetype
+      },
+      body: file,
+      ...signal === void 0 ? {} : { signal }
+    }, UPLOAD_TIMEOUT_MS);
+    if (!stored.ok) throw new Error("图片上传失败（HTTP " + stored.status + "）");
+    return readCosPreviewUrl(await postUploadApi(
+      UPLOAD_CALLBACK_PATH,
+      { keys: JSON.stringify([info.key]) },
+      accountId,
+      { is_finished: "true" },
+      "确认 CDN 上传结果失败",
+      signal
+    ));
+  }
+
   // scripts/heybox-up/src/ui/theme.ts
   var THEME_CLASS = "heybox-up-theme";
   var THEME_ATTR = "data-heybox-up-theme";
@@ -8641,8 +8958,21 @@
   .hbu-reader-composer-reply-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hbu-reader-composer-reply-cancel { flex: none; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-link); font: inherit; cursor: pointer; }
   .hbu-reader-composer-bar { display: flex; gap: 8px; align-items: center; }
-  .hbu-reader-composer-emoji-toggle { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid var(--hbu-reader-border); border-radius: 8px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
+  .hbu-reader-composer-emoji-toggle, .hbu-reader-composer-image-toggle { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid var(--hbu-reader-border); border-radius: 8px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-composer-emoji-toggle[aria-expanded="true"] { border-color: var(--hbu-reader-accent); color: var(--hbu-reader-ink); }
+  .hbu-reader-composer-emoji-toggle:disabled, .hbu-reader-composer-image-toggle:disabled { opacity: .55; cursor: default; }
+  /* Picked pictures keep a square thumbnail so a nine picture row wraps instead
+     of pushing the panel wider than its column. */
+  .hbu-reader-composer-images { display: flex; flex-wrap: wrap; gap: 9px; }
+  .hbu-reader-composer-images[hidden] { display: none; }
+  .hbu-reader-composer-image { position: relative; width: 62px; height: 62px; margin: 0; }
+  .hbu-reader-composer-image-frame { position: relative; display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--hbu-reader-border); border-radius: 9px; background: var(--hbu-reader-subtle); }
+  .hbu-reader-composer-image-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .hbu-reader-composer-image-placeholder { color: var(--hbu-reader-muted); font-size: 11px; }
+  .hbu-reader-composer-image-state { position: absolute; right: 0; bottom: 0; left: 0; padding: 1px 0; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 10px; text-align: center; }
+  .hbu-reader-composer-image[data-status="failed"] .hbu-reader-composer-image-frame { border-color: var(--hbu-reader-danger); }
+  .hbu-reader-composer-image-remove { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
+  .hbu-reader-composer-file { display: none; }
   .hbu-reader-composer-emoji { max-height: 196px; padding: 8px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--hbu-reader-border); border-radius: 10px; background: var(--hbu-reader-subtle); }
   .hbu-reader-composer-emoji[hidden] { display: none; }
   .hbu-reader-composer-emoji-groups { display: flex; flex-direction: column; gap: 10px; }
@@ -8659,8 +8989,11 @@
   .hbu-reader-composer-submit:disabled { opacity: .55; cursor: default; }
   /* The lightbox is a scrollable stage: a very long picture keeps its reading
      width and grows downward instead of being squeezed into the viewport. The
-     width itself is measured in JS so zoom steps stay exact. */
-  .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4050; display: flex; flex-direction: column; align-items: center; padding: 52px 12px 20px; overflow: auto; border: 0; background: rgba(2, 4, 7, .95); color: #e9eef5; font: inherit; }
+     width itself is measured in JS so zoom steps stay exact. The viewer opens
+     from inside the comment sheet as well as from the article, so it paints
+     above every reader overlay: the panel sits at 4065 and the toast at 4060,
+     while the site alert stays at 4100. */
+  .hbu-reader-lightbox { position: fixed; inset: 0; z-index: 4070; display: flex; flex-direction: column; align-items: center; padding: 52px 12px 20px; overflow: auto; border: 0; background: rgba(2, 4, 7, .95); color: #e9eef5; font: inherit; }
   .hbu-reader-lightbox-stage { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: center; width: 100%; }
   .hbu-reader-lightbox img { display: block; max-width: none; height: auto; margin: 0 auto; border-radius: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, .55); cursor: zoom-in; transition: width .16s ease; }
   .hbu-reader-lightbox img[data-zoom="0"] { cursor: zoom-in; }
@@ -9461,6 +9794,8 @@
     let pendingReplySeq = 0;
     const ARTICLE_COMMENT_MAX_LENGTH = 1e3;
     const articleComposerEmojiClosers = /* @__PURE__ */ new WeakMap();
+    const articleComposerImages = /* @__PURE__ */ new WeakMap();
+    let articleComposerImageSeq = 0;
     let commentPanel = null;
     let commentPanelList = null;
     let commentPanelStatus = null;
@@ -11240,11 +11575,171 @@
       }).catch(() => void 0);
     };
     const readArticleComposers = () => Array.from(document.querySelectorAll("[data-hbu-article-composer]"));
+    const readComposerImages = (root) => articleComposerImages.get(root) ?? [];
+    const createComposerPreviewUrl = (file) => {
+      if (typeof URL.createObjectURL !== "function") return "";
+      try {
+        return URL.createObjectURL(file);
+      } catch {
+        return "";
+      }
+    };
+    const revokeComposerPreviewUrl = (url) => {
+      if (url === "" || typeof URL.revokeObjectURL !== "function") return;
+      URL.revokeObjectURL(url);
+    };
+    const readComposerStatus = (root) => {
+      const status = root.querySelector(".hbu-reader-composer-status");
+      return status instanceof HTMLElement ? status : null;
+    };
+    const renderComposerImages = (root) => {
+      const strip = root.querySelector(".hbu-reader-composer-images");
+      if (!(strip instanceof HTMLElement)) return;
+      const images = readComposerImages(root);
+      strip.textContent = "";
+      strip.hidden = images.length === 0;
+      for (const image of images) {
+        const item = document.createElement("figure");
+        item.className = "hbu-reader-composer-image";
+        item.dataset["status"] = image.status;
+        item.dataset["imageId"] = String(image.id);
+        const frame = document.createElement("div");
+        frame.className = "hbu-reader-composer-image-frame";
+        if (image.previewUrl !== "") {
+          const preview = document.createElement("img");
+          preview.alt = image.name;
+          preview.decoding = "async";
+          preview.src = image.previewUrl;
+          frame.append(preview);
+        } else {
+          const placeholder = document.createElement("span");
+          placeholder.className = "hbu-reader-composer-image-placeholder";
+          placeholder.textContent = "图片";
+          frame.append(placeholder);
+        }
+        if (image.status !== "ready") {
+          const state = document.createElement("span");
+          state.className = "hbu-reader-composer-image-state";
+          state.textContent = image.status === "pending" ? "上传中…" : "上传失败";
+          frame.append(state);
+        }
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "hbu-reader-composer-image-remove";
+        remove.textContent = "×";
+        remove.title = "移除图片";
+        remove.setAttribute("aria-label", "移除图片 " + image.name);
+        remove.addEventListener("click", () => removeComposerImage(root, image.id));
+        item.append(frame, remove);
+        strip.append(item);
+      }
+    };
+    const uploadComposerImage = (root, image) => {
+      void (async () => {
+        try {
+          const accountId = await resolveHeyboxId(image.controller.signal);
+          if (image.removed) return;
+          if (accountId === "") throw new Error("请先登录小黑盒");
+          const uploaded = await uploadCommentImage(image.file, accountId, image.controller.signal);
+          if (image.removed) return;
+          image.status = "ready";
+          image.url = uploaded.url;
+        } catch (error) {
+          if (image.removed || isAbortError(error)) return;
+          image.status = "failed";
+          image.error = error instanceof Error ? error.message : "图片上传失败";
+        }
+        if (image.removed) return;
+        renderComposerImages(root);
+        if (image.status === "failed") {
+          const status = readComposerStatus(root);
+          if (status !== null) status.textContent = image.name + " 上传失败" + (image.error === "" ? "" : "：" + image.error);
+        }
+        syncArticleComposers();
+      })();
+    };
+    function removeComposerImage(root, id) {
+      const kept = [];
+      for (const image of readComposerImages(root)) {
+        if (image.id !== id) {
+          kept.push(image);
+          continue;
+        }
+        image.removed = true;
+        image.controller.abort();
+        revokeComposerPreviewUrl(image.previewUrl);
+        image.previewUrl = "";
+      }
+      articleComposerImages.set(root, kept);
+      const status = readComposerStatus(root);
+      if (status !== null) status.textContent = "";
+      renderComposerImages(root);
+      syncArticleComposers();
+    }
+    function clearComposerImages(root) {
+      for (const image of readComposerImages(root)) {
+        image.removed = true;
+        image.controller.abort();
+        revokeComposerPreviewUrl(image.previewUrl);
+        image.previewUrl = "";
+      }
+      articleComposerImages.delete(root);
+      renderComposerImages(root);
+    }
+    const addComposerImages = (root, files) => {
+      const status = readComposerStatus(root);
+      const images = readComposerImages(root);
+      const room = MAX_COMMENT_IMAGES - images.length;
+      if (room <= 0) {
+        if (status !== null) status.textContent = "最多选择 " + MAX_COMMENT_IMAGES + " 张图片";
+        return;
+      }
+      const picked = files.filter((file) => file.type.startsWith("image/"));
+      if (picked.length === 0) {
+        if (status !== null) status.textContent = "仅支持选择图片文件";
+        return;
+      }
+      const chosen = picked.slice(0, room);
+      if (status !== null) status.textContent = picked.length > room ? "最多选择 " + MAX_COMMENT_IMAGES + " 张图片" : "";
+      const next = images.slice();
+      const added = [];
+      for (const file of chosen) {
+        articleComposerImageSeq += 1;
+        const image = {
+          id: articleComposerImageSeq,
+          name: file.name,
+          file,
+          previewUrl: createComposerPreviewUrl(file),
+          status: "pending",
+          url: "",
+          error: "",
+          removed: false,
+          controller: new AbortController()
+        };
+        next.push(image);
+        added.push(image);
+      }
+      articleComposerImages.set(root, next);
+      renderComposerImages(root);
+      syncArticleComposers();
+      for (const image of added) uploadComposerImage(root, image);
+    };
     const clearArticleReplyTarget = (restoreFocus) => {
       if (articleReplyTarget === null) return;
       articleReplyTarget = null;
       syncArticleComposers();
       if (restoreFocus) readArticleComposers()[0]?.querySelector(".hbu-reader-composer-input")?.focus({ preventScroll: true });
+    };
+    const beginArticleReply = (target) => {
+      for (const root of readArticleComposers()) {
+        if (readComposerImages(root).length === 0) continue;
+        clearComposerImages(root);
+        const status = readComposerStatus(root);
+        if (status !== null) status.textContent = "回复暂不支持图片，已移除所选图片";
+      }
+      articleReplyTarget = target;
+      syncArticleComposers();
+      readArticleComposers()[0]?.querySelector(".hbu-reader-composer-input")?.focus({ preventScroll: true });
     };
     const syncArticleComposers = () => {
       const reply = articleReplyTarget;
@@ -11252,8 +11747,16 @@
         const input = root.querySelector(".hbu-reader-composer-input");
         const submit = root.querySelector(".hbu-reader-composer-submit");
         if (!(input instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) continue;
-        submit.disabled = articleCommentBusy || input.value.trim() === "";
+        const images = readComposerImages(root);
+        const uploading = images.some((image) => image.status === "pending");
+        const ready = images.filter((image) => image.status === "ready").length;
+        submit.disabled = articleCommentBusy || uploading || input.value.trim() === "" && ready === 0;
         submit.textContent = articleCommentBusy ? "发布中…" : "发布";
+        const imageToggle = root.querySelector(".hbu-reader-composer-image-toggle");
+        if (imageToggle instanceof HTMLButtonElement) {
+          imageToggle.disabled = articleCommentBusy || reply !== null || images.length >= MAX_COMMENT_IMAGES;
+          imageToggle.title = reply === null ? "添加图片" : "回复暂不支持图片";
+        }
         const replyBar = root.querySelector(".hbu-reader-composer-reply");
         const replyName = root.querySelector(".hbu-reader-composer-reply-name");
         if (replyBar instanceof HTMLElement) replyBar.hidden = reply === null;
@@ -11268,17 +11771,27 @@
         const input = root.querySelector(".hbu-reader-composer-input");
         const status = root.querySelector(".hbu-reader-composer-status");
         const count = root.querySelector(".hbu-reader-composer-count");
+        const file = root.querySelector(".hbu-reader-composer-file");
         if (input instanceof HTMLTextAreaElement) input.value = "";
+        if (file instanceof HTMLInputElement) file.value = "";
         if (status !== null) status.textContent = "";
         if (count !== null) count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
+        clearComposerImages(root);
       }
       articleReplyTarget = null;
       syncArticleComposers();
     };
     const submitArticleComment = async (input, status) => {
       if (articleCommentBusy) return;
+      const root = input.closest("[data-hbu-article-composer]");
+      const images = root === null ? [] : readComposerImages(root);
+      if (images.some((image) => image.status === "pending")) {
+        status.textContent = "图片上传中，请稍候";
+        return;
+      }
+      const imageUrls = images.filter((image) => image.status === "ready" && image.url !== "").map((image) => image.url);
       const text = input.value.trim();
-      if (text === "") {
+      if (text === "" && imageUrls.length === 0) {
         status.textContent = "请输入评论内容";
         input.focus({ preventScroll: true });
         return;
@@ -11293,7 +11806,7 @@
         const accountId = await resolveHeyboxId();
         if (articleId !== targetId || readerGeneration !== generation) return;
         if (accountId === "") throw new Error("请先登录小黑盒");
-        const created = await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply), accountId);
+        const created = await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply, imageUrls), accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
         const createdId = readCreatedCommentId(created);
         clearArticleComposers();
@@ -11314,6 +11827,7 @@
             userId: accountId,
             createAt: Math.floor(Date.now() / 1e3),
             sequence: ++pendingReplySeq,
+            imageUrls,
             ...createdId === "" ? {} : { commentId: createdId }
           });
           if (pending !== null) {
@@ -11592,6 +12106,30 @@
       emojiPanel.setAttribute("role", "group");
       emojiPanel.setAttribute("aria-label", "表情列表");
       const emojiPicker = createComposerEmojiPicker(input, status, emojiToggle, emojiPanel);
+      const imageToggle = document.createElement("button");
+      imageToggle.type = "button";
+      imageToggle.className = "hbu-reader-composer-image-toggle";
+      imageToggle.textContent = "图片";
+      imageToggle.title = "添加图片";
+      imageToggle.setAttribute("aria-label", "添加图片");
+      const fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.className = "hbu-reader-composer-file";
+      fileInput.accept = "image/*";
+      fileInput.multiple = true;
+      fileInput.tabIndex = -1;
+      fileInput.setAttribute("aria-hidden", "true");
+      const strip = document.createElement("div");
+      strip.className = "hbu-reader-composer-images";
+      strip.hidden = true;
+      strip.setAttribute("role", "group");
+      strip.setAttribute("aria-label", "已选图片");
+      imageToggle.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", () => {
+        const files = fileInput.files === null ? [] : Array.from(fileInput.files);
+        fileInput.value = "";
+        addComposerImages(root, files);
+      });
       root.addEventListener("keydown", (event) => {
         if (event.key !== "Escape" || emojiPanel.hidden) return;
         event.preventDefault();
@@ -11600,7 +12138,7 @@
       }, true);
       input.addEventListener("input", () => {
         count.textContent = input.value.length + "/" + ARTICLE_COMMENT_MAX_LENGTH;
-        submit.disabled = articleCommentBusy || input.value.trim() === "";
+        syncArticleComposers();
       });
       input.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" || !event.ctrlKey && !event.metaKey) return;
@@ -11608,8 +12146,8 @@
         if (!submit.disabled) void submitArticleComment(input, status);
       });
       submit.addEventListener("click", () => void submitArticleComment(input, status));
-      bar.append(emojiToggle, status, count, submit);
-      root.append(replyBar, input, emojiPanel, bar);
+      bar.append(emojiToggle, imageToggle, status, count, submit);
+      root.append(replyBar, input, emojiPanel, strip, fileInput, bar);
       articleComposerEmojiClosers.set(root, () => emojiPicker.close(false));
       return root;
     };
@@ -11765,9 +12303,7 @@
         const name = reply.dataset["replyName"] || "";
         if (id === "") return;
         event.preventDefault();
-        articleReplyTarget = { id, rootId, name };
-        syncArticleComposers();
-        readArticleComposers()[0]?.querySelector(".hbu-reader-composer-input")?.focus({ preventScroll: true });
+        beginArticleReply({ id, rootId, name });
       });
       sheet.addEventListener("keydown", trapCommentPanelTab);
       document.body.append(panel);
