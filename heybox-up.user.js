@@ -7342,16 +7342,43 @@
   #page-creator-content-management .scroll-list__no-more-desc {
     display: none !important;
   }
-  /* 收藏与文章页：右栏只剩二维码、推广与备案信息，移除后让主列表占满内容区。 */
-  :is(#page-user-favour, #page-creator-content-management, #page-creator-content-management-detail)
+  /* Topic, editor, favourites, and article pages have only promotional right rails. */
+  :is(#page-user-favour, #page-creator-content-management, #page-creator-content-management-detail, #page-topic-link, #page-creator-editor)
     .cpt-right-side.right {
     display: none !important;
   }
-  :is(#page-user-favour, #page-creator-content-management, #page-creator-content-management-detail)
+  #page-topic-link .topic__aside-miniprogram {
+    display: none !important;
+  }
+  :is(#page-user-favour, #page-creator-content-management, #page-creator-content-management-detail, #page-topic-link, #page-creator-editor)
     .content > .list {
     flex: 1 1 auto !important;
     width: auto !important;
     max-width: none !important;
+  }
+  #page-topic-link .topic-link__main,
+  #page-creator-editor > .content > .list {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+  /* Preserve the native engagement glyphs beside article statistics. */
+  #page-creator-content-management .creator-content-item__data-item .hb-icon,
+  #page-creator-content-management .creator-content-item__data-item svg {
+    display: inline-flex !important;
+    visibility: visible !important;
+    flex: none !important;
+  }
+  /* Keep route content on the selected theme while the SPA swaps page nodes. */
+  :root.heybox-up-theme #page-creator-content-management,
+  :root.heybox-up-theme #page-creator-content-management-detail {
+    background-color: var(--heybox-up-bg) !important;
+    transition: none !important;
+  }
+  :root.heybox-up-theme #page-creator-content-management > .content,
+  :root.heybox-up-theme #page-creator-content-management-detail > .content {
+    background-color: var(--heybox-up-bg) !important;
   }
   /* Global search page: right rail holds only hot searches, a QR code, app links and ICP text. */
   #page-bbs-list .cpt-right-side.right {
@@ -8471,11 +8498,15 @@
   }
   .hbu-reader-rich {
     width: 100%;
+    min-width: 0;
     font-size: 18px;
     line-height: var(--heybox-up-reading-line-height);
     color: var(--hbu-reader-ink);
+    white-space: normal !important;
     overflow-wrap: anywhere;
+    word-break: normal;
   }
+  .hbu-reader-rich img[class*="emoji"], .hbu-reader-rich [class*="emoji"] img { display: inline-block !important; width: 1.2em !important; height: 1.2em !important; max-width: 1.2em !important; max-height: 1.2em !important; object-fit: contain; vertical-align: -0.2em; }
   /* The cloned markup keeps a hard-coded 25px line height; cover body text only so
      cards and blockquotes keep their own styles. */
   .hbu-reader-rich :is(p, li, ul, ol, .line, .order-line, .text):not([class*="com-"], [class*="com-"] *):not(blockquote, blockquote *) {
@@ -8519,9 +8550,9 @@
   }
   /* Media pages start below the translucent head gradient, so the top of a
      user-uploaded picture is never dimmed by the overlay. */
-  .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: calc(84px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
-  .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: calc(84px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
-  .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: calc(84px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
+  .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
+  .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
+  .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
   .hbu-reader-page[data-kind="notice"] { justify-content: center; padding: 32px 24px 72px; background: var(--hbu-reader-page); }
   .hbu-reader-notice {
     width: min(520px, 100%);
@@ -8697,7 +8728,7 @@
   .hbu-reader-tag { min-height: 36px; padding: 7px 12px; border: 1px solid var(--hbu-reader-border); border-radius: 99px; background: transparent; color: var(--hbu-reader-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-related { width: min(440px, 100%); }
   .hbu-reader-related h2 { margin: 0 0 8px; color: var(--hbu-reader-muted); font-size: 11px; font-weight: 600; letter-spacing: .08em; }
-  .hbu-reader-related a { display: flex; gap: 10px; min-height: 44px; padding: 11px 13px; border: 1px solid var(--hbu-reader-border); border-radius: 12px; color: var(--hbu-reader-ink); font-size: 13px; line-height: 1.5; text-decoration: none; }
+  .hbu-reader-related a { display: flex; gap: 10px; min-width: 0; min-height: 44px; padding: 11px 13px; overflow-wrap: anywhere; word-break: break-word; border: 1px solid var(--hbu-reader-border); border-radius: 12px; color: var(--hbu-reader-ink); font-size: 13px; line-height: 1.5; text-decoration: none; }
   .hbu-reader-related a + a { margin-top: 6px; }
   .hbu-reader-related a:hover { background: var(--hbu-reader-subtle); }
   .hbu-reader-end-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
@@ -8796,7 +8827,7 @@
   .hbu-reader-favour-save { min-width: 64px; border-color: var(--hbu-reader-accent); background: var(--hbu-reader-accent); color: #fff; font-weight: 600; }
   .hbu-reader-favour-save:hover:not(:disabled) { filter: brightness(1.08); }
   .hbu-reader-favour-menu :is(button, input):disabled { cursor: default; opacity: .5; }
-  .hbu-reader-spacing-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; width: 196px; max-width: calc(100vw - 84px); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
+  .hbu-reader-spacing-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; width: 248px; max-width: calc(100vw - 84px); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
   .hbu-reader-spacing-menu[hidden] { display: none; }
   .hbu-reader-spacing-label { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--hbu-reader-float-ink); }
   .hbu-reader-spacing-row { display: flex; gap: 7px; align-items: center; }
@@ -8805,6 +8836,13 @@
   .hbu-reader-spacing-unit { font-size: 12px; color: var(--hbu-reader-float-muted); }
   .hbu-reader-spacing-reset { height: 32px; margin-left: auto; padding: 0 9px; border: 1px solid var(--hbu-reader-float-border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   .hbu-reader-spacing-reset:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-setting-section + .hbu-reader-setting-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hbu-reader-float-border); }
+  .hbu-reader-setting-line { display: flex; gap: 8px; align-items: center; min-height: 32px; color: var(--hbu-reader-float-muted); font-size: 12px; }
+  .hbu-reader-setting-line input[type="number"] { width: 76px; height: 30px; margin-left: auto; padding: 0 7px; border: 1px solid var(--hbu-reader-float-border); border-radius: 8px; outline: none; background: var(--hbu-reader-float-hover); color: var(--hbu-reader-float-ink); font: inherit; font-variant-numeric: tabular-nums; }
+  .hbu-reader-setting-line input[type="number"]:focus { border-color: var(--hbu-reader-accent); }
+  .hbu-reader-setting-switch { display: flex; gap: 8px; align-items: center; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-float-ink); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+  .hbu-reader-setting-switch::after { content: ""; width: 28px; height: 16px; margin-left: auto; border: 1px solid var(--hbu-reader-float-border); border-radius: 99px; background: var(--hbu-reader-float-hover); }
+  .hbu-reader-setting-switch[aria-checked="true"]::after { border-color: var(--hbu-reader-accent); background: var(--hbu-reader-accent); }
   /* The timeline mirrors the spacing popover, but its rows are full-width
      targets so a long history stays easy to hit while reading. */
   .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 236px; max-width: calc(100vw - 84px); max-height: min(360px, 62dvh); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
@@ -9041,9 +9079,9 @@
     .hbu-reader-page[data-kind="hero"] { padding: 0; }
     .hbu-reader-page[data-kind="text"] { padding: 0 64px 0 24px; }
     .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
-    .hbu-reader-page[data-kind="media"] { padding: calc(72px + env(safe-area-inset-top)) 16px 62px; }
-    .hbu-reader-page[data-kind="embed"] { padding: calc(72px + env(safe-area-inset-top)) 16px 62px; }
-    .hbu-reader-page[data-kind="video"] { padding: calc(72px + env(safe-area-inset-top)) 16px 62px; }
+    .hbu-reader-page[data-kind="media"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
+    .hbu-reader-page[data-kind="embed"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
+    .hbu-reader-page[data-kind="video"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
     .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
     .hbu-reader-rich { font-size: 17px; }
@@ -10557,7 +10595,7 @@
         panel.className = "hbu-reader-spacing-menu";
         panel.hidden = true;
         panel.setAttribute("role", "group");
-        panel.setAttribute("aria-label", "正文行距");
+        panel.setAttribute("aria-label", "沉浸阅读设置");
         const label = document.createElement("div");
         label.className = "hbu-reader-spacing-label";
         label.textContent = "正文行距";
@@ -10585,7 +10623,42 @@
           syncNumberInput(readerLineHeightInput, value);
         });
         row.append(input, unit, reset);
-        panel.append(label, row);
+        const spacingSection = document.createElement("div");
+        spacingSection.className = "hbu-reader-setting-section";
+        spacingSection.append(label, row);
+        const historySection = document.createElement("div");
+        historySection.className = "hbu-reader-setting-section";
+        const timelineToggle2 = document.createElement("button");
+        timelineToggle2.type = "button";
+        timelineToggle2.className = "hbu-reader-setting-switch";
+        timelineToggle2.setAttribute("role", "switch");
+        timelineToggle2.setAttribute("aria-label", "启用阅读时间轴");
+        timelineToggle2.textContent = "显示阅读时间轴";
+        timelineToggle2.setAttribute("aria-checked", String(readReaderTimelinePreference()));
+        timelineToggle2.addEventListener("click", () => {
+          const enabled = timelineToggle2.getAttribute("aria-checked") !== "true";
+          timelineToggle2.setAttribute("aria-checked", String(enabled));
+          setReaderTimelinePreference(enabled);
+        });
+        const historyLine = document.createElement("label");
+        historyLine.className = "hbu-reader-setting-line";
+        historyLine.textContent = "时间轴保留条数";
+        const historyInput2 = document.createElement("input");
+        historyInput2.type = "number";
+        historyInput2.min = "0";
+        historyInput2.step = "1";
+        historyInput2.inputMode = "numeric";
+        historyInput2.setAttribute("aria-label", "时间轴保留条数，0 表示不限");
+        historyInput2.title = "设置为 0 表示不限条数";
+        historyInput2.value = String(readReaderHistoryLimit());
+        historyInput2.addEventListener("change", () => {
+          const parsed = parseReaderHistoryLimitInput(historyInput2.value);
+          const value = parsed === null ? readReaderHistoryLimit() : setReaderHistoryLimitPreference(parsed);
+          historyInput2.value = String(value);
+        });
+        historyLine.append(historyInput2);
+        historySection.append(timelineToggle2, historyLine);
+        panel.append(spacingSection, historySection);
         bindNumberInput(input, commitSpacingInput);
         spacingPanel = panel;
         spacingInput = input;
@@ -10594,6 +10667,10 @@
       if (spacingPanel.parentNode !== rail) rail.append(spacingPanel);
       if (spacingInput === null) return;
       spacingInput.value = String(readReaderLineHeight());
+      const timelineToggle = spacingPanel.querySelector(".hbu-reader-setting-switch");
+      timelineToggle?.setAttribute("aria-checked", String(readReaderTimelinePreference()));
+      const historyInput = spacingPanel.querySelector(".hbu-reader-setting-line input");
+      if (historyInput !== null) historyInput.value = String(readReaderHistoryLimit());
       spacingPanel.hidden = false;
       button.setAttribute("aria-expanded", "true");
       spacingInput.focus({ preventScroll: true });
@@ -13268,10 +13345,10 @@
       spacing.type = "button";
       spacing.className = "hbu-reader-action";
       spacing.dataset["action"] = "spacing";
-      spacing.setAttribute("aria-label", "正文行距设置");
+      spacing.setAttribute("aria-label", "阅读设置");
       spacing.setAttribute("aria-haspopup", "true");
       spacing.setAttribute("aria-expanded", "false");
-      spacing.title = "正文行距设置";
+      spacing.title = "阅读设置";
       spacing.innerHTML = SETTINGS_ICON;
       spacing.addEventListener("click", () => openSpacingMenu(rail, spacing));
       rail.append(avatar, like, favour, cy, comment, share, spacing);
