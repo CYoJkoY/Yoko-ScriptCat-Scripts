@@ -836,9 +836,13 @@ export const READER_CSS = `
   .hbu-reader-history-item:first-child::before { top: 50%; }
   .hbu-reader-history-item:last-child::before { bottom: 50%; }
   .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-float-border); }
-  .hbu-reader-history-row { display: flex; gap: 6px; align-items: center; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; }
+  .hbu-reader-history-row { position: relative; display: flex; gap: 6px; align-items: center; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; }
   .hbu-reader-history-row:hover { background: var(--hbu-reader-float-hover); }
   .hbu-reader-history-title { display: -webkit-box; min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .hbu-reader-history-progress { flex: none; min-width: 30px; color: var(--hbu-reader-float-muted); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
+  /* A hairline under each row turns the list into a visual reading record. */
+  .hbu-reader-history-bar { position: absolute; right: 8px; bottom: 3px; left: 8px; height: 2px; overflow: hidden; border-radius: 2px; background: var(--hbu-reader-float-border); opacity: .55; }
+  .hbu-reader-history-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--hbu-reader-accent); }
   .hbu-reader-history-row[aria-current="true"] { background: var(--hbu-reader-float-hover); color: var(--hbu-reader-accent); font-weight: 650; }
   .hbu-reader-history-row[data-preview="true"] { outline: 1px solid var(--hbu-reader-float-ink); outline-offset: -1px; background: var(--hbu-reader-float-hover); }
   .hbu-reader-history-current { flex: none; padding: 2px 5px; border-radius: 5px; background: var(--hbu-reader-glow); color: var(--hbu-reader-accent); font-size: 10px; font-weight: 650; }
@@ -2661,6 +2665,13 @@ export function watchReader(navigation: PostNavigationController): void {
     closeHistoryPanel();
   }, true);
 
+  /* One label for the row, the peek and the screen reader, so they cannot drift. */
+  const historyProgressLabel = (id: string): string => {
+    const ratio = readReaderRatio(id);
+    if (ratio < 0) return "";
+    return ratio >= .98 ? "读完" : Math.round(ratio * 100) + "%";
+  };
+
   /**
    * Rebuilds the visit list. The current entry is highlighted and every other
    * row jumps straight to that post, so the timeline works as a shortcut back
@@ -2696,8 +2707,26 @@ export function watchReader(navigation: PostNavigationController): void {
       const rowTitle = entry.title === "" ? "帖子 " + entry.id : entry.title;
       label.textContent = rowTitle;
       const visitNumber = total - orderIndex;
-      button.setAttribute("aria-label", "第 " + visitNumber + " 篇，共 " + total + " 篇：" + rowTitle + (entry.current ? "，正在阅读" : ""));
+      const ratio = readReaderRatio(entry.id);
+      const progressText = historyProgressLabel(entry.id);
+      button.setAttribute("aria-label", "第 " + visitNumber + " 篇，共 " + total + " 篇：" + rowTitle + (progressText === "" ? "" : ratio >= .98 ? "，已读完" : "，已读 " + progressText) + (entry.current ? "，正在阅读" : ""));
       button.append(marker, label);
+      if (ratio >= 0) {
+        const bar = document.createElement("span");
+        bar.className = "hbu-reader-history-bar";
+        bar.setAttribute("aria-hidden", "true");
+        const fill = document.createElement("i");
+        fill.style.width = Math.max(3, Math.round(ratio * 100)) + "%";
+        bar.append(fill);
+        button.append(bar);
+      }
+      if (progressText !== "") {
+        const progress = document.createElement("span");
+        progress.className = "hbu-reader-history-progress";
+        progress.textContent = progressText;
+        progress.title = ratio >= .98 ? "上次读到末尾" : "上次读到 " + progressText;
+        button.append(progress);
+      }
       if (entry.current) {
         const current = document.createElement("span");
         current.className = "hbu-reader-history-current";
@@ -2711,6 +2740,15 @@ export function watchReader(navigation: PostNavigationController): void {
         }
         closeHistoryPanel();
         openReaderArticle(entry.id);
+      });
+      button.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        const rows = Array.from(historyList?.querySelectorAll<HTMLButtonElement>(".hbu-reader-history-row") ?? []);
+        const at = rows.indexOf(button);
+        const next = rows[at + (event.key === "ArrowDown" ? 1 : -1)];
+        if (next === undefined) return;
+        event.preventDefault();
+        next.focus({ preventScroll: false });
       });
       item.append(button);
       historyList.append(item);
@@ -2751,7 +2789,11 @@ export function watchReader(navigation: PostNavigationController): void {
     historyRail.hidden = total === 0;
     if (historyPeek !== null) {
       const entry = navigation.readStatus().history[index];
-      historyPeek.textContent = entry === undefined || entry.title === "" ? "" : entry.title;
+      if (entry === undefined || entry.title === "") historyPeek.textContent = "";
+      else {
+        const progress = historyProgressLabel(entry.id);
+        historyPeek.textContent = entry.title + (progress === "" ? "" : " · " + progress);
+      }
       historyPeek.hidden = historyPeek.textContent === "";
     }
   };
@@ -6946,6 +6988,10 @@ export function watchReader(navigation: PostNavigationController): void {
       advanceFromReader();
       return;
     }
+    // A timeline owns the navigation keys: arrows walk its rows and must not
+    // scroll the post behind the panel. Check the DOM rather than this closure
+    // so a listener left over from an earlier mount also stays out of the way.
+    if (event.target instanceof Element && event.target.closest(".hbu-reader-history-menu") !== null) return;
     if (event.key === "h" || event.key === "H") {
       event.preventDefault();
       navigateToPath("/app/bbs/home");

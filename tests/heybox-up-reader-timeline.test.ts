@@ -29,8 +29,9 @@ vi.hoisted(() => {
 });
 
 import { READER_ID, watchReader } from "../scripts/heybox-up/src/ui/reader";
-import { localStore, readReaderTimelinePreference, setReaderTimelinePreference } from "../scripts/heybox-up/src/state";
+import { localStore, readReaderTimelinePreference, sessionStore, setReaderTimelinePreference } from "../scripts/heybox-up/src/state";
 import { STORAGE_KEYS } from "../scripts/heybox-up/src/config";
+import { READER_RATIO_KEY, writeReaderRatio } from "../scripts/heybox-up/src/ui/reader";
 
 const navigation = {
   sync: (): void => undefined,
@@ -72,6 +73,8 @@ function mountReader(): HTMLElement {
 describe("reader history timeline", () => {
   beforeEach(() => {
     localStore.remove(STORAGE_KEYS.readerTimeline);
+    sessionStore.remove(READER_RATIO_KEY + "100");
+    sessionStore.remove(READER_RATIO_KEY + "123456");
     setReaderTimelinePreference(true);
   });
 
@@ -79,6 +82,8 @@ describe("reader history timeline", () => {
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
     localStore.remove(STORAGE_KEYS.readerTimeline);
+    sessionStore.remove(READER_RATIO_KEY + "100");
+    sessionStore.remove(READER_RATIO_KEY + "123456");
   });
 
   it("ships the timeline action enabled by default", () => {
@@ -93,6 +98,7 @@ describe("reader history timeline", () => {
   });
 
   it("lists visited posts newest first and marks the open one", () => {
+    writeReaderRatio("100", 0.625);
     const host = mountReader();
     host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
     const panel = host.querySelector<HTMLElement>(".hbu-reader-history-menu");
@@ -102,7 +108,8 @@ describe("reader history timeline", () => {
     expect(rows.map((row) => row.getAttribute("data-id"))).toEqual(["123456", "100"]);
     expect(rows[0]?.getAttribute("aria-current")).toBe("true");
     expect(rows[0]?.getAttribute("aria-label")).toBe("第 2 篇，共 2 篇：Title，正在阅读");
-    expect(rows[1]?.getAttribute("aria-label")).toBe("第 1 篇，共 2 篇：Earlier post");
+    expect(rows[1]?.getAttribute("aria-label")).toBe("第 1 篇，共 2 篇：Earlier post，已读 63%");
+    expect(rows[1]?.querySelector(".hbu-reader-history-progress")?.textContent).toBe("63%");
     expect(rows[0]?.querySelector(".hbu-reader-history-current")?.textContent).toBe("正在阅读");
   });
 
@@ -117,6 +124,53 @@ describe("reader history timeline", () => {
     expect(panel.hidden).toBe(true);
     expect(action?.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(action);
+  });
+
+  it("refreshes the per-post reading progress when the panel reopens", () => {
+    const host = mountReader();
+    const action = host.querySelector<HTMLButtonElement>('[data-action="history"]');
+    action?.click();
+    action?.click();
+    writeReaderRatio("100", 0.4);
+    action?.click();
+    const row = host.querySelector<HTMLButtonElement>('.hbu-reader-history-row[data-id="100"]');
+    expect(row?.querySelector(".hbu-reader-history-progress")?.textContent).toBe("40%");
+    expect(row?.getAttribute("aria-label")).toContain("已读 40%");
+  });
+
+  it("marks a finished post and draws its progress bar", () => {
+    writeReaderRatio("100", 1);
+    const host = mountReader();
+    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+    const row = host.querySelector<HTMLButtonElement>('.hbu-reader-history-row[data-id="100"]');
+    expect(row?.querySelector(".hbu-reader-history-progress")?.textContent).toBe("读完");
+    expect(row?.getAttribute("aria-label")).toBe("第 1 篇，共 2 篇：Earlier post，已读完");
+    const fill = row?.querySelector<HTMLElement>(".hbu-reader-history-bar > i");
+    expect(fill?.style.width).toBe("100%");
+    expect(fill?.parentElement?.getAttribute("aria-hidden")).toBe("true");
+    // An unread visit keeps the row clean instead of showing 0%.
+    const currentRow = host.querySelector<HTMLButtonElement>('.hbu-reader-history-row[data-id="123456"]');
+    expect(currentRow?.querySelector(".hbu-reader-history-progress")).toBeNull();
+  });
+
+  it("moves the row focus with the arrow keys and shows progress in the peek", () => {
+    writeReaderRatio("100", 1);
+    const host = mountReader();
+    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".hbu-reader-history-row"));
+    const [currentRow, olderRow] = rows;
+    if (currentRow === undefined || olderRow === undefined) throw new Error("Expected two rows");
+    currentRow.focus();
+    currentRow.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(olderRow);
+    // The first row has nowhere to go upward.
+    olderRow.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(olderRow);
+    expect(location.pathname).toBe("/app/bbs/link/123456");
+
+    const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
+    thumb?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+    expect(host.querySelector(".hbu-reader-history-peek")?.textContent).toBe("Earlier post · 读完");
   });
 
   it("scrolls the current visit into view when the timeline opens", () => {
