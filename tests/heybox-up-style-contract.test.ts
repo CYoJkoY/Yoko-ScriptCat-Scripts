@@ -221,3 +221,33 @@ describe("search suggestion contrast contract", () => {
   });
 });
 
+describe("HeyBox redundant rail and article-page layout contract", () => {
+  it("hides promotional rails while allowing topic and editor content to expand", () => {
+    const rail = themeRules.find((rule) =>
+      rule.selector.includes("#page-topic-link")
+      && rule.selector.includes(".cpt-right-side.right")
+    );
+    expect(rail?.style.getPropertyValue("display")).toBe("none");
+    const miniProgram = themeRules.find((rule) => rule.selector === "#page-topic-link .topic__aside-miniprogram");
+    expect(miniProgram?.style.getPropertyValue("display")).toBe("none");
+    const expandedContent = themeRules.find((rule) =>
+      rule.selector.includes("#page-topic-link .topic-link__main")
+      && rule.selector.includes("#page-creator-editor > .content > .list")
+    );
+    expect(expandedContent?.style.cssText).toContain("flex: 1 1 auto");
+  });
+
+  it("preserves article engagement icons and paints route backgrounds without transitions", () => {
+    const icons = themeRules.find((rule) =>
+      rule.selector.includes("#page-creator-content-management .creator-content-item__data-item .hb-icon")
+    );
+    expect(icons?.style.getPropertyValue("display")).toBe("inline-flex");
+    expect(icons?.style.getPropertyPriority("display")).toBe("important");
+    const page = themeRules.find((rule) =>
+      rule.selector.includes(":root.heybox-up-theme #page-creator-content-management,")
+    );
+    expect(page?.style.getPropertyValue("background-color")).toBe("var(--heybox-up-bg)");
+    expect(page?.style.getPropertyValue("transition")).toBe("none");
+  });
+});
+
