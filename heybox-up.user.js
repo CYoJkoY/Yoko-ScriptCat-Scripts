@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.5.0
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；用户上传的图片页顶部另留出渐变高度，图片最上沿不会被顶栏压暗，首屏渐变也收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏提供“阅读时间轴”按钮，按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.6.0
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；用户上传的图片页顶部另留出渐变高度，图片最上沿不会被顶栏压暗，首屏渐变也收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏提供“阅读时间轴”按钮，按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -8845,9 +8845,11 @@
   .hbu-reader-setting-switch[aria-checked="true"]::after { border-color: var(--hbu-reader-accent); background: var(--hbu-reader-accent); }
   /* The timeline mirrors the spacing popover, but its rows are full-width
      targets so a long history stays easy to hit while reading. */
-  .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 236px; max-width: calc(100vw - 84px); max-height: min(360px, 62dvh); padding: 10px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
+  .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 256px; max-width: calc(100vw - 84px); max-height: min(400px, 68dvh); padding: 12px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
   .hbu-reader-history-menu[hidden] { display: none; }
-  .hbu-reader-history-label { flex: none; font-size: 12px; font-weight: 650; color: var(--hbu-reader-float-ink); }
+  .hbu-reader-history-head { display: flex; flex: none; flex-direction: column; gap: 3px; }
+  .hbu-reader-history-label { font-size: 13px; font-weight: 700; color: var(--hbu-reader-float-ink); }
+  .hbu-reader-history-meta { color: var(--hbu-reader-float-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   /* The feed-style rail on the right of the menu: a fixed-height track with one
      draggable thumb that prints the current position as x/n. */
   .hbu-reader-history-body { display: flex; flex: 1 1 auto; gap: 8px; align-items: stretch; min-height: 120px; max-height: min(240px, 46dvh); }
@@ -8866,10 +8868,16 @@
   .hbu-reader-history-item:first-child::before { top: 50%; }
   .hbu-reader-history-item:last-child::before { bottom: 50%; }
   .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-float-border); }
-  .hbu-reader-history-row { display: flex; align-items: center; width: 100%; min-height: 30px; padding: 5px 7px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.45; text-align: left; cursor: pointer; }
+  .hbu-reader-history-row { position: relative; display: flex; gap: 6px; align-items: center; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; }
   .hbu-reader-history-row:hover { background: var(--hbu-reader-float-hover); }
-  .hbu-reader-history-title { display: -webkit-box; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .hbu-reader-history-row[aria-current="true"] { color: var(--hbu-reader-accent); font-weight: 650; }
+  .hbu-reader-history-title { display: -webkit-box; min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .hbu-reader-history-progress { flex: none; min-width: 30px; color: var(--hbu-reader-float-muted); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
+  /* A hairline under each row turns the list into a visual reading record. */
+  .hbu-reader-history-bar { position: absolute; right: 8px; bottom: 3px; left: 8px; height: 2px; overflow: hidden; border-radius: 2px; background: var(--hbu-reader-float-border); opacity: .55; }
+  .hbu-reader-history-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--hbu-reader-accent); }
+  .hbu-reader-history-row[aria-current="true"] { background: var(--hbu-reader-float-hover); color: var(--hbu-reader-accent); font-weight: 650; }
+  .hbu-reader-history-row[data-preview="true"] { outline: 1px solid var(--hbu-reader-float-ink); outline-offset: -1px; background: var(--hbu-reader-float-hover); }
+  .hbu-reader-history-current { flex: none; padding: 2px 5px; border-radius: 5px; background: var(--hbu-reader-glow); color: var(--hbu-reader-accent); font-size: 10px; font-weight: 650; }
   .hbu-reader-history-item[data-current="true"] .hbu-reader-history-dot { background: var(--hbu-reader-accent); }
   .hbu-reader-history-empty { padding: 6px 8px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
   .hbu-reader-cy-dialog { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--hbu-reader-scrim); backdrop-filter: blur(4px); }
@@ -9770,6 +9778,7 @@
     let spacingInput = null;
     let historyPanel = null;
     let historyButton = null;
+    let historyMeta = null;
     let historyList = null;
     let historyRail = null;
     let historyThumb = null;
@@ -10340,13 +10349,22 @@
       if (historyPanel.contains(target) || historyButton?.contains(target)) return;
       closeHistoryPanel();
     }, true);
+    const historyProgressLabel = (id) => {
+      const ratio = readReaderRatio(id);
+      if (ratio < 0) return "";
+      return ratio >= 0.98 ? "读完" : Math.round(ratio * 100) + "%";
+    };
     const renderHistoryPanel = () => {
       if (historyList === null || historyRail === null || historyThumb === null) return;
       const status = navigation.readStatus();
       const total = status.history.length;
+      const currentIndex = status.history.findIndex((entry) => entry.current);
+      if (historyMeta !== null) {
+        historyMeta.textContent = total === 0 ? "还没有访问记录" : "共 " + total + " 篇 · 正在阅读第 " + (currentIndex + 1) + " 篇";
+      }
       historyList.textContent = "";
       const ordered = status.history.slice().reverse();
-      for (const entry of ordered) {
+      for (const [orderIndex, entry] of ordered.entries()) {
         const item = document.createElement("li");
         item.className = "hbu-reader-history-item";
         if (entry.current) item.dataset["current"] = "true";
@@ -10359,8 +10377,35 @@
         marker.className = "hbu-reader-history-dot";
         const label = document.createElement("span");
         label.className = "hbu-reader-history-title";
-        label.textContent = entry.title === "" ? "帖子 " + entry.id : entry.title;
+        const rowTitle = entry.title === "" ? "帖子 " + entry.id : entry.title;
+        label.textContent = rowTitle;
+        const visitNumber = total - orderIndex;
+        const ratio = readReaderRatio(entry.id);
+        const progressText = historyProgressLabel(entry.id);
+        button.setAttribute("aria-label", "第 " + visitNumber + " 篇，共 " + total + " 篇：" + rowTitle + (progressText === "" ? "" : ratio >= 0.98 ? "，已读完" : "，已读 " + progressText) + (entry.current ? "，正在阅读" : ""));
         button.append(marker, label);
+        if (ratio >= 0) {
+          const bar = document.createElement("span");
+          bar.className = "hbu-reader-history-bar";
+          bar.setAttribute("aria-hidden", "true");
+          const fill = document.createElement("i");
+          fill.style.width = Math.max(3, Math.round(ratio * 100)) + "%";
+          bar.append(fill);
+          button.append(bar);
+        }
+        if (progressText !== "") {
+          const progress = document.createElement("span");
+          progress.className = "hbu-reader-history-progress";
+          progress.textContent = progressText;
+          progress.title = ratio >= 0.98 ? "上次读到末尾" : "上次读到 " + progressText;
+          button.append(progress);
+        }
+        if (entry.current) {
+          const current = document.createElement("span");
+          current.className = "hbu-reader-history-current";
+          current.textContent = "正在阅读";
+          button.append(current);
+        }
         button.addEventListener("click", () => {
           if (entry.current) {
             closeHistoryPanel(true);
@@ -10368,6 +10413,15 @@
           }
           closeHistoryPanel();
           openReaderArticle(entry.id);
+        });
+        button.addEventListener("keydown", (event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          const rows = Array.from(historyList?.querySelectorAll(".hbu-reader-history-row") ?? []);
+          const at = rows.indexOf(button);
+          const next = rows[at + (event.key === "ArrowDown" ? 1 : -1)];
+          if (next === void 0) return;
+          event.preventDefault();
+          next.focus({ preventScroll: false });
         });
         item.append(button);
         historyList.append(item);
@@ -10378,9 +10432,9 @@
         empty.textContent = "读完几篇后，这里会留下访问顺序。";
         historyList.append(empty);
       }
-      const currentIndex = Math.max(0, status.history.findIndex((entry) => entry.current));
-      historyPreviewX = currentIndex;
-      renderHistoryRail(currentIndex, total);
+      const previewIndex = Math.max(0, currentIndex);
+      historyPreviewX = previewIndex;
+      renderHistoryRail(previewIndex, total);
       historyThumb.setAttribute("data-preview", "false");
     };
     const renderHistoryRail = (index, total) => {
@@ -10405,7 +10459,11 @@
       historyRail.hidden = total === 0;
       if (historyPeek !== null) {
         const entry = navigation.readStatus().history[index];
-        historyPeek.textContent = entry === void 0 || entry.title === "" ? "" : entry.title;
+        if (entry === void 0 || entry.title === "") historyPeek.textContent = "";
+        else {
+          const progress = historyProgressLabel(entry.id);
+          historyPeek.textContent = entry.title + (progress === "" ? "" : " · " + progress);
+        }
         historyPeek.hidden = historyPeek.textContent === "";
       }
     };
@@ -10424,6 +10482,13 @@
       historyPreviewX = next;
       renderHistoryRail(next, total);
       historyThumb?.setAttribute("data-preview", "true");
+      if (historyList !== null) {
+        const rows = Array.from(historyList.querySelectorAll(".hbu-reader-history-row"));
+        const previewRow = rows[total - 1 - next];
+        for (const row of rows) row.removeAttribute("data-preview");
+        previewRow?.setAttribute("data-preview", "true");
+        previewRow?.scrollIntoView?.({ block: "nearest" });
+      }
       return next;
     };
     const commitHistoryIndex = (index) => {
@@ -10508,9 +10573,21 @@
         panel.hidden = true;
         panel.setAttribute("role", "group");
         panel.setAttribute("aria-label", "阅读时间轴");
+        panel.addEventListener("keydown", (event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          closeHistoryPanel(true);
+        });
         const label = document.createElement("div");
         label.className = "hbu-reader-history-label";
         label.textContent = "阅读时间轴";
+        const heading = document.createElement("div");
+        heading.className = "hbu-reader-history-head";
+        const meta = document.createElement("div");
+        meta.className = "hbu-reader-history-meta";
+        meta.setAttribute("aria-live", "polite");
+        heading.append(label, meta);
         const body = document.createElement("div");
         body.className = "hbu-reader-history-body";
         const list = document.createElement("ol");
@@ -10533,9 +10610,13 @@
         const peek = document.createElement("div");
         peek.className = "hbu-reader-history-peek";
         peek.hidden = true;
+        peek.setAttribute("role", "status");
+        peek.setAttribute("aria-live", "polite");
+        peek.setAttribute("aria-atomic", "true");
         body.append(list, railBody);
-        panel.append(label, body, peek);
+        panel.append(heading, body, peek);
         historyPanel = panel;
+        historyMeta = meta;
         historyList = list;
         historyRail = railBody;
         historyThumb = thumb;
@@ -10547,7 +10628,9 @@
       renderHistoryPanel();
       historyPanel.hidden = false;
       button.setAttribute("aria-expanded", "true");
-      historyPanel.querySelector(".hbu-reader-history-row[aria-current='true']")?.focus({ preventScroll: true });
+      const currentRow = historyPanel.querySelector(".hbu-reader-history-row[aria-current='true']");
+      currentRow?.scrollIntoView?.({ block: "nearest" });
+      currentRow?.focus({ preventScroll: true });
     };
     const createHistoryAction = (rail) => {
       const history2 = document.createElement("button");
@@ -10572,6 +10655,7 @@
         existing?.remove();
         historyPanel?.remove();
         historyPanel = null;
+        historyMeta = null;
         historyList = null;
         historyButton = null;
         return;
@@ -14160,6 +14244,7 @@
         advanceFromReader();
         return;
       }
+      if (event.target instanceof Element && event.target.closest(".hbu-reader-history-menu") !== null) return;
       if (event.key === "h" || event.key === "H") {
         event.preventDefault();
         navigateToPath("/app/bbs/home");
