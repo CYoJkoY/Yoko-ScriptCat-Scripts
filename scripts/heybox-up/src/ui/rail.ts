@@ -413,6 +413,39 @@ export const RAIL_HEYGIRL_NAMES = [
   "滑稽", "偷看", "喝奶茶", "惊", "记下来", "挨刀",
 ];
 
+/**
+ * Older posts carry the font-label form `<i class="cube cube-e012">`, whose
+ * only hint is the icon-font codepoint. The tables mirror the site bundle's own
+ * `getEmojiByUnicode`, so a codepoint shared by several newer cube emoji (the
+ * icon font stops at e02f) resolves exactly like it does on the site.
+ */
+export const RAIL_CUBE_FONT_NAMES: Readonly<Record<string, string>> = {
+  e012: "哭泣", e037: "酷", e003: "doge", e013: "喜欢",
+  e03b: "黑人问号", e020: "惊讶", e01d: "开心", e025: "捂脸哭",
+  e029: "晕", e021: "感动", e017: "委屈", e01a: "并不简单",
+  e007: "乖", e032: "笑cry", e01f: "怒", e02d: "滑稽",
+  e02c: "沧桑", e00a: "凄凉", e033: "赞", e018: "学习",
+  e00d: "叹气", e00b: "加油", e027: "摊手", e014: "喷水",
+  e024: "打脸", e002: "H币", e02e: "生气", e015: "困",
+  e038: "闭嘴", e00e: "吐", e010: "咕咕", e01e: "微笑",
+  e011: "哇", e02b: "汗", e00f: "吓", e030: "睡觉",
+  e001: "2023", e016: "圣诞树", e01c: "庆祝", e01b: "庆祝-圣诞",
+  e008: "你懂我", e022: "我懂你", e039: "阳", e02a: "比心",
+  e004: "wota", e03a: "鹅", e026: "握草", e035: "这是什么鸟",
+  e006: "上学-乐", e005: "上学-丧", e023: "打咩", e034: "超人",
+  e009: "僵尸", e019: "小鸡", e031: "窝囊", e028: "摸摸头",
+  e02f: "电牛",
+};
+
+export const RAIL_HEYGIRL_FONT_NAMES: Readonly<Record<string, string>> = {
+  e019: "诶嘿", e006: "哭", e014: "白嫖怪", e012: "疑问",
+  e013: "痴", e007: "喜欢", e00e: "捏脸", e00a: "害羞",
+  e016: "苦酒入喉", e015: "秃", e001: "rua!", e004: "吃瓜",
+  e017: "茄化", e010: "无语", e01a: "这…", e00f: "敲开心",
+  e00b: "开可乐", e005: "哈哈", e011: "滑稽", e003: "偷看",
+  e008: "喝奶茶", e00c: "惊", e018: "记下来", e00d: "挨刀",
+};
+
 export const RAIL_EMOJI_NAME_IDS = new Map(
   RAIL_EMOJI_NAMES.map((name, index) => [name, String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1)])
 );
@@ -545,6 +578,20 @@ export function parseRailTextBody(value: unknown): RailSegment[] {
   return segments.slice(0, RAIL_SEGMENT_MAX);
 }
 
+/** Resolves the legacy icon-font form `<i class="cube cube-e012">`. */
+export function resolveRailEmojiFontLabel(className: unknown): RailEmojiRef | null {
+  const raw = String(className === undefined || className === null ? "" : className);
+  const match = /(^|\s)([a-z0-9]{1,16})\s+\2-([a-z0-9]{1,8})(?=\s|$)/i.exec(raw);
+  if (match === null) return null;
+  const pack = match[2].toLowerCase();
+  if (!isRailEmojiPack(pack)) return null;
+  const code = "e" + match[3].toLowerCase().replace(/^e/, "").padStart(3, "0").slice(-3);
+  const table = pack === "cube" ? RAIL_CUBE_FONT_NAMES : RAIL_HEYGIRL_FONT_NAMES;
+  const name = table[code];
+  if (name === undefined) return null;
+  return resolveRailEmoji(pack, name);
+}
+
 export function parseRailBody(value: unknown): RailSegment[] {
   const source = String(value === undefined || value === null ? "" : value).slice(0, RAIL_BODY_MAX);
   if (source === "") return [];
@@ -552,8 +599,9 @@ export function parseRailBody(value: unknown): RailSegment[] {
   template.innerHTML = source;
   const segments: RailSegment[] = [];
   const pushText = (value: unknown): void => pushRailTextSegments(segments, String(value === undefined || value === null ? "" : value));
-  // The site renders emoji as <span class="hb-emoji hb-emoji-cube_11">, and
-  // sometimes also as an <img> pointing at the sprite sheet.
+  // The site renders emoji as <span class="hb-emoji hb-emoji-cube_11">, but
+  // older payloads keep the icon-font <i class="cube cube-e012"> form and some
+  // rows use an <img> that carries the same emoji marker.
   const readEmojiElement = (element: Element): RailEmojiRef | null => {
     const match = /hb-emoji-([a-z0-9]{1,16})_([^\s"]{1,64})/i.exec(String(element.className || ""));
     if (match !== null) {
@@ -561,8 +609,15 @@ export function parseRailBody(value: unknown): RailSegment[] {
       if (fromClass !== null) return fromClass;
     }
     const dataEmoji = element.getAttribute("data-emoji");
-    if (dataEmoji === null || dataEmoji.trim() === "") return null;
-    return resolveRailEmojiRef(dataEmoji);
+    if (dataEmoji !== null && dataEmoji.trim() !== "") {
+      const fromData = resolveRailEmojiRef(dataEmoji);
+      if (fromData !== null) return fromData;
+    }
+    return resolveRailEmojiFontLabel(element.className);
+  };
+  const readEmojiMarker = (element: Element): string => {
+    const dataEmoji = element.getAttribute("data-emoji");
+    return dataEmoji === null ? "" : dataEmoji.trim();
   };
   const walk = (node: ParentNode): void => {
     for (const child of node.childNodes) {
@@ -573,6 +628,12 @@ export function parseRailBody(value: unknown): RailSegment[] {
       if (child.nodeType !== Node.ELEMENT_NODE || !(child instanceof Element)) continue;
       const element = child;
       if (element.tagName === "IMG") {
+        // An <img> can carry the emoji marker instead of pointing at a picture.
+        const asEmoji = readEmojiElement(element);
+        if (asEmoji !== null) {
+          segments.push(asEmoji);
+          continue;
+        }
         const raw = element.getAttribute("src") ?? "";
         if (!readRailEmojiSpriteUrl(raw)) {
           const src = normalizeRailImageUrl(raw);
@@ -589,10 +650,10 @@ export function parseRailBody(value: unknown): RailSegment[] {
         segments.push(emoji);
         continue;
       }
-      const dataEmoji = element.getAttribute("data-emoji");
-      if (dataEmoji !== null && dataEmoji.trim() !== "") {
+      const marker = readEmojiMarker(element);
+      if (marker !== "") {
         // An emoji the local pack tables do not know yet stays readable text.
-        pushText("[" + dataEmoji.trim() + "]");
+        pushText("[" + marker + "]");
         continue;
       }
       walk(element);

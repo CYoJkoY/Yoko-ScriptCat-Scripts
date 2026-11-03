@@ -1,6 +1,6 @@
-import { ADAPTED_ROUTES, FEED_WIDTH_MAX, FEED_WIDTH_MIN, FEED_WIDTH_STEP, isOfficialHomePath, PAGE_ROUTE, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
+import { ADAPTED_ROUTES, FEED_WIDTH_MAX, FEED_WIDTH_MIN, FEED_WIDTH_STEP, isOfficialHomePath, PAGE_ROUTE, READER_HISTORY_LIMIT_UNLIMITED, READER_HISTORY_LIMIT_WARN, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
 import { ensureStyleElement, registerPageSync, removeStyleElement } from "../core/page-sync";
-import { localStore, parseFeedWidthInput, parseReaderLineHeightInput, readCommentPreviewPreference, readFeedWidth, readNavMotionPreference, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, setCommentPreviewPreference, setFeedWidthPreference, setNavMotionPreference, setReaderLineHeightPreference, setReaderPreference, setReaderTimelinePreference } from "../state";
+import { localStore, parseFeedWidthInput, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readCommentPreviewPreference, readFeedWidth, readNavMotionPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, setCommentPreviewPreference, setFeedWidthPreference, setNavMotionPreference, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderPreference, setReaderTimelinePreference } from "../state";
 
 export const THEME_CLASS = "heybox-up-theme";
 
@@ -77,6 +77,10 @@ export let feedWidthChips: Element[] = [];
 export let feedWidthInput: HTMLInputElement | null = null;
 
 export let readerLineHeightInput: HTMLInputElement | null = null;
+
+export let readerHistoryLimitInput: HTMLInputElement | null = null;
+
+export let readerHistoryLimitHint: HTMLSpanElement | null = null;
 
 export function readThemeMode(): string {
   return normalizeThemeMode(localStore.read(THEME_STORAGE_KEY));
@@ -1684,6 +1688,8 @@ export const THEME_ENTRY_CSS = `
   }
   .number:focus { border-color: var(--heybox-up-accent, #6f8db3); }
   .unit { font-size: 11px; color: var(--hbu-menu-muted, #6b7280); }
+  .field-hint { display: block; margin-top: 5px; color: var(--hbu-menu-muted, #6b7280); font-size: 10.5px; line-height: 1.45; }
+  .field-hint[data-warn="true"] { color: #b4762a; }
   .chips { display: flex; gap: 4px; }
   .chip {
     flex: 1 1 0; min-width: 0; padding: 5px 0; border: 1px solid var(--hbu-menu-border, rgba(20, 25, 30, .12));
@@ -1746,6 +1752,7 @@ export function updateThemeEntry(): void {
   if (readerTimelineToggle) readerTimelineToggle.setAttribute("aria-checked", String(readReaderTimelinePreference()));
   syncFeedWidthControls(readFeedWidth());
   syncNumberInput(readerLineHeightInput, readReaderLineHeight());
+  syncReaderHistoryLimitControl(readReaderHistoryLimit());
 }
 
 export function applyTheme(mode: string, persist: boolean): void {
@@ -1849,6 +1856,7 @@ export function createThemeEntry(): void {
     createNavMotionToggle(),
     createReaderToggle(),
     createReaderTimelineToggle(),
+    createReaderHistoryLimitControl(),
     createReaderLineHeightControl(),
     createThemeMenuSeparator(),
     createFeedWidthControl()
@@ -2049,6 +2057,58 @@ export function bindNumberInput(input: HTMLInputElement, commit: () => void): vo
   });
   input.addEventListener("change", commit);
   input.addEventListener("blur", commit);
+}
+
+/** Mirrors the stored visit limit into the settings input and its warning. */
+export function syncReaderHistoryLimitControl(value: number): void {
+  const limit = Number.isSafeInteger(value) && value >= READER_HISTORY_LIMIT_UNLIMITED ? value : 0;
+  syncNumberInput(readerHistoryLimitInput, limit);
+  if (readerHistoryLimitHint === null) return;
+  readerHistoryLimitHint.dataset["warn"] = String(limit === READER_HISTORY_LIMIT_UNLIMITED || limit > READER_HISTORY_LIMIT_WARN);
+  readerHistoryLimitHint.textContent = limit === READER_HISTORY_LIMIT_UNLIMITED
+    ? "0 表示不限条数，长时间阅读会占用更多内存与浏览器存储"
+    : limit > READER_HISTORY_LIMIT_WARN
+      ? "记录较多，会占用更多内存与浏览器存储"
+      : "只保留最近 " + limit + " 篇，超出后自动丢弃最旧的记录";
+}
+
+export function createReaderHistoryLimitControl(): HTMLDivElement {
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  wrap.setAttribute("role", "group");
+  wrap.setAttribute("aria-label", "阅读时间轴条数上限");
+  const label = document.createElement("div");
+  label.className = "field-label";
+  label.textContent = "时间轴最多保留条数";
+  const row = document.createElement("div");
+  row.className = "field-row";
+  const input = document.createElement("input");
+  input.type = "number";
+  input.className = "number";
+  input.min = "0";
+  input.step = "1";
+  input.inputMode = "numeric";
+  input.value = String(readReaderHistoryLimit());
+  input.setAttribute("aria-label", "阅读时间轴最多保留的帖子数量");
+  input.title = "0 表示不限；条数越多占用越高";
+  const unit = document.createElement("span");
+  unit.className = "unit";
+  unit.textContent = "篇";
+  const hint = document.createElement("span");
+  hint.className = "field-hint";
+  row.append(input, unit);
+  wrap.append(label, row, hint);
+  bindNumberInput(input, () => {
+    const next = parseReaderHistoryLimitInput(input.value);
+    const value = next === null ? readReaderHistoryLimit() : setReaderHistoryLimitPreference(next);
+    input.value = String(value);
+    syncReaderHistoryLimitControl(value);
+    updateThemeEntry();
+  });
+  readerHistoryLimitInput = input;
+  readerHistoryLimitHint = hint;
+  syncReaderHistoryLimitControl(readReaderHistoryLimit());
+  return wrap;
 }
 
 export function createReaderLineHeightControl(): HTMLDivElement {

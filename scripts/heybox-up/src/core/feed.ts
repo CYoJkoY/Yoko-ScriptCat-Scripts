@@ -25,8 +25,6 @@ export const POST_HISTORY_CURSOR_KEY = "heybox-up.postHistoryCursor.v1";
 /** Titles captured while reading, so older timeline rows keep their labels. */
 export const POST_HISTORY_TITLES_KEY = "heybox-up.postHistoryTitles.v1";
 
-export const POST_TRAIL_MAX = 40;
-
 export const FEED_ORDER_MAX = 600;
 
 export const FEED_QUEUE_KEY = "heybox-up.feedQueue.v1";

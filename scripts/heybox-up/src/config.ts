@@ -8,6 +8,7 @@ export const STORAGE_KEYS = Object.freeze({
   navMotion: "heybox-up.navMotion.v1",
   reader: "heybox-up.reader.v1",
   readerTimeline: "heybox-up.readerTimeline.v1",
+  readerHistoryLimit: "heybox-up.readerHistoryLimit.v1",
   feedWidth: "heybox-up.feedWidth.v1",
   readerLineHeight: "heybox-up.readerLineHeight.v1",
   theme: "heybox-up.theme.v1",
@@ -19,6 +20,7 @@ export const PREFERENCE_DEFAULTS = Object.freeze({
   navMotion: true,
   reader: true,
   readerTimeline: true,
+  readerHistoryLimit: 40,
   feedWidth: 56,
   readerLineHeight: 1.7,
 });
@@ -30,6 +32,9 @@ export const READER_LINE_HEIGHT_MIN = 1;
 export const READER_LINE_HEIGHT_MAX = 2.2;
 export const READER_LINE_HEIGHT_STEP = 0.05;
 export const READER_LINE_HEIGHT_DEFAULT = 1.7;
+/** Zero keeps every visit; a positive value caps the stored trail. */
+export const READER_HISTORY_LIMIT_UNLIMITED = 0;
+export const READER_HISTORY_LIMIT_WARN = 500;
 export const REQUEST_TIMEOUT_MS = 15000;
 
 export const PAGE_SYNC_INTERVAL_MS = 120;

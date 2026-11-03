@@ -160,4 +160,52 @@ describe("reader comment panel first open", () => {
     expect(emoji[1].style.backgroundImage).toContain("cube2_emoji.png");
     expect(emoji[1].style.backgroundSize).toBe("102px 68px");
   });
+
+  it("offers every emoji of both packs and inserts the site token", async () => {
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const toggle = host.ownerDocument.querySelector<HTMLButtonElement>(".hbu-reader-composer-emoji-toggle");
+    expect(toggle).not.toBeNull();
+    toggle?.click();
+    const panel = host.ownerDocument.querySelector<HTMLElement>(".hbu-reader-composer-emoji");
+    expect(panel?.hidden).toBe(false);
+    const cube = Array.from(panel?.querySelectorAll<HTMLButtonElement>('[data-pack="cube"] button') ?? []);
+    const heygirl = Array.from(panel?.querySelectorAll<HTMLButtonElement>('[data-pack="heygirl"] button') ?? []);
+    expect(cube).toHaveLength(109);
+    expect(heygirl).toHaveLength(24);
+    // Every button paints a sprite cell, so nothing renders as a blank square.
+    for (const button of [...cube, ...heygirl]) {
+      const glyph = button.querySelector<HTMLElement>("span");
+      expect(glyph?.style.backgroundImage).toContain("max-c.com/heybox_web/emoji/");
+      expect(glyph?.style.backgroundPosition).toMatch(/^-?\d+px -?\d+px$/);
+    }
+    expect(cube[0]?.getAttribute("aria-label")).toBe("盒表情 哭泣");
+    expect(heygirl[23]?.getAttribute("aria-label")).toBe("黑盒娘 挨刀");
+
+    const input = host.ownerDocument.querySelector<HTMLTextAreaElement>(".hbu-reader-composer-input");
+    cube[0]?.click();
+    heygirl[23]?.click();
+    expect(input?.value).toBe("[cube_哭泣][heygirl_挨刀]");
+  });
+
+  it("moves through the emoji grid with the arrow keys", async () => {
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const toggle = host.ownerDocument.querySelector<HTMLButtonElement>(".hbu-reader-composer-emoji-toggle");
+    toggle?.click();
+    const panel = host.ownerDocument.querySelector<HTMLElement>(".hbu-reader-composer-emoji");
+    if (panel === null) throw new Error("Expected the emoji panel");
+    const buttons = Array.from(panel.querySelectorAll<HTMLButtonElement>("button"));
+    expect(host.ownerDocument.activeElement).toBe(buttons[0]);
+    panel.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    expect(host.ownerDocument.activeElement).toBe(buttons[1]);
+    panel.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(host.ownerDocument.activeElement).toBe(buttons[7]);
+    panel.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+    expect(host.ownerDocument.activeElement).toBe(buttons[buttons.length - 1]);
+    panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true }));
+    expect(host.ownerDocument.activeElement).toBe(buttons[0]);
+  });
 });
