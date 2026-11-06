@@ -12,6 +12,7 @@ interface RuleRecord {
 }
 
 let themeRules: RuleRecord[] = [];
+let readerCss = "";
 
 function collectRules(css: string): RuleRecord[] {
   const style = document.createElement("style");
@@ -58,6 +59,8 @@ beforeAll(async () => {
       dispatchEvent: (): boolean => true,
     }),
   });
+  const reader = await import("../scripts/heybox-up/src/ui/reader");
+  readerCss = reader.READER_CSS;
   const theme = await import("../scripts/heybox-up/src/ui/theme");
   const style = document.createElement("style");
   style.textContent = theme.THEME_CSS;
@@ -248,6 +251,31 @@ describe("HeyBox redundant rail and article-page layout contract", () => {
     );
     expect(page?.style.getPropertyValue("background-color")).toBe("var(--heybox-up-bg)");
     expect(page?.style.getPropertyValue("transition")).toBe("none");
+  });
+});
+
+describe("immersive reader centering contract", () => {
+  it("keeps the article stage centered and places timeline and actions outside it", () => {
+    const rules = collectRules(readerCss);
+    const scroll = rules.find((rule) =>
+      rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-scroll"
+    );
+    expect(scroll?.style.getPropertyValue("margin-left")).toBe("calc((100% - var(--hbu-reader-stage)) / 2)");
+    expect(scroll?.style.getPropertyValue("margin-right")).toBe("0px");
+
+    const timeline = rules.find((rule) => rule.selector === ".hbu-reader-history-menu");
+    expect(timeline?.style.getPropertyValue("right")).toBe("calc(-1 * var(--hbu-reader-history-width))");
+
+    const rail = rules.find((rule) =>
+      rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-rail"
+    );
+    expect(rail?.style.getPropertyValue("right")).toBe("calc((100% - var(--hbu-reader-stage)) / 2 + 16px)");
+
+    const narrowScroll = rules.find((rule) =>
+      rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-scroll"
+      && rule.media === "(max-width: 1199px)"
+    );
+    expect(narrowScroll?.style.getPropertyValue("margin-inline")).toBe("auto");
   });
 });
 
