@@ -6080,6 +6080,7 @@ export function watchReader(navigation: PostNavigationController): void {
     like.dataset["action"] = "like";
     like.setAttribute("aria-label", "点赞");
     like.title = "点赞";
+    like.innerHTML = READER_ICONS.like;
     like.addEventListener("click", () => void toggleLike());
     const favour = document.createElement("button");
     favour.type = "button";
@@ -6089,6 +6090,7 @@ export function watchReader(navigation: PostNavigationController): void {
     favour.setAttribute("aria-haspopup", "dialog");
     favour.setAttribute("aria-expanded", "false");
     favour.title = "收藏到收藏夹";
+    favour.innerHTML = READER_ICONS.star;
     favour.addEventListener("click", () => openFavourMenu(rail, favour));
     const cy = document.createElement("button");
     cy.type = "button";

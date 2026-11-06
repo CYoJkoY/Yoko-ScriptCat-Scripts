@@ -544,7 +544,7 @@ export function normalizeRailImageUrl(value: unknown): string {
 }
 
 function readRailEmojiSpriteUrl(src: string): boolean {
-  return /\/heybox_web\/emoji\//i.test(src);
+  return /\/(?:cube_emoji(?:_v\d+)?|cube2_emoji)\.png(?:[?#]|$)/i.test(src);
 }
 
 function pushRailTextSegment(segments: RailSegment[], value: string): void {
@@ -613,7 +613,15 @@ export function parseRailBody(value: unknown): RailSegment[] {
       const fromData = resolveRailEmojiRef(dataEmoji);
       if (fromData !== null) return fromData;
     }
-    return resolveRailEmojiFontLabel(element.className);
+    const fromFont = resolveRailEmojiFontLabel(element.className);
+    if (fromFont !== null) return fromFont;
+    for (const attribute of ["alt", "title"]) {
+      const marker = element.getAttribute(attribute);
+      if (marker === null || marker.trim() === "") continue;
+      const fromAttribute = resolveRailEmojiRef(marker.replace(/^\[|\]$/g, ""));
+      if (fromAttribute !== null) return fromAttribute;
+    }
+    return null;
   };
   const readEmojiMarker = (element: Element): string => {
     const dataEmoji = element.getAttribute("data-emoji");
