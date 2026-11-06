@@ -210,6 +210,9 @@ export const READER_CSS = `
   :root {
     --heybox-up-reading-line-height: 1.7;
     --hbu-reader-stage: 732px;
+    /* Width of the docked reading timeline. The reader grows by this much on
+       wide screens so the article keeps its 732px stage. */
+    --hbu-reader-history-width: 300px;
     /* Light preset. It is also the fallback set every other preset overrides. */
     --hbu-reader-bg: #e9eef3;
     --hbu-reader-page: #fff;
@@ -814,43 +817,46 @@ export const READER_CSS = `
   .hbu-reader-setting-switch { display: flex; gap: 8px; align-items: center; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-float-ink); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
   .hbu-reader-setting-switch::after { content: ""; width: 28px; height: 16px; margin-left: auto; border: 1px solid var(--hbu-reader-float-border); border-radius: 99px; background: var(--hbu-reader-float-hover); }
   .hbu-reader-setting-switch[aria-checked="true"]::after { border-color: var(--hbu-reader-accent); background: var(--hbu-reader-accent); }
-  /* The timeline mirrors the spacing popover, but its rows are full-width
-     targets so a long history stays easy to hit while reading. */
-  .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 256px; max-width: calc(100vw - 84px); max-height: min(400px, 68dvh); padding: 12px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
-  .hbu-reader-history-menu[hidden] { display: none; }
-  .hbu-reader-history-head { display: flex; flex: none; flex-direction: column; gap: 3px; }
-  .hbu-reader-history-label { font-size: 13px; font-weight: 700; color: var(--hbu-reader-float-ink); }
-  .hbu-reader-history-meta { color: var(--hbu-reader-float-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  /* The timeline is a docked column, not a popover: it owns the right edge of
+     the reader and keeps every visit visible while the article scrolls. */
+  .hbu-reader-history-menu { position: absolute; top: 0; right: 0; bottom: 0; z-index: 13; display: flex; flex-direction: column; gap: 10px; width: var(--hbu-reader-history-width); padding: 18px 16px 20px; overflow: hidden; border-left: 1px solid var(--hbu-reader-border); background: var(--hbu-reader-page); color: var(--hbu-reader-ink); }
+  .hbu-reader-history-head { display: flex; flex: none; gap: 8px; align-items: flex-start; justify-content: space-between; }
+  .hbu-reader-history-head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .hbu-reader-history-close { display: none; place-items: center; width: 30px; height: 30px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: var(--hbu-reader-muted); cursor: pointer; }
+  .hbu-reader-history-close:hover { border-color: var(--hbu-reader-accent); color: var(--hbu-reader-ink); }
+  .hbu-reader-history-close svg { width: 15px; height: 15px; }
+  .hbu-reader-history-label { font-size: 14px; font-weight: 700; color: var(--hbu-reader-ink); }
+  .hbu-reader-history-meta { color: var(--hbu-reader-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   /* The feed-style rail on the right of the menu: a fixed-height track with one
      draggable thumb that prints the current position as x/n. */
-  .hbu-reader-history-body { display: flex; flex: 1 1 auto; gap: 8px; align-items: stretch; min-height: 120px; max-height: min(240px, 46dvh); }
+  .hbu-reader-history-body { display: flex; flex: 1 1 auto; gap: 8px; align-items: stretch; min-height: 0; }
   .hbu-reader-history-rail { position: relative; flex: none; width: 52px; touch-action: none; user-select: none; }
-  .hbu-reader-history-track { position: absolute; top: 8px; bottom: 8px; left: 50%; width: 2px; margin-left: -1px; border-radius: 99px; background: var(--hbu-reader-float-border); cursor: pointer; }
-  .hbu-reader-history-tick { position: absolute; left: calc(50% - 2px); width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: var(--hbu-reader-float-border); }
-  .hbu-reader-history-thumb { position: absolute; top: 0; left: 50%; display: grid; place-items: center; min-width: 42px; height: 22px; padding: 0 6px; translate: -50% -50%; border: 1px solid var(--hbu-reader-accent); border-radius: 99px; background: var(--hbu-reader-float); color: var(--hbu-reader-accent); font: inherit; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; cursor: grab; box-shadow: 0 6px 16px rgba(0, 0, 0, .28); touch-action: none; }
+  .hbu-reader-history-track { position: absolute; top: 8px; bottom: 8px; left: 50%; width: 2px; margin-left: -1px; border-radius: 99px; background: var(--hbu-reader-border); cursor: pointer; }
+  .hbu-reader-history-tick { position: absolute; left: calc(50% - 2px); width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: var(--hbu-reader-border); }
+  .hbu-reader-history-thumb { position: absolute; top: 0; left: 50%; display: grid; place-items: center; min-width: 42px; height: 22px; padding: 0 6px; translate: -50% -50%; border: 1px solid var(--hbu-reader-accent); border-radius: 99px; background: var(--hbu-reader-page); color: var(--hbu-reader-accent); font: inherit; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; cursor: grab; box-shadow: 0 6px 16px rgba(0, 0, 0, .18); touch-action: none; }
   .hbu-reader-history-thumb[data-dragging="true"] { cursor: grabbing; }
   .hbu-reader-history-thumb:focus-visible { outline: 2px solid var(--hbu-reader-accent); outline-offset: 2px; }
-  .hbu-reader-history-thumb[data-preview="true"] { border-color: var(--hbu-reader-float-ink); color: var(--hbu-reader-float-ink); }
-  .hbu-reader-history-peek { flex: none; min-height: 15px; overflow: hidden; color: var(--hbu-reader-float-muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .hbu-reader-history-thumb[data-preview="true"] { border-color: var(--hbu-reader-ink); color: var(--hbu-reader-ink); }
+  .hbu-reader-history-peek { flex: none; min-height: 15px; overflow: hidden; color: var(--hbu-reader-muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
   .hbu-reader-history-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: 1px; min-height: 0; margin: 0; padding: 0 0 0 2px; overflow-y: auto; list-style: none; }
   .hbu-reader-history-item { position: relative; display: flex; padding-left: 13px; }
   /* A single continuous rule carries the visit order between rows. */
-  .hbu-reader-history-item::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-item::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--hbu-reader-border); }
   .hbu-reader-history-item:first-child::before { top: 50%; }
   .hbu-reader-history-item:last-child::before { bottom: 50%; }
-  .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-border); }
   .hbu-reader-history-row { position: relative; display: flex; gap: 6px; align-items: center; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; }
-  .hbu-reader-history-row:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-history-row:hover { background: var(--hbu-reader-subtle); }
   .hbu-reader-history-title { display: -webkit-box; min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .hbu-reader-history-progress { flex: none; min-width: 30px; color: var(--hbu-reader-float-muted); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
+  .hbu-reader-history-progress { flex: none; min-width: 30px; color: var(--hbu-reader-muted); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
   /* A hairline under each row turns the list into a visual reading record. */
-  .hbu-reader-history-bar { position: absolute; right: 8px; bottom: 3px; left: 8px; height: 2px; overflow: hidden; border-radius: 2px; background: var(--hbu-reader-float-border); opacity: .55; }
+  .hbu-reader-history-bar { position: absolute; right: 8px; bottom: 3px; left: 8px; height: 2px; overflow: hidden; border-radius: 2px; background: var(--hbu-reader-border); opacity: .55; }
   .hbu-reader-history-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--hbu-reader-accent); }
-  .hbu-reader-history-row[aria-current="true"] { background: var(--hbu-reader-float-hover); color: var(--hbu-reader-accent); font-weight: 650; }
-  .hbu-reader-history-row[data-preview="true"] { outline: 1px solid var(--hbu-reader-float-ink); outline-offset: -1px; background: var(--hbu-reader-float-hover); }
+  .hbu-reader-history-row[aria-current="true"] { background: var(--hbu-reader-subtle); color: var(--hbu-reader-accent); font-weight: 650; }
+  .hbu-reader-history-row[data-preview="true"] { outline: 1px solid var(--hbu-reader-ink); outline-offset: -1px; background: var(--hbu-reader-subtle); }
   .hbu-reader-history-current { flex: none; padding: 2px 5px; border-radius: 5px; background: var(--hbu-reader-glow); color: var(--hbu-reader-accent); font-size: 10px; font-weight: 650; }
   .hbu-reader-history-item[data-current="true"] .hbu-reader-history-dot { background: var(--hbu-reader-accent); }
-  .hbu-reader-history-empty { padding: 6px 8px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
+  .hbu-reader-history-empty { padding: 6px 8px; color: var(--hbu-reader-muted); font-size: 12px; line-height: 1.5; }
   .hbu-reader-cy-dialog { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--hbu-reader-scrim); backdrop-filter: blur(4px); }
   .hbu-reader-cy-dialog[hidden] { display: none; }
   .hbu-reader-cy-card { width: min(520px, 100%); padding: 20px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); box-shadow: var(--hbu-reader-shadow); }
@@ -1103,6 +1109,39 @@ export const READER_CSS = `
   @media (prefers-reduced-motion: reduce) {
     .hbu-reader-scroll { scroll-behavior: auto; }
     #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
+  }
+  /* The timeline is docked rather than opened, so the reader itself grows by
+     one column on wide screens. Specificity must beat the base #id width rule. */
+  #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px + var(--hbu-reader-history-width)), 100%); }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: calc(100% - 80px - var(--hbu-reader-history-width)); margin-left: 40px; margin-right: 0; }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { right: var(--hbu-reader-history-width); }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: calc(var(--hbu-reader-history-width) + 16px); }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { right: var(--hbu-reader-history-width); }
+  /* The column is already on screen, so the rail toggle only exists for the
+     narrow drawer. Hiding it inside a wide-screen query keeps the base rail
+     intact wherever media queries are unavailable. */
+  @media (min-width: 1200px) {
+    #${READER_ID}.hbu-reader-has-timeline [data-action="history"] { display: none; }
+  }
+  .hbu-reader-history-scrim { position: absolute; inset: 0; z-index: 44; padding: 0; border: 0; background: var(--hbu-reader-scrim); }
+  .hbu-reader-history-scrim[hidden] { display: none; }
+  /* Below this width the dock would squeeze the article, so it folds back into
+     a drawer opened from the rail. */
+  @media (max-width: 1199px) {
+    #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: calc(100% - 80px); margin-inline: auto; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { right: 0; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { right: 0; }
+    .hbu-reader-history-menu { width: min(320px, 88vw); z-index: 45; visibility: hidden; box-shadow: var(--hbu-reader-shadow); transform: translateX(100%); transition: transform .22s ease, visibility .22s; }
+    #${READER_ID}[data-timeline-open="true"] .hbu-reader-history-menu { visibility: visible; transform: none; }
+    .hbu-reader-history-close { display: grid; }
+  }
+  @media (max-width: 900px) {
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; }
+  }
+  @media (max-width: 760px) {
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 10px; }
+    .hbu-reader-history-menu { padding: 14px 12px 16px; }
   }
   /* The progress bar is now a sibling band, not an overlay on a page. */
 `;
@@ -1992,6 +2031,9 @@ export function watchReader(navigation: PostNavigationController): void {
   let historyRail: HTMLDivElement | null = null;
   let historyThumb: HTMLButtonElement | null = null;
   let historyPeek: HTMLDivElement | null = null;
+  let historyScrim: HTMLDivElement | null = null;
+  /** Below this width the dock folds into a drawer opened from the rail. */
+  const historyNarrow = window.matchMedia("(max-width: 1199px)");
   /** Visit number the thumb is previewing while dragged; 0 follows the post on screen. */
   let historyPreviewX = 0;
   let articleId = "";
@@ -2655,19 +2697,65 @@ export function watchReader(navigation: PostNavigationController): void {
     syncNumberInput(readerLineHeightInput, value);
   };
 
-  const closeHistoryPanel = (returnFocus: boolean = false): void => {
+  const isHistoryDrawerOpen = (): boolean =>
+    historyNarrow.matches && host?.dataset["timelineOpen"] === "true";
+
+  /**
+   * The same panel is a persistent column on wide screens and a drawer below
+   * 1200px. Keeping one mode function means the scrim, inert state and the
+   * toggle's aria-expanded can never disagree after a resize.
+   */
+  const syncHistoryPanelMode = (): void => {
     if (historyPanel === null) return;
-    if (historyPanel.hidden) return;
-    historyPanel.hidden = true;
+    if (historyNarrow.matches) {
+      const open = isHistoryDrawerOpen();
+      if (open) historyPanel.removeAttribute("inert");
+      else historyPanel.setAttribute("inert", "");
+      historyPanel.setAttribute("aria-hidden", String(!open));
+      if (historyScrim !== null) historyScrim.hidden = !open;
+      historyButton?.setAttribute("aria-expanded", String(open));
+      return;
+    }
+    if (host !== null) delete host.dataset["timelineOpen"];
+    historyPanel.removeAttribute("inert");
+    historyPanel.removeAttribute("aria-hidden");
+    if (historyScrim !== null) historyScrim.hidden = true;
     historyButton?.setAttribute("aria-expanded", "false");
-    if (returnFocus) historyButton?.focus({ preventScroll: true });
   };
+
+  const openHistoryDrawer = (): void => {
+    if (host === null || historyPanel === null || historyButton === null) return;
+    closeFavourMenu();
+    closeSpacingMenu();
+    host.dataset["timelineOpen"] = "true";
+    syncHistoryPanelMode();
+    const currentRow = historyPanel.querySelector<HTMLButtonElement>(".hbu-reader-history-row[aria-current='true']");
+    currentRow?.scrollIntoView?.({ block: "nearest" });
+    currentRow?.focus({ preventScroll: true });
+  };
+
+  const closeHistoryDrawer = (returnFocus: boolean = false): void => {
+    if (host === null) return;
+    if (!isHistoryDrawerOpen()) {
+      syncHistoryPanelMode();
+      return;
+    }
+    delete host.dataset["timelineOpen"];
+    // Move focus out before the drawer turns inert, or the browser drops the
+    // caret to the body when the focused row disappears from the tab order.
+    if (returnFocus) {
+      historyButton?.focus({ preventScroll: true });
+    }
+    syncHistoryPanelMode();
+  };
+
   document.addEventListener("pointerdown", (event) => {
-    if (historyPanel === null || historyPanel.hidden) return;
+    if (!isHistoryDrawerOpen() || historyPanel === null) return;
     const target = event.target instanceof Node ? event.target : null;
     if (historyPanel.contains(target) || historyButton?.contains(target)) return;
-    closeHistoryPanel();
+    closeHistoryDrawer();
   }, true);
+  historyNarrow.addEventListener("change", syncHistoryPanelMode);
 
   /* One label for the row, the peek and the screen reader, so they cannot drift. */
   const historyProgressLabel = (id: string): string => {
@@ -2739,10 +2827,10 @@ export function watchReader(navigation: PostNavigationController): void {
       }
       button.addEventListener("click", () => {
         if (entry.current) {
-          closeHistoryPanel(true);
+          closeHistoryDrawer(true);
           return;
         }
-        closeHistoryPanel();
+        closeHistoryDrawer();
         openReaderArticle(entry.id);
       });
       button.addEventListener("keydown", (event) => {
@@ -2837,7 +2925,7 @@ export function watchReader(navigation: PostNavigationController): void {
       renderHistoryPanel();
       return;
     }
-    closeHistoryPanel();
+    closeHistoryDrawer();
     openReaderArticle(entry.id);
   };
 
@@ -2908,80 +2996,88 @@ export function watchReader(navigation: PostNavigationController): void {
     });
   };
 
-  const openHistoryPanel = (rail: HTMLElement, button: HTMLButtonElement): void => {
-    if (historyPanel !== null && !historyPanel.hidden) {
-      closeHistoryPanel(true);
-      return;
-    }
-    closeFavourMenu();
-    closeSpacingMenu();
-    if (historyPanel === null) {
-      const panel = document.createElement("div");
-      panel.className = "hbu-reader-history-menu";
-      panel.hidden = true;
-      panel.setAttribute("role", "group");
-      panel.setAttribute("aria-label", "阅读时间轴");
-      panel.addEventListener("keydown", (event) => {
-        if (event.key !== "Escape") return;
-        event.preventDefault();
-        event.stopPropagation();
-        closeHistoryPanel(true);
-      });
-      const label = document.createElement("div");
-      label.className = "hbu-reader-history-label";
-      label.textContent = "阅读时间轴";
-      const heading = document.createElement("div");
-      heading.className = "hbu-reader-history-head";
-      const meta = document.createElement("div");
-      meta.className = "hbu-reader-history-meta";
-      meta.setAttribute("aria-live", "polite");
-      heading.append(label, meta);
-      const body = document.createElement("div");
-      body.className = "hbu-reader-history-body";
-      const list = document.createElement("ol");
-      list.className = "hbu-reader-history-list";
-      const railTrack = document.createElement("div");
-      railTrack.className = "hbu-reader-history-track";
-      const thumb = document.createElement("button");
-      thumb.type = "button";
-      thumb.className = "hbu-reader-history-thumb";
-      thumb.setAttribute("role", "slider");
-      thumb.setAttribute("aria-label", "阅读时间轴位置");
-      thumb.setAttribute("aria-orientation", "vertical");
-      thumb.setAttribute("aria-valuemin", "0");
-      thumb.setAttribute("aria-valuemax", "0");
-      thumb.setAttribute("aria-valuenow", "0");
-      thumb.title = "拖动快速跳转，点击跳回当前篇";
-      const railBody = document.createElement("div");
-      railBody.className = "hbu-reader-history-rail";
-      railBody.append(railTrack, thumb);
-      const peek = document.createElement("div");
-      peek.className = "hbu-reader-history-peek";
-      peek.hidden = true;
-      peek.setAttribute("role", "status");
-      peek.setAttribute("aria-live", "polite");
-      peek.setAttribute("aria-atomic", "true");
-      body.append(list, railBody);
-      panel.append(heading, body, peek);
-      historyPanel = panel;
-      historyMeta = meta;
-      historyList = list;
-      historyRail = railBody;
-      historyThumb = thumb;
-      historyPeek = peek;
-      bindHistoryRail(railBody, railTrack, thumb);
-    }
-    historyButton = button;
-    if (historyPanel.parentNode !== rail) rail.append(historyPanel);
+  /**
+   * Mounts the timeline into the reader shell. On wide screens it is a column
+   * that is always on screen; below 1200px CSS folds it into a drawer that the
+   * rail toggles. Only the drawer changes `hidden` semantics through inert.
+   */
+  const mountHistoryTimeline = (): void => {
+    if (host === null || historyPanel !== null) return;
+    const panel = document.createElement("div");
+    panel.className = "hbu-reader-history-menu";
+    panel.setAttribute("role", "group");
+    panel.setAttribute("aria-label", "阅读时间轴");
+    panel.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !isHistoryDrawerOpen()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeHistoryDrawer(true);
+    });
+    const heading = document.createElement("div");
+    heading.className = "hbu-reader-history-head";
+    const headText = document.createElement("div");
+    headText.className = "hbu-reader-history-head-text";
+    const label = document.createElement("div");
+    label.className = "hbu-reader-history-label";
+    label.textContent = "阅读时间轴";
+    const meta = document.createElement("div");
+    meta.className = "hbu-reader-history-meta";
+    meta.setAttribute("aria-live", "polite");
+    headText.append(label, meta);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "hbu-reader-history-close";
+    close.setAttribute("aria-label", "关闭阅读时间轴");
+    close.innerHTML = READER_ICONS.close;
+    close.addEventListener("click", () => closeHistoryDrawer(true));
+    heading.append(headText, close);
+    const body = document.createElement("div");
+    body.className = "hbu-reader-history-body";
+    const list = document.createElement("ol");
+    list.className = "hbu-reader-history-list";
+    const railTrack = document.createElement("div");
+    railTrack.className = "hbu-reader-history-track";
+    const thumb = document.createElement("button");
+    thumb.type = "button";
+    thumb.className = "hbu-reader-history-thumb";
+    thumb.setAttribute("role", "slider");
+    thumb.setAttribute("aria-label", "阅读时间轴位置");
+    thumb.setAttribute("aria-orientation", "vertical");
+    thumb.setAttribute("aria-valuemin", "0");
+    thumb.setAttribute("aria-valuemax", "0");
+    thumb.setAttribute("aria-valuenow", "0");
+    thumb.title = "拖动快速跳转，点击跳回当前篇";
+    const railBody = document.createElement("div");
+    railBody.className = "hbu-reader-history-rail";
+    railBody.append(railTrack, thumb);
+    const peek = document.createElement("div");
+    peek.className = "hbu-reader-history-peek";
+    peek.hidden = true;
+    peek.setAttribute("role", "status");
+    peek.setAttribute("aria-live", "polite");
+    peek.setAttribute("aria-atomic", "true");
+    body.append(list, railBody);
+    panel.append(heading, body, peek);
+    const scrim = document.createElement("div");
+    scrim.className = "hbu-reader-history-scrim";
+    scrim.hidden = true;
+    scrim.addEventListener("pointerdown", () => closeHistoryDrawer(true));
+    historyPanel = panel;
+    historyMeta = meta;
+    historyList = list;
+    historyRail = railBody;
+    historyThumb = thumb;
+    historyPeek = peek;
+    historyScrim = scrim;
+    bindHistoryRail(railBody, railTrack, thumb);
+    host.append(scrim, panel);
     renderHistoryPanel();
-    historyPanel.hidden = false;
-    button.setAttribute("aria-expanded", "true");
-    const currentRow = historyPanel.querySelector<HTMLButtonElement>(".hbu-reader-history-row[aria-current='true']");
+    syncHistoryPanelMode();
+    const currentRow = panel.querySelector<HTMLButtonElement>(".hbu-reader-history-row[aria-current='true']");
     currentRow?.scrollIntoView?.({ block: "nearest" });
-    currentRow?.focus({ preventScroll: true });
   };
 
-  const createHistoryAction = (rail: HTMLElement): HTMLButtonElement => {
+  const createHistoryAction = (): HTMLButtonElement => {
     const history = document.createElement("button");
     history.type = "button";
     history.className = "hbu-reader-action";
@@ -2991,30 +3087,47 @@ export function watchReader(navigation: PostNavigationController): void {
     history.setAttribute("aria-expanded", "false");
     history.title = "阅读时间轴";
     history.innerHTML = READER_ICONS.history;
-    history.addEventListener("click", () => openHistoryPanel(rail, history));
+    history.addEventListener("click", () => {
+      if (isHistoryDrawerOpen()) closeHistoryDrawer(true);
+      else openHistoryDrawer();
+    });
     return history;
   };
 
-  const syncHistoryAction = (): void => {
+  const syncHistoryTimeline = (): void => {
     if (host === null) return;
     const rail = host.querySelector<HTMLElement>(".hbu-reader-rail");
     if (rail === null) return;
     const existing = rail.querySelector<HTMLButtonElement>('[data-action="history"]');
     if (!readReaderTimelinePreference()) {
-      closeHistoryPanel();
+      delete host.dataset["timelineOpen"];
+      host.classList.remove("hbu-reader-has-timeline");
       existing?.remove();
       historyPanel?.remove();
+      historyScrim?.remove();
       historyPanel = null;
       historyMeta = null;
       historyList = null;
+      historyRail = null;
+      historyThumb = null;
+      historyPeek = null;
+      historyScrim = null;
       historyButton = null;
+      historyPreviewX = 0;
       return;
     }
-    if (existing !== null) return;
-    const spacing = rail.querySelector<HTMLElement>('[data-action="spacing"]');
-    const history = createHistoryAction(rail);
-    if (spacing === null) rail.append(history);
-    else rail.insertBefore(history, spacing);
+    host.classList.add("hbu-reader-has-timeline");
+    historyButton = existing;
+    if (historyButton === null) {
+      const spacing = rail.querySelector<HTMLElement>('[data-action="spacing"]');
+      const history = createHistoryAction();
+      historyButton = history;
+      if (spacing === null) rail.append(history);
+      else rail.insertBefore(history, spacing);
+    }
+    if (historyPanel === null) mountHistoryTimeline();
+    else renderHistoryPanel();
+    syncHistoryPanelMode();
   };
 
   const openSpacingMenu = (rail: HTMLElement, button: HTMLButtonElement): void => {
@@ -3024,7 +3137,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     closeFavourMenu();
-    closeHistoryPanel();
+    closeHistoryDrawer();
     if (spacingPanel === null) {
       const panel = document.createElement("div");
       panel.className = "hbu-reader-spacing-menu";
@@ -3452,7 +3565,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     closeSpacingMenu();
-    closeHistoryPanel();
+    closeHistoryDrawer();
     const targetId = articleId;
     const generation = readerGeneration;
     favourMenuBusy = true;
@@ -6129,11 +6242,6 @@ export function watchReader(navigation: PostNavigationController): void {
     spacing.innerHTML = SETTINGS_ICON;
     spacing.addEventListener("click", () => openSpacingMenu(rail, spacing));
     rail.append(avatar, like, favour, cy, comment, share, spacing);
-    if (readReaderTimelinePreference()) {
-      // The timeline button sits above the settings gear, inside the same rail,
-      // so it keeps the 48px touch target the other actions use.
-      rail.insertBefore(createHistoryAction(rail), spacing);
-    }
     return rail;
   };
 
@@ -6626,6 +6734,12 @@ export function watchReader(navigation: PostNavigationController): void {
     historyPanel = null;
     historyButton = null;
     historyList = null;
+    historyMeta = null;
+    historyRail = null;
+    historyThumb = null;
+    historyPeek = null;
+    historyScrim = null;
+    historyPreviewX = 0;
     coverIndex = 0;
     coverTotal = 0;
     activeIndex = 0;
@@ -6644,6 +6758,7 @@ export function watchReader(navigation: PostNavigationController): void {
     scroll.append(createEndPage(data));
     const rail = createRail(data);
     host.append(scroll, rail);
+    syncHistoryTimeline();
     const progress = document.createElement("div");
     progress.className = "hbu-reader-progress";
     const current = document.createElement("span");
@@ -6829,6 +6944,7 @@ export function watchReader(navigation: PostNavigationController): void {
     historyRail = null;
     historyThumb = null;
     historyPeek = null;
+    historyScrim = null;
     historyPreviewX = 0;
     host?.remove();
     host = null;
@@ -6905,7 +7021,7 @@ export function watchReader(navigation: PostNavigationController): void {
       return;
     }
     syncReaderEndActions();
-    if (historyPanel !== null && !historyPanel.hidden) renderHistoryPanel();
+    if (historyPanel !== null) renderHistoryPanel();
     if (readerPendingAdvanceSourceId === "") return;
     if (status.currentId !== readerPendingAdvanceSourceId || status.revision !== readerPendingAdvanceRevision) {
       clearPendingReaderAdvance();
@@ -6933,14 +7049,14 @@ export function watchReader(navigation: PostNavigationController): void {
   });
 
   document.addEventListener(READER_TIMELINE_EVENT, () => {
-    syncHistoryAction();
+    syncHistoryTimeline();
   });
 
   document.addEventListener(READER_HISTORY_LIMIT_EVENT, (event) => {
     const detail = event instanceof CustomEvent ? event.detail : undefined;
     const limit = typeof detail === "number" && Number.isSafeInteger(detail) && detail >= 0 ? detail : readReaderHistoryLimit();
     applyPostHistoryLimit(limit);
-    if (historyPanel !== null && !historyPanel.hidden) renderHistoryPanel();
+    if (historyPanel !== null) renderHistoryPanel();
     if (host !== null) syncReaderEndActions();
   });
 
@@ -6958,9 +7074,9 @@ export function watchReader(navigation: PostNavigationController): void {
         event.preventDefault();
         closeSpacingMenu();
         spacingButton?.focus({ preventScroll: true });
-      } else if (historyPanel !== null && !historyPanel.hidden) {
+      } else if (isHistoryDrawerOpen()) {
         event.preventDefault();
-        closeHistoryPanel(true);
+        closeHistoryDrawer(true);
       } else if (favourPanel !== null && !favourPanel.hidden) {
         event.preventDefault();
         closeFavourMenu(true);
