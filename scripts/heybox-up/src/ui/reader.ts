@@ -735,7 +735,7 @@ export const READER_CSS = `
   .hbu-reader-follow { min-width: 56px; height: 36px; padding: 0 13px; border: 0; border-radius: 99px; background: var(--hbu-reader-accent); color: var(--hbu-reader-on-accent); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
   .hbu-reader-follow[aria-pressed="true"] { background: var(--hbu-reader-float-hover); color: var(--hbu-reader-glass-ink); }
   .hbu-reader-head-spacer { flex: 1 1 auto; }
-  .hbu-reader-rail { position: absolute; right: 16px; bottom: 118px; z-index: 11; display: flex; flex-direction: column; gap: 13px; align-items: center; }
+  .hbu-reader-rail { position: absolute; right: -32px; bottom: 118px; z-index: 11; display: flex; flex-direction: column; gap: 13px; align-items: center; }
   .hbu-reader-action { display: grid; place-items: center; width: 48px; min-height: 48px; padding: 4px 0; border: 1px solid var(--hbu-reader-glass-border); border-radius: 50%; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); cursor: pointer; backdrop-filter: blur(10px); }
   .hbu-reader-action:hover { background: var(--hbu-reader-float-hover); }
   .hbu-reader-action svg { width: 21px; height: 21px; }
@@ -1109,17 +1109,19 @@ export const READER_CSS = `
     .hbu-reader-scroll { scroll-behavior: auto; }
     #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
   }
-  /* The wide reader grows to host its sidecar, while the article stage remains
-     centered in the viewport and the action rail stays just outside that stage. */
-  #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px + var(--hbu-reader-history-width)), 100%); }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: calc(100% - 80px - var(--hbu-reader-history-width)); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { right: var(--hbu-reader-history-width); }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: calc((100% - var(--hbu-reader-stage)) / 2 + 16px); }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { right: var(--hbu-reader-history-width); }
-  /* The column is already on screen, so the rail toggle only exists for the
-     narrow drawer. Hiding it inside a wide-screen query keeps the base rail
-     intact wherever media queries are unavailable. */
+  /* Keep the article stage centered in the viewport. The rail and timeline are
+     secondary columns alongside it and never consume its reading width. */
+  #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: var(--hbu-reader-stage); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; transform: translateX(calc(100% + 16px)); }
+  /* The column is visible only when there is room for both sidecars beyond the
+     centered article; otherwise the timeline remains a right-side drawer. */
   @media (min-width: 1200px) {
+    #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px + var(--hbu-reader-history-width)), 100%); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head,
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: calc((100% - var(--hbu-reader-stage)) / 2); right: auto; width: var(--hbu-reader-stage); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { right: calc(-1 * var(--hbu-reader-history-width)); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: calc((var(--hbu-reader-history-width) - 48px) / 2); transform: none; }
     #${READER_ID}.hbu-reader-has-timeline [data-action="history"] { display: none; }
   }
   .hbu-reader-history-scrim { position: absolute; inset: 0; z-index: 44; padding: 0; border: 0; background: var(--hbu-reader-scrim); }
@@ -1128,18 +1130,17 @@ export const READER_CSS = `
      a drawer opened from the rail. */
   @media (max-width: 1199px) {
     #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: calc(100% - 80px); margin-inline: auto; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { right: 0; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { right: 0; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: var(--hbu-reader-stage); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: -32px; transform: none; }
     .hbu-reader-history-menu { width: min(320px, 88vw); z-index: 45; visibility: hidden; box-shadow: var(--hbu-reader-shadow); transform: translateX(100%); transition: transform .22s ease, visibility .22s; }
     #${READER_ID}[data-timeline-open="true"] .hbu-reader-history-menu { visibility: visible; transform: none; }
     .hbu-reader-history-close { display: grid; }
   }
   @media (max-width: 900px) {
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; transform: none; }
   }
   @media (max-width: 760px) {
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 10px; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 10px; transform: none; }
     .hbu-reader-history-menu { padding: 14px 12px 16px; }
   }
   /* The progress bar is now a sibling band, not an overlay on a page. */
