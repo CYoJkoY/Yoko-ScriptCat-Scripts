@@ -30,6 +30,7 @@ vi.hoisted(() => {
 
 import { READER_ID, watchReader } from "../scripts/heybox-up/src/ui/reader";
 import { localStore, readReaderTimelinePreference, sessionStore, setReaderTimelinePreference } from "../scripts/heybox-up/src/state";
+import { READER_HISTORY_LIMIT_EVENT } from "../scripts/heybox-up/src/state";
 import { STORAGE_KEYS } from "../scripts/heybox-up/src/config";
 import { READER_RATIO_KEY, writeReaderRatio } from "../scripts/heybox-up/src/ui/reader";
 
@@ -53,6 +54,24 @@ const navigation = {
   subscribe: () => (): void => undefined,
 };
 
+/** Switches the viewport query the reader reads when it is constructed. */
+function setNarrowViewport(narrow: boolean): void {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string): MediaQueryList => ({
+      matches: narrow,
+      media: query,
+      onchange: null,
+      addListener: (): void => undefined,
+      removeListener: (): void => undefined,
+      addEventListener: (): void => undefined,
+      removeEventListener: (): void => undefined,
+      dispatchEvent: (): boolean => true,
+    }),
+  });
+}
+
 function mountReader(): HTMLElement {
   history.replaceState(null, "", "/app/bbs/link/123456");
   document.body.innerHTML = [
@@ -70,8 +89,15 @@ function mountReader(): HTMLElement {
   return host;
 }
 
+function timeline(host: HTMLElement): HTMLElement {
+  const panel = host.querySelector<HTMLElement>(".hbu-reader-history-menu");
+  if (panel === null) throw new Error("Expected the docked timeline");
+  return panel;
+}
+
 describe("reader history timeline", () => {
   beforeEach(() => {
+    setNarrowViewport(false);
     localStore.remove(STORAGE_KEYS.readerTimeline);
     sessionStore.remove(READER_RATIO_KEY + "100");
     sessionStore.remove(READER_RATIO_KEY + "123456");
@@ -86,25 +112,30 @@ describe("reader history timeline", () => {
     sessionStore.remove(READER_RATIO_KEY + "123456");
   });
 
-  it("ships the timeline action enabled by default", () => {
-    expect(readReaderTimelinePreference()).toBe(true);
+  it("docks the timeline beside the article without a click", () => {
     const host = mountReader();
+    expect(host.classList.contains("hbu-reader-has-timeline")).toBe(true);
+    const panel = timeline(host);
+    expect(panel.hidden).toBe(false);
+    expect(panel.hasAttribute("inert")).toBe(false);
+    expect(panel.getAttribute("aria-hidden")).toBeNull();
+    expect(panel.parentElement).toBe(host);
+    // Wide screens keep the rail toggle in the DOM for narrow-screen resizes,
+    // but the CSS hides it while the column is docked.
     const rail = host.querySelector(".hbu-reader-rail");
     const action = rail?.querySelector<HTMLButtonElement>('[data-action="history"]');
     expect(action).not.toBeNull();
     expect(action?.getAttribute("aria-expanded")).toBe("false");
-    // The action stays above the settings gear so the rail keeps one order.
     expect(action?.nextElementSibling?.getAttribute("data-action")).toBe("spacing");
+    expect(host.querySelector(".hbu-reader-history-close")).not.toBeNull();
   });
 
   it("lists visited posts newest first and marks the open one", () => {
     writeReaderRatio("100", 0.625);
     const host = mountReader();
-    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
-    const panel = host.querySelector<HTMLElement>(".hbu-reader-history-menu");
-    expect(panel?.hidden).toBe(false);
-    expect(panel?.querySelector(".hbu-reader-history-meta")?.textContent).toBe("共 2 篇 · 正在阅读第 2 篇");
-    const rows = Array.from(panel?.querySelectorAll(".hbu-reader-history-row") ?? []);
+    const panel = timeline(host);
+    expect(panel.querySelector(".hbu-reader-history-meta")?.textContent).toBe("共 2 篇 · 正在阅读第 2 篇");
+    const rows = Array.from(panel.querySelectorAll(".hbu-reader-history-row"));
     expect(rows.map((row) => row.getAttribute("data-id"))).toEqual(["123456", "100"]);
     expect(rows[0]?.getAttribute("aria-current")).toBe("true");
     expect(rows[0]?.getAttribute("aria-label")).toBe("第 2 篇，共 2 篇：Title，正在阅读");
@@ -113,26 +144,10 @@ describe("reader history timeline", () => {
     expect(rows[0]?.querySelector(".hbu-reader-history-current")?.textContent).toBe("正在阅读");
   });
 
-  it("closes on Escape and returns focus to the timeline action", () => {
+  it("refreshes the per-post reading progress when navigation rerenders", () => {
     const host = mountReader();
-    const action = host.querySelector<HTMLButtonElement>('[data-action="history"]');
-    action?.click();
-    const panel = host.querySelector<HTMLElement>(".hbu-reader-history-menu");
-    const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
-    if (panel === null || thumb === null) throw new Error("Expected the open timeline");
-    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    expect(panel.hidden).toBe(true);
-    expect(action?.getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(action);
-  });
-
-  it("refreshes the per-post reading progress when the panel reopens", () => {
-    const host = mountReader();
-    const action = host.querySelector<HTMLButtonElement>('[data-action="history"]');
-    action?.click();
-    action?.click();
     writeReaderRatio("100", 0.4);
-    action?.click();
+    document.dispatchEvent(new CustomEvent(READER_HISTORY_LIMIT_EVENT, { detail: 40 }));
     const row = host.querySelector<HTMLButtonElement>('.hbu-reader-history-row[data-id="100"]');
     expect(row?.querySelector(".hbu-reader-history-progress")?.textContent).toBe("40%");
     expect(row?.getAttribute("aria-label")).toContain("已读 40%");
@@ -141,7 +156,6 @@ describe("reader history timeline", () => {
   it("marks a finished post and draws its progress bar", () => {
     writeReaderRatio("100", 1);
     const host = mountReader();
-    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
     const row = host.querySelector<HTMLButtonElement>('.hbu-reader-history-row[data-id="100"]');
     expect(row?.querySelector(".hbu-reader-history-progress")?.textContent).toBe("读完");
     expect(row?.getAttribute("aria-label")).toBe("第 1 篇，共 2 篇：Earlier post，已读完");
@@ -156,7 +170,6 @@ describe("reader history timeline", () => {
   it("moves the row focus with the arrow keys and shows progress in the peek", () => {
     writeReaderRatio("100", 1);
     const host = mountReader();
-    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
     const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".hbu-reader-history-row"));
     const [currentRow, olderRow] = rows;
     if (currentRow === undefined || olderRow === undefined) throw new Error("Expected two rows");
@@ -173,34 +186,37 @@ describe("reader history timeline", () => {
     expect(host.querySelector(".hbu-reader-history-peek")?.textContent).toBe("Earlier post · 读完");
   });
 
-  it("scrolls the current visit into view when the timeline opens", () => {
+  it("scrolls the current visit into view when the timeline mounts", () => {
     const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
     try {
       const host = mountReader();
-      host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
       expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+      const currentRow = host.querySelector(".hbu-reader-history-row[aria-current='true']");
+      expect(scrollIntoView.mock.contexts.at(-1)).toBe(currentRow);
     } finally {
       if (original === undefined) delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
       else Object.defineProperty(HTMLElement.prototype, "scrollIntoView", original);
     }
   });
 
-  it("removes the action and panel when the switch turns off", () => {
+  it("removes the action, column and host class when the switch turns off", () => {
     const host = mountReader();
-    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
     setReaderTimelinePreference(false);
     expect(host.querySelector('[data-action="history"]')).toBeNull();
     expect(host.querySelector(".hbu-reader-history-menu")).toBeNull();
+    expect(host.querySelector(".hbu-reader-history-scrim")).toBeNull();
+    expect(host.classList.contains("hbu-reader-has-timeline")).toBe(false);
 
     setReaderTimelinePreference(true);
     expect(host.querySelector('[data-action="history"]')).not.toBeNull();
+    expect(host.classList.contains("hbu-reader-has-timeline")).toBe(true);
+    expect(host.querySelector(".hbu-reader-history-menu")).not.toBeNull();
   });
 
   it("prints the visit position as x/n on the draggable thumb", () => {
     const host = mountReader();
-    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
     const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
     expect(thumb?.textContent).toBe("2/2");
     expect(thumb?.getAttribute("role")).toBe("slider");
@@ -219,7 +235,6 @@ describe("reader history timeline", () => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
     try {
       const host = mountReader();
-      host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
       const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
       if (thumb === null) throw new Error("Expected the rail thumb");
       const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".hbu-reader-history-row"));
@@ -254,7 +269,6 @@ describe("reader history timeline", () => {
 
   it("tracks the pointer while the thumb is dragged", () => {
     const host = mountReader();
-    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
     const body = host.querySelector<HTMLElement>(".hbu-reader-history-rail");
     const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
     if (body === null || thumb === null) throw new Error("Expected the timeline rail");
@@ -277,5 +291,46 @@ describe("reader history timeline", () => {
     thumb.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 0 }));
     expect(thumb.textContent).toBe("2/2");
     expect(thumb.style.top).toBe("0%");
+  });
+
+  it("folds into a drawer below 1200px and closes on Escape", () => {
+    setNarrowViewport(true);
+    const host = mountReader();
+    const panel = timeline(host);
+    const action = host.querySelector<HTMLButtonElement>('[data-action="history"]');
+    const scrim = host.querySelector<HTMLDivElement>(".hbu-reader-history-scrim");
+    if (action === null || scrim === null) throw new Error("Expected the drawer controls");
+    // Closed by default, and inert so tabbing cannot reach the hidden rows.
+    expect(panel.getAttribute("aria-hidden")).toBe("true");
+    expect(panel.hasAttribute("inert")).toBe(true);
+    expect(scrim.hidden).toBe(true);
+    expect(action.getAttribute("aria-expanded")).toBe("false");
+
+    action.click();
+    expect(host.dataset["timelineOpen"]).toBe("true");
+    expect(panel.getAttribute("aria-hidden")).toBe("false");
+    expect(panel.hasAttribute("inert")).toBe(false);
+    expect(scrim.hidden).toBe(false);
+    expect(action.getAttribute("aria-expanded")).toBe("true");
+
+    const thumb = host.querySelector<HTMLButtonElement>(".hbu-reader-history-thumb");
+    if (thumb === null) throw new Error("Expected the rail thumb");
+    thumb.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(host.dataset["timelineOpen"]).toBeUndefined();
+    expect(panel.getAttribute("aria-hidden")).toBe("true");
+    expect(scrim.hidden).toBe(true);
+    expect(action.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(action);
+  });
+
+  it("closes the drawer from its own close button", () => {
+    setNarrowViewport(true);
+    const host = mountReader();
+    host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+    const close = host.querySelector<HTMLButtonElement>(".hbu-reader-history-close");
+    if (close === null) throw new Error("Expected the drawer close button");
+    close.click();
+    expect(host.dataset["timelineOpen"]).toBeUndefined();
+    expect(timeline(host).getAttribute("aria-hidden")).toBe("true");
   });
 });
