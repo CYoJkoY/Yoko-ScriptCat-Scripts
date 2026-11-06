@@ -276,11 +276,11 @@ describe("immersive reader centering contract", () => {
     expect(rail?.style.getPropertyValue("right")).toBe("0px");
     expect(rail?.style.getPropertyValue("transform")).toBe("none");
     const wideHeader = rules.find((rule) =>
-      rule.selector.includes("#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-progress")
+      rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-progress"
       && rule.media === "(min-width: 901px)"
     );
     expect(wideHeader?.style.getPropertyValue("width")).toBe("min(var(--hbu-reader-stage), calc(100% - 80px))");
-    expect(wideHeader?.style.getPropertyValue("right")).toBe("80px");
+    expect(wideHeader?.style.getPropertyValue("margin-right")).toBe("80px");
 
     const narrowScroll = rules.find((rule) =>
       rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-scroll"

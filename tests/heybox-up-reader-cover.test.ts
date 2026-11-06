@@ -98,6 +98,26 @@ describe("reader cover pager band", () => {
     expect(stage?.querySelector(".hbu-reader-cover-dots")).toBeNull();
   });
 
+  it("measures cover swipes relative to the scrollport below the toolbar", () => {
+    const host = mountReader();
+    const scroll = host.querySelector<HTMLElement>(".hbu-reader-scroll")!;
+    const hero = host.querySelector<HTMLElement>('[data-kind="hero"]')!;
+    Object.defineProperty(scroll, "clientHeight", { value: 600 });
+    vi.spyOn(scroll, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 80, 732, 600));
+    vi.spyOn(hero, "getBoundingClientRect").mockReturnValue(new DOMRect(0, -300, 732, 620));
+    const scrollBy = vi.fn();
+    scroll.scrollBy = scrollBy;
+    const start = new Event("touchstart");
+    Object.defineProperty(start, "touches", { value: [{ clientX: 150, clientY: 100 }] });
+    scroll.dispatchEvent(start);
+    const end = new Event("touchend");
+    Object.defineProperty(end, "changedTouches", { value: [{ clientX: 50, clientY: 100 }] });
+    scroll.dispatchEvent(end);
+    // Only 240px of the cover remains in the 600px scrollport, below the 45% threshold.
+    expect(scrollBy).toHaveBeenCalledWith({ top: 492, behavior: "smooth" });
+    expect(host.querySelector('.hbu-reader-cover img[data-active="true"]')?.getAttribute("src")).toBe("https://img/a.jpg");
+  });
+
   it("collects interior and adjacent votes once in order and updates only the component", async () => {
     const host = mountReader(
       '<div class="article-vote"><h3>Inside</h3><button>Same</button></div>',
