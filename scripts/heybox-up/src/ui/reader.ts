@@ -817,9 +817,8 @@ export const READER_CSS = `
   .hbu-reader-setting-switch { display: flex; gap: 8px; align-items: center; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-float-ink); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
   .hbu-reader-setting-switch::after { content: ""; width: 28px; height: 16px; margin-left: auto; border: 1px solid var(--hbu-reader-float-border); border-radius: 99px; background: var(--hbu-reader-float-hover); }
   .hbu-reader-setting-switch[aria-checked="true"]::after { border-color: var(--hbu-reader-accent); background: var(--hbu-reader-accent); }
-  /* The timeline is a docked column, not a popover: it owns the right edge of
-     the reader and keeps every visit visible while the article scrolls. */
-  .hbu-reader-history-menu { position: absolute; top: 0; right: 0; bottom: 0; z-index: 13; display: flex; flex-direction: column; gap: 10px; width: var(--hbu-reader-history-width); padding: 18px 16px 20px; overflow: hidden; border-left: 1px solid var(--hbu-reader-border); background: var(--hbu-reader-page); color: var(--hbu-reader-ink); }
+  /* The timeline is a docked sidecar outside the centered article stage. */
+  .hbu-reader-history-menu { position: absolute; top: 0; right: calc(-1 * var(--hbu-reader-history-width)); bottom: 0; z-index: 13; display: flex; flex-direction: column; gap: 10px; width: var(--hbu-reader-history-width); padding: 18px 16px 20px; overflow: hidden; border-left: 1px solid var(--hbu-reader-border); background: var(--hbu-reader-page); color: var(--hbu-reader-ink); }
   .hbu-reader-history-head { display: flex; flex: none; gap: 8px; align-items: flex-start; justify-content: space-between; }
   .hbu-reader-history-head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .hbu-reader-history-close { display: none; place-items: center; width: 30px; height: 30px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: var(--hbu-reader-muted); cursor: pointer; }
@@ -1110,12 +1109,12 @@ export const READER_CSS = `
     .hbu-reader-scroll { scroll-behavior: auto; }
     #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
   }
-  /* The timeline is docked rather than opened, so the reader itself grows by
-     one column on wide screens. Specificity must beat the base #id width rule. */
+  /* The wide reader grows to host its sidecar, while the article stage remains
+     centered in the viewport and the action rail stays just outside that stage. */
   #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px + var(--hbu-reader-history-width)), 100%); }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: calc(100% - 80px - var(--hbu-reader-history-width)); margin-left: 40px; margin-right: 0; }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: calc(100% - 80px - var(--hbu-reader-history-width)); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
   #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { right: var(--hbu-reader-history-width); }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: calc(var(--hbu-reader-history-width) + 16px); }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: calc((100% - var(--hbu-reader-stage)) / 2 + 16px); }
   #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { right: var(--hbu-reader-history-width); }
   /* The column is already on screen, so the rail toggle only exists for the
      narrow drawer. Hiding it inside a wide-screen query keeps the base rail
