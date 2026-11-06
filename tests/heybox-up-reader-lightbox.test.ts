@@ -235,7 +235,7 @@ describe("reader media page spacing", () => {
     expect(READER_CSS).toContain('.hbu-reader-rich figcaption { margin: .5rem 0 0;');
   });
 
-  it("keeps the cover scrim short and light", () => {
-    expect(READER_CSS).toContain("background: linear-gradient(180deg, rgba(0, 0, 0, .28), transparent 14%);");
+  it("keeps the photo stage free of a dimming scrim", () => {
+    expect(READER_CSS).not.toContain(".hbu-reader-cover-stage::after");
   });
 });

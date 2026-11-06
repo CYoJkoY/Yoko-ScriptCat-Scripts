@@ -228,7 +228,7 @@ export const READER_CSS = `
     --hbu-reader-glass: rgba(255, 255, 255, .88);
     --hbu-reader-glass-ink: #14191e;
     --hbu-reader-glass-border: rgba(20, 25, 30, .12);
-    --hbu-reader-head: linear-gradient(180deg, rgba(255, 255, 255, .94), rgba(255, 255, 255, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(255, 255, 255, .98);
     --hbu-reader-float-ink: #14191e;
     --hbu-reader-float-border: rgba(20, 25, 30, .14);
@@ -256,7 +256,7 @@ export const READER_CSS = `
     --hbu-reader-glass: rgba(21, 28, 36, .84);
     --hbu-reader-glass-ink: #e6edf5;
     --hbu-reader-glass-border: rgba(230, 237, 245, .14);
-    --hbu-reader-head: linear-gradient(180deg, rgba(18, 24, 31, .94), rgba(18, 24, 31, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(21, 28, 36, .97);
     --hbu-reader-float-ink: #e6edf5;
     --hbu-reader-float-border: #2b3642;
@@ -280,7 +280,7 @@ export const READER_CSS = `
     --hbu-reader-link: #a8c0d8;
     --hbu-reader-glass: rgba(16, 16, 16, .86);
     --hbu-reader-glass-border: rgba(230, 237, 245, .14);
-    --hbu-reader-head: linear-gradient(180deg, rgba(9, 9, 9, .94), rgba(9, 9, 9, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(12, 12, 12, .97);
     --hbu-reader-float-ink: #e6edf5;
     --hbu-reader-float-border: #242424;
@@ -308,7 +308,7 @@ export const READER_CSS = `
     --hbu-reader-glass: rgba(250, 245, 234, .9);
     --hbu-reader-glass-ink: #332b21;
     --hbu-reader-glass-border: rgba(51, 43, 33, .16);
-    --hbu-reader-head: linear-gradient(180deg, rgba(250, 245, 234, .94), rgba(250, 245, 234, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(255, 253, 247, .98);
     --hbu-reader-float-ink: #332b21;
     --hbu-reader-float-border: #ddd0bc;
@@ -336,7 +336,7 @@ export const READER_CSS = `
     --hbu-reader-glass: rgba(251, 253, 253, .9);
     --hbu-reader-glass-ink: #1d3338;
     --hbu-reader-glass-border: rgba(29, 51, 56, .16);
-    --hbu-reader-head: linear-gradient(180deg, rgba(247, 251, 251, .94), rgba(247, 251, 251, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(252, 254, 254, .98);
     --hbu-reader-float-ink: #1d3338;
     --hbu-reader-float-border: #cbdcdf;
@@ -401,6 +401,8 @@ export const READER_CSS = `
     width: min(calc(var(--hbu-reader-stage) + 80px), 100%);
     height: 100%;
     height: 100dvh;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) 46px;
     transform: translateX(-50%);
     background: var(--hbu-reader-page);
     color: var(--hbu-reader-ink);
@@ -417,9 +419,12 @@ export const READER_CSS = `
   }
   .hbu-reader-scroll {
     position: relative;
+    grid-row: 2;
     width: calc(100% - 80px);
-    /* The progress bar owns its own 46px band; scrolling content never paints under it. */
-    height: calc(100% - 46px);
+    /* The toolbar and progress bar own separate rows outside the scrollport. */
+    height: 100%;
+    min-height: 0;
+    container-type: size;
     overflow-x: hidden;
     overflow-y: auto;
     margin-inline: auto;
@@ -442,8 +447,8 @@ export const READER_CSS = `
      统一的 .72em 节奏，跨页处也只保留一次段间距，避免 64px 的叠加空隙。 */
   .hbu-reader-page[data-kind="text"] { padding: 0 60px; }
   .hbu-reader-page[data-kind="heading"] { padding: 56px 60px 28px; }
-  .hbu-reader-page[data-kind="hero"] { min-height: calc(100dvh - 46px); padding: 0; }
-  .hbu-reader-page[data-kind="end"] { min-height: calc(100dvh - 46px); }
+  .hbu-reader-page[data-kind="hero"] { min-height: 100cqh; padding: 0; }
+  .hbu-reader-page[data-kind="end"] { min-height: 100cqh; }
   .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
   .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
     width: min(34em, 100%);
@@ -526,8 +531,8 @@ export const READER_CSS = `
   .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 2rem 20px; background: var(--hbu-reader-page); }
   .hbu-reader-page[data-kind="media"] + .hbu-reader-page[data-kind="media"] { padding-top: 0; }
   .hbu-reader-page[data-kind="text"]:has(+ .hbu-reader-page[data-kind="media"]) .hbu-reader-copy > :last-child { margin-bottom: 0; }
-  .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
-  .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
+  .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: 2rem 20px; background: #05070a; }
+  .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: 2rem 20px; background: #05070a; }
   .hbu-reader-page[data-kind="notice"] { justify-content: center; padding: 32px 24px 72px; background: var(--hbu-reader-page); }
   .hbu-reader-notice {
     width: min(520px, 100%);
@@ -577,7 +582,7 @@ export const READER_CSS = `
   .hbu-reader-video {
     display: block;
     width: min(100%, 1120px);
-    max-height: calc(100dvh - 150px);
+    max-height: calc(100cqh - 4rem);
     margin: auto;
     aspect-ratio: 16 / 9;
     border-radius: 12px;
@@ -589,7 +594,7 @@ export const READER_CSS = `
     padding: 0;
     justify-content: flex-start;
     align-items: stretch;
-    min-height: calc(100dvh - 46px);
+    min-height: 100cqh;
     background: var(--hbu-reader-page);
     color: var(--hbu-reader-ink);
   }
@@ -617,14 +622,6 @@ export const READER_CSS = `
     pointer-events: none;
   }
   .hbu-reader-cover img[data-active="true"] { opacity: 1; pointer-events: auto; }
-  .hbu-reader-cover-stage::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    /* Only a short scrim keeps the translucent head readable; a deep wash would
-       dim the top of the photo the reader came to look at. */
-    background: linear-gradient(180deg, rgba(0, 0, 0, .28), transparent 14%);
-  }
   .hbu-reader-page[data-kind="hero"][data-cover="none"] { justify-content: center; }
   .hbu-reader-cover-nav {
     position: absolute;
@@ -723,7 +720,7 @@ export const READER_CSS = `
     .hbu-reader-page[data-kind="end"] .hbu-reader-stats { display: none; }
     .hbu-reader-end-head img { width: 40px; height: 40px; }
   }
-  .hbu-reader-head { position: absolute; top: 0; right: 0; left: 0; z-index: 12; display: flex; gap: 9px; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); background: var(--hbu-reader-head); color: var(--hbu-reader-glass-ink); pointer-events: none; }
+  .hbu-reader-head { position: relative; grid-row: 1; width: calc(100% - 80px); margin-inline: auto; z-index: 12; display: flex; gap: 9px; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); background: var(--hbu-reader-head); color: var(--hbu-reader-glass-ink); pointer-events: none; }
   .hbu-reader-head > * { pointer-events: auto; }
   .hbu-reader-round { display: grid; place-items: center; width: 40px; height: 40px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-glass-border); border-radius: 50%; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); cursor: pointer; backdrop-filter: blur(8px); }
   .hbu-reader-round svg { width: 19px; height: 19px; }
@@ -870,7 +867,7 @@ export const READER_CSS = `
   .hbu-reader-cy-actions button[data-primary] { border-color: transparent; background: var(--hbu-reader-accent); color: var(--hbu-reader-on-accent); font-weight: 650; }
   .hbu-reader-cy-actions button:disabled { opacity: .55; cursor: default; }
   .hbu-reader-action-count { display: block; margin-top: 2px; font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1.2; }
-  .hbu-reader-progress { position: absolute; right: 0; bottom: 0; left: 0; z-index: 10; display: flex; gap: 10px; align-items: center; height: 46px; padding: 0 18px; background: linear-gradient(0deg, var(--hbu-reader-glass), transparent); color: var(--hbu-reader-glass-ink); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+  .hbu-reader-progress { position: relative; grid-row: 3; width: calc(100% - 80px); margin-inline: auto; z-index: 10; display: flex; gap: 10px; align-items: center; height: 46px; padding: 0 18px; background: linear-gradient(0deg, var(--hbu-reader-glass), transparent); color: var(--hbu-reader-glass-ink); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
   .hbu-reader-progress-bar { flex: 1 1 auto; height: 2px; overflow: hidden; border-radius: 99px; background: var(--hbu-reader-glass-border); }
   .hbu-reader-progress-bar i { display: block; width: 0; height: 100%; background: var(--hbu-reader-accent); transition: width .2s linear; }
   .hbu-reader-hint { color: var(--hbu-reader-float-muted); white-space: nowrap; }
@@ -1051,7 +1048,7 @@ export const READER_CSS = `
   }
   @media (max-width: 900px) {
     #${READER_ID} { width: 100%; }
-    .hbu-reader-scroll { width: 100%; }
+    .hbu-reader-scroll, .hbu-reader-head, .hbu-reader-progress { width: 100%; }
     .hbu-reader-rail { right: 14px; bottom: 96px; }
     .hbu-reader-page { padding-right: 86px; }
     .hbu-reader-caption { padding-right: 86px; }
@@ -1065,8 +1062,9 @@ export const READER_CSS = `
     .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
     .hbu-reader-page[data-kind="media"] { padding: 1.5rem 16px; }
     .hbu-reader-rich figure { margin-block: 1.5rem; }
-    .hbu-reader-page[data-kind="embed"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
-    .hbu-reader-page[data-kind="video"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
+    .hbu-reader-page[data-kind="embed"] { padding: 1.5rem 16px; }
+    .hbu-reader-page[data-kind="video"] { padding: 1.5rem 16px; }
+    .hbu-reader-video { max-height: calc(100cqh - 3rem); }
     .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
     .hbu-reader-rich { font-size: 17px; }
@@ -1098,6 +1096,8 @@ export const READER_CSS = `
   }
   @media (max-height: 620px) {
     .hbu-reader-page { padding-top: 72px; padding-bottom: 76px; }
+    .hbu-reader-page:is([data-kind="media"], [data-kind="embed"], [data-kind="video"]) { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+    .hbu-reader-video { max-height: calc(100cqh - 3rem); }
     .hbu-reader-page[data-kind="hero"] { padding: 0; }
     .hbu-reader-page[data-kind="text"] { padding-top: 0; padding-bottom: 0; }
     .hbu-reader-caption { padding: 14px 64px 58px 24px; }
@@ -1115,8 +1115,8 @@ export const READER_CSS = `
     #${READER_ID}.hbu-reader-has-timeline { left: 0; width: calc(100% - var(--hbu-reader-history-width) - 40px); transform: none; }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: min(var(--hbu-reader-stage), calc(100% - 80px)); margin-left: auto; margin-right: 80px; }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; width: 56px; transform: none; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head,
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: auto; right: 80px; width: min(var(--hbu-reader-stage), calc(100% - 80px)); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { width: calc(100% - 80px); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { margin-left: auto; margin-right: 80px; width: min(var(--hbu-reader-stage), calc(100% - 80px)); }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { position: fixed; left: auto; right: 16px; width: var(--hbu-reader-history-width); }
     #${READER_ID}.hbu-reader-has-timeline [data-action="history"] { display: none; }
   }
@@ -5331,7 +5331,7 @@ export function watchReader(navigation: PostNavigationController): void {
     const scroll = host?.querySelector<HTMLElement>(".hbu-reader-scroll");
     const hero = host?.querySelector('.hbu-reader-page[data-kind="hero"]');
     if (!scroll || !hero) return false;
-    return hero.getBoundingClientRect().bottom > scroll.clientHeight * 0.45;
+    return hero.getBoundingClientRect().bottom - scroll.getBoundingClientRect().top > scroll.clientHeight * 0.45;
   };
 
   const bindSwipe = (scroll: HTMLElement): void => {

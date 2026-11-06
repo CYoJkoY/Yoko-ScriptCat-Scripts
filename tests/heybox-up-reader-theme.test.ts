@@ -194,7 +194,7 @@ describe("immersive reader theme contract", () => {
     const paper = presetTokens(rules, "paper");
     const mist = presetTokens(rules, "mist");
     const dark = presetTokens(rules, "dark");
-    for (const name of ["page", "accent", "float", "head", "scrim", "shadow"] as const) {
+    for (const name of ["page", "accent", "float", "scrim", "shadow"] as const) {
       expect(paper.get(name)).not.toBe(dark.get(name));
       expect(mist.get(name)).not.toBe(dark.get(name));
     }
@@ -328,7 +328,25 @@ describe("immersive reader theme contract", () => {
   it("preserves the reading stage and progress band layout", () => {
     expect(ruleFor(rules, BASE_GATE).style.getPropertyValue("--hbu-reader-stage")).toBe("732px");
     expect(ruleFor(rules, ".hbu-reader-progress").style.getPropertyValue("height")).toBe("46px");
-    expect(ruleFor(rules, ".hbu-reader-scroll").style.getPropertyValue("height")).toBe("calc(100% - 46px)");
+    expect(ruleFor(rules, ".hbu-reader-scroll").style.getPropertyValue("height")).toBe("100%");
+  });
+
+  it("reserves separate toolbar and progress rows so neither can obscure photos", () => {
+    const host = ruleFor(rules, "#heybox-up-reader").style;
+    expect(host.getPropertyValue("display")).toBe("grid");
+    expect(host.getPropertyValue("grid-template-rows")).toBe("auto minmax(0, 1fr) 46px");
+    for (const [selector, row] of [[".hbu-reader-head", "1"], [".hbu-reader-scroll", "2"], [".hbu-reader-progress", "3"]]) {
+      const style = ruleFor(rules, selector!).style;
+      expect(style.getPropertyValue("grid-row")).toBe(row);
+      expect(style.getPropertyValue("position")).toBe("relative");
+    }
+    expect(ruleFor(rules, ".hbu-reader-scroll").style.getPropertyValue("container-type")).toBe("size");
+    for (const kind of ["hero", "end"]) {
+      expect(ruleFor(rules, '.hbu-reader-page[data-kind="' + kind + '"]').style.getPropertyValue("min-height")).toBe("100cqh");
+    }
+    expect(rules.some((rule) => rule.selector === ".hbu-reader-cover-stage::after")).toBe(false);
+    for (const preset of PRESETS) expect(presetTokens(rules, preset).get("head")).toBe("var(--hbu-reader-page)");
+    expect(ruleFor(rules, ".hbu-reader-cover img").style.getPropertyValue("object-fit")).toBe("contain");
   });
 
   it("styles the reply folding controls from the reader tokens", () => {
