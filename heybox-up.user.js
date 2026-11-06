@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.7.3
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，首屏渐变收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，宽屏直接停靠在文章右侧，窄屏通过按钮打开抽屉；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.8.0
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，首屏渐变收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -8181,6 +8181,112 @@
     }, delay);
   }
 
+  // scripts/heybox-up/src/ui/reader-interactions.ts
+  var READER_VOTE_SELECTOR = ".image-text__vote, .article-vote, .vote-container";
+  var CONTROL_SELECTOR = "button, input, select, textarea, label, a[href], [role=button], [class*=vote-item], [class*=vote-submit]";
+  var componentSequence = 0;
+  function bindReaderInteraction(clone, source, includeNode = () => true) {
+    let native = source;
+    const parent = source.parentElement;
+    const slot = parent === null ? -1 : Array.from(parent.children).indexOf(source);
+    let mapping = /* @__PURE__ */ new WeakMap();
+    let disposed = false;
+    const radioGroupPrefix = "hbu-reader-" + ++componentSequence + "-";
+    const mirror = (copy, original) => {
+      mapping.set(copy, original);
+      if (original instanceof Element && original.matches("iframe, video, audio, embed, object")) return;
+      if (copy instanceof Element && original instanceof Element) {
+        for (const attribute of Array.from(copy.attributes)) {
+          if (!original.hasAttribute(attribute.name)) copy.removeAttribute(attribute.name);
+        }
+        for (const attribute of Array.from(original.attributes)) {
+          const value = attribute.name === "name" && original instanceof HTMLInputElement && original.type === "radio" ? radioGroupPrefix + attribute.value : attribute.value;
+          if (copy.getAttribute(attribute.name) !== value) copy.setAttribute(attribute.name, value);
+        }
+        if (copy instanceof HTMLInputElement && original instanceof HTMLInputElement) {
+          copy.checked = original.checked;
+          if (copy.value !== original.value) copy.value = original.value;
+          copy.indeterminate = original.indeterminate;
+        }
+        if (copy instanceof HTMLTextAreaElement && original instanceof HTMLTextAreaElement && copy.value !== original.value) copy.value = original.value;
+        if (copy instanceof HTMLOptionElement && original instanceof HTMLOptionElement) copy.selected = original.selected;
+      } else if (copy.nodeValue !== original.nodeValue) copy.nodeValue = original.nodeValue;
+      const originals = Array.from(original.childNodes).filter(includeNode);
+      for (const [index, child] of originals.entries()) {
+        let copied = copy.childNodes[index];
+        if (copied === void 0 || copied.nodeType !== child.nodeType || copied.nodeName !== child.nodeName) {
+          const replacement = child.cloneNode(true);
+          if (copied === void 0) copy.appendChild(replacement);
+          else copy.replaceChild(replacement, copied);
+          copied = replacement;
+        }
+        mirror(copied, child);
+      }
+      while (copy.childNodes.length > originals.length) copy.removeChild(copy.lastChild);
+    };
+    const refresh = () => {
+      if (disposed) return;
+      if (!native.isConnected && parent !== null) {
+        const replacement = parent.children[slot];
+        if (replacement === void 0 || replacement.tagName !== source.tagName || source.matches(READER_VOTE_SELECTOR) && !replacement.matches(READER_VOTE_SELECTOR)) {
+          mapping = /* @__PURE__ */ new WeakMap();
+          return;
+        }
+        native = replacement;
+      }
+      mapping = /* @__PURE__ */ new WeakMap();
+      mirror(clone, native);
+    };
+    const forward = (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.type === "submit") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const form = mapping.get(event.target);
+        if (form instanceof HTMLFormElement) {
+          const submitter = event instanceof SubmitEvent && event.submitter !== null ? mapping.get(event.submitter) : void 0;
+          form.requestSubmit(submitter instanceof HTMLElement ? submitter : void 0);
+        }
+        return;
+      }
+      const control = event.target.closest(CONTROL_SELECTOR);
+      if (control === null || !clone.contains(control)) return;
+      const target = mapping.get(event.target);
+      if (!(target instanceof Element)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.type === "click") {
+        if (target instanceof HTMLElement) target.click();
+        else target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      } else {
+        const proxy = event.target;
+        if (proxy instanceof HTMLInputElement && target instanceof HTMLInputElement) {
+          target.value = proxy.value;
+          target.checked = proxy.checked;
+        } else if (proxy instanceof HTMLTextAreaElement && target instanceof HTMLTextAreaElement) target.value = proxy.value;
+        else if (proxy instanceof HTMLSelectElement && target instanceof HTMLSelectElement) {
+          for (const [index, option] of Array.from(proxy.options).entries()) target.options[index].selected = option.selected;
+        }
+        target.dispatchEvent(new Event(event.type, { bubbles: true }));
+      }
+      queueMicrotask(refresh);
+    };
+    refresh();
+    const observer = new MutationObserver(refresh);
+    observer.observe(parent || native, { subtree: true, childList: true, attributes: true, characterData: true });
+    for (const type of ["click", "input", "change", "submit"]) clone.addEventListener(type, forward, true);
+    parent?.addEventListener("input", refresh);
+    parent?.addEventListener("change", refresh);
+    return { refresh, dispose: () => {
+      disposed = true;
+      observer.disconnect();
+      mapping = /* @__PURE__ */ new WeakMap();
+      for (const type of ["click", "input", "change", "submit"]) clone.removeEventListener(type, forward, true);
+      parent?.removeEventListener("input", refresh);
+      parent?.removeEventListener("change", refresh);
+    } };
+  }
+
   // scripts/heybox-up/src/ui/reader.ts
   var READER_ID = "heybox-up-reader";
   var READER_STYLE_ID = "heybox-up-reader-style";
@@ -8250,8 +8356,8 @@
   :root {
     --heybox-up-reading-line-height: 1.7;
     --hbu-reader-stage: 732px;
-    /* Width of the timeline beside the centered article and action rail. */
-    --hbu-reader-history-width: 300px;
+    /* Viewport-pinned history column on desktop. */
+    --hbu-reader-history-width: clamp(240px, 22vw, 300px);
     /* Light preset. It is also the fallback set every other preset overrides. */
     --hbu-reader-bg: #e9eef3;
     --hbu-reader-page: #fff;
@@ -9148,35 +9254,27 @@
     .hbu-reader-scroll { scroll-behavior: auto; }
     #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
   }
-  /* Keep the article stage centered in the viewport. The rail and timeline are
-     secondary columns alongside it and never consume its reading width. */
-  #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: var(--hbu-reader-stage); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; transform: translateX(calc(100% + 16px)); }
-  /* The column is visible only when there is room for both sidecars beyond the
-     centered article; otherwise the timeline remains a right-side drawer. */
-  /* 732px article + two 380px side allowances + 44px viewport clearance. */
-  @media (min-width: 1536px) {
+  /* Keep the history column docked at the viewport edge while sharing the
+     available row with the article stage and action rail. */
+  @media (min-width: 901px) {
+    #${READER_ID}.hbu-reader-has-timeline { left: 0; width: calc(100% - var(--hbu-reader-history-width) - 40px); transform: none; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: min(var(--hbu-reader-stage), calc(100% - 80px)); margin-left: auto; margin-right: 80px; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; width: 56px; transform: none; }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head,
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: calc((100% - var(--hbu-reader-stage)) / 2); right: auto; width: var(--hbu-reader-stage); }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { left: calc(50% + var(--hbu-reader-stage) / 2 + 80px); right: auto; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: -24px; transform: none; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: auto; right: 80px; width: min(var(--hbu-reader-stage), calc(100% - 80px)); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { position: fixed; left: auto; right: 16px; width: var(--hbu-reader-history-width); }
     #${READER_ID}.hbu-reader-has-timeline [data-action="history"] { display: none; }
   }
   .hbu-reader-history-scrim { position: absolute; inset: 0; z-index: 44; padding: 0; border: 0; background: var(--hbu-reader-scrim); }
   .hbu-reader-history-scrim[hidden] { display: none; }
-  /* Below this width the dock would squeeze the article, so it folds back into
-     a drawer opened from the rail. */
-  @media (max-width: 1535px) {
-    #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: var(--hbu-reader-stage); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: -32px; transform: none; }
+  /* Keep the timeline in a drawer only on narrow viewports. */
+  @media (max-width: 900px) {
+    #${READER_ID}.hbu-reader-has-timeline { width: 100%; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: 100%; margin-left: 0; margin-right: 0; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; transform: none; }
     .hbu-reader-history-menu { right: 0; width: min(320px, 88vw); z-index: 45; visibility: hidden; box-shadow: var(--hbu-reader-shadow); transform: translateX(100%); transition: transform .22s ease, visibility .22s; }
     #${READER_ID}[data-timeline-open="true"] .hbu-reader-history-menu { visibility: visible; transform: none; }
     .hbu-reader-history-close { display: grid; }
-  }
-  @media (max-width: 900px) {
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; transform: none; }
   }
   @media (max-width: 760px) {
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 10px; transform: none; }
@@ -9834,7 +9932,7 @@
     let historyThumb = null;
     let historyPeek = null;
     let historyScrim = null;
-    const historyNarrow = window.matchMedia("(max-width: 1535px)");
+    const historyNarrow = window.matchMedia("(max-width: 900px)");
     let historyPreviewX = 0;
     let articleId = "";
     let dismissedArticleId = "";
@@ -12781,16 +12879,10 @@
         if (native instanceof HTMLElement) native.click();
       });
     };
+    const interactionBindings = /* @__PURE__ */ new Set();
     const bindRichProxy = (clone, native) => {
-      const tags = Array.from(clone.querySelectorAll("button"));
-      for (const button of tags) {
-        const text = (button.textContent || "").trim();
-        const className = typeof button.className === "string" ? button.className : "";
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          const candidates = Array.from(native.querySelectorAll("button")).filter((node) => (typeof node.className === "string" ? node.className : "") === className && (node.textContent || "").trim() === text);
-          if (candidates[0] instanceof HTMLElement) candidates[0].click();
-        });
+      if (native.matches(READER_VOTE_SELECTOR + ", button, input, select, textarea, [role=button]") || native.querySelector("button, input, select, textarea, [role=button]") !== null) {
+        interactionBindings.add(bindReaderInteraction(clone, native, (node) => !(node instanceof Element) || !isHiddenEmbedNode(node)));
       }
       for (const link of Array.from(clone.querySelectorAll("a[href]"))) {
         if ((link.getAttribute("href") || "").startsWith("#")) link.addEventListener("click", (event) => event.preventDefault());
@@ -13238,6 +13330,11 @@
         }
         if (tag === "script" || tag === "style") return;
         if (isHiddenEmbedNode(node)) return;
+        if (node.matches(READER_VOTE_SELECTOR)) {
+          flush();
+          addRichPage(target, node);
+          return;
+        }
         if (tag === "img") {
           flush();
           addMediaPage(target, node.getAttribute("data-src") || node.getAttribute("src") || "", node.getAttribute("alt") || "");
@@ -13288,8 +13385,14 @@
         flush();
         if (text !== "" || images.length > 0) addRichPage(target, node);
       };
+      const article = body.closest(READER_SOURCE_ROOT_SELECTOR);
+      const scope = article?.parentElement || body.parentElement || body;
+      const votes = Array.from(scope.querySelectorAll(READER_VOTE_SELECTOR)).filter((vote) => !body.contains(vote) && vote.parentElement?.closest(READER_VOTE_SELECTOR) === null);
+      const before = votes.filter((vote) => (vote.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+      for (const vote of before) addRichPage(target, vote);
       for (const child of Array.from(body.childNodes)) visit(child);
       flush();
+      for (const vote of votes) if (!before.includes(vote)) addRichPage(target, vote);
     };
     const readEmbedSourceSrcs = (node) => JSON.stringify(
       Array.from(node.querySelectorAll("source")).map((child) => child.getAttribute("src") || "")
@@ -13819,6 +13922,11 @@
       const videoMissing = isVideoPost && videos.every((item) => item.source === "");
       const tags = pageRoot.querySelectorAll(".link-tags__tag-item");
       const related = pageRoot.querySelectorAll(".bbs-link__related-recommend a[href*='/app/bbs/link/'], .related-recommend__container a[href*='/app/bbs/link/']");
+      const stableTextLength = (node) => {
+        if (node instanceof Element && (node.matches(READER_VOTE_SELECTOR) || /(^|\s)(com-|hb-cpt__image|card)/.test(node.className))) return 0;
+        if (node.nodeType === Node.TEXT_NODE) return (node.textContent || "").length;
+        return Array.from(node.childNodes).reduce((length, child) => length + stableTextLength(child), 0);
+      };
       return {
         pageRoot,
         article,
@@ -13834,7 +13942,8 @@
           isVideoPost ? "video" : "post",
           titleNode?.textContent?.length || 0,
           body?.childNodes.length || 0,
-          (body?.textContent || "").length,
+          body === null ? 0 : stableTextLength(body),
+          (article.parentElement || article).querySelectorAll(READER_VOTE_SELECTOR).length,
           covers.join(","),
           bodyImages.join(","),
           videos.map((item) => item.source + "~" + item.poster).join(","),
@@ -13965,6 +14074,8 @@
     const render = (data) => {
       if (host === null) return;
       restoreSuspendedEmbeds();
+      for (const binding of interactionBindings) binding.dispose();
+      interactionBindings.clear();
       readerGeneration += 1;
       observer?.disconnect();
       window.cancelAnimationFrame(scrollRaf);
@@ -14091,6 +14202,8 @@
         if (readerPendingArticleId === articleId && readerPendingGeneration === readerGeneration) return;
         clearPendingReader();
       }
+      for (const binding of interactionBindings) binding.dispose();
+      interactionBindings.clear();
       host.textContent = "";
       const pending = document.createElement("div");
       pending.className = "hbu-reader-pending";
@@ -14146,6 +14259,8 @@
     };
     const teardown = () => {
       restoreSuspendedEmbeds();
+      for (const binding of interactionBindings) binding.dispose();
+      interactionBindings.clear();
       readerGeneration += 1;
       clearPendingReader();
       clearPendingReaderAdvance();
@@ -14258,6 +14373,7 @@
       }
       ensureShell();
       if (signature === source.signature) {
+        for (const binding of interactionBindings) binding.refresh();
         const now = performance.now();
         if (now - lastActionSyncAt >= 1e3) {
           lastActionSyncAt = now;
