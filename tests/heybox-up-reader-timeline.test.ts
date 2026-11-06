@@ -296,7 +296,7 @@ describe("reader history timeline", () => {
   it("synchronizes drawer accessibility when crossing the docking breakpoint", () => {
     const media = window.matchMedia("(max-width: 1535px)");
     let resize: (() => void) | undefined;
-    media.addEventListener = (_type, listener): void => {
+    media.addEventListener = (_type: string, listener: EventListenerOrEventListenerObject | ((this: MediaQueryList, event: MediaQueryListEvent) => unknown)): void => {
       if (typeof listener === "function") resize = () => listener.call(media, new Event("change") as MediaQueryListEvent);
     };
     const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation(() => media);
