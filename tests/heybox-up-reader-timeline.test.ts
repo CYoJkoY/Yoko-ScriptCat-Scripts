@@ -294,7 +294,7 @@ describe("reader history timeline", () => {
   });
 
   it("synchronizes drawer accessibility when crossing the docking breakpoint", () => {
-    const media = window.matchMedia("(max-width: 1535px)");
+    const media = window.matchMedia("(max-width: 900px)");
     let resize: (() => void) | undefined;
     media.addEventListener = (_type: string, listener: EventListenerOrEventListenerObject | ((this: MediaQueryList, event: MediaQueryListEvent) => unknown)): void => {
       if (typeof listener === "function") resize = () => listener.call(media, new Event("change") as MediaQueryListEvent);
@@ -302,7 +302,7 @@ describe("reader history timeline", () => {
     const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation(() => media);
     try {
       const host = mountReader();
-      expect(matchMedia).toHaveBeenCalledWith("(max-width: 1535px)");
+      expect(matchMedia).toHaveBeenCalledWith("(max-width: 900px)");
       if (resize === undefined) throw new Error("Expected a viewport change listener");
       Object.defineProperty(media, "matches", { configurable: true, value: true });
       resize();
@@ -320,7 +320,7 @@ describe("reader history timeline", () => {
     }
   });
 
-  it("folds into a drawer below 1536px and closes on Escape", () => {
+  it("folds into a drawer at or below 900px and closes on Escape", () => {
     setNarrowViewport(true);
     const host = mountReader();
     const panel = timeline(host);

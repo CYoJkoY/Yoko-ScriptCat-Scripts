@@ -210,8 +210,8 @@ export const READER_CSS = `
   :root {
     --heybox-up-reading-line-height: 1.7;
     --hbu-reader-stage: 732px;
-    /* Width of the timeline beside the centered article and action rail. */
-    --hbu-reader-history-width: 300px;
+    /* Viewport-pinned history column on desktop. */
+    --hbu-reader-history-width: clamp(240px, 22vw, 300px);
     /* Light preset. It is also the fallback set every other preset overrides. */
     --hbu-reader-bg: #e9eef3;
     --hbu-reader-page: #fff;
@@ -1108,35 +1108,27 @@ export const READER_CSS = `
     .hbu-reader-scroll { scroll-behavior: auto; }
     #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
   }
-  /* Keep the article stage centered in the viewport. The rail and timeline are
-     secondary columns alongside it and never consume its reading width. */
-  #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: var(--hbu-reader-stage); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; transform: translateX(calc(100% + 16px)); }
-  /* The column is visible only when there is room for both sidecars beyond the
-     centered article; otherwise the timeline remains a right-side drawer. */
-  /* 732px article + two 380px side allowances + 44px viewport clearance. */
-  @media (min-width: 1536px) {
+  /* Keep the history column docked at the viewport edge while sharing the
+     available row with the article stage and action rail. */
+  @media (min-width: 901px) {
+    #${READER_ID}.hbu-reader-has-timeline { left: 0; width: calc(100% - var(--hbu-reader-history-width) - 40px); transform: none; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: min(var(--hbu-reader-stage), calc(100% - 80px)); margin-left: auto; margin-right: 80px; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; width: 56px; transform: none; }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head,
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: calc((100% - var(--hbu-reader-stage)) / 2); right: auto; width: var(--hbu-reader-stage); }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { left: calc(50% + var(--hbu-reader-stage) / 2 + 80px); right: auto; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: -24px; transform: none; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: auto; right: 80px; width: min(var(--hbu-reader-stage), calc(100% - 80px)); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { position: fixed; left: auto; right: 16px; width: var(--hbu-reader-history-width); }
     #${READER_ID}.hbu-reader-has-timeline [data-action="history"] { display: none; }
   }
   .hbu-reader-history-scrim { position: absolute; inset: 0; z-index: 44; padding: 0; border: 0; background: var(--hbu-reader-scrim); }
   .hbu-reader-history-scrim[hidden] { display: none; }
-  /* Below this width the dock would squeeze the article, so it folds back into
-     a drawer opened from the rail. */
-  @media (max-width: 1535px) {
-    #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: var(--hbu-reader-stage); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: -32px; transform: none; }
+  /* Keep the timeline in a drawer only on narrow viewports. */
+  @media (max-width: 900px) {
+    #${READER_ID}.hbu-reader-has-timeline { width: 100%; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: 100%; margin-left: 0; margin-right: 0; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; transform: none; }
     .hbu-reader-history-menu { right: 0; width: min(320px, 88vw); z-index: 45; visibility: hidden; box-shadow: var(--hbu-reader-shadow); transform: translateX(100%); transition: transform .22s ease, visibility .22s; }
     #${READER_ID}[data-timeline-open="true"] .hbu-reader-history-menu { visibility: visible; transform: none; }
     .hbu-reader-history-close { display: grid; }
-  }
-  @media (max-width: 900px) {
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; transform: none; }
   }
   @media (max-width: 760px) {
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 10px; transform: none; }
@@ -2032,7 +2024,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let historyPeek: HTMLDivElement | null = null;
   let historyScrim: HTMLDivElement | null = null;
   /** Below this width the dock folds into a drawer opened from the rail. */
-  const historyNarrow = window.matchMedia("(max-width: 1535px)");
+  const historyNarrow = window.matchMedia("(max-width: 900px)");
   /** Visit number the thumb is previewing while dragged; 0 follows the post on screen. */
   let historyPreviewX = 0;
   let articleId = "";
@@ -2700,8 +2692,8 @@ export function watchReader(navigation: PostNavigationController): void {
     historyNarrow.matches && host?.dataset["timelineOpen"] === "true";
 
   /**
-   * The same panel is a persistent column on wide screens and a drawer below
-   * 1536px. Keeping one mode function means the scrim, inert state and the
+   * The same panel is a persistent column on desktop and a drawer below
+   * 901px. Keeping one mode function means the scrim, inert state and the
    * toggle's aria-expanded can never disagree after a resize.
    */
   const syncHistoryPanelMode = (): void => {
@@ -2997,7 +2989,7 @@ export function watchReader(navigation: PostNavigationController): void {
 
   /**
    * Mounts the timeline into the reader shell. On wide screens it is a column
-   * that is always on screen; below 1536px CSS folds it into a drawer that the
+   * that is always on screen; below 901px CSS folds it into a drawer that the
    * rail toggles. Only the drawer changes `hidden` semantics through inert.
    */
   const mountHistoryTimeline = (): void => {
