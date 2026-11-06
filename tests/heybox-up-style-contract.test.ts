@@ -255,42 +255,44 @@ describe("HeyBox redundant rail and article-page layout contract", () => {
 });
 
 describe("immersive reader centering contract", () => {
-  it("centers the article and keeps timeline and actions in secondary columns", () => {
+  it("docks the history column at the viewport edge and keeps the article within the available row", () => {
     const rules = collectRules(readerCss);
     const scroll = rules.find((rule) =>
       rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-scroll"
     );
-    expect(scroll?.style.getPropertyValue("margin-left")).toBe("calc((100% - var(--hbu-reader-stage)) / 2)");
-    expect(scroll?.style.getPropertyValue("margin-right")).toBe("0px");
-    expect(scroll?.style.getPropertyValue("width")).toBe("var(--hbu-reader-stage)");
+    expect(scroll?.media).toBe("(min-width: 901px)");
+    expect(scroll?.style.getPropertyValue("margin-left")).toBe("auto");
+    expect(scroll?.style.getPropertyValue("margin-right")).toBe("80px");
+    expect(scroll?.style.getPropertyValue("width")).toBe("min(var(--hbu-reader-stage), calc(100% - 80px))");
 
     const wideTimeline = rules.find((rule) => rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-history-menu");
-    expect(wideTimeline?.style.getPropertyValue("left")).toBe("calc(50% + var(--hbu-reader-stage) / 2 + 80px)");
-    expect(wideTimeline?.style.getPropertyValue("right")).toBe("auto");
+    expect(wideTimeline?.style.getPropertyValue("left")).toBe("auto");
+    expect(wideTimeline?.style.getPropertyValue("right")).toBe("16px");
 
     const rail = rules.find((rule) =>
       rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-rail"
-      && rule.media === "(min-width: 1536px)"
+      && rule.media === "(min-width: 901px)"
     );
-    expect(rail?.style.getPropertyValue("right")).toBe("-24px");
+    expect(rail?.style.getPropertyValue("right")).toBe("0px");
     expect(rail?.style.getPropertyValue("transform")).toBe("none");
     const wideHeader = rules.find((rule) =>
       rule.selector.includes("#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-progress")
-      && rule.media === "(min-width: 1536px)"
+      && rule.media === "(min-width: 901px)"
     );
-    expect(wideHeader?.style.getPropertyValue("width")).toBe("var(--hbu-reader-stage)");
+    expect(wideHeader?.style.getPropertyValue("width")).toBe("min(var(--hbu-reader-stage), calc(100% - 80px))");
+    expect(wideHeader?.style.getPropertyValue("right")).toBe("80px");
 
     const narrowScroll = rules.find((rule) =>
       rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-scroll"
-      && rule.media === "(max-width: 1535px)"
+      && rule.media === "(max-width: 900px)"
     );
-    expect(narrowScroll?.style.getPropertyValue("margin-left")).toBe("calc((100% - var(--hbu-reader-stage)) / 2)");
+    expect(narrowScroll?.style.getPropertyValue("margin-left")).toBe("0px");
     const narrowRail = rules.find((rule) =>
       rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-rail"
-      && rule.media === "(max-width: 1535px)"
+      && rule.media === "(max-width: 900px)"
     );
-    expect(narrowRail?.style.getPropertyValue("right")).toBe("-32px");
-    const drawer = rules.find((rule) => rule.selector === ".hbu-reader-history-menu" && rule.media === "(max-width: 1535px)");
+    expect(narrowRail?.style.getPropertyValue("right")).toBe("14px");
+    const drawer = rules.find((rule) => rule.selector === ".hbu-reader-history-menu" && rule.media === "(max-width: 900px)");
     expect(drawer?.style.getPropertyValue("right")).toBe("0px");
   });
 });

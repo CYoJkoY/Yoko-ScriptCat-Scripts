@@ -15,6 +15,7 @@ import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailComm
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, READER_HISTORY_LIMIT_EVENT, READER_TIMELINE_EVENT, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readHideCyPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderTimelinePreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
+import { bindReaderInteraction, READER_VOTE_SELECTOR } from "./reader-interactions";
 
 export interface RelatedPostLink {
   id: string;
@@ -210,8 +211,8 @@ export const READER_CSS = `
   :root {
     --heybox-up-reading-line-height: 1.7;
     --hbu-reader-stage: 732px;
-    /* Width of the timeline beside the centered article and action rail. */
-    --hbu-reader-history-width: 300px;
+    /* Viewport-pinned history column on desktop. */
+    --hbu-reader-history-width: clamp(240px, 22vw, 300px);
     /* Light preset. It is also the fallback set every other preset overrides. */
     --hbu-reader-bg: #e9eef3;
     --hbu-reader-page: #fff;
@@ -1108,35 +1109,27 @@ export const READER_CSS = `
     .hbu-reader-scroll { scroll-behavior: auto; }
     #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
   }
-  /* Keep the article stage centered in the viewport. The rail and timeline are
-     secondary columns alongside it and never consume its reading width. */
-  #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: var(--hbu-reader-stage); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
-  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; transform: translateX(calc(100% + 16px)); }
-  /* The column is visible only when there is room for both sidecars beyond the
-     centered article; otherwise the timeline remains a right-side drawer. */
-  /* 732px article + two 380px side allowances + 44px viewport clearance. */
-  @media (min-width: 1536px) {
+  /* Keep the history column docked at the viewport edge while sharing the
+     available row with the article stage and action rail. */
+  @media (min-width: 901px) {
+    #${READER_ID}.hbu-reader-has-timeline { left: 0; width: calc(100% - var(--hbu-reader-history-width) - 40px); transform: none; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: min(var(--hbu-reader-stage), calc(100% - 80px)); margin-left: auto; margin-right: 80px; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; width: 56px; transform: none; }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head,
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: calc((100% - var(--hbu-reader-stage)) / 2); right: auto; width: var(--hbu-reader-stage); }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { left: calc(50% + var(--hbu-reader-stage) / 2 + 80px); right: auto; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: -24px; transform: none; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: auto; right: 80px; width: min(var(--hbu-reader-stage), calc(100% - 80px)); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { position: fixed; left: auto; right: 16px; width: var(--hbu-reader-history-width); }
     #${READER_ID}.hbu-reader-has-timeline [data-action="history"] { display: none; }
   }
   .hbu-reader-history-scrim { position: absolute; inset: 0; z-index: 44; padding: 0; border: 0; background: var(--hbu-reader-scrim); }
   .hbu-reader-history-scrim[hidden] { display: none; }
-  /* Below this width the dock would squeeze the article, so it folds back into
-     a drawer opened from the rail. */
-  @media (max-width: 1535px) {
-    #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: var(--hbu-reader-stage); margin-left: calc((100% - var(--hbu-reader-stage)) / 2); margin-right: 0; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: -32px; transform: none; }
+  /* Keep the timeline in a drawer only on narrow viewports. */
+  @media (max-width: 900px) {
+    #${READER_ID}.hbu-reader-has-timeline { width: 100%; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: 100%; margin-left: 0; margin-right: 0; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; transform: none; }
     .hbu-reader-history-menu { right: 0; width: min(320px, 88vw); z-index: 45; visibility: hidden; box-shadow: var(--hbu-reader-shadow); transform: translateX(100%); transition: transform .22s ease, visibility .22s; }
     #${READER_ID}[data-timeline-open="true"] .hbu-reader-history-menu { visibility: visible; transform: none; }
     .hbu-reader-history-close { display: grid; }
-  }
-  @media (max-width: 900px) {
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; transform: none; }
   }
   @media (max-width: 760px) {
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 10px; transform: none; }
@@ -2032,7 +2025,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let historyPeek: HTMLDivElement | null = null;
   let historyScrim: HTMLDivElement | null = null;
   /** Below this width the dock folds into a drawer opened from the rail. */
-  const historyNarrow = window.matchMedia("(max-width: 1535px)");
+  const historyNarrow = window.matchMedia("(max-width: 900px)");
   /** Visit number the thumb is previewing while dragged; 0 follows the post on screen. */
   let historyPreviewX = 0;
   let articleId = "";
@@ -2700,8 +2693,8 @@ export function watchReader(navigation: PostNavigationController): void {
     historyNarrow.matches && host?.dataset["timelineOpen"] === "true";
 
   /**
-   * The same panel is a persistent column on wide screens and a drawer below
-   * 1536px. Keeping one mode function means the scrim, inert state and the
+   * The same panel is a persistent column on desktop and a drawer below
+   * 901px. Keeping one mode function means the scrim, inert state and the
    * toggle's aria-expanded can never disagree after a resize.
    */
   const syncHistoryPanelMode = (): void => {
@@ -2997,7 +2990,7 @@ export function watchReader(navigation: PostNavigationController): void {
 
   /**
    * Mounts the timeline into the reader shell. On wide screens it is a column
-   * that is always on screen; below 1536px CSS folds it into a drawer that the
+   * that is always on screen; below 901px CSS folds it into a drawer that the
    * rail toggles. Only the drawer changes `hidden` semantics through inert.
    */
   const mountHistoryTimeline = (): void => {
@@ -5391,17 +5384,12 @@ export function watchReader(navigation: PostNavigationController): void {
     });
   };
 
+  const interactionBindings = new Set<{ refresh: () => void; dispose: () => void }>();
+
   const bindRichProxy = (clone: Element, native: Element): void => {
-    const tags = Array.from(clone.querySelectorAll<HTMLButtonElement>("button"));
-    for (const button of tags) {
-      const text = (button.textContent || "").trim();
-      const className = typeof button.className === "string" ? button.className : "";
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        const candidates = Array.from(native.querySelectorAll<HTMLButtonElement>("button"))
-          .filter((node) => (typeof node.className === "string" ? node.className : "") === className && (node.textContent || "").trim() === text);
-        if (candidates[0] instanceof HTMLElement) candidates[0].click();
-      });
+    if (native.matches(READER_VOTE_SELECTOR + ", button, input, select, textarea, [role=button]")
+      || native.querySelector("button, input, select, textarea, [role=button]") !== null) {
+      interactionBindings.add(bindReaderInteraction(clone, native, (node) => !(node instanceof Element) || !isHiddenEmbedNode(node)));
     }
     for (const link of Array.from(clone.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
       if ((link.getAttribute("href") || "").startsWith("#")) link.addEventListener("click", (event) => event.preventDefault());
@@ -5907,6 +5895,11 @@ export function watchReader(navigation: PostNavigationController): void {
       if (tag === "br") { flush(); return; }
       if (tag === "script" || tag === "style") return;
       if (isHiddenEmbedNode(node)) return;
+      if (node.matches(READER_VOTE_SELECTOR)) {
+        flush();
+        addRichPage(target, node);
+        return;
+      }
       if (tag === "img") {
         flush();
         addMediaPage(target, (node.getAttribute("data-src") || node.getAttribute("src") || ""), node.getAttribute("alt") || "");
@@ -5959,8 +5952,15 @@ export function watchReader(navigation: PostNavigationController): void {
       flush();
       if (text !== "" || images.length > 0) addRichPage(target, node);
     };
+    const article = body.closest(READER_SOURCE_ROOT_SELECTOR);
+    const scope = article?.parentElement || body.parentElement || body;
+    const votes = Array.from(scope.querySelectorAll(READER_VOTE_SELECTOR))
+      .filter((vote) => !body.contains(vote) && vote.parentElement?.closest(READER_VOTE_SELECTOR) === null);
+    const before = votes.filter((vote) => (vote.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+    for (const vote of before) addRichPage(target, vote);
     for (const child of Array.from(body.childNodes)) visit(child);
     flush();
+    for (const vote of votes) if (!before.includes(vote)) addRichPage(target, vote);
   };
 
   const readEmbedSourceSrcs = (node: Element): string => JSON.stringify(
@@ -6538,6 +6538,12 @@ export function watchReader(navigation: PostNavigationController): void {
     const videoMissing = isVideoPost && videos.every((item) => item.source === "");
     const tags = pageRoot.querySelectorAll(".link-tags__tag-item");
     const related = pageRoot.querySelectorAll(".bbs-link__related-recommend a[href*='/app/bbs/link/'], .related-recommend__container a[href*='/app/bbs/link/']");
+    const stableTextLength = (node: Node): number => {
+      if (node instanceof Element && (node.matches(READER_VOTE_SELECTOR)
+        || /(^|\s)(com-|hb-cpt__image|card)/.test(node.className))) return 0;
+      if (node.nodeType === Node.TEXT_NODE) return (node.textContent || "").length;
+      return Array.from(node.childNodes).reduce((length, child) => length + stableTextLength(child), 0);
+    };
     return {
       pageRoot,
       article,
@@ -6553,7 +6559,8 @@ export function watchReader(navigation: PostNavigationController): void {
         isVideoPost ? "video" : "post",
         titleNode?.textContent?.length || 0,
         body?.childNodes.length || 0,
-        (body?.textContent || "").length,
+        body === null ? 0 : stableTextLength(body),
+        (article.parentElement || article).querySelectorAll(READER_VOTE_SELECTOR).length,
         covers.join(","),
         bodyImages.join(","),
         videos.map((item) => item.source + "~" + item.poster).join(","),
@@ -6698,6 +6705,8 @@ export function watchReader(navigation: PostNavigationController): void {
   const render = (data: ReaderData): void => {
     if (host === null) return;
     restoreSuspendedEmbeds();
+    for (const binding of interactionBindings) binding.dispose();
+    interactionBindings.clear();
     readerGeneration += 1;
     observer?.disconnect();
     window.cancelAnimationFrame(scrollRaf);
@@ -6831,6 +6840,8 @@ export function watchReader(navigation: PostNavigationController): void {
       if (readerPendingArticleId === articleId && readerPendingGeneration === readerGeneration) return;
       clearPendingReader();
     }
+    for (const binding of interactionBindings) binding.dispose();
+    interactionBindings.clear();
     host.textContent = "";
     const pending = document.createElement("div");
     pending.className = "hbu-reader-pending";
@@ -6887,6 +6898,8 @@ export function watchReader(navigation: PostNavigationController): void {
 
   const teardown = () => {
     restoreSuspendedEmbeds();
+    for (const binding of interactionBindings) binding.dispose();
+    interactionBindings.clear();
     readerGeneration += 1;
     clearPendingReader();
     clearPendingReaderAdvance();
@@ -7001,6 +7014,7 @@ export function watchReader(navigation: PostNavigationController): void {
     }
     ensureShell();
     if (signature === source.signature) {
+      for (const binding of interactionBindings) binding.refresh();
       const now = performance.now();
       if (now - lastActionSyncAt >= 1000) {
         lastActionSyncAt = now;
