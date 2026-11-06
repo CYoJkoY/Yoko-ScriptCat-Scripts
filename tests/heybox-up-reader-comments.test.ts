@@ -161,6 +161,40 @@ describe("reader comment panel first open", () => {
     expect(emoji[1].style.backgroundSize).toBe("102px 68px");
   });
 
+  it("keeps Cy emoji images visible when the server uses an image marker", async () => {
+    const cyPayload = {
+      status: "ok",
+      result: {
+        comments: [{
+          comment: [{
+            comment_id: "9101",
+            text: '<p><img class="emoji" alt="[cube_酷]" src="https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v34.png"></p>',
+            user: { username: "me", userid: 42 },
+          }],
+        }],
+        link: { comment_num: 1, title: "t" },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(cyPayload),
+    })));
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const emoji = host.ownerDocument.querySelector<HTMLElement>(".hbu-reader-comments-emoji");
+    expect(emoji).not.toBeNull();
+    expect(emoji?.style.backgroundPosition).toBe("-17px 0px");
+    expect(host.ownerDocument.querySelector(".hbu-reader-comments-text")?.textContent).not.toContain("图片或表情");
+  });
+
+  it("mounts visible like and favorite icons before state synchronization", () => {
+    const host = mountReader();
+    expect(host.querySelector('[data-action="like"] svg')).not.toBeNull();
+    expect(host.querySelector('[data-action="favour"] svg')).not.toBeNull();
+  });
+
   it("offers every emoji of both packs and inserts the site token", async () => {
     const host = mountReader();
     host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
