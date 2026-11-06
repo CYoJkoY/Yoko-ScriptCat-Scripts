@@ -483,6 +483,9 @@ export const READER_CSS = `
   .hbu-reader-rich :is(h1, h2, h3, h4, h5, h6) { margin: 0 0 .7em; font-size: 22px; line-height: 1.45; }
   .hbu-reader-rich :is(p, .text) { margin: 0 0 .72em; }
   .hbu-reader-rich :is(ul, ol, pre, blockquote, table) { margin: 0 0 1em; }
+  .hbu-reader-rich figure { margin: 2rem 0; }
+  .hbu-reader-rich figure > img { display: block; height: auto; margin-inline: auto; }
+  .hbu-reader-rich figcaption { margin: .5rem 0 0; color: var(--hbu-reader-muted); font-size: .875em; }
   .hbu-reader-rich :is(ul, ol) { padding-left: 1.35em; }
   .hbu-reader-rich li + li { margin-top: .45em; }
   .hbu-reader-rich blockquote {
@@ -516,9 +519,10 @@ export const READER_CSS = `
   .hbu-reader-rich blockquote :is(p, .text) {
     color: var(--hbu-reader-ink-2) !important;
   }
-  /* Media pages start below the translucent head gradient, so the top of a
-     user-uploaded picture is never dimmed by the overlay. */
-  .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
+  /* Body images share the article surface and use whitespace instead of a letterbox. */
+  .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 2rem 20px; background: var(--hbu-reader-page); }
+  .hbu-reader-page[data-kind="media"] + .hbu-reader-page[data-kind="media"] { padding-top: 0; }
+  .hbu-reader-page[data-kind="text"]:has(+ .hbu-reader-page[data-kind="media"]) .hbu-reader-copy > :last-child { margin-bottom: 0; }
   .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
   .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
   .hbu-reader-page[data-kind="notice"] { justify-content: center; padding: 32px 24px 72px; background: var(--hbu-reader-page); }
@@ -563,10 +567,9 @@ export const READER_CSS = `
     width: auto;
     height: auto;
     object-fit: contain;
-    margin: auto;
+    margin: 0 auto;
     border-radius: 12px;
     cursor: zoom-in;
-    box-shadow: 0 18px 50px rgba(0, 0, 0, .35);
   }
   .hbu-reader-video {
     display: block;
@@ -1055,7 +1058,8 @@ export const READER_CSS = `
     .hbu-reader-page[data-kind="hero"] { padding: 0; }
     .hbu-reader-page[data-kind="text"] { padding: 0 64px 0 24px; }
     .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
-    .hbu-reader-page[data-kind="media"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
+    .hbu-reader-page[data-kind="media"] { padding: 1.5rem 16px; }
+    .hbu-reader-rich figure { margin-block: 1.5rem; }
     .hbu-reader-page[data-kind="embed"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
     .hbu-reader-page[data-kind="video"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
     .hbu-reader-page[data-kind="text"] .hbu-reader-copy,

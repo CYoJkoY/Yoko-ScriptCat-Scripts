@@ -252,7 +252,12 @@ describe("immersive reader theme contract", () => {
 
   it("protects uploaded media, related titles, and rich inline content from clipping", () => {
     const media = ruleFor(rules, '.hbu-reader-page[data-kind="media"]');
-    expect(media.style.padding).toContain("112px");
+    expect(media.style.padding).toBe("2rem 20px");
+    const mobileMedia = rules.find((rule) => rule.selector === media.selector && rule.media === "(max-width: 760px)");
+    expect(mobileMedia?.style.padding).toBe("1.5rem 16px");
+    const image = ruleFor(rules, ".hbu-reader-media").style;
+    expect(image.getPropertyValue("height")).toBe("auto");
+    expect(image.getPropertyValue("max-height")).toBe("none");
     const related = ruleFor(rules, ".hbu-reader-related a").style;
     expect(related.getPropertyValue("overflow-wrap")).toBe("anywhere");
     expect(related.getPropertyValue("word-break")).toBe("break-word");
@@ -309,8 +314,10 @@ describe("immersive reader theme contract", () => {
     );
   });
 
-  it("keeps the neutral letterbox for photos, video and embeds", () => {
-    for (const kind of ["media", "embed", "video"]) {
+  it("uses the article surface for body photos and retains player letterboxes", () => {
+    expect(ruleFor(rules, '.hbu-reader-page[data-kind="media"]').style.getPropertyValue("background")).toBe("var(--hbu-reader-page)");
+    expect(ruleFor(rules, ".hbu-reader-media").style.getPropertyValue("box-shadow")).toBe("");
+    for (const kind of ["embed", "video"]) {
       const selector = '.hbu-reader-page[data-kind="' + kind + '"]';
       expect(ruleFor(rules, selector).style.getPropertyValue("background"), kind).toBe("rgb(5, 7, 10)");
     }
