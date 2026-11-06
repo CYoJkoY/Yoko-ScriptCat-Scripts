@@ -326,12 +326,16 @@ v0.5.0 的评论发图与查看器层级回归由 `tests/heybox-up-upload.test.t
 
 ## 九、版本历史
 
+### v0.7.2
+
+- 修正沉浸阅读布局：文章舞台保持在视口正中，点赞、收藏和 CY 操作栏移至正文区域之外，宽屏时间轴作为更外侧的附属栏；空间不足时继续使用右侧抽屉。
+- 将 v0.7.1 更新日志改为中文。
+
 ### v0.7.1
 
-- Body images now share the reading theme background without the black letterbox or drop shadow.
-- Standalone image spacing is 2rem on desktop and 1.5rem on mobile; adjacent images share one gap. Existing figure captions use a tighter .5rem gap.
-- Image dimensions, lazy loading, zoom controls, cover presentation and video players are preserved.
-- Browser visual verification is pending because sctl is disconnected.
+- 正文图片现在与阅读主题共用背景，不再出现黑色遮幅或投影。
+- 独立图片在桌面端上下间距为 2rem、移动端为 1.5rem；相邻图片共用一段间距，已有的图片说明与图片间距缩小为 .5rem。
+- 保留图片尺寸、延迟加载、缩放控件、封面展示与视频播放器。
 
 ### v0.7.0
 
