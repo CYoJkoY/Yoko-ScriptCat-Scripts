@@ -1757,7 +1757,7 @@
     return /^https?:\/\/[^\s]+$/i.test(candidate) ? candidate : "";
   }
   function readRailEmojiSpriteUrl(src) {
-    return /\/heybox_web\/emoji\//i.test(src);
+    return /\/(?:cube_emoji(?:_v\d+)?|cube2_emoji)\.png(?:[?#]|$)/i.test(src);
   }
   function pushRailTextSegment(segments, value) {
     const collapsed = String(value).replace(/\s+/g, " ");
@@ -1813,7 +1813,15 @@
         const fromData = resolveRailEmojiRef(dataEmoji);
         if (fromData !== null) return fromData;
       }
-      return resolveRailEmojiFontLabel(element.className);
+      const fromFont = resolveRailEmojiFontLabel(element.className);
+      if (fromFont !== null) return fromFont;
+      for (const attribute of ["alt", "title"]) {
+        const marker = element.getAttribute(attribute);
+        if (marker === null || marker.trim() === "") continue;
+        const fromAttribute = resolveRailEmojiRef(marker.replace(/^\[|\]$/g, ""));
+        if (fromAttribute !== null) return fromAttribute;
+      }
+      return null;
     };
     const readEmojiMarker = (element) => {
       const dataEmoji = element.getAttribute("data-emoji");
@@ -13393,6 +13401,7 @@
       like.dataset["action"] = "like";
       like.setAttribute("aria-label", "点赞");
       like.title = "点赞";
+      like.innerHTML = READER_ICONS.like;
       like.addEventListener("click", () => void toggleLike());
       const favour = document.createElement("button");
       favour.type = "button";
@@ -13402,6 +13411,7 @@
       favour.setAttribute("aria-haspopup", "dialog");
       favour.setAttribute("aria-expanded", "false");
       favour.title = "收藏到收藏夹";
+      favour.innerHTML = READER_ICONS.star;
       favour.addEventListener("click", () => openFavourMenu(rail, favour));
       const cy = document.createElement("button");
       cy.type = "button";
