@@ -227,10 +227,12 @@ describe("reader lightbox layering", () => {
   });
 });
 
-describe("reader media page clearance", () => {
-  it("keeps the media page below the fading head", () => {
-    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px;');
-    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }');
+describe("reader media page spacing", () => {
+  it("uses responsive whitespace and avoids doubling gaps between adjacent images", () => {
+    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 2rem 20px;');
+    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] { padding: 1.5rem 16px; }');
+    expect(READER_CSS).toContain('.hbu-reader-page[data-kind="media"] + .hbu-reader-page[data-kind="media"] { padding-top: 0; }');
+    expect(READER_CSS).toContain('.hbu-reader-rich figcaption { margin: .5rem 0 0;');
   });
 
   it("keeps the cover scrim short and light", () => {
