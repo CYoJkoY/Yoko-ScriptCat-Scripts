@@ -293,7 +293,34 @@ describe("reader history timeline", () => {
     expect(thumb.style.top).toBe("0%");
   });
 
-  it("folds into a drawer below 1200px and closes on Escape", () => {
+  it("synchronizes drawer accessibility when crossing the docking breakpoint", () => {
+    const media = window.matchMedia("(max-width: 1535px)");
+    let resize: (() => void) | undefined;
+    media.addEventListener = (_type, listener): void => {
+      if (typeof listener === "function") resize = () => listener.call(media, new Event("change") as MediaQueryListEvent);
+    };
+    const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation(() => media);
+    try {
+      const host = mountReader();
+      expect(matchMedia).toHaveBeenCalledWith("(max-width: 1535px)");
+      if (resize === undefined) throw new Error("Expected a viewport change listener");
+      Object.defineProperty(media, "matches", { configurable: true, value: true });
+      resize();
+      expect(timeline(host).hasAttribute("inert")).toBe(true);
+      host.querySelector<HTMLButtonElement>('[data-action="history"]')?.click();
+      expect(host.dataset["timelineOpen"]).toBe("true");
+      Object.defineProperty(media, "matches", { configurable: true, value: false });
+      resize();
+      expect(host.dataset["timelineOpen"]).toBeUndefined();
+      expect(timeline(host).hasAttribute("inert")).toBe(false);
+      expect(timeline(host).hasAttribute("aria-hidden")).toBe(false);
+      expect(host.querySelector<HTMLButtonElement>(".hbu-reader-history-scrim")?.hidden).toBe(true);
+    } finally {
+      matchMedia.mockRestore();
+    }
+  });
+
+  it("folds into a drawer below 1536px and closes on Escape", () => {
     setNarrowViewport(true);
     const host = mountReader();
     const panel = timeline(host);

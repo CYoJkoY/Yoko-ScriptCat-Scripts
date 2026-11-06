@@ -265,30 +265,33 @@ describe("immersive reader centering contract", () => {
     expect(scroll?.style.getPropertyValue("width")).toBe("var(--hbu-reader-stage)");
 
     const wideTimeline = rules.find((rule) => rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-history-menu");
-    expect(wideTimeline?.style.getPropertyValue("right")).toBe("calc(-1 * var(--hbu-reader-history-width))");
+    expect(wideTimeline?.style.getPropertyValue("left")).toBe("calc(50% + var(--hbu-reader-stage) / 2 + 80px)");
+    expect(wideTimeline?.style.getPropertyValue("right")).toBe("auto");
 
     const rail = rules.find((rule) =>
       rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-rail"
-      && rule.media === "(min-width: 1200px)"
+      && rule.media === "(min-width: 1536px)"
     );
-    expect(rail?.style.getPropertyValue("right")).toBe("calc((var(--hbu-reader-history-width) - 48px) / 2)");
+    expect(rail?.style.getPropertyValue("right")).toBe("-24px");
     expect(rail?.style.getPropertyValue("transform")).toBe("none");
     const wideHeader = rules.find((rule) =>
       rule.selector.includes("#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-progress")
-      && rule.media === "(min-width: 1200px)"
+      && rule.media === "(min-width: 1536px)"
     );
     expect(wideHeader?.style.getPropertyValue("width")).toBe("var(--hbu-reader-stage)");
 
     const narrowScroll = rules.find((rule) =>
       rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-scroll"
-      && rule.media === "(max-width: 1199px)"
+      && rule.media === "(max-width: 1535px)"
     );
     expect(narrowScroll?.style.getPropertyValue("margin-left")).toBe("calc((100% - var(--hbu-reader-stage)) / 2)");
     const narrowRail = rules.find((rule) =>
       rule.selector === "#heybox-up-reader.hbu-reader-has-timeline .hbu-reader-rail"
-      && rule.media === "(max-width: 1199px)"
+      && rule.media === "(max-width: 1535px)"
     );
     expect(narrowRail?.style.getPropertyValue("right")).toBe("-32px");
+    const drawer = rules.find((rule) => rule.selector === ".hbu-reader-history-menu" && rule.media === "(max-width: 1535px)");
+    expect(drawer?.style.getPropertyValue("right")).toBe("0px");
   });
 });
 
