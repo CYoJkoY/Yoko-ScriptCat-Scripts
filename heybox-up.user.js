@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.0
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，首屏渐变收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.8.1
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，顶部操作栏独占一行，图片不再被渐变遮挡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -8373,7 +8373,7 @@
     --hbu-reader-glass: rgba(255, 255, 255, .88);
     --hbu-reader-glass-ink: #14191e;
     --hbu-reader-glass-border: rgba(20, 25, 30, .12);
-    --hbu-reader-head: linear-gradient(180deg, rgba(255, 255, 255, .94), rgba(255, 255, 255, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(255, 255, 255, .98);
     --hbu-reader-float-ink: #14191e;
     --hbu-reader-float-border: rgba(20, 25, 30, .14);
@@ -8401,7 +8401,7 @@
     --hbu-reader-glass: rgba(21, 28, 36, .84);
     --hbu-reader-glass-ink: #e6edf5;
     --hbu-reader-glass-border: rgba(230, 237, 245, .14);
-    --hbu-reader-head: linear-gradient(180deg, rgba(18, 24, 31, .94), rgba(18, 24, 31, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(21, 28, 36, .97);
     --hbu-reader-float-ink: #e6edf5;
     --hbu-reader-float-border: #2b3642;
@@ -8425,7 +8425,7 @@
     --hbu-reader-link: #a8c0d8;
     --hbu-reader-glass: rgba(16, 16, 16, .86);
     --hbu-reader-glass-border: rgba(230, 237, 245, .14);
-    --hbu-reader-head: linear-gradient(180deg, rgba(9, 9, 9, .94), rgba(9, 9, 9, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(12, 12, 12, .97);
     --hbu-reader-float-ink: #e6edf5;
     --hbu-reader-float-border: #242424;
@@ -8453,7 +8453,7 @@
     --hbu-reader-glass: rgba(250, 245, 234, .9);
     --hbu-reader-glass-ink: #332b21;
     --hbu-reader-glass-border: rgba(51, 43, 33, .16);
-    --hbu-reader-head: linear-gradient(180deg, rgba(250, 245, 234, .94), rgba(250, 245, 234, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(255, 253, 247, .98);
     --hbu-reader-float-ink: #332b21;
     --hbu-reader-float-border: #ddd0bc;
@@ -8481,7 +8481,7 @@
     --hbu-reader-glass: rgba(251, 253, 253, .9);
     --hbu-reader-glass-ink: #1d3338;
     --hbu-reader-glass-border: rgba(29, 51, 56, .16);
-    --hbu-reader-head: linear-gradient(180deg, rgba(247, 251, 251, .94), rgba(247, 251, 251, .6) 58%, transparent);
+    --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(252, 254, 254, .98);
     --hbu-reader-float-ink: #1d3338;
     --hbu-reader-float-border: #cbdcdf;
@@ -8546,6 +8546,8 @@
     width: min(calc(var(--hbu-reader-stage) + 80px), 100%);
     height: 100%;
     height: 100dvh;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) 46px;
     transform: translateX(-50%);
     background: var(--hbu-reader-page);
     color: var(--hbu-reader-ink);
@@ -8562,9 +8564,12 @@
   }
   .hbu-reader-scroll {
     position: relative;
+    grid-row: 2;
     width: calc(100% - 80px);
-    /* The progress bar owns its own 46px band; scrolling content never paints under it. */
-    height: calc(100% - 46px);
+    /* The toolbar and progress bar own separate rows outside the scrollport. */
+    height: 100%;
+    min-height: 0;
+    container-type: size;
     overflow-x: hidden;
     overflow-y: auto;
     margin-inline: auto;
@@ -8587,8 +8592,8 @@
      统一的 .72em 节奏，跨页处也只保留一次段间距，避免 64px 的叠加空隙。 */
   .hbu-reader-page[data-kind="text"] { padding: 0 60px; }
   .hbu-reader-page[data-kind="heading"] { padding: 56px 60px 28px; }
-  .hbu-reader-page[data-kind="hero"] { min-height: calc(100dvh - 46px); padding: 0; }
-  .hbu-reader-page[data-kind="end"] { min-height: calc(100dvh - 46px); }
+  .hbu-reader-page[data-kind="hero"] { min-height: 100cqh; padding: 0; }
+  .hbu-reader-page[data-kind="end"] { min-height: 100cqh; }
   .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
   .hbu-reader-page[data-kind="heading"] .hbu-reader-copy {
     width: min(34em, 100%);
@@ -8671,8 +8676,8 @@
   .hbu-reader-page[data-kind="media"] { justify-content: flex-start; padding: 2rem 20px; background: var(--hbu-reader-page); }
   .hbu-reader-page[data-kind="media"] + .hbu-reader-page[data-kind="media"] { padding-top: 0; }
   .hbu-reader-page[data-kind="text"]:has(+ .hbu-reader-page[data-kind="media"]) .hbu-reader-copy > :last-child { margin-bottom: 0; }
-  .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
-  .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: calc(112px + env(safe-area-inset-top)) 20px 64px; background: #05070a; }
+  .hbu-reader-page[data-kind="embed"] { justify-content: flex-start; padding: 2rem 20px; background: #05070a; }
+  .hbu-reader-page[data-kind="video"] { justify-content: flex-start; padding: 2rem 20px; background: #05070a; }
   .hbu-reader-page[data-kind="notice"] { justify-content: center; padding: 32px 24px 72px; background: var(--hbu-reader-page); }
   .hbu-reader-notice {
     width: min(520px, 100%);
@@ -8722,7 +8727,7 @@
   .hbu-reader-video {
     display: block;
     width: min(100%, 1120px);
-    max-height: calc(100dvh - 150px);
+    max-height: calc(100cqh - 4rem);
     margin: auto;
     aspect-ratio: 16 / 9;
     border-radius: 12px;
@@ -8734,7 +8739,7 @@
     padding: 0;
     justify-content: flex-start;
     align-items: stretch;
-    min-height: calc(100dvh - 46px);
+    min-height: 100cqh;
     background: var(--hbu-reader-page);
     color: var(--hbu-reader-ink);
   }
@@ -8762,14 +8767,6 @@
     pointer-events: none;
   }
   .hbu-reader-cover img[data-active="true"] { opacity: 1; pointer-events: auto; }
-  .hbu-reader-cover-stage::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    /* Only a short scrim keeps the translucent head readable; a deep wash would
-       dim the top of the photo the reader came to look at. */
-    background: linear-gradient(180deg, rgba(0, 0, 0, .28), transparent 14%);
-  }
   .hbu-reader-page[data-kind="hero"][data-cover="none"] { justify-content: center; }
   .hbu-reader-cover-nav {
     position: absolute;
@@ -8868,7 +8865,7 @@
     .hbu-reader-page[data-kind="end"] .hbu-reader-stats { display: none; }
     .hbu-reader-end-head img { width: 40px; height: 40px; }
   }
-  .hbu-reader-head { position: absolute; top: 0; right: 0; left: 0; z-index: 12; display: flex; gap: 9px; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); background: var(--hbu-reader-head); color: var(--hbu-reader-glass-ink); pointer-events: none; }
+  .hbu-reader-head { position: relative; grid-row: 1; width: calc(100% - 80px); margin-inline: auto; z-index: 12; display: flex; gap: 9px; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); background: var(--hbu-reader-head); color: var(--hbu-reader-glass-ink); pointer-events: none; }
   .hbu-reader-head > * { pointer-events: auto; }
   .hbu-reader-round { display: grid; place-items: center; width: 40px; height: 40px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-glass-border); border-radius: 50%; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); cursor: pointer; backdrop-filter: blur(8px); }
   .hbu-reader-round svg { width: 19px; height: 19px; }
@@ -9015,7 +9012,7 @@
   .hbu-reader-cy-actions button[data-primary] { border-color: transparent; background: var(--hbu-reader-accent); color: var(--hbu-reader-on-accent); font-weight: 650; }
   .hbu-reader-cy-actions button:disabled { opacity: .55; cursor: default; }
   .hbu-reader-action-count { display: block; margin-top: 2px; font-size: 10px; font-variant-numeric: tabular-nums; line-height: 1.2; }
-  .hbu-reader-progress { position: absolute; right: 0; bottom: 0; left: 0; z-index: 10; display: flex; gap: 10px; align-items: center; height: 46px; padding: 0 18px; background: linear-gradient(0deg, var(--hbu-reader-glass), transparent); color: var(--hbu-reader-glass-ink); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+  .hbu-reader-progress { position: relative; grid-row: 3; width: calc(100% - 80px); margin-inline: auto; z-index: 10; display: flex; gap: 10px; align-items: center; height: 46px; padding: 0 18px; background: linear-gradient(0deg, var(--hbu-reader-glass), transparent); color: var(--hbu-reader-glass-ink); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
   .hbu-reader-progress-bar { flex: 1 1 auto; height: 2px; overflow: hidden; border-radius: 99px; background: var(--hbu-reader-glass-border); }
   .hbu-reader-progress-bar i { display: block; width: 0; height: 100%; background: var(--hbu-reader-accent); transition: width .2s linear; }
   .hbu-reader-hint { color: var(--hbu-reader-float-muted); white-space: nowrap; }
@@ -9196,7 +9193,7 @@
   }
   @media (max-width: 900px) {
     #${READER_ID} { width: 100%; }
-    .hbu-reader-scroll { width: 100%; }
+    .hbu-reader-scroll, .hbu-reader-head, .hbu-reader-progress { width: 100%; }
     .hbu-reader-rail { right: 14px; bottom: 96px; }
     .hbu-reader-page { padding-right: 86px; }
     .hbu-reader-caption { padding-right: 86px; }
@@ -9210,8 +9207,9 @@
     .hbu-reader-page[data-kind="heading"] { padding: 44px 64px 24px 24px; }
     .hbu-reader-page[data-kind="media"] { padding: 1.5rem 16px; }
     .hbu-reader-rich figure { margin-block: 1.5rem; }
-    .hbu-reader-page[data-kind="embed"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
-    .hbu-reader-page[data-kind="video"] { padding: calc(96px + env(safe-area-inset-top)) 16px 62px; }
+    .hbu-reader-page[data-kind="embed"] { padding: 1.5rem 16px; }
+    .hbu-reader-page[data-kind="video"] { padding: 1.5rem 16px; }
+    .hbu-reader-video { max-height: calc(100cqh - 3rem); }
     .hbu-reader-page[data-kind="text"] .hbu-reader-copy,
     .hbu-reader-page[data-kind="heading"] .hbu-reader-copy,
     .hbu-reader-rich { font-size: 17px; }
@@ -9243,6 +9241,8 @@
   }
   @media (max-height: 620px) {
     .hbu-reader-page { padding-top: 72px; padding-bottom: 76px; }
+    .hbu-reader-page:is([data-kind="media"], [data-kind="embed"], [data-kind="video"]) { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+    .hbu-reader-video { max-height: calc(100cqh - 3rem); }
     .hbu-reader-page[data-kind="hero"] { padding: 0; }
     .hbu-reader-page[data-kind="text"] { padding-top: 0; padding-bottom: 0; }
     .hbu-reader-caption { padding: 14px 64px 58px 24px; }
@@ -9260,8 +9260,8 @@
     #${READER_ID}.hbu-reader-has-timeline { left: 0; width: calc(100% - var(--hbu-reader-history-width) - 40px); transform: none; }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: min(var(--hbu-reader-stage), calc(100% - 80px)); margin-left: auto; margin-right: 80px; }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 0; width: 56px; transform: none; }
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head,
-    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { left: auto; right: 80px; width: min(var(--hbu-reader-stage), calc(100% - 80px)); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { width: calc(100% - 80px); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { margin-left: auto; margin-right: 80px; width: min(var(--hbu-reader-stage), calc(100% - 80px)); }
     #${READER_ID}.hbu-reader-has-timeline .hbu-reader-history-menu { position: fixed; left: auto; right: 16px; width: var(--hbu-reader-history-width); }
     #${READER_ID}.hbu-reader-has-timeline [data-action="history"] { display: none; }
   }
@@ -12831,7 +12831,7 @@
       const scroll = host?.querySelector(".hbu-reader-scroll");
       const hero = host?.querySelector('.hbu-reader-page[data-kind="hero"]');
       if (!scroll || !hero) return false;
-      return hero.getBoundingClientRect().bottom > scroll.clientHeight * 0.45;
+      return hero.getBoundingClientRect().bottom - scroll.getBoundingClientRect().top > scroll.clientHeight * 0.45;
     };
     const bindSwipe = (scroll) => {
       let startX = 0;
