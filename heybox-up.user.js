@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.6.0
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；用户上传的图片页顶部另留出渐变高度，图片最上沿不会被顶栏压暗，首屏渐变也收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏提供“阅读时间轴”按钮，按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.7.0
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；用户上传的图片页顶部另留出渐变高度，图片最上沿不会被顶栏压暗，首屏渐变也收窄变淡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，宽屏直接停靠在文章右侧，窄屏通过按钮打开抽屉；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，图片与视频仍用中性黑底衬托。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -8250,6 +8250,9 @@
   :root {
     --heybox-up-reading-line-height: 1.7;
     --hbu-reader-stage: 732px;
+    /* Width of the docked reading timeline. The reader grows by this much on
+       wide screens so the article keeps its 732px stage. */
+    --hbu-reader-history-width: 300px;
     /* Light preset. It is also the fallback set every other preset overrides. */
     --hbu-reader-bg: #e9eef3;
     --hbu-reader-page: #fff;
@@ -8851,43 +8854,46 @@
   .hbu-reader-setting-switch { display: flex; gap: 8px; align-items: center; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--hbu-reader-float-ink); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
   .hbu-reader-setting-switch::after { content: ""; width: 28px; height: 16px; margin-left: auto; border: 1px solid var(--hbu-reader-float-border); border-radius: 99px; background: var(--hbu-reader-float-hover); }
   .hbu-reader-setting-switch[aria-checked="true"]::after { border-color: var(--hbu-reader-accent); background: var(--hbu-reader-accent); }
-  /* The timeline mirrors the spacing popover, but its rows are full-width
-     targets so a long history stays easy to hit while reading. */
-  .hbu-reader-history-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; width: 256px; max-width: calc(100vw - 84px); max-height: min(400px, 68dvh); padding: 12px; border: 1px solid var(--hbu-reader-float-border); border-radius: 14px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); box-shadow: var(--hbu-reader-shadow); backdrop-filter: blur(12px); }
-  .hbu-reader-history-menu[hidden] { display: none; }
-  .hbu-reader-history-head { display: flex; flex: none; flex-direction: column; gap: 3px; }
-  .hbu-reader-history-label { font-size: 13px; font-weight: 700; color: var(--hbu-reader-float-ink); }
-  .hbu-reader-history-meta { color: var(--hbu-reader-float-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  /* The timeline is a docked column, not a popover: it owns the right edge of
+     the reader and keeps every visit visible while the article scrolls. */
+  .hbu-reader-history-menu { position: absolute; top: 0; right: 0; bottom: 0; z-index: 13; display: flex; flex-direction: column; gap: 10px; width: var(--hbu-reader-history-width); padding: 18px 16px 20px; overflow: hidden; border-left: 1px solid var(--hbu-reader-border); background: var(--hbu-reader-page); color: var(--hbu-reader-ink); }
+  .hbu-reader-history-head { display: flex; flex: none; gap: 8px; align-items: flex-start; justify-content: space-between; }
+  .hbu-reader-history-head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .hbu-reader-history-close { display: none; place-items: center; width: 30px; height: 30px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: transparent; color: var(--hbu-reader-muted); cursor: pointer; }
+  .hbu-reader-history-close:hover { border-color: var(--hbu-reader-accent); color: var(--hbu-reader-ink); }
+  .hbu-reader-history-close svg { width: 15px; height: 15px; }
+  .hbu-reader-history-label { font-size: 14px; font-weight: 700; color: var(--hbu-reader-ink); }
+  .hbu-reader-history-meta { color: var(--hbu-reader-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   /* The feed-style rail on the right of the menu: a fixed-height track with one
      draggable thumb that prints the current position as x/n. */
-  .hbu-reader-history-body { display: flex; flex: 1 1 auto; gap: 8px; align-items: stretch; min-height: 120px; max-height: min(240px, 46dvh); }
+  .hbu-reader-history-body { display: flex; flex: 1 1 auto; gap: 8px; align-items: stretch; min-height: 0; }
   .hbu-reader-history-rail { position: relative; flex: none; width: 52px; touch-action: none; user-select: none; }
-  .hbu-reader-history-track { position: absolute; top: 8px; bottom: 8px; left: 50%; width: 2px; margin-left: -1px; border-radius: 99px; background: var(--hbu-reader-float-border); cursor: pointer; }
-  .hbu-reader-history-tick { position: absolute; left: calc(50% - 2px); width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: var(--hbu-reader-float-border); }
-  .hbu-reader-history-thumb { position: absolute; top: 0; left: 50%; display: grid; place-items: center; min-width: 42px; height: 22px; padding: 0 6px; translate: -50% -50%; border: 1px solid var(--hbu-reader-accent); border-radius: 99px; background: var(--hbu-reader-float); color: var(--hbu-reader-accent); font: inherit; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; cursor: grab; box-shadow: 0 6px 16px rgba(0, 0, 0, .28); touch-action: none; }
+  .hbu-reader-history-track { position: absolute; top: 8px; bottom: 8px; left: 50%; width: 2px; margin-left: -1px; border-radius: 99px; background: var(--hbu-reader-border); cursor: pointer; }
+  .hbu-reader-history-tick { position: absolute; left: calc(50% - 2px); width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: var(--hbu-reader-border); }
+  .hbu-reader-history-thumb { position: absolute; top: 0; left: 50%; display: grid; place-items: center; min-width: 42px; height: 22px; padding: 0 6px; translate: -50% -50%; border: 1px solid var(--hbu-reader-accent); border-radius: 99px; background: var(--hbu-reader-page); color: var(--hbu-reader-accent); font: inherit; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; cursor: grab; box-shadow: 0 6px 16px rgba(0, 0, 0, .18); touch-action: none; }
   .hbu-reader-history-thumb[data-dragging="true"] { cursor: grabbing; }
   .hbu-reader-history-thumb:focus-visible { outline: 2px solid var(--hbu-reader-accent); outline-offset: 2px; }
-  .hbu-reader-history-thumb[data-preview="true"] { border-color: var(--hbu-reader-float-ink); color: var(--hbu-reader-float-ink); }
-  .hbu-reader-history-peek { flex: none; min-height: 15px; overflow: hidden; color: var(--hbu-reader-float-muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .hbu-reader-history-thumb[data-preview="true"] { border-color: var(--hbu-reader-ink); color: var(--hbu-reader-ink); }
+  .hbu-reader-history-peek { flex: none; min-height: 15px; overflow: hidden; color: var(--hbu-reader-muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
   .hbu-reader-history-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: 1px; min-height: 0; margin: 0; padding: 0 0 0 2px; overflow-y: auto; list-style: none; }
   .hbu-reader-history-item { position: relative; display: flex; padding-left: 13px; }
   /* A single continuous rule carries the visit order between rows. */
-  .hbu-reader-history-item::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-item::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--hbu-reader-border); }
   .hbu-reader-history-item:first-child::before { top: 50%; }
   .hbu-reader-history-item:last-child::before { bottom: 50%; }
-  .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-float-border); }
+  .hbu-reader-history-dot { position: absolute; top: 50%; left: -13px; width: 7px; height: 7px; margin-top: -3.5px; margin-left: 3px; translate: -3px 0; border-radius: 50%; background: var(--hbu-reader-border); }
   .hbu-reader-history-row { position: relative; display: flex; gap: 6px; align-items: center; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; }
-  .hbu-reader-history-row:hover { background: var(--hbu-reader-float-hover); }
+  .hbu-reader-history-row:hover { background: var(--hbu-reader-subtle); }
   .hbu-reader-history-title { display: -webkit-box; min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .hbu-reader-history-progress { flex: none; min-width: 30px; color: var(--hbu-reader-float-muted); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
+  .hbu-reader-history-progress { flex: none; min-width: 30px; color: var(--hbu-reader-muted); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
   /* A hairline under each row turns the list into a visual reading record. */
-  .hbu-reader-history-bar { position: absolute; right: 8px; bottom: 3px; left: 8px; height: 2px; overflow: hidden; border-radius: 2px; background: var(--hbu-reader-float-border); opacity: .55; }
+  .hbu-reader-history-bar { position: absolute; right: 8px; bottom: 3px; left: 8px; height: 2px; overflow: hidden; border-radius: 2px; background: var(--hbu-reader-border); opacity: .55; }
   .hbu-reader-history-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--hbu-reader-accent); }
-  .hbu-reader-history-row[aria-current="true"] { background: var(--hbu-reader-float-hover); color: var(--hbu-reader-accent); font-weight: 650; }
-  .hbu-reader-history-row[data-preview="true"] { outline: 1px solid var(--hbu-reader-float-ink); outline-offset: -1px; background: var(--hbu-reader-float-hover); }
+  .hbu-reader-history-row[aria-current="true"] { background: var(--hbu-reader-subtle); color: var(--hbu-reader-accent); font-weight: 650; }
+  .hbu-reader-history-row[data-preview="true"] { outline: 1px solid var(--hbu-reader-ink); outline-offset: -1px; background: var(--hbu-reader-subtle); }
   .hbu-reader-history-current { flex: none; padding: 2px 5px; border-radius: 5px; background: var(--hbu-reader-glow); color: var(--hbu-reader-accent); font-size: 10px; font-weight: 650; }
   .hbu-reader-history-item[data-current="true"] .hbu-reader-history-dot { background: var(--hbu-reader-accent); }
-  .hbu-reader-history-empty { padding: 6px 8px; color: var(--hbu-reader-float-muted); font-size: 12px; line-height: 1.5; }
+  .hbu-reader-history-empty { padding: 6px 8px; color: var(--hbu-reader-muted); font-size: 12px; line-height: 1.5; }
   .hbu-reader-cy-dialog { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--hbu-reader-scrim); backdrop-filter: blur(4px); }
   .hbu-reader-cy-dialog[hidden] { display: none; }
   .hbu-reader-cy-card { width: min(520px, 100%); padding: 20px; border: 1px solid var(--hbu-reader-border); border-radius: 20px; background: var(--hbu-reader-page); color: var(--hbu-reader-ink); box-shadow: var(--hbu-reader-shadow); }
@@ -9139,6 +9145,39 @@
   @media (prefers-reduced-motion: reduce) {
     .hbu-reader-scroll { scroll-behavior: auto; }
     #${READER_ID} *, #${READER_ID} *::before, #${READER_ID} *::after { transition: none !important; }
+  }
+  /* The timeline is docked rather than opened, so the reader itself grows by
+     one column on wide screens. Specificity must beat the base #id width rule. */
+  #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px + var(--hbu-reader-history-width)), 100%); }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: calc(100% - 80px - var(--hbu-reader-history-width)); margin-left: 40px; margin-right: 0; }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { right: var(--hbu-reader-history-width); }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: calc(var(--hbu-reader-history-width) + 16px); }
+  #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { right: var(--hbu-reader-history-width); }
+  /* The column is already on screen, so the rail toggle only exists for the
+     narrow drawer. Hiding it inside a wide-screen query keeps the base rail
+     intact wherever media queries are unavailable. */
+  @media (min-width: 1200px) {
+    #${READER_ID}.hbu-reader-has-timeline [data-action="history"] { display: none; }
+  }
+  .hbu-reader-history-scrim { position: absolute; inset: 0; z-index: 44; padding: 0; border: 0; background: var(--hbu-reader-scrim); }
+  .hbu-reader-history-scrim[hidden] { display: none; }
+  /* Below this width the dock would squeeze the article, so it folds back into
+     a drawer opened from the rail. */
+  @media (max-width: 1199px) {
+    #${READER_ID}.hbu-reader-has-timeline { width: min(calc(var(--hbu-reader-stage) + 80px), 100%); }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-scroll { width: calc(100% - 80px); margin-inline: auto; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-head { right: 0; }
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-progress { right: 0; }
+    .hbu-reader-history-menu { width: min(320px, 88vw); z-index: 45; visibility: hidden; box-shadow: var(--hbu-reader-shadow); transform: translateX(100%); transition: transform .22s ease, visibility .22s; }
+    #${READER_ID}[data-timeline-open="true"] .hbu-reader-history-menu { visibility: visible; transform: none; }
+    .hbu-reader-history-close { display: grid; }
+  }
+  @media (max-width: 900px) {
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 14px; }
+  }
+  @media (max-width: 760px) {
+    #${READER_ID}.hbu-reader-has-timeline .hbu-reader-rail { right: 10px; }
+    .hbu-reader-history-menu { padding: 14px 12px 16px; }
   }
   /* The progress bar is now a sibling band, not an overlay on a page. */
 `;
@@ -9791,6 +9830,8 @@
     let historyRail = null;
     let historyThumb = null;
     let historyPeek = null;
+    let historyScrim = null;
+    const historyNarrow = window.matchMedia("(max-width: 1199px)");
     let historyPreviewX = 0;
     let articleId = "";
     let dismissedArticleId = "";
@@ -10344,19 +10385,53 @@
       spacingInput.value = String(value);
       syncNumberInput(readerLineHeightInput, value);
     };
-    const closeHistoryPanel = (returnFocus = false) => {
+    const isHistoryDrawerOpen = () => historyNarrow.matches && host?.dataset["timelineOpen"] === "true";
+    const syncHistoryPanelMode = () => {
       if (historyPanel === null) return;
-      if (historyPanel.hidden) return;
-      historyPanel.hidden = true;
+      if (historyNarrow.matches) {
+        const open = isHistoryDrawerOpen();
+        if (open) historyPanel.removeAttribute("inert");
+        else historyPanel.setAttribute("inert", "");
+        historyPanel.setAttribute("aria-hidden", String(!open));
+        if (historyScrim !== null) historyScrim.hidden = !open;
+        historyButton?.setAttribute("aria-expanded", String(open));
+        return;
+      }
+      if (host !== null) delete host.dataset["timelineOpen"];
+      historyPanel.removeAttribute("inert");
+      historyPanel.removeAttribute("aria-hidden");
+      if (historyScrim !== null) historyScrim.hidden = true;
       historyButton?.setAttribute("aria-expanded", "false");
-      if (returnFocus) historyButton?.focus({ preventScroll: true });
+    };
+    const openHistoryDrawer = () => {
+      if (host === null || historyPanel === null || historyButton === null) return;
+      closeFavourMenu();
+      closeSpacingMenu();
+      host.dataset["timelineOpen"] = "true";
+      syncHistoryPanelMode();
+      const currentRow = historyPanel.querySelector(".hbu-reader-history-row[aria-current='true']");
+      currentRow?.scrollIntoView?.({ block: "nearest" });
+      currentRow?.focus({ preventScroll: true });
+    };
+    const closeHistoryDrawer = (returnFocus = false) => {
+      if (host === null) return;
+      if (!isHistoryDrawerOpen()) {
+        syncHistoryPanelMode();
+        return;
+      }
+      delete host.dataset["timelineOpen"];
+      if (returnFocus) {
+        historyButton?.focus({ preventScroll: true });
+      }
+      syncHistoryPanelMode();
     };
     document.addEventListener("pointerdown", (event) => {
-      if (historyPanel === null || historyPanel.hidden) return;
+      if (!isHistoryDrawerOpen() || historyPanel === null) return;
       const target = event.target instanceof Node ? event.target : null;
       if (historyPanel.contains(target) || historyButton?.contains(target)) return;
-      closeHistoryPanel();
+      closeHistoryDrawer();
     }, true);
+    historyNarrow.addEventListener("change", syncHistoryPanelMode);
     const historyProgressLabel = (id) => {
       const ratio = readReaderRatio(id);
       if (ratio < 0) return "";
@@ -10416,10 +10491,10 @@
         }
         button.addEventListener("click", () => {
           if (entry.current) {
-            closeHistoryPanel(true);
+            closeHistoryDrawer(true);
             return;
           }
-          closeHistoryPanel();
+          closeHistoryDrawer();
           openReaderArticle(entry.id);
         });
         button.addEventListener("keydown", (event) => {
@@ -10505,7 +10580,7 @@
         renderHistoryPanel();
         return;
       }
-      closeHistoryPanel();
+      closeHistoryDrawer();
       openReaderArticle(entry.id);
     };
     const bindHistoryRail = (railBody, track, thumb) => {
@@ -10568,79 +10643,82 @@
         previewHistoryIndex(next);
       });
     };
-    const openHistoryPanel = (rail, button) => {
-      if (historyPanel !== null && !historyPanel.hidden) {
-        closeHistoryPanel(true);
-        return;
-      }
-      closeFavourMenu();
-      closeSpacingMenu();
-      if (historyPanel === null) {
-        const panel = document.createElement("div");
-        panel.className = "hbu-reader-history-menu";
-        panel.hidden = true;
-        panel.setAttribute("role", "group");
-        panel.setAttribute("aria-label", "阅读时间轴");
-        panel.addEventListener("keydown", (event) => {
-          if (event.key !== "Escape") return;
-          event.preventDefault();
-          event.stopPropagation();
-          closeHistoryPanel(true);
-        });
-        const label = document.createElement("div");
-        label.className = "hbu-reader-history-label";
-        label.textContent = "阅读时间轴";
-        const heading = document.createElement("div");
-        heading.className = "hbu-reader-history-head";
-        const meta = document.createElement("div");
-        meta.className = "hbu-reader-history-meta";
-        meta.setAttribute("aria-live", "polite");
-        heading.append(label, meta);
-        const body = document.createElement("div");
-        body.className = "hbu-reader-history-body";
-        const list = document.createElement("ol");
-        list.className = "hbu-reader-history-list";
-        const railTrack = document.createElement("div");
-        railTrack.className = "hbu-reader-history-track";
-        const thumb = document.createElement("button");
-        thumb.type = "button";
-        thumb.className = "hbu-reader-history-thumb";
-        thumb.setAttribute("role", "slider");
-        thumb.setAttribute("aria-label", "阅读时间轴位置");
-        thumb.setAttribute("aria-orientation", "vertical");
-        thumb.setAttribute("aria-valuemin", "0");
-        thumb.setAttribute("aria-valuemax", "0");
-        thumb.setAttribute("aria-valuenow", "0");
-        thumb.title = "拖动快速跳转，点击跳回当前篇";
-        const railBody = document.createElement("div");
-        railBody.className = "hbu-reader-history-rail";
-        railBody.append(railTrack, thumb);
-        const peek = document.createElement("div");
-        peek.className = "hbu-reader-history-peek";
-        peek.hidden = true;
-        peek.setAttribute("role", "status");
-        peek.setAttribute("aria-live", "polite");
-        peek.setAttribute("aria-atomic", "true");
-        body.append(list, railBody);
-        panel.append(heading, body, peek);
-        historyPanel = panel;
-        historyMeta = meta;
-        historyList = list;
-        historyRail = railBody;
-        historyThumb = thumb;
-        historyPeek = peek;
-        bindHistoryRail(railBody, railTrack, thumb);
-      }
-      historyButton = button;
-      if (historyPanel.parentNode !== rail) rail.append(historyPanel);
+    const mountHistoryTimeline = () => {
+      if (host === null || historyPanel !== null) return;
+      const panel = document.createElement("div");
+      panel.className = "hbu-reader-history-menu";
+      panel.setAttribute("role", "group");
+      panel.setAttribute("aria-label", "阅读时间轴");
+      panel.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || !isHistoryDrawerOpen()) return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeHistoryDrawer(true);
+      });
+      const heading = document.createElement("div");
+      heading.className = "hbu-reader-history-head";
+      const headText = document.createElement("div");
+      headText.className = "hbu-reader-history-head-text";
+      const label = document.createElement("div");
+      label.className = "hbu-reader-history-label";
+      label.textContent = "阅读时间轴";
+      const meta = document.createElement("div");
+      meta.className = "hbu-reader-history-meta";
+      meta.setAttribute("aria-live", "polite");
+      headText.append(label, meta);
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "hbu-reader-history-close";
+      close.setAttribute("aria-label", "关闭阅读时间轴");
+      close.innerHTML = READER_ICONS.close;
+      close.addEventListener("click", () => closeHistoryDrawer(true));
+      heading.append(headText, close);
+      const body = document.createElement("div");
+      body.className = "hbu-reader-history-body";
+      const list = document.createElement("ol");
+      list.className = "hbu-reader-history-list";
+      const railTrack = document.createElement("div");
+      railTrack.className = "hbu-reader-history-track";
+      const thumb = document.createElement("button");
+      thumb.type = "button";
+      thumb.className = "hbu-reader-history-thumb";
+      thumb.setAttribute("role", "slider");
+      thumb.setAttribute("aria-label", "阅读时间轴位置");
+      thumb.setAttribute("aria-orientation", "vertical");
+      thumb.setAttribute("aria-valuemin", "0");
+      thumb.setAttribute("aria-valuemax", "0");
+      thumb.setAttribute("aria-valuenow", "0");
+      thumb.title = "拖动快速跳转，点击跳回当前篇";
+      const railBody = document.createElement("div");
+      railBody.className = "hbu-reader-history-rail";
+      railBody.append(railTrack, thumb);
+      const peek = document.createElement("div");
+      peek.className = "hbu-reader-history-peek";
+      peek.hidden = true;
+      peek.setAttribute("role", "status");
+      peek.setAttribute("aria-live", "polite");
+      peek.setAttribute("aria-atomic", "true");
+      body.append(list, railBody);
+      panel.append(heading, body, peek);
+      const scrim = document.createElement("div");
+      scrim.className = "hbu-reader-history-scrim";
+      scrim.hidden = true;
+      scrim.addEventListener("pointerdown", () => closeHistoryDrawer(true));
+      historyPanel = panel;
+      historyMeta = meta;
+      historyList = list;
+      historyRail = railBody;
+      historyThumb = thumb;
+      historyPeek = peek;
+      historyScrim = scrim;
+      bindHistoryRail(railBody, railTrack, thumb);
+      host.append(scrim, panel);
       renderHistoryPanel();
-      historyPanel.hidden = false;
-      button.setAttribute("aria-expanded", "true");
-      const currentRow = historyPanel.querySelector(".hbu-reader-history-row[aria-current='true']");
+      syncHistoryPanelMode();
+      const currentRow = panel.querySelector(".hbu-reader-history-row[aria-current='true']");
       currentRow?.scrollIntoView?.({ block: "nearest" });
-      currentRow?.focus({ preventScroll: true });
     };
-    const createHistoryAction = (rail) => {
+    const createHistoryAction = () => {
       const history2 = document.createElement("button");
       history2.type = "button";
       history2.className = "hbu-reader-action";
@@ -10650,29 +10728,46 @@
       history2.setAttribute("aria-expanded", "false");
       history2.title = "阅读时间轴";
       history2.innerHTML = READER_ICONS.history;
-      history2.addEventListener("click", () => openHistoryPanel(rail, history2));
+      history2.addEventListener("click", () => {
+        if (isHistoryDrawerOpen()) closeHistoryDrawer(true);
+        else openHistoryDrawer();
+      });
       return history2;
     };
-    const syncHistoryAction = () => {
+    const syncHistoryTimeline = () => {
       if (host === null) return;
       const rail = host.querySelector(".hbu-reader-rail");
       if (rail === null) return;
       const existing = rail.querySelector('[data-action="history"]');
       if (!readReaderTimelinePreference()) {
-        closeHistoryPanel();
+        delete host.dataset["timelineOpen"];
+        host.classList.remove("hbu-reader-has-timeline");
         existing?.remove();
         historyPanel?.remove();
+        historyScrim?.remove();
         historyPanel = null;
         historyMeta = null;
         historyList = null;
+        historyRail = null;
+        historyThumb = null;
+        historyPeek = null;
+        historyScrim = null;
         historyButton = null;
+        historyPreviewX = 0;
         return;
       }
-      if (existing !== null) return;
-      const spacing = rail.querySelector('[data-action="spacing"]');
-      const history2 = createHistoryAction(rail);
-      if (spacing === null) rail.append(history2);
-      else rail.insertBefore(history2, spacing);
+      host.classList.add("hbu-reader-has-timeline");
+      historyButton = existing;
+      if (historyButton === null) {
+        const spacing = rail.querySelector('[data-action="spacing"]');
+        const history2 = createHistoryAction();
+        historyButton = history2;
+        if (spacing === null) rail.append(history2);
+        else rail.insertBefore(history2, spacing);
+      }
+      if (historyPanel === null) mountHistoryTimeline();
+      else renderHistoryPanel();
+      syncHistoryPanelMode();
     };
     const openSpacingMenu = (rail, button) => {
       if (spacingPanel !== null && !spacingPanel.hidden) {
@@ -10681,7 +10776,7 @@
         return;
       }
       closeFavourMenu();
-      closeHistoryPanel();
+      closeHistoryDrawer();
       if (spacingPanel === null) {
         const panel = document.createElement("div");
         panel.className = "hbu-reader-spacing-menu";
@@ -11097,7 +11192,7 @@
         return;
       }
       closeSpacingMenu();
-      closeHistoryPanel();
+      closeHistoryDrawer();
       const targetId = articleId;
       const generation = readerGeneration;
       favourMenuBusy = true;
@@ -13446,9 +13541,6 @@
       spacing.innerHTML = SETTINGS_ICON;
       spacing.addEventListener("click", () => openSpacingMenu(rail, spacing));
       rail.append(avatar, like, favour, cy, comment, share, spacing);
-      if (readReaderTimelinePreference()) {
-        rail.insertBefore(createHistoryAction(rail), spacing);
-      }
       return rail;
     };
     const createHeroCover = (page, data, sources, kind) => {
@@ -13905,6 +13997,12 @@
       historyPanel = null;
       historyButton = null;
       historyList = null;
+      historyMeta = null;
+      historyRail = null;
+      historyThumb = null;
+      historyPeek = null;
+      historyScrim = null;
+      historyPreviewX = 0;
       coverIndex = 0;
       coverTotal = 0;
       activeIndex = 0;
@@ -13923,6 +14021,7 @@
       scroll.append(createEndPage(data));
       const rail = createRail(data);
       host.append(scroll, rail);
+      syncHistoryTimeline();
       const progress = document.createElement("div");
       progress.className = "hbu-reader-progress";
       const current = document.createElement("span");
@@ -14100,6 +14199,7 @@
       historyRail = null;
       historyThumb = null;
       historyPeek = null;
+      historyScrim = null;
       historyPreviewX = 0;
       host?.remove();
       host = null;
@@ -14173,7 +14273,7 @@
         return;
       }
       syncReaderEndActions();
-      if (historyPanel !== null && !historyPanel.hidden) renderHistoryPanel();
+      if (historyPanel !== null) renderHistoryPanel();
       if (readerPendingAdvanceSourceId === "") return;
       if (status.currentId !== readerPendingAdvanceSourceId || status.revision !== readerPendingAdvanceRevision) {
         clearPendingReaderAdvance();
@@ -14199,13 +14299,13 @@
       sync();
     });
     document.addEventListener(READER_TIMELINE_EVENT, () => {
-      syncHistoryAction();
+      syncHistoryTimeline();
     });
     document.addEventListener(READER_HISTORY_LIMIT_EVENT, (event) => {
       const detail = event instanceof CustomEvent ? event.detail : void 0;
       const limit = typeof detail === "number" && Number.isSafeInteger(detail) && detail >= 0 ? detail : readReaderHistoryLimit();
       applyPostHistoryLimit(limit);
-      if (historyPanel !== null && !historyPanel.hidden) renderHistoryPanel();
+      if (historyPanel !== null) renderHistoryPanel();
       if (host !== null) syncReaderEndActions();
     });
     document.addEventListener("keydown", (event) => {
@@ -14221,9 +14321,9 @@
           event.preventDefault();
           closeSpacingMenu();
           spacingButton?.focus({ preventScroll: true });
-        } else if (historyPanel !== null && !historyPanel.hidden) {
+        } else if (isHistoryDrawerOpen()) {
           event.preventDefault();
-          closeHistoryPanel(true);
+          closeHistoryDrawer(true);
         } else if (favourPanel !== null && !favourPanel.hidden) {
           event.preventDefault();
           closeFavourMenu(true);
