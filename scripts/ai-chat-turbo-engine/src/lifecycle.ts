@@ -226,6 +226,7 @@ export function initializeEngine(): void {
       fullTurnSyncRequested = true;
     },
     saveConfig: () => saveCurrentConfig(state),
+    markRestoredTurn: (turnElement) => restoredTurns.add(turnElement),
     activeFileCount: () => virtualFiles.activeFileCount(),
     clearFiles: () => virtualFiles.clearFiles(),
     injectStyles: injectEngineStyles,
@@ -695,6 +696,7 @@ export function initializeEngine(): void {
           event.altKey &&
           !event.ctrlKey &&
           !event.metaKey &&
+          !event.repeat &&
           (event.code === "KeyT" ||
             event.key.toLowerCase() === "t" ||
             event.key === "†")

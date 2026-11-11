@@ -239,6 +239,7 @@ export const BLOCK_TEXT_TAGS = new Set([
 
 export interface PlatformDefinition {
   readonly name: string;
+  readonly supportsToolMemory?: boolean;
   readonly turnSelectors: readonly string[];
   readonly turnSelectorGroups?: readonly (readonly string[])[];
   readonly userTurnSelectors?: readonly string[];
@@ -654,6 +655,7 @@ export const PLATFORMS = {
   },
   yuanbao: {
     name: "Tencent Yuanbao / 腾讯元宝",
+    supportsToolMemory: true,
     turnSelectors: [
       ".agent-chat__list__item--human",
       ".agent-chat__list__item--ai",

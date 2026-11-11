@@ -8,6 +8,30 @@ import { reportRecoverableError } from "./core/diagnostics";
 import { createReportedStorage } from "./storage/reported";
 import type { TurnRecord } from "./core/turns";
 
+export type HudTheme = "auto" | "light" | "dark";
+
+export interface PersistedEngineConfig {
+  pruneEnabled: boolean;
+  keepTurns: number;
+  messageLimit: number;
+  collapseCode: boolean;
+  virtualFileEnabled: boolean;
+  rememberReasoning: boolean;
+  rememberTools: boolean;
+  hudTheme: HudTheme;
+}
+
+const DEFAULT_PERSISTED_CONFIG: PersistedEngineConfig = {
+  pruneEnabled: true,
+  keepTurns: 8,
+  messageLimit: DEFAULT_MESSAGE_LIMIT,
+  collapseCode: true,
+  virtualFileEnabled: true,
+  rememberReasoning: true,
+  rememberTools: true,
+  hudTheme: "auto",
+};
+
 /**
  * Reads and writes keep the released diagnostics: one message per failed
  * settings load or save, routed through the shared adapter.
@@ -21,14 +45,7 @@ const configStore = createReportedStorage("localStorage", (failure) => {
 });
 
 /** Mutable engine state shared by the HUD, turn pruning, and code folding. */
-export interface EngineState {
-  pruneEnabled: boolean;
-  keepTurns: number;
-  messageLimit: number;
-  collapseCode: boolean;
-  virtualFileEnabled: boolean;
-  rememberReasoning: boolean;
-  rememberTools: boolean;
+export interface EngineState extends PersistedEngineConfig {
   hudOpen: boolean;
   totalTurns: number;
   hiddenCount: number;
@@ -37,25 +54,11 @@ export interface EngineState {
 }
 
 /** Persisted subset of the engine state; key order matches the legacy payload. */
-interface SavedEngineConfig {
-  keepTurns: number;
-  messageLimit: number;
-  pruneEnabled: boolean;
-  collapseCode: boolean;
-  virtualFileEnabled: boolean;
-  rememberReasoning: boolean;
-  rememberTools: boolean;
-}
+type SavedEngineConfig = Partial<PersistedEngineConfig>;
 
 export function createEngineState(): EngineState {
   return {
-    pruneEnabled: true,
-    keepTurns: 8,
-    messageLimit: DEFAULT_MESSAGE_LIMIT,
-    collapseCode: true,
-    virtualFileEnabled: true,
-    rememberReasoning: true,
-    rememberTools: true,
+    ...DEFAULT_PERSISTED_CONFIG,
     hudOpen: false,
     totalTurns: 0,
     hiddenCount: 0,
@@ -108,14 +111,26 @@ export function loadSavedConfig(state: EngineState): void {
     if (typeof parsed.rememberTools === "boolean") {
       state.rememberTools = parsed.rememberTools;
     }
+    if (
+      parsed.hudTheme === "auto" ||
+      parsed.hudTheme === "light" ||
+      parsed.hudTheme === "dark"
+    ) {
+      state.hudTheme = parsed.hudTheme;
+    }
   } catch (error: unknown) {
     reportRecoverableError("load saved engine config", error);
   }
 }
 
+/** Restore persisted defaults without touching live counters or HUD placement. */
+export function resetPersistedConfig(state: EngineState): void {
+  Object.assign(state, DEFAULT_PERSISTED_CONFIG);
+}
+
 export function saveCurrentConfig(state: EngineState): void {
   try {
-    const config: SavedEngineConfig = {
+    const config: PersistedEngineConfig = {
       keepTurns: state.keepTurns,
       messageLimit: state.messageLimit,
       pruneEnabled: state.pruneEnabled,
@@ -123,6 +138,7 @@ export function saveCurrentConfig(state: EngineState): void {
       virtualFileEnabled: state.virtualFileEnabled,
       rememberReasoning: state.rememberReasoning,
       rememberTools: state.rememberTools,
+      hudTheme: state.hudTheme,
     };
     configStore.write(STORAGE_KEY_CONFIG, JSON.stringify(config));
   } catch (error: unknown) {

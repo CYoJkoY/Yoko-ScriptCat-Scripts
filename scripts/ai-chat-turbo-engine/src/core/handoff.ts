@@ -52,7 +52,7 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
   const isSubmitting = deps.isSubmitting;
 
   let handoffStatusNode: HTMLElement | null = null;
-  let handoffResumeTimer: ReturnType<typeof setInterval> | null = null;
+  let handoffResumeTimer: number | null = null;
   let rejectedHandoffWrite: unknown = null;
 
   /**
