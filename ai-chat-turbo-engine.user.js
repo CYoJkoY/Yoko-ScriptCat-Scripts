@@ -1463,6 +1463,77 @@ ${CODE_FENCE}
     };
   }
 
+  // scripts/ai-chat-turbo-engine/src/core/motion-quiet.ts
+  var QUIET_WINDOW_MS = 450;
+  var SIDEBAR_SELECTOR = "bard-sidenav, .bard-sidenav, side-navigation";
+  var SIDEBAR_TOGGLE_SELECTOR = [
+    '[data-test-id="side-nav-menu-button"]',
+    'button[aria-label*="menu" i]',
+    ".side-nav-menu-button",
+    'button[aria-label*="主菜单"]'
+  ].join(", ");
+  function createMotionQuiet(options = {}) {
+    const durationMs = options.durationMs ?? QUIET_WINDOW_MS;
+    const endListeners = /* @__PURE__ */ new Set();
+    let timer = null;
+    let quiet = false;
+    let boundDocument = null;
+    if (options.onQuietEnd) endListeners.add(options.onQuietEnd);
+    function clearTimer() {
+      if (timer === null) return;
+      clearTimeout(timer);
+      timer = null;
+    }
+    function finish() {
+      timer = null;
+      quiet = false;
+      for (const listener of Array.from(endListeners)) listener();
+    }
+    function start(ms = durationMs) {
+      quiet = true;
+      clearTimer();
+      timer = setTimeout(finish, ms);
+    }
+    function isQuiet() {
+      return quiet;
+    }
+    function onQuietEnd(listener) {
+      endListeners.add(listener);
+      return () => {
+        endListeners.delete(listener);
+      };
+    }
+    function handleTransitionRun(event) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.closest(SIDEBAR_SELECTOR)) return;
+      start();
+    }
+    function handleClick(event) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.closest(SIDEBAR_TOGGLE_SELECTOR)) return;
+      start();
+    }
+    function bind(doc) {
+      if (boundDocument === doc) return;
+      teardown();
+      boundDocument = doc;
+      doc.addEventListener("transitionrun", handleTransitionRun, true);
+      doc.addEventListener("click", handleClick, true);
+    }
+    function teardown() {
+      if (boundDocument) {
+        boundDocument.removeEventListener("transitionrun", handleTransitionRun, true);
+        boundDocument.removeEventListener("click", handleClick, true);
+        boundDocument = null;
+      }
+      clearTimer();
+      quiet = false;
+    }
+    return { start, isQuiet, onQuietEnd, bind, teardown };
+  }
+
   // scripts/ai-chat-turbo-engine/src/core/mutation-classify.ts
   function classifyMutations(records, context) {
     const dirtyTurns = /* @__PURE__ */ new Set();
@@ -5918,7 +5989,6 @@ ${contentText}`);
 
     :host {
       color-scheme: dark;
-      --hud-panel-bg: rgba(12, 16, 18, 0.94);
       --hud-panel-solid: #0c1012;
       --hud-text: #e2ebe6;
       --hud-title: #f8fafc;
@@ -5960,7 +6030,6 @@ ${contentText}`);
 
     :host([data-hud-theme="light"]) {
       color-scheme: light;
-      --hud-panel-bg: rgba(255, 255, 255, 0.96);
       --hud-panel-solid: #ffffff;
       --hud-text: #1f2a26;
       --hud-title: #0f172a;
@@ -6065,8 +6134,6 @@ ${contentText}`);
       position: absolute;
       inset: 0;
       background: var(--hud-scrim);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -6097,7 +6164,7 @@ ${contentText}`);
       box-shadow: var(--hud-shadow);
       color: var(--hud-text);
       transform: scale(0.96);
-      transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+      transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       outline: none;
     }
@@ -6105,14 +6172,8 @@ ${contentText}`);
       .hud-panel { max-height: min(720px, calc(100dvh - 24px)); }
     }
     .modal-backdrop.open .hud-panel { transform: scale(1); }
-
-    @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-      .hud-panel {
-        background: var(--hud-panel-bg);
-        -webkit-backdrop-filter: blur(18px) saturate(140%);
-        backdrop-filter: blur(18px) saturate(140%);
-      }
-    }
+    /* The panel stays opaque: an 18px backdrop blur repaints the whole page
+       behind it on every frame of the open and close animation. */
 
     .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .brand-title { font-size: 13px; font-weight: 700; color: var(--hud-title); }
@@ -8061,6 +8122,37 @@ ${CODE_FENCE}`;
       transition: none !important;
       will-change: auto !important;
     }
+
+    /* The history sidebar animates its width, so every frame of that motion
+       relayouts the chat column while the panel shadow and glass repaint. Keep
+       the native width animation, shorten it, and drop the depth effects that
+       only add paint. */
+    bard-sidenav,
+    bard-sidenav side-navigation,
+    side-navigation,
+    side-navigation-content,
+    sidenav-with-history-container,
+    conversations-list {
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
+    bard-sidenav {
+      transition-duration: 120ms !important;
+      transition-timing-function: cubic-bezier(0.2, 0, 0, 1) !important;
+    }
+
+    /* Layout containment keeps an opening list from invalidating siblings
+       outside the panel. Render skipping stays off here: an estimated
+       contain-intrinsic-size would make the scroll height of the history list
+       jump while rows mount. */
+    side-navigation-content,
+    sidenav-with-history-container,
+    conversations-list,
+    conversations-list > * {
+      contain: layout style !important;
+    }
 `;
   var BASE_ENGINE_CSS = `
     .ai-turbo-dehydrated {
@@ -8524,6 +8616,13 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       isUserTurn
     } = createTurnUtils(currentPlatform);
     const state = createEngineState();
+    const motionQuiet = createMotionQuiet({
+      onQuietEnd: () => {
+        if (isEngineDormant()) return;
+        fullTurnSyncRequested = true;
+        requestUpdate();
+      }
+    });
     const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
     const restoredTurns = /* @__PURE__ */ new Set();
     const dehydratedTurns = /* @__PURE__ */ new Set();
@@ -8870,6 +8969,10 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
     }
     function runScheduledUpdate() {
       scheduleTimer = null;
+      if (motionQuiet.isQuiet()) {
+        fullTurnSyncRequested = true;
+        return;
+      }
       lastUpdateTime = performance.now();
       clearRenderedCache();
       if (isEngineDormant()) return;
@@ -8888,6 +8991,10 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       if (virtualFiles.isTrayDirty()) virtualFiles.renderVirtualFileTray();
     }
     function requestUpdate() {
+      if (motionQuiet.isQuiet()) {
+        fullTurnSyncRequested = true;
+        return;
+      }
       if (scheduleTimer) return;
       const elapsed = performance.now() - lastUpdateTime;
       if (elapsed >= THROTTLE_INTERVAL) {
@@ -8904,6 +9011,10 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       observer?.disconnect();
       observer = new MutationObserver((records) => {
         if (selfMutationDepth > 0) return;
+        if (motionQuiet.isQuiet()) {
+          fullTurnSyncRequested = true;
+          return;
+        }
         handleMutationRecords(records);
       });
       observer.observe(observeRoot, {
@@ -8960,6 +9071,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       hud = null;
       observer?.disconnect();
       codeBlocks.disconnectCodeLayoutObserver();
+      motionQuiet.teardown();
       if (scheduleTimer) {
         window.cancelAnimationFrame(scheduleTimer);
         window.clearTimeout(scheduleTimer);
@@ -9075,6 +9187,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       injectStyles();
       hud?.buildHUD();
       codeBlocks.observeCodeLayout();
+      if (currentPlatform === PLATFORMS.gemini) motionQuiet.bind(document);
       observeDom();
       patchHistoryForSpaNavigation();
       bindGlobalListeners();
