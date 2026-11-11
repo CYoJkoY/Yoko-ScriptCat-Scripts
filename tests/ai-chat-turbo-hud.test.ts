@@ -89,6 +89,8 @@ interface HudFixture {
   pill: HTMLElement;
   markRestoredTurn: ReturnType<typeof vi.fn>;
   saveConfig: ReturnType<typeof vi.fn>;
+  flushTextIndex: ReturnType<typeof vi.fn>;
+  requestCodeScanForTurn: ReturnType<typeof vi.fn>;
 }
 
 const activeHuds: HudUtils[] = [];
@@ -103,6 +105,8 @@ function createHud(
   const state = options.state ?? createEngineState();
   const platform = options.platform ?? PLATFORMS.chatgpt;
   const markRestoredTurn = vi.fn();
+  const flushTextIndex = vi.fn(() => 0);
+  const requestCodeScanForTurn = vi.fn();
   const saveConfig = vi.fn(() => {
     saveCurrentConfig(state);
     options.onSaved?.();
@@ -111,10 +115,10 @@ function createHud(
     el,
     state,
     currentPlatform: platform,
-    version: "0.17.0",
+    version: "0.17.1",
     reasoningStatusNode: document.createElement("div"),
     toolStatusNode: document.createElement("div"),
-    codeBlocks: { requestCodeScan: vi.fn() },
+    codeBlocks: { requestCodeScan: vi.fn(), requestCodeScanForTurn },
     reasoning: {
       attachStatusNode: vi.fn(),
       scheduleReasoningRestore: vi.fn(),
@@ -139,6 +143,7 @@ function createHud(
     requestFullTurnSync: vi.fn(),
     saveConfig,
     markRestoredTurn,
+    flushTextIndex,
     activeFileCount: () => 0,
     clearFiles: vi.fn(),
     injectStyles: vi.fn(),
@@ -163,6 +168,8 @@ function createHud(
     pill,
     markRestoredTurn,
     saveConfig,
+    flushTextIndex,
+    requestCodeScanForTurn,
   };
 }
 
@@ -530,19 +537,26 @@ describe("HUD search restore", () => {
     document.body.append(turn);
     const state = createEngineState();
     state.indexedTurns.push({ id: 0, element: turn, text: "needle text" });
-    const { hud, shadow, markRestoredTurn, panel } = createHud({ state });
+    const {
+      hud,
+      shadow,
+      markRestoredTurn,
+      requestCodeScanForTurn,
+      panel,
+    } = createHud({ state });
     hud.togglePanel(true);
 
     const input = shadowInput(shadow, "hud-search");
     input.value = "needle";
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(120);
 
     const result = shadow.querySelector<HTMLButtonElement>(".result-item");
     if (!result) throw new Error("Missing search result");
     result.click();
 
     expect(markRestoredTurn).toHaveBeenCalledWith(turn);
+    expect(requestCodeScanForTurn).toHaveBeenCalledWith(turn);
     expect(turn.classList.contains("ai-turbo-dehydrated")).toBe(false);
     expect(turn.style.getPropertyValue("--turbo-cached-h")).toBe("");
     expect(scrollIntoView).toHaveBeenCalledWith({
@@ -553,6 +567,52 @@ describe("HUD search restore", () => {
     expect(panel.getAttribute("aria-hidden")).toBe("true");
     vi.advanceTimersByTime(1800);
     expect(turn.style.outline).toBe("");
+  });
+});
+
+describe("HUD search indexing", () => {
+  it("shows known matches with a pending notice instead of an empty result", () => {
+    const turn = document.createElement("div");
+    document.body.append(turn);
+    const state = createEngineState();
+    state.indexedTurns.push({ id: 0, element: turn, text: "alpha answer" });
+    const { shadow, hud, flushTextIndex } = createHud({ state });
+    flushTextIndex.mockReturnValue(1);
+    hud.togglePanel(true);
+
+    const input = shadowInput(shadow, "hud-search");
+    input.value = "alpha";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(120);
+
+    expect(shadow.querySelector(".result-item")?.textContent).toContain("alpha");
+    const pending = shadow.querySelector(".result-pending");
+    expect(pending?.textContent).toBe("正在索引 1 条消息…");
+    expect(pending?.getAttribute("role")).toBe("status");
+    expect(shadow.textContent).not.toContain("没有匹配的消息");
+
+    flushTextIndex.mockReturnValue(0);
+    vi.advanceTimersByTime(200);
+    expect(shadow.querySelector(".result-pending")).toBeNull();
+    expect(shadow.querySelector(".result-item")?.textContent).toContain("alpha");
+  });
+
+  it("does not report no match while indexing is still pending", () => {
+    const { shadow, hud, flushTextIndex } = createHud();
+    flushTextIndex.mockReturnValue(2);
+    hud.togglePanel(true);
+
+    const input = shadowInput(shadow, "hud-search");
+    input.value = "missing";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(120);
+
+    expect(shadow.querySelector(".result-empty")).toBeNull();
+    expect(shadow.querySelector(".result-pending")).not.toBeNull();
+
+    flushTextIndex.mockReturnValue(0);
+    vi.advanceTimersByTime(200);
+    expect(shadow.querySelector(".result-empty")).not.toBeNull();
   });
 });
 

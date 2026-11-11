@@ -24,11 +24,6 @@ export const TURN_MARKER_ATTRIBUTES = new Set([
   "data-chatgpt-agent-turn-start",
   "data-app-shell-main-surface",
 ]);
-export const TURN_SELECTOR_ATTRIBUTES = new Set([
-  ...TURN_MARKER_ATTRIBUTES,
-  "class",
-  "id",
-]);
 export const CHATGPT_SHELL_ROOT_SELECTOR =
   '[data-app-shell-main-surface] [data-thread-find-target="conversation"]';
 export const CHATGPT_SHELL_TURN_SELECTOR =
@@ -69,6 +64,14 @@ export const COMPOSER_VISUAL_GAP = 48;
 export const COMPOSER_VISUAL_MAX_DEPTH = 5;
 export const STREAMING_IDLE_DELAY = 1500;
 export const THROTTLE_INTERVAL = 80;
+/** Delay before incremental text re-indexing of changed turns. */
+export const TEXT_INDEX_INTERVAL = 450;
+/** Wall-clock budget for one incremental text extraction slice. */
+export const TEXT_INDEX_FRAME_BUDGET = 8;
+/** Throttle for code block re-scan after content mutations. */
+export const CODE_SCAN_INTERVAL = 250;
+/** Retry cadence for turn discovery while no turn is indexed yet. */
+export const TURN_DISCOVERY_RETRY_INTERVAL = 1000;
 export const CODE_FENCE = "\x60\x60\x60";
 
 export const VF_TOKEN_START = "[[TURBO_VFILE_START:";
@@ -351,6 +354,16 @@ export const PLATFORMS = {
   },
   gemini: {
     name: "Gemini",
+    turnSelectorGroups: [
+      ["user-query", "model-response"],
+      ['[data-test-id="user-query"]', '[data-test-id="model-response"]'],
+      [
+        ".user-query",
+        ".model-response",
+        ".user-query-container",
+        ".model-response-container",
+      ],
+    ],
     turnSelectors: [
       "user-query",
       "model-response",

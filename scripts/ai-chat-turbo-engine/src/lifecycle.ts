@@ -1,5 +1,7 @@
 import { readUserscriptInfo } from "../../../shared/userscript/globals";
-import { createTurnUtils, type TurnRecord } from "./core/turns";
+import { createTurnUtils } from "./core/turns";
+import { createTurnTextIndex } from "./core/turn-index";
+import { classifyMutations } from "./core/mutation-classify";
 import {
   createEngineState,
   loadSavedConfig,
@@ -21,13 +23,15 @@ import {
   type VirtualFileUtils,
 } from "./ui/virtual-files";
 import { injectEngineStyles } from "./ui/styles";
-import { matchesReasoningElement } from "./core/text";
 import {
+  CODE_SCAN_INTERVAL,
   HUD_ID,
   STYLE_ID,
+  TEXT_INDEX_FRAME_BUDGET,
+  TEXT_INDEX_INTERVAL,
   TURN_MARKER_ATTRIBUTES,
-  TURN_SELECTOR_ATTRIBUTES,
   THROTTLE_INTERVAL,
+  TURN_DISCOVERY_RETRY_INTERVAL,
   type PlatformDefinition,
 } from "./config";
 import {
@@ -59,17 +63,22 @@ export function initializeEngine(): void {
   } = createTurnUtils(currentPlatform);
 
   const state: EngineState = createEngineState();
-  const turnIndex = new Map<Element, TurnRecord>();
+  const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
   // 用户手动恢复过的轮次：即使仍在保留轮次之外也不再脱水，避免阅读被打断
-  const restoredTurns = new WeakSet<Element>();
+  const restoredTurns = new Set<Element>();
+  // 由引擎施加过脱水的轮次；恢复（含点击）时据此补扫该轮的代码块
+  const dehydratedTurns = new Set<Element>();
   let isSubmitting = false;
 
   let observer: MutationObserver | null = null;
   let scheduleTimer: ReturnType<typeof setTimeout> | null = null;
+  let textIndexTimer: ReturnType<typeof setTimeout> | null = null;
+  let textIndexFrame: number | null = null;
+  let codeScanTimer: ReturnType<typeof setTimeout> | null = null;
+  let turnDiscoveryTimer: ReturnType<typeof setInterval> | null = null;
   let lastUpdateTime = 0;
+  let lastCodeScanTime = 0;
   let fullTurnSyncRequested = true;
-  let dirtyTurns = new Set<Element>();
-  let previousTurns: Element[] = [];
   let selfMutationDepth = 0;
   let globalListenersBound = false;
   let historyPatched = false;
@@ -205,6 +214,7 @@ export function initializeEngine(): void {
     setSubmitting: (value) => {
       isSubmitting = value;
     },
+    flushTextIndex,
   });
 
   let hud: HudUtils | null = null;
@@ -227,6 +237,7 @@ export function initializeEngine(): void {
     },
     saveConfig: () => saveCurrentConfig(state),
     markRestoredTurn: (turnElement) => restoredTurns.add(turnElement),
+    flushTextIndex: () => flushTextIndex({ force: true }),
     activeFileCount: () => virtualFiles.activeFileCount(),
     clearFiles: () => virtualFiles.clearFiles(),
     injectStyles: injectEngineStyles,
@@ -237,70 +248,51 @@ export function initializeEngine(): void {
   }
 
 
-  // 读写分离脱水，彻底杜绝 Layout Thrashing
-  function syncTurnIndex(forceFull: boolean): void {
+  const IGNORED_MUTATION_TARGET_SELECTOR =
+    "#" +
+    HUD_ID +
+    ", .ai-turbo-code-bar, #ai-turbo-vf-tray, .ai-turbo-chat-capsule, #ai-turbo-vf-preview-modal";
+
+  function isIgnoredMutationTarget(target: Element): boolean {
+    return Boolean(target.closest(IGNORED_MUTATION_TARGET_SELECTOR));
+  }
+
+  /**
+   * Align the text index and turn counters with the current DOM without
+   * extracting text. Extraction runs on the frame-budgeted queue below, so
+   * this stays cheap enough to run on every structural sync.
+   */
+  function reconcileTurnIndex(): Element[] {
     const turns = getTurns();
-    const structuralChange =
-      forceFull ||
-      turns.length !== previousTurns.length ||
-      turns.some((turnElement, index) => turnElement !== previousTurns[index]);
+    const liveTurns = new Set(turns);
 
-    if (forceFull) {
-      turnIndex.clear();
-    } else if (structuralChange) {
-      /*
-       * A new turn only appends: keep the text of every surviving turn and
-       * re-extract new or dirty ones, so one message costs O(1) not O(n).
-       * shortcut: a text edit the observer never reports stays stale, upgrade
-       * to a periodic full re-sync if a platform does that.
-       */
-      const liveTurns = new Set(turns);
-      for (const indexedTurn of [...turnIndex.keys()]) {
-        if (!liveTurns.has(indexedTurn)) turnIndex.delete(indexedTurn);
-      }
+    for (const restoredTurn of restoredTurns) {
+      if (!liveTurns.has(restoredTurn)) restoredTurns.delete(restoredTurn);
+    }
+    for (const dehydratedTurn of dehydratedTurns) {
+      if (!liveTurns.has(dehydratedTurn)) dehydratedTurns.delete(dehydratedTurn);
     }
 
-    for (const turnElement of turns) {
+    const addedTurns = turns.filter((turn) => !turnTextIndex.hasTurn(turn));
+    turnTextIndex.reconcile(turns);
+
+    for (const turnElement of addedTurns) {
       chatCapsules.collapseInChatFileBlocks(turnElement);
-      const record = turnIndex.get(turnElement);
-      if (!record) {
-        turnIndex.set(turnElement, {
-          id: turnIndex.size,
-          element: turnElement,
-          text: extractTurnText(turnElement),
-        });
-      } else if (dirtyTurns.has(turnElement)) {
-        record.text = extractTurnText(turnElement);
-      }
-    }
-
-    for (const turnElement of dirtyTurns) {
-      if (!turnIndex.has(turnElement)) {
-        fullTurnSyncRequested = true;
-      }
     }
 
     state.totalTurns = turns.length;
-    state.indexedTurns = turns.map((turnElement, index) => {
-      const record = turnIndex.get(turnElement);
-      if (record) {
-        record.id = index;
-        return record;
-      }
-      const fallbackRecord: TurnRecord = {
-        id: index,
-        element: turnElement,
-        text: extractTurnText(turnElement),
-      };
-      turnIndex.set(turnElement, fallbackRecord);
-      return fallbackRecord;
-    });
+    state.indexedTurns = turnTextIndex.getRecords();
+    return turns;
+  }
 
+  // 读写分离脱水：只读新脱水轮次的高度，再统一写入类名与缓存变量
+  function syncTurnIndex(): void {
+    const turns = reconcileTurnIndex();
     const cutoff = state.pruneEnabled
       ? Math.max(0, turns.length - state.keepTurns)
       : 0;
 
-    const toDehydrate: { elem: HTMLElement; height: number }[] = [];
+    const toDehydrate: HTMLElement[] = [];
     const toHydrate: HTMLElement[] = [];
 
     turns.forEach((turnElement, index) => {
@@ -310,40 +302,53 @@ export function initializeEngine(): void {
         "ai-turbo-dehydrated",
       );
 
-      if (shouldDehydrate && !isDehydrated && turnElement instanceof HTMLElement) {
-        toDehydrate.push({
-          elem: turnElement,
-          height: turnElement.offsetHeight || 120,
-        });
-      } else if (
-        !shouldDehydrate &&
-        isDehydrated &&
-        turnElement instanceof HTMLElement
-      ) {
-        toHydrate.push(turnElement);
+      if (shouldDehydrate && !isDehydrated) {
+        if (turnElement instanceof HTMLElement) toDehydrate.push(turnElement);
+        return;
+      }
+
+      /* Manual restores remove the class outside this pass; notice them too. */
+      const leftDehydration =
+        !isDehydrated && dehydratedTurns.has(turnElement);
+      if ((!shouldDehydrate && isDehydrated) || leftDehydration) {
+        if (turnElement instanceof HTMLElement) toHydrate.push(turnElement);
       }
     });
 
+    const heights = toDehydrate.map(
+      (turnElement) => turnElement.offsetHeight || 120,
+    );
+
     withSelfMutation(() => {
-      for (let i = 0; i < toDehydrate.length; i++) {
-        const item = toDehydrate[i];
-        item.elem.style.setProperty("--turbo-cached-h", `${item.height}px`);
-        item.elem.classList.add("ai-turbo-dehydrated");
+      for (let index = 0; index < toDehydrate.length; index++) {
+        toDehydrate[index].style.setProperty(
+          "--turbo-cached-h",
+          String(heights[index]) + "px",
+        );
+        toDehydrate[index].classList.add("ai-turbo-dehydrated");
       }
-      for (let i = 0; i < toHydrate.length; i++) {
-        toHydrate[i].classList.remove("ai-turbo-dehydrated");
-        toHydrate[i].style.removeProperty("--turbo-cached-h");
+      for (const turnElement of toHydrate) {
+        turnElement.classList.remove("ai-turbo-dehydrated");
+        turnElement.style.removeProperty("--turbo-cached-h");
       }
     });
+
+    for (const turnElement of toDehydrate) {
+      dehydratedTurns.add(turnElement);
+      codeBlocks.suspendTurnCodeBlocks(turnElement);
+    }
+    for (const turnElement of toHydrate) {
+      dehydratedTurns.delete(turnElement);
+      codeBlocks.requestCodeScanForTurn(turnElement);
+    }
 
     state.hiddenCount = turns.reduce(
       (count, turnElement) =>
         count + Number(turnElement.classList.contains("ai-turbo-dehydrated")),
       0,
     );
-    previousTurns = turns;
-    dirtyTurns.clear();
-    fullTurnSyncRequested = false;
+
+    if (turnTextIndex.pendingCount() > 0) requestTextIndexSoon();
   }
 
   function findIndexedTurnAncestor(mutationNode: Node): Element | null {
@@ -353,152 +358,143 @@ export function initializeEngine(): void {
         : mutationNode.parentElement;
 
     while (ancestor) {
-      if (turnIndex.has(ancestor)) return ancestor;
+      if (turnTextIndex.hasTurn(ancestor)) return ancestor;
       ancestor = ancestor.parentElement;
     }
 
     return null;
   }
 
-  function collectMutationTargets(records: MutationRecord[]): boolean {
-    const turnSelector = getActiveTurnSelectors().join(",");
-    const allTurnSelectors = [
-      ...(currentPlatform.turnSelectors || []),
-      ...(currentPlatform.turnSelectorGroups || []).flat(),
-    ];
-    const allTurnSelector = [...new Set(allTurnSelectors)].join(",");
-    const turnMarkerSelector = [
-      '[data-testid^="conversation-turn-"]',
-      "[data-turn]",
-      "[data-turn-key]",
-      "[data-message-author-role]",
-      "[data-message-role]",
-      "[data-conversation-role]",
-      "[data-role]",
-      '[data-content-search-unit-key$=":user"]',
-      '[data-content-search-unit-key$=":assistant"]',
-      '[data-thread-find-target="conversation"]',
-      "ol[data-conversation-transcript]",
-      '[data-user-message-bubble="true"]',
-      "[data-chatgpt-agent-turn-start]",
-    ].join(",");
-    const anyTurnSelector = `${allTurnSelector},${turnMarkerSelector}`;
-    const codeSelectors = currentPlatform.codeSelectors || ["pre"];
-    let structuralChange = false;
-    let shouldRequestUpdate = false;
+  /**
+   * Run one incremental extraction slice. The time budget keeps a long
+   * conversation from blocking paint; the rest continues next frame.
+   */
+  function runTextIndexFrame(): void {
+    if (isEngineDormant()) return;
+    const remaining = turnTextIndex.flush({
+      budgetMs: TEXT_INDEX_FRAME_BUDGET,
+    });
+    if (remaining > 0) {
+      textIndexFrame = window.requestAnimationFrame(() => {
+        textIndexFrame = null;
+        runTextIndexFrame();
+      });
+      return;
+    }
+    hud?.updateHudDashboard();
+  }
 
-    for (const mutationRecord of records) {
-        const mutationTarget = mutationRecord.target;
+  /** Wait out the streaming burst, then extract changed turns incrementally. */
+  function requestTextIndexSoon(): void {
+    if (textIndexTimer !== null || textIndexFrame !== null) return;
+    textIndexTimer = window.setTimeout(() => {
+      textIndexTimer = null;
+      runTextIndexFrame();
+    }, TEXT_INDEX_INTERVAL);
+  }
 
-      if (
-        mutationTarget instanceof Element &&
-        mutationTarget.closest(
-          `#${HUD_ID}, .ai-turbo-code-bar, #ai-turbo-vf-tray, .ai-turbo-chat-capsule, #ai-turbo-vf-preview-modal`,
-        )
-      ) {
-        continue;
-      }
+  /**
+   * Drain the text queue for search and handoff. A non-forced call performs
+   * one bounded slice and reports what is left for the caller to retry.
+   */
+  function flushTextIndex(options: { force?: boolean } = {}): number {
+    if (isEngineDormant()) return 0;
+    reconcileTurnIndex();
 
-      if (mutationRecord.type === "attributes") {
-        const attributeName = mutationRecord.attributeName || "";
-        if (!(mutationTarget instanceof Element)) continue;
-
-        const isSelectorAttribute =
-          attributeName === "class" || attributeName === "id";
-        const isMarkerAttribute = TURN_MARKER_ATTRIBUTES.has(attributeName);
-        const isIndexedTurn = turnIndex.has(mutationTarget);
-        const matchesKnownTurn =
-          isIndexedTurn ||
-          (Boolean(allTurnSelector) &&
-            (mutationTarget.matches(allTurnSelector) ||
-              mutationTarget.matches(turnMarkerSelector) ||
-              mutationTarget.matches('[data-testid^="conversation-turn-"]')));
-
-        // Preserve the existing refresh behaviour for marker attributes.
-        // Ignore unrelated class/id changes to avoid redundant full syncs.
-        if (isMarkerAttribute) shouldRequestUpdate = true;
-
-        if (matchesKnownTurn && (isMarkerAttribute || isSelectorAttribute)) {
-          invalidateActiveTurnSelectorGroup();
-          structuralChange = true;
-          shouldRequestUpdate = true;
-        }
-        continue;
-      }
-
-      shouldRequestUpdate = true;
-      const indexedTurn = findIndexedTurnAncestor(mutationTarget);
-      const possibleTurn =
-        indexedTurn ||
-        (mutationTarget instanceof Element
-          ? mutationTarget.closest(turnSelector)
-          : mutationTarget.parentElement?.closest(turnSelector));
-
-      if (
-        possibleTurn instanceof Element &&
-        !isGeminiThoughtElement(possibleTurn) &&
-        !matchesReasoningElement(possibleTurn)
-      ) {
-        dirtyTurns.add(possibleTurn);
-      }
-
-      let possibleCode: HTMLElement | null = null;
-
-      if (mutationTarget instanceof Element) {
-        for (const selector of codeSelectors) {
-          const candidate = mutationTarget.matches(selector)
-            ? mutationTarget
-            : mutationTarget.closest(selector);
-          if (candidate instanceof HTMLElement) {
-            possibleCode = codeBlocks.normalizeCodeElement(candidate);
-            break;
-          }
-        }
-      }
-
-      if (possibleCode instanceof HTMLElement) {
-        codeBlocks.markCodeBlockDirty(possibleCode);
-      }
-
-      if (mutationRecord.type !== "childList") continue;
-
-      for (const changedNode of [
-        ...mutationRecord.addedNodes,
-        ...mutationRecord.removedNodes,
-      ]) {
-        if (!(changedNode instanceof Element)) continue;
-
-        if (
-          changedNode.matches(anyTurnSelector) ||
-          changedNode.querySelector(anyTurnSelector)
-        ) {
-          structuralChange = true;
-        }
-
-        for (const selector of codeSelectors) {
-          if (changedNode.matches(selector)) {
-            const elNorm = codeBlocks.normalizeCodeElement(changedNode);
-            if (elNorm instanceof HTMLElement) {
-              codeBlocks.markCodeBlockDirty(elNorm);
-            }
-          }
-          changedNode.querySelectorAll(selector).forEach((c) => {
-            const elNorm = codeBlocks.normalizeCodeElement(c);
-            if (elNorm instanceof HTMLElement) {
-              codeBlocks.markCodeBlockDirty(elNorm);
-            }
-          });
-        }
-      }
+    if (options.force === true) {
+      const remaining = turnTextIndex.flush();
+      hud?.updateHudDashboard();
+      return remaining;
     }
 
-    if (structuralChange) {
+    const remaining = turnTextIndex.flush({
+      budgetMs: TEXT_INDEX_FRAME_BUDGET,
+    });
+    if (remaining > 0 && textIndexTimer === null && textIndexFrame === null) {
+      textIndexFrame = window.requestAnimationFrame(() => {
+        textIndexFrame = null;
+        runTextIndexFrame();
+      });
+    }
+    hud?.updateHudDashboard();
+    return remaining;
+  }
+
+  /** Throttle code measurement so streaming text does not rescan per token. */
+  function scheduleCodeScan(): void {
+    if (codeScanTimer !== null) return;
+    const elapsed = performance.now() - lastCodeScanTime;
+    codeScanTimer = window.setTimeout(() => {
+      codeScanTimer = null;
+      if (isEngineDormant()) return;
+      lastCodeScanTime = performance.now();
+      codeBlocks.flushCodeBlockScan();
+      hud?.updateHudDashboard();
+      if (codeBlocks.isCodeScanPending()) scheduleCodeScan();
+    }, Math.max(0, CODE_SCAN_INTERVAL - elapsed));
+  }
+
+  function handleMutationRecords(records: MutationRecord[]): void {
+    const classification = classifyMutations(records, {
+      turnSelector: getActiveTurnSelectors().join(","),
+      isIgnoredTarget: isIgnoredMutationTarget,
+      findTurnAncestor: findIndexedTurnAncestor,
+    });
+
+    if (classification.turnStructureChanged) {
       invalidateActiveTurnSelectorGroup();
       fullTurnSyncRequested = true;
-      codeBlocks.requestCodeScan();
     }
 
-    return shouldRequestUpdate || structuralChange;
+    if (classification.dirtyTurns.size > 0) {
+      for (const turnElement of classification.dirtyTurns) {
+        turnTextIndex.markDirty(turnElement);
+      }
+      requestTextIndexSoon();
+    }
+
+    if (classification.codeRoots.size > 0) {
+      codeBlocks.markCodeSubtreesDirty(classification.codeRoots);
+      scheduleCodeScan();
+    }
+
+    if (classification.requestUpdate) requestUpdate();
+  }
+
+  /**
+   * Some hosts swap turns in with class-only markup. While nothing is indexed,
+   * retry the selector groups once per second; stop as soon as a turn appears.
+   */
+  function syncTurnDiscoveryFallback(): void {
+    if (state.totalTurns > 0) {
+      if (turnDiscoveryTimer !== null) {
+        window.clearInterval(turnDiscoveryTimer);
+        turnDiscoveryTimer = null;
+      }
+      return;
+    }
+    if (turnDiscoveryTimer !== null) return;
+    turnDiscoveryTimer = window.setInterval(() => {
+      if (isEngineDormant()) return;
+      if (state.totalTurns > 0) {
+        if (turnDiscoveryTimer !== null) {
+          window.clearInterval(turnDiscoveryTimer);
+          turnDiscoveryTimer = null;
+        }
+        return;
+      }
+      invalidateActiveTurnSelectorGroup();
+      requestUpdate();
+    }, TURN_DISCOVERY_RETRY_INTERVAL);
+  }
+
+  /** Reset per-conversation caches when the route points at another chat. */
+  function resetTurnIndexForNavigation(): void {
+    invalidateActiveTurnSelectorGroup();
+    turnTextIndex.clear();
+    restoredTurns.clear();
+    dehydratedTurns.clear();
+    fullTurnSyncRequested = true;
   }
 
   function runScheduledUpdate(): void {
@@ -513,15 +509,11 @@ export function initializeEngine(): void {
       return;
     }
 
-    const currentTurnSet = new Set(previousTurns);
-    for (const dirtyTurn of dirtyTurns) {
-      if (!(dirtyTurn instanceof Element) || !currentTurnSet.has(dirtyTurn)) {
-        fullTurnSyncRequested = true;
-      }
-    }
-
-    syncTurnIndex(fullTurnSyncRequested);
-    codeBlocks.flushCodeBlockScan();
+    const structuralSync = fullTurnSyncRequested;
+    fullTurnSyncRequested = false;
+    syncTurnIndex();
+    if (structuralSync) syncTurnDiscoveryFallback();
+    if (codeBlocks.isCodeScanPending()) scheduleCodeScan();
     toolMemory.maybeRestore();
     hud?.updateHudDashboard();
     hud?.ensureHUDMounted();
@@ -547,14 +539,14 @@ export function initializeEngine(): void {
     observer?.disconnect();
     observer = new MutationObserver((records) => {
       if (selfMutationDepth > 0) return;
-      if (collectMutationTargets(records)) requestUpdate();
+      handleMutationRecords(records);
     });
 
     observer.observe(observeRoot, {
       childList: true,
       characterData: true,
       attributes: true,
-      attributeFilter: Array.from(TURN_SELECTOR_ATTRIBUTES),
+      attributeFilter: Array.from(TURN_MARKER_ATTRIBUTES),
       subtree: true,
     });
   }
@@ -569,8 +561,7 @@ export function initializeEngine(): void {
       const result = originalPushState.apply(this, args);
       window.setTimeout(() => {
         if (syncEngineActivation()) return;
-        invalidateActiveTurnSelectorGroup();
-        fullTurnSyncRequested = true;
+        resetTurnIndexForNavigation();
         codeBlocks.requestCodeScan();
         requestUpdate();
         reasoning.scheduleReasoningRestore();
@@ -583,8 +574,7 @@ export function initializeEngine(): void {
       const result = originalReplaceState.apply(this, args);
       window.setTimeout(() => {
         if (syncEngineActivation()) return;
-        invalidateActiveTurnSelectorGroup();
-        fullTurnSyncRequested = true;
+        resetTurnIndexForNavigation();
         codeBlocks.requestCodeScan();
         requestUpdate();
       }, 0);
@@ -593,8 +583,7 @@ export function initializeEngine(): void {
 
     window.addEventListener("popstate", () => {
       if (syncEngineActivation()) return;
-      invalidateActiveTurnSelectorGroup();
-      fullTurnSyncRequested = true;
+      resetTurnIndexForNavigation();
       codeBlocks.requestCodeScan();
       requestUpdate();
       reasoning.scheduleReasoningRestore();
@@ -619,6 +608,25 @@ export function initializeEngine(): void {
       window.clearTimeout(scheduleTimer);
       scheduleTimer = null;
     }
+    if (textIndexTimer !== null) {
+      window.clearTimeout(textIndexTimer);
+      textIndexTimer = null;
+    }
+    if (textIndexFrame !== null) {
+      window.cancelAnimationFrame(textIndexFrame);
+      textIndexFrame = null;
+    }
+    if (codeScanTimer !== null) {
+      window.clearTimeout(codeScanTimer);
+      codeScanTimer = null;
+    }
+    if (turnDiscoveryTimer !== null) {
+      window.clearInterval(turnDiscoveryTimer);
+      turnDiscoveryTimer = null;
+    }
+    turnTextIndex.clear();
+    restoredTurns.clear();
+    dehydratedTurns.clear();
     virtualFiles.stopSyncLoop();
 
     codeBlocks.unmountAllCodeControls();
@@ -773,6 +781,7 @@ export function initializeEngine(): void {
 
     fullTurnSyncRequested = true;
     codeBlocks.requestCodeScan();
+    syncTurnDiscoveryFallback();
     requestUpdate();
 
     handoff.resumePendingHandoffPrompt();

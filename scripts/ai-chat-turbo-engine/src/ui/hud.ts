@@ -65,7 +65,10 @@ export interface HudDeps {
   version: string;
   reasoningStatusNode: HTMLElement;
   toolStatusNode: HTMLElement;
-  codeBlocks: Pick<CodeBlockUtils, "requestCodeScan">;
+  codeBlocks: Pick<
+    CodeBlockUtils,
+    "requestCodeScan" | "requestCodeScanForTurn"
+  >;
   reasoning: Pick<
     ReasoningUtils,
     "attachStatusNode" | "scheduleReasoningRestore" | "renderReasoningStatus"
@@ -80,6 +83,8 @@ export interface HudDeps {
   requestFullTurnSync: () => void;
   saveConfig: () => void;
   markRestoredTurn: (turnElement: Element) => void;
+  /** Finish pending text extraction and return how many turns remain queued. */
+  flushTextIndex: () => number;
   activeFileCount: () => number;
   clearFiles: () => void;
   injectStyles: () => void;
@@ -251,6 +256,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     requestFullTurnSync,
     saveConfig,
     markRestoredTurn,
+    flushTextIndex,
     activeFileCount,
     clearFiles,
     injectStyles,
@@ -262,6 +268,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
   let searchInput: HTMLInputElement | null = null;
   let searchResultsBox: HTMLElement | null = null;
   let searchDebounceTimer: number | null = null;
+  let searchRefreshTimer: number | null = null;
   let announceTimer: number | null = null;
   let themeObserver: MutationObserver | null = null;
   let themeMediaQuery: MediaQueryList | null = null;
@@ -554,55 +561,77 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     searchResultsBox.textContent = "";
     if (!queryText) return;
 
+    const pendingCount = flushTextIndex();
     const normalizedQuery = queryText.toLowerCase();
     const matches = state.indexedTurns
       .filter((record) => record.text.toLowerCase().includes(normalizedQuery))
       .slice(0, SEARCH_LIMIT);
 
     if (!matches.length) {
-      searchResultsBox.appendChild(
-        el("div", { className: "result-empty" }, ["没有匹配的消息"]),
-      );
-      return;
+      if (pendingCount === 0) {
+        searchResultsBox.appendChild(
+          el("div", { className: "result-empty" }, ["没有匹配的消息"]),
+        );
+        return;
+      }
+    } else {
+      for (const record of matches) {
+        const previewText = record.text || "（无文本）";
+        const resultText =
+          previewText.length > SEARCH_PREVIEW_LIMIT
+            ? previewText.slice(0, SEARCH_PREVIEW_LIMIT) + "…"
+            : previewText;
+        const resultButton = el(
+          "button",
+          {
+            type: "button",
+            className: "result-item",
+          },
+          ["#" + String(record.id + 1) + "  " + resultText],
+        );
+        resultButton.addEventListener("click", () => {
+          const targetElement = record.element;
+          if (!(targetElement instanceof Element)) return;
+          markRestoredTurn(targetElement);
+          targetElement.classList.remove("ai-turbo-dehydrated");
+          if (targetElement instanceof HTMLElement) {
+            targetElement.style.removeProperty("--turbo-cached-h");
+          }
+          togglePanel(false);
+          targetElement.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
+          codeBlocks.requestCodeScanForTurn(targetElement);
+          if (targetElement instanceof HTMLElement) {
+            targetElement.style.outline = "2px solid rgba(52, 211, 153, 0.85)";
+            targetElement.style.outlineOffset = "4px";
+            window.setTimeout(() => {
+              targetElement.style.outline = "";
+              targetElement.style.outlineOffset = "";
+            }, 1800);
+          }
+        });
+        searchResultsBox.appendChild(resultButton);
+      }
     }
 
-    for (const record of matches) {
-      const previewText = record.text || "（无文本）";
-      const resultText =
-        previewText.length > SEARCH_PREVIEW_LIMIT
-          ? previewText.slice(0, SEARCH_PREVIEW_LIMIT) + "…"
-          : previewText;
-      const resultButton = el(
-        "button",
-        {
-          type: "button",
-          className: "result-item",
-        },
-        ["#" + String(record.id + 1) + "  " + resultText],
+    if (pendingCount > 0) {
+      searchResultsBox.appendChild(
+        el(
+          "div",
+          { className: "result-pending", role: "status", "aria-live": "polite" },
+          ["正在索引 " + String(pendingCount) + " 条消息…"],
+        ),
       );
-      resultButton.addEventListener("click", () => {
-        const targetElement = record.element;
-        if (!(targetElement instanceof Element)) return;
-        markRestoredTurn(targetElement);
-        targetElement.classList.remove("ai-turbo-dehydrated");
-        if (targetElement instanceof HTMLElement) {
-          targetElement.style.removeProperty("--turbo-cached-h");
-        }
-        togglePanel(false);
-        targetElement.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
-        if (targetElement instanceof HTMLElement) {
-          targetElement.style.outline = "2px solid rgba(52, 211, 153, 0.85)";
-          targetElement.style.outlineOffset = "4px";
-          window.setTimeout(() => {
-            targetElement.style.outline = "";
-            targetElement.style.outlineOffset = "";
-          }, 1800);
-        }
-      });
-      searchResultsBox.appendChild(resultButton);
+      if (searchRefreshTimer !== null) {
+        window.clearTimeout(searchRefreshTimer);
+      }
+      searchRefreshTimer = window.setTimeout(() => {
+        searchRefreshTimer = null;
+        const currentQuery = searchInput?.value.trim() ?? "";
+        if (currentQuery === queryText) renderSearchResults(currentQuery);
+      }, 200);
     }
   }
 
@@ -916,7 +945,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       const inputElement = searchInput;
       searchDebounceTimer = window.setTimeout(() => {
         renderSearchResults(inputElement?.value.trim() ?? "");
-      }, 100);
+      }, 120);
     });
     searchResultsBox = el("div", { className: "results" });
     const searchSection = el("div", { className: "section" }, [
@@ -1334,6 +1363,10 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     if (announceTimer !== null) {
       window.clearTimeout(announceTimer);
       announceTimer = null;
+    }
+    if (searchRefreshTimer !== null) {
+      window.clearTimeout(searchRefreshTimer);
+      searchRefreshTimer = null;
     }
     cleanupPillDrag?.();
     cleanupPillDrag = null;

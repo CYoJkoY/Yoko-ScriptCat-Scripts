@@ -49,7 +49,15 @@ export interface CodeBlockUtils {
   observeCodeLayout(): void;
   disconnectCodeLayoutObserver(): void;
   requestCodeScan(): void;
+  /** Queue the code blocks of one turn, used when it leaves dehydration. */
+  requestCodeScanForTurn(turnElement: Element): void;
+  /** Drop controls and observers of one turn, used before dehydration. */
+  suspendTurnCodeBlocks(turnElement: Element): void;
+  /** Queue code blocks found under mutated subtrees. */
+  markCodeSubtreesDirty(roots: Iterable<Element>): void;
   markCodeBlockDirty(codeElement: HTMLElement): void;
+  /** True while a scan or dirty batch is waiting to be flushed. */
+  isCodeScanPending(): boolean;
 }
 
 export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
@@ -65,6 +73,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
 
   const codeState = new Map<HTMLElement, CodeEntry>();
   const dirtyCodeBlocks = new Set<HTMLElement>();
+  const observedCodeBlocks = new Set<HTMLElement>();
   let codeScanRequested = true;
   let codeResizeObserver: ResizeObserver | null = null;
 
@@ -80,39 +89,73 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     return candidate;
   }
 
+  function toCodeElement(candidate: Element): HTMLElement | null {
+    /* Dehydrated turns stay unrendered; measuring them would force layout. */
+    if (candidate.closest(".ai-turbo-dehydrated")) return null;
+
+    const belongsToUserTurn = (currentPlatform.userTurnSelectors || []).some(
+      (selector) => {
+        try {
+          return (
+            candidate.matches(selector) || Boolean(candidate.closest(selector))
+          );
+        } catch (error: unknown) {
+          reportRecoverableError("test code card boundary", error);
+          return false;
+        }
+      },
+    );
+
+    if (
+      candidate.classList.contains("ai-turbo-chat-folded-target") ||
+      belongsToUserTurn ||
+      candidate.closest(
+        ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], [data-content-search-unit-key$=':user'], [data-user-message-bubble='true'], [data-testid='collapsible-user-message-root'], .font-user-message",
+      )
+    ) {
+      return null;
+    }
+    const codeElement = normalizeCodeElement(candidate);
+    if (!codeElement) return null;
+    if (isGeminiThoughtElement(codeElement)) return null;
+    return codeElement;
+  }
+
+  function getCodeSelectors(): readonly string[] {
+    return currentPlatform.codeSelectors || ["pre"];
+  }
+
+  function collectCodeElements(rootNode: Element): HTMLElement[] {
+    const collected: HTMLElement[] = [];
+
+    for (const selector of getCodeSelectors()) {
+      const closest = rootNode.closest(selector);
+      if (closest) {
+        const codeElement = toCodeElement(closest);
+        if (codeElement) collected.push(codeElement);
+      }
+      if (rootNode.matches(selector)) {
+        const codeElement = toCodeElement(rootNode);
+        if (codeElement) collected.push(codeElement);
+      }
+      rootNode.querySelectorAll(selector).forEach((candidate) => {
+        const codeElement = toCodeElement(candidate);
+        if (codeElement) collected.push(codeElement);
+      });
+    }
+
+    return filterOutNested(collected).filter(
+      (element): element is HTMLElement => element instanceof HTMLElement,
+    );
+  }
+
   function getCodeBlocks(rootNode: ParentNode = document): HTMLElement[] {
     const collected: HTMLElement[] = [];
-    const selectors = currentPlatform.codeSelectors || ["pre"];
 
-    for (const selector of selectors) {
+    for (const selector of getCodeSelectors()) {
       rootNode.querySelectorAll(selector).forEach((candidate) => {
-        const belongsToUserTurn = (
-          currentPlatform.userTurnSelectors || []
-        ).some((selector) => {
-          try {
-            return (
-              candidate.matches(selector) ||
-              Boolean(candidate.closest(selector))
-            );
-          } catch (error: unknown) {
-            reportRecoverableError("test code card boundary", error);
-            return false;
-          }
-        });
-
-        if (
-          candidate.classList.contains("ai-turbo-chat-folded-target") ||
-          belongsToUserTurn ||
-          candidate.closest(
-            ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], [data-content-search-unit-key$=':user'], [data-user-message-bubble='true'], [data-testid='collapsible-user-message-root'], .font-user-message",
-          )
-        ) {
-          return;
-        }
-        const codeElement = normalizeCodeElement(candidate);
-        if (!codeElement) return;
-        if (isGeminiThoughtElement(codeElement)) return;
-        collected.push(codeElement);
+        const codeElement = toCodeElement(candidate);
+        if (codeElement) collected.push(codeElement);
       });
     }
 
@@ -249,6 +292,17 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     entry.toggleButton.setAttribute("aria-expanded", String(entry.expanded));
   }
 
+  function observeCodeElement(codeElement: HTMLElement): void {
+    if (!codeResizeObserver || observedCodeBlocks.has(codeElement)) return;
+    observedCodeBlocks.add(codeElement);
+    codeResizeObserver.observe(codeElement);
+  }
+
+  function unobserveCodeElement(codeElement: HTMLElement): void {
+    if (!observedCodeBlocks.delete(codeElement)) return;
+    codeResizeObserver?.unobserve(codeElement);
+  }
+
   function unmountCodeControls(codeElement: HTMLElement): void {
     const entry = codeState.get(codeElement);
     if (!entry) return;
@@ -265,6 +319,8 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
       codeElement.style.removeProperty("display");
     });
     codeState.delete(codeElement);
+    dirtyCodeBlocks.delete(codeElement);
+    unobserveCodeElement(codeElement);
   }
 
   function isNativeCodeHeaderNode(node: Element): boolean {
@@ -521,6 +577,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
 
     applyFoldStyles(entry, codeElement);
     updateCodeMeta(entry, codeElement);
+    observeCodeElement(codeElement);
   }
 
   function sweepOrphanBars(): void {
@@ -571,7 +628,9 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
           .map(normalizeCodeElement)
           .filter(
             (elem): elem is HTMLElement =>
-              elem instanceof HTMLElement && elem.isConnected,
+              elem instanceof HTMLElement &&
+              elem.isConnected &&
+              !elem.closest(".ai-turbo-dehydrated"),
           );
 
     const candidates = filterOutNested(rawCandidates).filter(
@@ -592,9 +651,6 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
         mountCodeControls(codeElement);
       }
 
-      if (codeResizeObserver) {
-        codeResizeObserver.observe(codeElement);
-      }
     }
 
     sweepOrphanBars();
@@ -609,6 +665,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   function observeCodeLayout(): void {
     if (!("ResizeObserver" in window)) return;
     codeResizeObserver?.disconnect();
+    observedCodeBlocks.clear();
 
     codeResizeObserver = new ResizeObserver((entries) => {
       for (const resizeEntry of entries) {
@@ -620,9 +677,10 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
       if (entries.length) requestUpdate();
     });
 
-    getCodeBlocks().forEach((codeElement) => {
-      codeResizeObserver?.observe(codeElement);
-    });
+    /* Reattach only the blocks that already have mounted controls. */
+    for (const codeElement of codeState.keys()) {
+      observeCodeElement(codeElement);
+    }
   }
 
   function flushCodeBlockScan(): void {
@@ -638,6 +696,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   function disconnectCodeLayoutObserver(): void {
     codeResizeObserver?.disconnect();
     codeResizeObserver = null;
+    observedCodeBlocks.clear();
   }
 
   function requestCodeScan(): void {
@@ -645,7 +704,60 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   }
 
   function markCodeBlockDirty(codeElement: HTMLElement): void {
+    if (codeElement.closest(".ai-turbo-dehydrated")) return;
     dirtyCodeBlocks.add(codeElement);
+  }
+
+  /**
+   * Queue the blocks of one turn. Used when a turn leaves dehydration, where
+   * no mutation record exists to announce the now-visible code.
+   */
+  function requestCodeScanForTurn(turnElement: Element): void {
+    if (!state.collapseCode) return;
+    if (turnElement.closest(".ai-turbo-dehydrated")) return;
+    let queued = false;
+    for (const codeElement of collectCodeElements(turnElement)) {
+      dirtyCodeBlocks.add(codeElement);
+      queued = true;
+    }
+    /* A restored turn has no mutation record to wake the scan timer. */
+    if (queued) requestUpdate();
+  }
+
+  /** Drop controls and observations before a turn is hidden by dehydration. */
+  function suspendTurnCodeBlocks(turnElement: Element): void {
+    for (const codeElement of Array.from(codeState.keys())) {
+      if (
+        codeElement === turnElement ||
+        turnElement.contains(codeElement)
+      ) {
+        unmountCodeControls(codeElement);
+      }
+    }
+    for (const codeElement of Array.from(dirtyCodeBlocks)) {
+      if (
+        codeElement === turnElement ||
+        turnElement.contains(codeElement)
+      ) {
+        dirtyCodeBlocks.delete(codeElement);
+      }
+    }
+    state.foldedCodeCount = Array.from(codeState.values()).filter(
+      (entry) => !entry.expanded,
+    ).length;
+  }
+
+  function markCodeSubtreesDirty(roots: Iterable<Element>): void {
+    for (const root of roots) {
+      if (!root.isConnected) continue;
+      for (const codeElement of collectCodeElements(root)) {
+        dirtyCodeBlocks.add(codeElement);
+      }
+    }
+  }
+
+  function isCodeScanPending(): boolean {
+    return codeScanRequested || dirtyCodeBlocks.size > 0;
   }
 
   return {
@@ -655,6 +767,10 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     observeCodeLayout,
     disconnectCodeLayoutObserver,
     requestCodeScan,
+    requestCodeScanForTurn,
+    suspendTurnCodeBlocks,
+    markCodeSubtreesDirty,
     markCodeBlockDirty,
+    isCodeScanPending,
   };
 }

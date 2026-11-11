@@ -264,10 +264,11 @@ export const HUD_STYLES = `
     .search-input::placeholder { color: var(--hud-muted); }
     .search-input:focus { border-color: var(--hud-normal-border); }
     .results { max-height: 132px; overflow-y: auto; margin-top: 6px; display: grid; gap: 4px; }
-    .result-item, .result-empty { padding: 6px 8px; font-size: 10px; border-radius: 7px; background: var(--hud-card-bg); color: var(--hud-text); border: none; text-align: left; cursor: pointer; }
-    .result-item { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .result-item, .result-empty, .result-pending { padding: 6px 8px; font-size: 10px; border-radius: 7px; background: var(--hud-card-bg); color: var(--hud-text); border: none; text-align: left; }
+    .result-item { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
     .result-item:hover { background: var(--hud-hover); color: var(--hud-accent); }
-    .result-empty { text-align: center; color: var(--hud-muted); }
+    .result-empty, .result-pending { text-align: center; color: var(--hud-muted); }
+    .result-pending { font-style: italic; }
     .footer-hint { margin-top: 12px; font-size: 9.5px; color: var(--hud-subtle); text-align: center; }
     .settings-hint { margin: 4px 0 2px; color: var(--hud-muted); font-size: 9.5px; line-height: 1.5; }
     kbd { padding: 2px 4px; border: 1px solid var(--hud-border); border-radius: 4px; color: var(--hud-muted); font-family: ui-monospace, monospace; }

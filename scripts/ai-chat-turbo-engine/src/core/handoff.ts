@@ -29,6 +29,8 @@ export interface HandoffDeps {
   turns: Pick<TurnUtils, "getTurns" | "extractTurnText" | "getTurnRole">;
   isSubmitting: () => boolean;
   setSubmitting: (value: boolean) => void;
+  /** Drain pending turn text before a handoff reads conversation content. */
+  flushTextIndex?: () => void;
 }
 
 export interface HandoffUtils {
@@ -88,6 +90,7 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
   }
 
   function exportCleanContext(onSuccess: (count: number) => void): void {
+    deps.flushTextIndex?.();
     const turns = getTurns();
     if (!turns.length) {
       window.alert("未检测到有效对话内容");
@@ -275,6 +278,7 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
   }
 
   function extractLatestHandoffText(): HandoffPackage | null {
+    deps.flushTextIndex?.();
     const turns = getTurns();
     let latestAssistantTurn = null;
 

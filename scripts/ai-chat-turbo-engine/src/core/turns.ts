@@ -178,9 +178,21 @@ export function createTurnUtils(platform: PlatformDefinition) {
 
   function filterOutNested(elements: Iterable<unknown>): Element[] {
     const ordered = uniqueDomOrdered(elements);
-    const candidateSet = new Set(ordered);
+    return filterNestedInDocumentOrder(ordered);
+  }
 
-    return ordered.filter((element) => {
+  /**
+   * Drop nested matches from a list that is already in document order and has
+   * no duplicates. A combined `querySelectorAll` guarantees both, so the sort
+   * and dedupe pass in `filterOutNested` can be skipped.
+   */
+  function filterNestedInDocumentOrder(
+    elements: readonly Element[],
+  ): Element[] {
+    if (elements.length < 2) return [...elements];
+    const candidateSet = new Set(elements);
+
+    return elements.filter((element) => {
       let parent = element.parentElement;
       while (parent) {
         if (candidateSet.has(parent)) return false;
@@ -355,15 +367,19 @@ export function createTurnUtils(platform: PlatformDefinition) {
     const currentChatGPTTurns = getCurrentChatGPTTurns();
     if (currentChatGPTTurns !== null) return currentChatGPTTurns;
 
-    const collected: Element[] = [];
-    for (const selector of getActiveTurnSelectors()) {
-      document
-        .querySelectorAll(selector)
-        .forEach((elem) => collected.push(elem));
-    }
+    const selectors = getActiveTurnSelectors();
+    if (selectors.length === 0) return [];
 
-    const unnested = filterOutNested(collected);
-    return unnested.filter(
+    /*
+     * Gemini ships eight fallback selectors. Query them as one union so the
+     * document is walked once instead of once per selector; the result is
+     * already in document order and free of duplicates.
+     */
+    const collected = Array.from(
+      document.querySelectorAll(selectors.join(",")),
+    );
+
+    return filterNestedInDocumentOrder(collected).filter(
       (element) =>
         (platform.name !== "ChatGPT" ||
           isRenderedChatGPTElement(element)) &&
