@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.17.4
+// @version      0.19.0
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -11,8 +11,8 @@
 // @match        https://gemini.google.com/*
 // @match        https://grok.com/*
 // @match        https://x.com/i/grok*
-// @match        https://claude.ai/*
 // @match        https://chat.deepseek.com/*
+// @match        https://copilot.com/*
 // @match        https://copilot.microsoft.com/*
 // @match        https://perplexity.ai/*
 // @match        https://www.perplexity.ai/*
@@ -258,6 +258,19 @@
   var PLATFORMS = {
     chatgpt: {
       name: "ChatGPT",
+      sidebar: {
+        selectors: ["aside.app-shell-left-panel"],
+        triggers: [
+          'button[aria-label="显示侧边栏"]',
+          'button[aria-label*="Show sidebar" i]',
+          'button[aria-label*="Expand sidebar" i]'
+        ],
+        // The expanded panel is mounted but its scroller keeps an inline
+        // display: none !important until the site opens it itself.
+        reveal: ["#app-shell-sidebar > div:nth-child(2) > div:first-child"],
+        peekWidth: 340,
+        collapsedMaxWidth: 96
+      },
       turnSelectorGroups: [
         [CHATGPT_SHELL_TURN_SELECTOR],
         [CHATGPT_TRANSCRIPT_MESSAGE_SELECTOR],
@@ -356,6 +369,19 @@
     },
     gemini: {
       name: "Gemini",
+      sidebar: {
+        selectors: ["bard-sidenav", ".bard-sidenav", "side-navigation"],
+        triggers: [
+          '[data-test-id="side-nav-sparkle-button"]',
+          '[data-test-id="side-nav-menu-button"]',
+          ".side-nav-menu-button",
+          'button[aria-label*="打开边栏"]',
+          'button[aria-label*="收起边栏"]',
+          'button[aria-label*="侧边栏"]'
+        ],
+        peekWidth: 248,
+        collapsedMaxWidth: 96
+      },
       turnSelectorGroups: [
         ["user-query", "model-response"],
         ['[data-test-id="user-query"]', '[data-test-id="model-response"]'],
@@ -430,33 +456,6 @@
         'button[aria-label*="发送"]'
       ]
     },
-    claude: {
-      name: "Claude",
-      turnSelectors: [
-        "div.font-user-message",
-        ".font-claude-response",
-        ".font-claude-message",
-        "div[data-test-render-count]"
-      ],
-      codeSelectors: ["pre"],
-      contentSelectors: [
-        ".standard-markdown",
-        ".progressive-markdown",
-        ".markdown",
-        '[class*="font-claude"]'
-      ],
-      inputSelectors: [
-        "div.ProseMirror[contenteditable='true']",
-        'div[contenteditable="true"]'
-      ],
-      sendButtonSelectors: [
-        'button[aria-label*="Send Message"]',
-        'button[aria-label*="发送消息"]',
-        'button[aria-label*="Send"]',
-        'button[aria-label*="发送"]',
-        "fieldset button:last-child"
-      ]
-    },
     deepseek: {
       name: "DeepSeek",
       turnSelectors: [
@@ -513,42 +512,73 @@
     },
     copilot: {
       name: "Microsoft Copilot",
+      // The rail is a Fluent NavDrawer that the site widens itself. Its width
+      // rule sits in the `application` cascade layer with !important, so the
+      // stylesheet override joins the site's first layer instead. The rail
+      // stays mounted and keeps its own listeners while peeking.
+      sidebar: {
+        selectors: [
+          'div.fai-CopilotNavDrawer[role="navigation"]',
+          'div.fui-NavDrawer[role="navigation"]'
+        ],
+        triggers: [
+          '[data-testid="nav-toggle-button"]',
+          'button[aria-label="展开边栏"]',
+          'button[aria-label="折叠边栏"]',
+          'button[aria-label*="Expand sidebar" i]',
+          'button[aria-label*="Collapse sidebar" i]'
+        ],
+        peekWidth: 256,
+        collapsedMaxWidth: 96
+      },
       turnSelectors: [
-        '[class*="user-message"]',
-        '[class*="assistant-message"]',
-        '[data-testid*="message"]'
+        "div.fai-UserMessage",
+        "div.fai-CopilotMessage"
       ],
       userTurnSelectors: [
-        '[class*="user-message"]',
-        '[data-testid*="user-message"]',
-        '[data-message-author-role="user"]'
+        "div.fai-UserMessage"
       ],
       userContentSelectors: [
-        '[class*="user-message"]',
-        '[data-testid*="user-message"]'
+        'div.fai-UserMessage [data-testid="chatOutput"]',
+        'div.fai-UserMessage [class*="user-message"]'
       ],
       codeSelectors: ["pre"],
       contentSelectors: [
-        ".ac-textBlock",
+        ".fai-CopilotMessage__content",
         ".markdown",
         ".prose",
-        '[class*="message-content"]'
+        ".ac-textBlock"
       ],
       inputSelectors: [
-        "textarea[placeholder]",
+        'span.fai-EditorInput__input[role="textbox"]',
+        'span.fai-EditorInput__input[contenteditable="true"]',
         'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
+        "textarea[placeholder]",
         "textarea"
       ],
       sendButtonSelectors: [
-        'button[data-testid*="send"]',
-        'button[aria-label*="Send"]',
+        'button[aria-label="发送"]',
+        "button.fai-SendButton",
+        'button[aria-label*="Send" i]',
         'button[aria-label*="发送"]',
+        'button[data-testid*="send"]',
         'button[type="submit"]'
       ]
     },
     perplexity: {
       name: "Perplexity",
+      sidebar: {
+        selectors: ["div.w-sideBarWidth"],
+        triggers: [
+          'button[aria-label="展开侧边栏"]',
+          'button[aria-label="打开侧边栏"]',
+          'button[aria-label*="Expand sidebar" i]',
+          'button[aria-label*="Open sidebar" i]'
+        ],
+        peekWidth: 240,
+        collapsedMaxWidth: 88
+      },
       turnSelectors: [
         '[data-testid="chat-message"]',
         '[data-testid*="chat-message"]',
@@ -722,6 +752,16 @@
     },
     qwen: {
       name: "Qwen Chat",
+      sidebar: {
+        selectors: ["#sidebar.sidebar"],
+        triggers: [
+          'button[aria-label="切换侧边栏"]',
+          'button[aria-label="展开侧边栏"]',
+          'button[aria-label*="sidebar" i]'
+        ],
+        peekWidth: 240,
+        collapsedMaxWidth: 96
+      },
       turnSelectors: [
         ".chat-user-message-container",
         ".chat-user-message",
@@ -841,6 +881,12 @@
     },
     glm: {
       name: "ChatGLM / 智谱清言",
+      sidebar: {
+        selectors: ["aside.el-aside.aside-container"],
+        triggers: [".aside-header .operation-btn"],
+        peekWidth: 260,
+        collapsedMaxWidth: 88
+      },
       turnSelectors: [
         ".question-txt.dots",
         '[data-message-author="user"]',
@@ -901,6 +947,15 @@
     },
     zai: {
       name: "Z.ai (GLM)",
+      sidebar: {
+        selectors: ["#sidebar"],
+        triggers: ['button[aria-label="切换侧边栏"]'],
+        // The row that holds the rail clips overflow, so the growth is cancelled
+        // by a fixed margin instead of a measurement.
+        shift: -178,
+        peekWidth: 238,
+        collapsedMaxWidth: 88
+      },
       turnSelectors: [
         ".chat-user",
         ".chat-assistant",
@@ -1557,6 +1612,315 @@ ${CODE_FENCE}
       quiet = false;
     }
     return { start, isQuiet, onQuietEnd, bind, teardown };
+  }
+
+  // scripts/ai-chat-turbo-engine/src/core/sidebar-peek.ts
+  var SIDEBAR_PEEK_ATTRIBUTE = "data-ai-turbo-sidebar-peek";
+  var SIDEBAR_PEEK_WIDTH_VAR = "--ai-turbo-sidebar-peek-width";
+  var SIDEBAR_PEEK_SHIFT_VAR = "--ai-turbo-sidebar-peek-shift";
+  var SIDEBAR_PEEK_SHOW_DELAY_MS = 70;
+  var SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
+  var DEFAULT_PEEK_WIDTH = 248;
+  var DEFAULT_COLLAPSED_MAX_WIDTH = 96;
+  var COLLAPSED_CLASS_TOKENS = /* @__PURE__ */ new Set([
+    "collapsed",
+    "is-collapsed",
+    "sidenav-collapsed",
+    "rail-collapsed",
+    "side-nav-collapsed"
+  ]);
+  var EXPANDED_CLASS_TOKENS = /* @__PURE__ */ new Set([
+    "sidenav-open",
+    "is-expanded",
+    "is-open",
+    "expanded"
+  ]);
+  var MOTION_ATTRIBUTES = ["class", "data-collapsed", "data-state", "aria-expanded"];
+  function createSidebarPeek(options) {
+    const definition = options.sidebar;
+    const showDelayMs = options.showDelayMs ?? SIDEBAR_PEEK_SHOW_DELAY_MS;
+    const hideDelayMs = options.hideDelayMs ?? SIDEBAR_PEEK_HIDE_DELAY_MS;
+    const peekWidth = definition?.peekWidth ?? DEFAULT_PEEK_WIDTH;
+    const collapsedMaxWidth = definition?.collapsedMaxWidth ?? DEFAULT_COLLAPSED_MAX_WIDTH;
+    const sidebarSelector = definition?.selectors.join(", ") ?? "";
+    const triggerSelector = definition?.triggers?.join(", ") ?? "";
+    const revealSelector = definition?.reveal?.join(", ") ?? "";
+    let boundDocument = null;
+    let observer = null;
+    let resolveDocument = null;
+    let resolvedRail = null;
+    let active = null;
+    let widthSnapshot = null;
+    let shiftSnapshot = null;
+    let showTimer = null;
+    let hideTimer = null;
+    let pendingRail = null;
+    let revealTargets = [];
+    const enabled = sidebarSelector !== "";
+    function resolveRail() {
+      const doc = boundDocument;
+      if (!enabled || doc === null) return null;
+      if (resolvedRail !== null && resolvedRail.isConnected) return resolvedRail;
+      if (resolveDocument !== doc) {
+        resolveDocument = doc;
+        resolvedRail = null;
+      }
+      const found = doc.querySelector(sidebarSelector);
+      resolvedRail = found instanceof HTMLElement ? found : null;
+      return resolvedRail;
+    }
+    function railFor(node) {
+      const rail = resolveRail();
+      if (rail === null) return null;
+      if (rail === node || rail.contains(node)) return rail;
+      if (triggerSelector !== "" && node.closest(triggerSelector) !== null) {
+        return rail;
+      }
+      return null;
+    }
+    function hasExpandedToken(node) {
+      for (const token of node.classList) {
+        if (EXPANDED_CLASS_TOKENS.has(token)) return true;
+      }
+      return false;
+    }
+    function isCollapsed(node) {
+      for (const token of node.classList) {
+        if (COLLAPSED_CLASS_TOKENS.has(token)) return true;
+        if (EXPANDED_CLASS_TOKENS.has(token)) return false;
+      }
+      const width = node.getBoundingClientRect().width;
+      return width > 0 && width <= collapsedMaxWidth;
+    }
+    function sideOf(node) {
+      const doc = node.ownerDocument;
+      const viewport = doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+      if (viewport <= 0) return "left";
+      const rect = node.getBoundingClientRect();
+      return rect.left + rect.width / 2 < viewport / 2 ? "left" : "right";
+    }
+    function measureShift(node, collapsedWidth) {
+      const view = node.ownerDocument.defaultView;
+      if (view === null) return 0;
+      if (!Number.isFinite(collapsedWidth) || collapsedWidth <= 0) return 0;
+      const style = view.getComputedStyle(node);
+      if (style.position !== "static" && style.position !== "relative") return 0;
+      const parent = node.parentElement;
+      if (parent === null) return 0;
+      const parentStyle = view.getComputedStyle(parent);
+      const isFlex = parentStyle.display === "flex" || parentStyle.display === "inline-flex";
+      const isGrid = parentStyle.display === "grid" || parentStyle.display === "inline-grid";
+      const isBlockFlow = parentStyle.display === "block" || parentStyle.display === "flow-root" || parentStyle.display === "inline-block";
+      if (!isFlex && !isGrid && !isBlockFlow) return 0;
+      if (isFlex && !parentStyle.flexDirection.startsWith("row")) return 0;
+      if (parentStyle.overflow !== "visible") return 0;
+      const shift = Math.round(collapsedWidth - peekWidth);
+      return shift < 0 ? shift : 0;
+    }
+    function readSnapshot(node, property) {
+      return {
+        value: node.style.getPropertyValue(property),
+        priority: node.style.getPropertyPriority(property)
+      };
+    }
+    function restoreSnapshot(node, property, snapshot) {
+      if (snapshot === null || snapshot.value === "") {
+        node.style.removeProperty(property);
+        return;
+      }
+      node.style.setProperty(property, snapshot.value, snapshot.priority);
+    }
+    function cancelShow() {
+      if (showTimer !== null) {
+        clearTimeout(showTimer);
+        showTimer = null;
+      }
+      pendingRail = null;
+    }
+    function cancelHide() {
+      if (hideTimer !== null) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    }
+    function releaseActive() {
+      const node = active;
+      if (node === null) return;
+      active = null;
+      node.removeAttribute(SIDEBAR_PEEK_ATTRIBUTE);
+      restoreSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR, widthSnapshot);
+      restoreSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR, shiftSnapshot);
+      widthSnapshot = null;
+      shiftSnapshot = null;
+      restoreReveal();
+    }
+    function liftReveal(rail) {
+      if (revealSelector === "") return;
+      const targets = [];
+      for (const found of Array.from(rail.querySelectorAll(revealSelector))) {
+        if (!(found instanceof HTMLElement)) continue;
+        targets.push({ node: found, display: readSnapshot(found, "display") });
+        found.style.setProperty("display", "flex", "important");
+      }
+      revealTargets = targets;
+    }
+    function restoreReveal() {
+      if (revealTargets.length === 0) return;
+      const targets = revealTargets;
+      revealTargets = [];
+      for (const target of targets) {
+        restoreSnapshot(target.node, "display", target.display);
+      }
+    }
+    function applyPeek(node) {
+      cancelShow();
+      cancelHide();
+      if (active === node) return;
+      releaseActive();
+      const collapsedWidth = node.getBoundingClientRect().width;
+      const measured = measureShift(node, collapsedWidth);
+      const shift = measured < 0 ? measured : definition?.shift ?? 0;
+      widthSnapshot = readSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR);
+      shiftSnapshot = readSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR);
+      active = node;
+      node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${peekWidth}px`);
+      node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
+      node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
+      liftReveal(node);
+    }
+    function scheduleShow(rail) {
+      cancelHide();
+      if (active === rail) return;
+      if (pendingRail === rail && showTimer !== null) return;
+      cancelShow();
+      pendingRail = rail;
+      showTimer = setTimeout(() => {
+        showTimer = null;
+        const target = pendingRail;
+        pendingRail = null;
+        if (target === null || !target.isConnected) return;
+        if (!isCollapsed(target)) return;
+        applyPeek(target);
+      }, showDelayMs);
+    }
+    function scheduleHide(rail) {
+      if (pendingRail === rail) cancelShow();
+      if (active !== rail) return;
+      cancelHide();
+      hideTimer = setTimeout(() => {
+        hideTimer = null;
+        if (active !== rail) return;
+        releaseActive();
+      }, hideDelayMs);
+    }
+    function isMousePointer(event) {
+      const pointerType = event.pointerType;
+      return pointerType === void 0 || pointerType === "" || pointerType === "mouse";
+    }
+    function handlePointerOver(event) {
+      if (!isMousePointer(event)) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const rail = railFor(target);
+      if (rail === null) return;
+      scheduleShow(rail);
+    }
+    function handlePointerOut(event) {
+      if (!isMousePointer(event)) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const rail = railFor(target);
+      if (rail === null) return;
+      const related = event.relatedTarget;
+      if (related instanceof Element && railFor(related) === rail) return;
+      scheduleHide(rail);
+    }
+    function handlePointerDown(event) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const rail = railFor(target);
+      if (rail === null) {
+        cancelShow();
+        releaseActive();
+        return;
+      }
+      if (active === rail && !rail.contains(target)) releaseActive();
+    }
+    function handleFocusIn(event) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const rail = railFor(target);
+      if (rail === null) return;
+      if (active === rail) return;
+      if (!isCollapsed(rail)) return;
+      applyPeek(rail);
+    }
+    function handleKeyDown(event) {
+      const key = event.key;
+      if (key === "Escape") {
+        cancelShow();
+        releaseActive();
+        return;
+      }
+      if (active === null || key !== "Enter" && key !== " ") return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (triggerSelector === "" || target.closest(triggerSelector) === null) {
+        return;
+      }
+      cancelShow();
+      releaseActive();
+    }
+    function handleMutations() {
+      const node = active;
+      if (node === null) return;
+      if (!node.isConnected || hasExpandedToken(node)) releaseActive();
+    }
+    function bind(doc) {
+      if (boundDocument === doc) return;
+      teardown();
+      if (!enabled) return;
+      boundDocument = doc;
+      doc.addEventListener("pointerover", handlePointerOver);
+      doc.addEventListener("pointerout", handlePointerOut);
+      doc.addEventListener("pointerdown", handlePointerDown);
+      doc.addEventListener("focusin", handleFocusIn);
+      doc.addEventListener("keydown", handleKeyDown);
+      const root = doc.documentElement ?? doc.body;
+      if (root !== null) {
+        observer = new MutationObserver(handleMutations);
+        observer.observe(root, {
+          attributes: true,
+          attributeFilter: MOTION_ATTRIBUTES,
+          childList: true,
+          subtree: true
+        });
+      }
+    }
+    function teardown() {
+      cancelShow();
+      cancelHide();
+      releaseActive();
+      if (observer !== null) {
+        observer.disconnect();
+        observer = null;
+      }
+      if (boundDocument !== null) {
+        boundDocument.removeEventListener("pointerover", handlePointerOver);
+        boundDocument.removeEventListener("pointerout", handlePointerOut);
+        boundDocument.removeEventListener("pointerdown", handlePointerDown);
+        boundDocument.removeEventListener("focusin", handleFocusIn);
+        boundDocument.removeEventListener("keydown", handleKeyDown);
+        boundDocument = null;
+      }
+      resolveDocument = null;
+      resolvedRail = null;
+    }
+    return {
+      bind,
+      teardown,
+      isPeeking: () => active !== null
+    };
   }
 
   // scripts/ai-chat-turbo-engine/src/core/mutation-classify.ts
@@ -2530,13 +2894,10 @@ ${CODE_FENCE}
     if (hostnameMatches(hostname, ["grok.com"]) || hostname === "x.com" && pathname.startsWith("/i/grok")) {
       return PLATFORMS.grok;
     }
-    if (hostnameMatches(hostname, ["claude.ai"])) {
-      return PLATFORMS.claude;
-    }
     if (hostnameMatches(hostname, ["deepseek.com"])) {
       return PLATFORMS.deepseek;
     }
-    if (hostnameMatches(hostname, ["copilot.microsoft.com"])) {
+    if (hostnameMatches(hostname, ["copilot.com", "copilot.microsoft.com"])) {
       return PLATFORMS.copilot;
     }
     if (hostnameMatches(hostname, ["perplexity.ai"])) {
@@ -7401,173 +7762,6 @@ ${contentText}`);
     };
   }
 
-  // scripts/ai-chat-turbo-engine/src/ui/chat-capsules.ts
-  function createChatCapsuleUtils(deps) {
-    const { el, withSelfMutation, state } = deps;
-    const isUserTurn = deps.isUserTurn;
-    const processedUserTurns = /* @__PURE__ */ new WeakSet();
-    const virtualFileChatRows = /* @__PURE__ */ new WeakMap();
-    function mountVirtualFileCapsuleOutsideTurn(turnElement, pill) {
-      if (!(turnElement instanceof Element) || !pill) {
-        return null;
-      }
-      const parent = turnElement.parentElement;
-      if (!parent) {
-        return null;
-      }
-      const previousRow = virtualFileChatRows.get(turnElement);
-      if (previousRow?.isConnected) {
-        previousRow.remove();
-      }
-      const row = el(
-        "div",
-        {
-          className: "ai-turbo-chat-file-row",
-          role: "group",
-          "aria-label": "虚拟文件"
-        },
-        [pill]
-      );
-      parent.insertBefore(row, turnElement);
-      virtualFileChatRows.set(turnElement, row);
-      return row;
-    }
-    function collapseInChatFileBlocks(turnElement) {
-      if (!state.virtualFileEnabled || !isUserTurn(turnElement)) {
-        return;
-      }
-      const existingRow = virtualFileChatRows.get(turnElement);
-      if (processedUserTurns.has(turnElement) && existingRow?.isConnected) {
-        return;
-      }
-      if (!existingRow?.isConnected) {
-        processedUserTurns.delete(turnElement);
-        virtualFileChatRows.delete(turnElement);
-      }
-      const walker = document.createTreeWalker(turnElement, NodeFilter.SHOW_TEXT);
-      let targetTextNode = null;
-      while (walker.nextNode()) {
-        const currentNode = walker.currentNode;
-        if (currentNode.nodeType === Node.TEXT_NODE && currentNode.nodeValue !== null && currentNode.nodeValue.includes(VF_TOKEN_START)) {
-          targetTextNode = currentNode instanceof Text ? currentNode : null;
-          break;
-        }
-      }
-      if (!targetTextNode) return;
-      const codeBlockElem = targetTextNode.parentElement?.closest("pre, code-block") ?? null;
-      let containerBlock = codeBlockElem;
-      if (!containerBlock) {
-        let cur = targetTextNode.parentElement;
-        while (cur && cur !== turnElement) {
-          const tag = cur.tagName.toLowerCase();
-          if (["p", "div", "pre", "code-block"].includes(tag) || cur.classList.contains("query-text") || cur.classList.contains("user-query-text")) {
-            containerBlock = cur;
-            break;
-          }
-          cur = cur.parentElement;
-        }
-      }
-      if (!containerBlock) {
-        containerBlock = targetTextNode.parentElement;
-      }
-      if (!(containerBlock instanceof HTMLElement)) return;
-      const hostBlock = containerBlock;
-      const fullRawText = hostBlock.textContent || "";
-      const startIndex = fullRawText.indexOf(VF_TOKEN_START);
-      if (startIndex === -1) return;
-      const match = fullRawText.match(VF_REGEX);
-      if (!match) return;
-      const fileName = (match[1] ?? "").trim();
-      const lineCount = parseInt(match[2] ?? "0", 10) || 0;
-      const sizeBytes = parseInt(match[3] ?? "0", 10) || 0;
-      const kbSize = (sizeBytes / 1024).toFixed(1);
-      const metaInfo = `${lineCount.toLocaleString()} 行 · ${kbSize} KB`;
-      let userPrompt = fullRawText.slice(0, startIndex);
-      userPrompt = userPrompt.replace(/```[a-z]*\s*$/i, "").trim();
-      if (userPrompt === "请查阅并分析以下文本内容：" || userPrompt === "请查阅以下文本：") {
-        userPrompt = "";
-      }
-      let promptAlreadyVisible = false;
-      let prev = hostBlock.previousElementSibling;
-      while (prev) {
-        if (prev.textContent && prev.textContent.trim().length > 0) {
-          promptAlreadyVisible = true;
-          break;
-        }
-        prev = prev.previousElementSibling;
-      }
-      const pill = withSelfMutation(() => {
-        let isExpanded = false;
-        const toggleBtn = el(
-          "button",
-          {
-            type: "button",
-            style: "background:rgba(255,255,255,0.08);border:1px solid rgba(148,163,184,0.25);color:#cbd5e1;padding:3px 12px;border-radius:999px;font:11px sans-serif;cursor:pointer;margin-left:auto;transition:all 0.15s ease;"
-          },
-          ["展开查看文本"]
-        );
-        const capsule = el(
-          "div",
-          {
-            className: "ai-turbo-chat-capsule",
-            style: "display:inline-flex;align-items:center;gap:8px;padding:6px 14px;background:rgba(18,24,38,0.95);border:1px solid rgba(52,211,153,0.45);border-radius:9999px;box-shadow:0 2px 10px rgba(0,0,0,0.3);user-select:none;max-width:100%;box-sizing:border-box;margin:6px 0 10px;"
-          },
-          [
-            el("span", { style: "font-size:14px;line-height:1;" }, ["📄"]),
-            el(
-              "span",
-              {
-                style: "font:600 12px ui-monospace,monospace;color:#f1f5f9;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-              },
-              [fileName]
-            ),
-            el(
-              "span",
-              {
-                style: "font:10px ui-monospace;background:rgba(52,211,153,0.15);color:#34d399;padding:2px 6px;border-radius:4px;"
-              },
-              [metaInfo]
-            ),
-            toggleBtn
-          ]
-        );
-        hostBlock.classList.add("ai-turbo-chat-folded-target");
-        hostBlock.style.setProperty("display", "none", "important");
-        hostBlock.style.setProperty("contain", "strict", "important");
-        toggleBtn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          isExpanded = !isExpanded;
-          toggleBtn.textContent = isExpanded ? "收起文本" : "展开查看文本";
-          if (isExpanded) {
-            hostBlock.style.setProperty("display", "block", "important");
-            hostBlock.style.setProperty("max-height", "320px", "important");
-            hostBlock.style.setProperty("overflow", "auto", "important");
-          } else {
-            hostBlock.style.setProperty("display", "none", "important");
-          }
-        });
-        if (!promptAlreadyVisible && userPrompt) {
-          const promptElem = el(
-            "div",
-            {
-              className: "ai-turbo-chat-user-prompt",
-              style: "margin-bottom:8px!important;white-space:pre-wrap!important;word-break:break-word!important;font:inherit!important;color:inherit!important;line-height:1.5!important;"
-            },
-            [userPrompt]
-          );
-          hostBlock.insertAdjacentElement("beforebegin", promptElem);
-        }
-        return capsule;
-      });
-      const mountedRow = mountVirtualFileCapsuleOutsideTurn(turnElement, pill);
-      if (mountedRow) {
-        processedUserTurns.add(turnElement);
-      }
-    }
-    return { collapseInChatFileBlocks };
-  }
-
   // scripts/ai-chat-turbo-engine/src/ui/icons.ts
   function createUiIcon(name, size = 14) {
     const paths = {
@@ -7598,6 +7792,471 @@ ${contentText}`);
       svg.appendChild(path);
     }
     return svg;
+  }
+
+  // scripts/ai-chat-turbo-engine/src/ui/text-preview.ts
+  var TEXT_PREVIEW_MODAL_ID = "ai-turbo-vf-preview-modal";
+  var TEXT_PREVIEW_CHAR_LIMIT = 12e3;
+  var restoreFocusTarget = null;
+  function closeTextPreview() {
+    const modal = document.getElementById(TEXT_PREVIEW_MODAL_ID);
+    if (!modal) return false;
+    const target = restoreFocusTarget;
+    modal.remove();
+    restoreFocusTarget = null;
+    if (target instanceof HTMLElement && target.isConnected) {
+      target.focus({ preventScroll: true });
+    }
+    return true;
+  }
+  function copyWithTextarea(text) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "readonly");
+    area.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none;";
+    document.body.appendChild(area);
+    area.select();
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch {
+      copied = false;
+    }
+    area.remove();
+    return copied;
+  }
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+    }
+    return copyWithTextarea(text);
+  }
+  function formatCount(value) {
+    return value.toLocaleString("zh-CN");
+  }
+  function showTextPreview(options) {
+    const { el, name, meta, content, note } = options;
+    const fullText = content ?? "";
+    const focusSource = document.activeElement;
+    closeTextPreview();
+    restoreFocusTarget = focusSource instanceof HTMLElement ? focusSource : null;
+    const backdrop = el("div", {
+      id: TEXT_PREVIEW_MODAL_ID,
+      className: "ai-turbo-modal-backdrop ai-turbo-text-preview"
+    });
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) closeTextPreview();
+    });
+    const titleNode = el(
+      "span",
+      { className: "ai-turbo-text-preview-name", title: name },
+      [name]
+    );
+    const metaNode = el("span", { className: "ai-turbo-text-preview-meta" }, [
+      meta
+    ]);
+    const closeBtn = el(
+      "button",
+      {
+        type: "button",
+        className: "ai-turbo-text-preview-close",
+        title: "关闭预览",
+        "aria-label": "关闭预览"
+      },
+      ["✕"]
+    );
+    closeBtn.addEventListener("click", () => closeTextPreview());
+    const header = el("div", { className: "ai-turbo-text-preview-header" }, [
+      el("div", { className: "ai-turbo-text-preview-heading" }, [
+        titleNode,
+        metaNode
+      ]),
+      closeBtn
+    ]);
+    const body = el("pre", {
+      className: "ai-turbo-text-preview-body",
+      tabindex: "0"
+    });
+    const renderBody = (limit) => {
+      body.textContent = fullText ? fullText.slice(0, limit) : "（这条消息里没有可预览的正文）";
+    };
+    renderBody(TEXT_PREVIEW_CHAR_LIMIT);
+    const charCount = fullText.length;
+    const lineCount = fullText ? fullText.split("\n").length : 0;
+    const info = el("span", { className: "ai-turbo-text-preview-info" }, [
+      `${formatCount(charCount)} 字符 · ${formatCount(lineCount)} 行`,
+      ...note ? [` · ${note}`] : []
+    ]);
+    const actions = el("div", { className: "ai-turbo-text-preview-actions" });
+    if (charCount > TEXT_PREVIEW_CHAR_LIMIT) {
+      const expandBtn = el(
+        "button",
+        { type: "button", className: "ai-turbo-text-preview-action" },
+        [`显示全部（${formatCount(charCount)} 字符）`]
+      );
+      expandBtn.addEventListener("click", () => {
+        renderBody(charCount);
+        expandBtn.remove();
+      });
+      actions.appendChild(expandBtn);
+    }
+    const copyBtn = el(
+      "button",
+      { type: "button", className: "ai-turbo-text-preview-action" },
+      ["复制全部"]
+    );
+    copyBtn.addEventListener("click", () => {
+      void copyText(fullText).then((copied) => {
+        copyBtn.textContent = copied ? "已复制" : "复制失败";
+        window.setTimeout(() => {
+          if (copyBtn.isConnected) copyBtn.textContent = "复制全部";
+        }, 1600);
+      });
+    });
+    actions.appendChild(copyBtn);
+    const footer = el("div", { className: "ai-turbo-text-preview-footer" }, [
+      info,
+      actions
+    ]);
+    const dialog = el(
+      "div",
+      {
+        className: "ai-turbo-text-preview-dialog",
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-label": `${name} 预览`
+      },
+      [header, body, footer]
+    );
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeTextPreview();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusables = Array.from(
+        dialog.querySelectorAll("button:not([disabled])")
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+    backdrop.appendChild(dialog);
+    document.body.appendChild(backdrop);
+    closeBtn.focus({ preventScroll: true });
+  }
+
+  // scripts/ai-chat-turbo-engine/src/ui/chat-capsules.ts
+  var GENERIC_PROMPTS = /* @__PURE__ */ new Set([
+    "请查阅并分析以下文本内容：",
+    "请查阅以下文本："
+  ]);
+  var BLOCK_TAGS = /* @__PURE__ */ new Set([
+    "P",
+    "DIV",
+    "PRE",
+    "LI",
+    "BLOCKQUOTE",
+    "TD",
+    "SECTION",
+    "ARTICLE",
+    "CODE-BLOCK"
+  ]);
+  function escapePattern(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function createTokenPattern() {
+    return new RegExp(
+      `${escapePattern(VF_TOKEN_START)}([^|\\r\\n]+)\\|(\\d+)\\|(\\d+)${escapePattern(VF_TOKEN_END)}`,
+      "g"
+    );
+  }
+  var FENCE_WITH_LANG_TAIL = /(?:^|\n)[ \t]*`{3,}[a-z0-9_-]+[ \t]*$/i;
+  var FENCE_TAIL = /(?:^|\n)[ \t]*`{3,}[ \t]*$/i;
+  var FENCE_AFTER_PROMPT = /`{3,}[a-z0-9_-]+[ \t]*$/i;
+  function dropFenceLine(text, pattern) {
+    const next = text.replace(pattern, "");
+    return next === text ? text : next.replace(/[ \t]+$/, "");
+  }
+  function stripWrapper(raw, options) {
+    let text = raw.replace(/\r\n?/g, "\n").replace(/\s+$/, "");
+    if (options.nextBlock) {
+      text = dropFenceLine(text, FENCE_WITH_LANG_TAIL).replace(/\s+$/, "");
+    }
+    text = dropFenceLine(text, FENCE_TAIL);
+    return text.replace(/^\n+/, "").replace(/\s+$/, "");
+  }
+  function parseChatVirtualFileMessage(source) {
+    if (!source || !source.includes(VF_TOKEN_START)) return null;
+    const pattern = createTokenPattern();
+    const headers = [];
+    let match = pattern.exec(source);
+    while (match) {
+      if (match[0]) headers.push(match);
+      match = pattern.exec(source);
+    }
+    if (!headers.length) return null;
+    const files = [];
+    for (let index = 0; index < headers.length; index++) {
+      const header = headers[index];
+      const next = headers[index + 1];
+      const bodyStart = header.index + header[0].length;
+      files.push({
+        name: (header[1] ?? "").trim() || "pasted_text.txt",
+        lineCount: Number.parseInt(header[2] ?? "0", 10) || 0,
+        sizeBytes: Number.parseInt(header[3] ?? "0", 10) || 0,
+        content: stripWrapper(
+          source.slice(bodyStart, next ? next.index : source.length),
+          { nextBlock: Boolean(next) }
+        )
+      });
+    }
+    const prompt = dropFenceLine(
+      stripWrapper(source.slice(0, headers[0].index), { nextBlock: true }),
+      FENCE_AFTER_PROMPT
+    ).trim();
+    return {
+      prompt: GENERIC_PROMPTS.has(prompt) ? "" : prompt,
+      files
+    };
+  }
+  function isBlockContainer(element) {
+    if (BLOCK_TAGS.has(element.tagName)) return true;
+    return element.classList.contains("query-text") || element.classList.contains("user-query-text");
+  }
+  function collectTokenContainers(turn) {
+    const containers = [];
+    const seen = /* @__PURE__ */ new Set();
+    const walker = document.createTreeWalker(turn, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const value = node.nodeValue;
+      if (value && value.includes(VF_TOKEN_START)) {
+        let block = node.parentElement;
+        while (block && block !== turn && !isBlockContainer(block)) {
+          block = block.parentElement;
+        }
+        const container = block ?? turn;
+        if (container instanceof HTMLElement && !seen.has(container)) {
+          seen.add(container);
+          containers.push(container);
+        }
+      }
+      node = walker.nextNode();
+    }
+    return containers;
+  }
+  function turnShowsPrompt(turn, prompt, hidden) {
+    if (!prompt) return false;
+    const probe = prompt.slice(0, 60);
+    const walker = document.createTreeWalker(turn, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const value = node.nodeValue;
+      const parent = node.parentElement;
+      if (value && parent && value.includes(probe)) {
+        const insideHidden = hidden.some((node_) => node_.contains(parent));
+        if (!insideHidden) return true;
+      }
+      node = walker.nextNode();
+    }
+    return false;
+  }
+  function createChatCapsuleUtils(deps) {
+    const { el, withSelfMutation, state } = deps;
+    let mounts = /* @__PURE__ */ new WeakMap();
+    const trackedTurns = /* @__PURE__ */ new Set();
+    function detachMount(turn) {
+      const mount = mounts.get(turn);
+      trackedTurns.delete(turn);
+      mounts.delete(turn);
+      if (!mount) return;
+      withSelfMutation(() => {
+        mount.row.remove();
+        if (mount.prompt?.isConnected) mount.prompt.remove();
+        for (const node of mount.hidden) {
+          if (node.isConnected) restoreContainer(node);
+        }
+      });
+    }
+    function restoreContainer(container) {
+      container.classList.remove("ai-turbo-chat-folded-target");
+      container.style.removeProperty("display");
+      container.style.removeProperty("contain");
+    }
+    function isMountHealthy(mount) {
+      if (!mount.row.isConnected) return false;
+      for (const node of mount.hidden) {
+        if (!node.isConnected) return false;
+        if (!node.classList.contains("ai-turbo-chat-folded-target")) {
+          return false;
+        }
+        if (node.style.getPropertyValue("display") !== "none") return false;
+      }
+      return true;
+    }
+    function syncRowVisibility(turn, mount) {
+      const collapsed = turn.classList.contains("ai-turbo-dehydrated");
+      if (mount.collapsed === collapsed) return;
+      withSelfMutation(() => {
+        mount.collapsed = collapsed;
+        if (collapsed) {
+          mount.row.style.setProperty("display", "none", "important");
+          return;
+        }
+        mount.row.style.removeProperty("display");
+      });
+    }
+    function openPreview(turn, index, fallback) {
+      const parsed = parseChatVirtualFileMessage(turn.textContent ?? "");
+      const file = parsed?.files[index] ?? {
+        name: fallback.name,
+        lineCount: fallback.lineCount,
+        sizeBytes: fallback.sizeBytes,
+        content: ""
+      };
+      showTextPreview({
+        el,
+        name: file.name,
+        meta: `${file.lineCount.toLocaleString("zh-CN")} 行 · ${(file.sizeBytes / 1024).toFixed(1)} KB`,
+        content: file.content,
+        note: file.content ? "来自你发送的消息" : "正文已不在页面中，重新打开这段对话后再试"
+      });
+    }
+    function createCapsule(turn, file, index) {
+      const metaInfo = `${file.lineCount.toLocaleString("zh-CN")} 行 · ${(file.sizeBytes / 1024).toFixed(1)} KB`;
+      const capsule = el(
+        "button",
+        {
+          type: "button",
+          className: "ai-turbo-chat-capsule",
+          title: `查看 ${file.name}`,
+          "aria-label": `查看虚拟文件 ${file.name}，${metaInfo}`
+        },
+        [
+          el("span", { className: "ai-turbo-chat-capsule-icon" }, [
+            createUiIcon("file", 13)
+          ]),
+          el("span", { className: "ai-turbo-chat-capsule-name" }, [file.name]),
+          el("span", { className: "ai-turbo-chat-capsule-meta" }, [metaInfo]),
+          el("span", { className: "ai-turbo-chat-capsule-action" }, ["查看"])
+        ]
+      );
+      capsule.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openPreview(turn, index, file);
+      });
+      return capsule;
+    }
+    function collapseInChatFileBlocks(turnElement) {
+      if (!state.virtualFileEnabled) return;
+      if (!(turnElement instanceof Element) || !turnElement.isConnected) return;
+      const existing = mounts.get(turnElement);
+      if (existing) {
+        if (isMountHealthy(existing) && existing.fileCount > 0) {
+          syncRowVisibility(turnElement, existing);
+          return;
+        }
+        detachMount(turnElement);
+      }
+      const parsed = parseChatVirtualFileMessage(turnElement.textContent ?? "");
+      if (!parsed) return;
+      if (!parsed.files.some((file) => file.content.length > 0)) return;
+      const containers = collectTokenContainers(turnElement);
+      if (!containers.length) return;
+      const mount = withSelfMutation(() => {
+        for (const container of containers) {
+          container.classList.add("ai-turbo-chat-folded-target");
+          container.style.setProperty("display", "none", "important");
+          container.style.setProperty("contain", "strict", "important");
+        }
+        const wholeTurnHidden = containers.includes(
+          turnElement
+        );
+        const inlinePrompt = wholeTurnHidden || Boolean(parsed.prompt) && !turnShowsPrompt(turnElement, parsed.prompt, containers);
+        let promptNode = null;
+        if (inlinePrompt && !wholeTurnHidden) {
+          promptNode = el("div", { className: "ai-turbo-chat-user-prompt" }, [
+            parsed.prompt
+          ]);
+          containers[0].insertAdjacentElement("beforebegin", promptNode);
+        }
+        const row = el("div", {
+          className: "ai-turbo-chat-file-row",
+          role: "group",
+          "aria-label": "虚拟文件"
+        });
+        const stack = el("div", { className: "ai-turbo-chat-file-stack" });
+        if (inlinePrompt && wholeTurnHidden) {
+          stack.appendChild(
+            el("div", { className: "ai-turbo-chat-user-prompt" }, [
+              parsed.prompt
+            ])
+          );
+        }
+        parsed.files.forEach((file, index) => {
+          stack.appendChild(createCapsule(turnElement, file, index));
+        });
+        row.appendChild(stack);
+        turnElement.insertAdjacentElement("afterend", row);
+        return {
+          row,
+          prompt: promptNode,
+          hidden: containers,
+          fileCount: parsed.files.length,
+          collapsed: false
+        };
+      });
+      mounts.set(turnElement, mount);
+      trackedTurns.add(turnElement);
+      syncRowVisibility(turnElement, mount);
+    }
+    function sweep(turns) {
+      if (!trackedTurns.size) return;
+      const live = new Set(turns);
+      for (const turn of Array.from(trackedTurns)) {
+        if (!state.virtualFileEnabled) {
+          reset();
+          return;
+        }
+        if (!turn.isConnected || !live.has(turn)) {
+          detachMount(turn);
+          continue;
+        }
+        const mount = mounts.get(turn);
+        if (!mount) {
+          trackedTurns.delete(turn);
+          continue;
+        }
+        if (!isMountHealthy(mount)) {
+          collapseInChatFileBlocks(turn);
+          continue;
+        }
+        syncRowVisibility(turn, mount);
+      }
+    }
+    function reset() {
+      for (const turn of Array.from(trackedTurns)) {
+        detachMount(turn);
+      }
+      trackedTurns.clear();
+      mounts = /* @__PURE__ */ new WeakMap();
+    }
+    return { collapseInChatFileBlocks, sweep, reset };
   }
 
   // scripts/ai-chat-turbo-engine/src/ui/virtual-files.ts
@@ -7784,78 +8443,13 @@ ${contentText}`);
       renderVirtualFileTray();
     }
     function showTextPreviewModal(fileItem) {
-      document.getElementById("ai-turbo-vf-preview-modal")?.remove();
-      const previewBackdrop = el("div", {
-        id: "ai-turbo-vf-preview-modal",
-        className: "ai-turbo-modal-backdrop",
-        onclick: (event) => {
-          if (event.target === previewBackdrop) previewBackdrop.remove();
-        }
+      showTextPreview({
+        el,
+        name: fileItem.name,
+        meta: `${fileItem.lineCount.toLocaleString("zh-CN")} 行 · ${(fileItem.size / 1024).toFixed(1)} KB`,
+        content: fileItem.content,
+        note: "发送时会提交完整文本"
       });
-      const titleSpan = el(
-        "span",
-        {
-          style: "font:600 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#f8fafc;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-        },
-        [
-          `📄 ${fileItem.name} (${fileItem.lineCount.toLocaleString()} 行 · ${(fileItem.size / 1024).toFixed(1)} KB)`
-        ]
-      );
-      const closeBtn = el(
-        "button",
-        {
-          type: "button",
-          style: "background:transparent;border:0;color:#94a3b8;cursor:pointer;font-size:16px;line-height:1;padding:4px;border-radius:4px;",
-          onclick: () => previewBackdrop.remove()
-        },
-        ["✕"]
-      );
-      const header = el(
-        "div",
-        {
-          style: "flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid rgba(148,163,184,0.15);background:rgba(18,24,38,0.98);"
-        },
-        [titleSpan, closeBtn]
-      );
-      const bodyText = el(
-        "pre",
-        {
-          style: "flex:1 1 auto;min-height:0;margin:0;padding:16px;overflow-y:auto;overflow-x:auto;background:rgba(5,8,15,0.7);font:12px/1.6 ui-monospace,monospace;color:#cbd5e1;white-space:pre-wrap;word-break:break-all;"
-        },
-        [
-          fileItem.content.slice(0, 8e3) + (fileItem.content.length > 8e3 ? "\n\n... (预览仅截取前 8,000 字符，发送时将提交完整全部文本)" : "")
-        ]
-      );
-      const footerText = el(
-        "span",
-        { style: "font:11px sans-serif;color:#64748b;" },
-        ["按 Esc 键或点击外部任意区域即可快速关闭"]
-      );
-      const footerCloseBtn = el(
-        "button",
-        {
-          type: "button",
-          style: "background:rgba(255,255,255,0.08);border:1px solid rgba(148,163,184,0.25);color:#e2e8f0;padding:4px 14px;border-radius:6px;font:11px sans-serif;cursor:pointer;",
-          onclick: () => previewBackdrop.remove()
-        },
-        ["关闭"]
-      );
-      const footer = el(
-        "div",
-        {
-          style: "flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-top:1px solid rgba(148,163,184,0.15);background:rgba(18,24,38,0.98);"
-        },
-        [footerText, footerCloseBtn]
-      );
-      const modalBox = el(
-        "div",
-        {
-          style: "background:#0d121c;border:1px solid rgba(52,211,153,0.35);box-shadow:0 24px 60px rgba(0,0,0,0.85);border-radius:14px;width:720px;max-width:94vw;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;"
-        },
-        [header, bodyText, footer]
-      );
-      previewBackdrop.appendChild(modalBox);
-      document.body.appendChild(previewBackdrop);
     }
     function renderVirtualFileTray() {
       let tray = document.getElementById("ai-turbo-vf-tray");
@@ -8192,6 +8786,148 @@ ${CODE_FENCE}`;
     conversations-list,
     conversations-list > * {
       contain: layout style !important;
+    }
+`;
+  var SIDEBAR_PEEK_CSS = `
+    [data-ai-turbo-sidebar-peek] {
+      width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      z-index: 5 !important;
+      transition: none !important;
+    }
+
+    [data-ai-turbo-sidebar-peek="left"] {
+      margin-right: var(--ai-turbo-sidebar-peek-shift, 0px) !important;
+    }
+
+    [data-ai-turbo-sidebar-peek="right"] {
+      margin-left: var(--ai-turbo-sidebar-peek-shift, 0px) !important;
+    }
+
+    /* ChatGPT keeps the expanded panel mounted at opacity 0 next to the rail.
+       Its inner scroller is lifted by the peek module because that node holds
+       an inline hidden-display rule, which a stylesheet cannot beat. */
+    aside.app-shell-left-panel[data-ai-turbo-sidebar-peek] #app-shell-sidebar > div:nth-child(2) {
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      transition: none !important;
+    }
+
+    /* Qwen hides history rows through visibility on their wrapper levels, so
+       every level between the rail and the title has to re-enter. */
+    #sidebar.sidebar[data-ai-turbo-sidebar-peek] {
+      max-width: var(--ai-turbo-sidebar-peek-width, 240px) !important;
+    }
+
+    #sidebar.sidebar[data-ai-turbo-sidebar-peek] :is(.session-list-wrapper, .sidebar-entry-list-content) {
+      visibility: visible !important;
+      opacity: 1 !important;
+      transition: none !important;
+    }
+
+    #sidebar.sidebar[data-ai-turbo-sidebar-peek] :is(.sidebar-entry-list-text, .chat-item-title-text, .folder-name) {
+      visibility: visible !important;
+      opacity: 1 !important;
+      transition: none !important;
+    }
+
+    /* ChatGLM shrinks every entry to its icon and removes the label box. */
+    aside.el-aside.aside-container[data-ai-turbo-sidebar-peek] :is(.aside-subject, .aside-subjects) {
+      width: auto !important;
+    }
+
+    aside.el-aside.aside-container[data-ai-turbo-sidebar-peek] .subject-text {
+      display: flex !important;
+      transition: none !important;
+    }
+
+    /* Z.ai pins its inner shell to the collapsed width and blurs labels. */
+    #sidebar[data-ai-turbo-sidebar-peek] > [role="presentation"] {
+      width: var(--ai-turbo-sidebar-peek-width, 238px) !important;
+      transition: none !important;
+    }
+
+    #sidebar[data-ai-turbo-sidebar-peek] [data-slot="sidebar-label"] {
+      max-width: none !important;
+      opacity: 1 !important;
+      filter: none !important;
+      transition: none !important;
+    }
+
+    #sidebar[data-ai-turbo-sidebar-peek] [data-testid="sidebar-scroll-region"] {
+      opacity: 1 !important;
+      transition: none !important;
+    }
+
+    #sidebar[data-ai-turbo-sidebar-peek] [role="presentation"] :is(button.w-full, a.w-full) {
+      width: 100% !important;
+      transition: none !important;
+    }
+
+    /* Perplexity clips its nav at the collapsed width inside the spacing
+       wrapper, so the wrapper rule alone keeps the labels cut off. */
+    div.w-sideBarWidth[data-ai-turbo-sidebar-peek] nav {
+      width: var(--ai-turbo-sidebar-peek-width, 240px) !important;
+      transition: none !important;
+    }
+
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed {
+      width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      transition: none !important;
+    }
+
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed :is(.label-and-badge, .title-text) {
+      visibility: visible !important;
+      opacity: 1 !important;
+      transition: none !important;
+    }
+
+    /* Gemini hides the whole history scroller while collapsed, so restoring a
+       single label is not enough; the list itself has to re-enter the flow. */
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed infinite-scroller,
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed infinite-scroller * {
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed mat-nav-list {
+      display: flex !important;
+      flex-direction: column !important;
+      transition: none !important;
+    }
+
+    /* Copilot pins the rail width with !important inside its application
+       cascade layer, which outranks every unlayered !important declaration.
+       Only a layered !important can win, so these rules join the site's first
+       layer: foundation already holds that position, so the site's own layer
+       order stays exactly as declared whether this sheet is parsed before or
+       after the site styles. The rail's own rail-width variable has to move
+       as well, otherwise the drawer body keeps the collapsed geometry even
+       when the outer box grows. */
+    @layer foundation {
+      div.fui-NavDrawer[data-ai-turbo-sidebar-peek] {
+        --m365-nav-rail-width: var(--ai-turbo-sidebar-peek-width, 256px);
+        width: var(--ai-turbo-sidebar-peek-width, 256px) !important;
+        min-width: var(--ai-turbo-sidebar-peek-width, 256px) !important;
+        max-width: var(--ai-turbo-sidebar-peek-width, 256px) !important;
+      }
+
+      div.fui-NavDrawer[data-ai-turbo-sidebar-peek] .fui-NavDrawerBody {
+        width: auto !important;
+        transition: none !important;
+      }
+
+      div.fui-NavDrawer[data-ai-turbo-sidebar-peek] a.fui-NavItem {
+        min-width: 0 !important;
+        max-width: none !important;
+        transition: none !important;
+      }
+    }
+
+    /* The collapsed drawer removes the label box from layout. */
+    div.fui-NavDrawer[data-ai-turbo-sidebar-peek] a.fui-NavItem > span:last-child {
+      display: block !important;
+      opacity: 1 !important;
+      transition: none !important;
     }
 `;
   var BASE_ENGINE_CSS = `
@@ -8552,18 +9288,63 @@ ${CODE_FENCE}`;
     }
 
     .ai-turbo-chat-capsule {
+      appearance: none !important;
+      -webkit-appearance: none !important;
       display: inline-flex !important;
       align-items: center !important;
       gap: 8px !important;
-      padding: 6px 14px !important;
+      min-width: 0 !important;
+      padding: 6px 10px 6px 11px !important;
       margin: 0 !important;
-      max-width: min(100%, 680px) !important;
+      max-width: 100% !important;
       background: #111619 !important;
       border: 1px solid rgba(153, 166, 161, 0.18) !important;
       border-left: 2px solid rgba(101, 210, 164, 0.7) !important;
       border-radius: 10px !important;
       box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16) !important;
+      color: #e7eeea !important;
+      font: inherit !important;
+      text-align: left !important;
+      cursor: pointer !important;
       user-select: none !important;
+      transition:
+        border-color 120ms ease,
+        background 120ms ease !important;
+    }
+
+    .ai-turbo-chat-capsule-icon {
+      flex: 0 0 auto !important;
+      display: inline-flex !important;
+      color: #72d6ab !important;
+    }
+
+    .ai-turbo-chat-capsule-name {
+      min-width: 0 !important;
+      max-width: 260px !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+      color: #f1f5f9 !important;
+      font: 600 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+    }
+
+    .ai-turbo-chat-capsule-meta {
+      flex: 0 0 auto !important;
+      padding: 2px 6px !important;
+      border-radius: 4px !important;
+      background: rgba(101, 210, 164, 0.12) !important;
+      color: #72d6ab !important;
+      font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+      white-space: nowrap !important;
+    }
+
+    .ai-turbo-chat-capsule-action {
+      flex: 0 0 auto !important;
+      padding-left: 8px !important;
+      border-left: 1px solid rgba(153, 166, 161, 0.16) !important;
+      color: #9fb3ab !important;
+      font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      white-space: nowrap !important;
     }
 
     .ai-turbo-chat-file-row {
@@ -8584,14 +9365,44 @@ ${CODE_FENCE}`;
       pointer-events: auto !important;
     }
 
+    .ai-turbo-chat-file-stack {
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: flex-end !important;
+      gap: 6px !important;
+      min-width: 0 !important;
+      max-width: 100% !important;
+    }
+
+    .ai-turbo-chat-user-prompt {
+      max-width: 100% !important;
+      margin: 0 0 2px !important;
+      color: inherit !important;
+      font: inherit !important;
+      line-height: 1.5 !important;
+      white-space: pre-wrap !important;
+      overflow-wrap: anywhere !important;
+      text-align: left !important;
+      user-select: text !important;
+    }
+
     .ai-turbo-chat-file-row .ai-turbo-chat-capsule {
       flex: 0 1 auto !important;
       min-width: 0 !important;
       max-width: min(680px, 100%) !important;
     }
 
-    .ai-turbo-chat-capsule:hover {
-      border-color: rgba(101, 210, 164, 0.3) !important;
+    .ai-turbo-chat-capsule:hover,
+    .ai-turbo-chat-capsule:focus-visible {
+      border-color: rgba(101, 210, 164, 0.42) !important;
+      background: #161d21 !important;
+      outline: none !important;
+    }
+
+    .ai-turbo-chat-capsule:focus-visible {
+      box-shadow:
+        0 0 0 2px rgba(101, 210, 164, 0.45),
+        0 5px 16px rgba(0, 0, 0, 0.16) !important;
     }
 
     .ai-turbo-modal-backdrop {
@@ -8608,6 +9419,134 @@ ${CODE_FENCE}`;
       box-sizing: border-box !important;
     }
 
+    .ai-turbo-text-preview-dialog {
+      display: flex !important;
+      flex-direction: column !important;
+      width: 760px !important;
+      max-width: 94vw !important;
+      max-height: 86vh !important;
+      overflow: hidden !important;
+      box-sizing: border-box !important;
+      background: #0d121c !important;
+      border: 1px solid rgba(101, 210, 164, 0.32) !important;
+      border-radius: 14px !important;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85) !important;
+      color: #cbd5e1 !important;
+      font: 12px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+    }
+
+    .ai-turbo-text-preview-header {
+      flex: 0 0 auto !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 12px !important;
+      padding: 12px 14px 12px 18px !important;
+      border-bottom: 1px solid rgba(153, 166, 161, 0.15) !important;
+      background: rgba(18, 24, 38, 0.98) !important;
+    }
+
+    .ai-turbo-text-preview-heading {
+      min-width: 0 !important;
+      display: flex !important;
+      align-items: baseline !important;
+      gap: 10px !important;
+    }
+
+    .ai-turbo-text-preview-name {
+      min-width: 0 !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+      color: #f8fafc !important;
+      font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+    }
+
+    .ai-turbo-text-preview-meta {
+      flex: 0 0 auto !important;
+      color: #72d6ab !important;
+      font: 10.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+      white-space: nowrap !important;
+    }
+
+    .ai-turbo-text-preview-close {
+      flex: 0 0 auto !important;
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      padding: 4px 7px !important;
+      border: 0 !important;
+      border-radius: 6px !important;
+      background: transparent !important;
+      color: #94a3b8 !important;
+      font: 15px/1 sans-serif !important;
+      cursor: pointer !important;
+    }
+
+    .ai-turbo-text-preview-close:hover {
+      color: #e2e8f0 !important;
+      background: rgba(255, 255, 255, 0.08) !important;
+    }
+
+    .ai-turbo-text-preview-body {
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      padding: 16px !important;
+      overflow: auto !important;
+      background: rgba(5, 8, 15, 0.7) !important;
+      color: #cbd5e1 !important;
+      font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+      white-space: pre-wrap !important;
+      overflow-wrap: anywhere !important;
+      tab-size: 4 !important;
+      user-select: text !important;
+    }
+
+    .ai-turbo-text-preview-footer {
+      flex: 0 0 auto !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 12px !important;
+      padding: 10px 14px 10px 18px !important;
+      border-top: 1px solid rgba(153, 166, 161, 0.15) !important;
+      background: rgba(18, 24, 38, 0.98) !important;
+    }
+
+    .ai-turbo-text-preview-info {
+      min-width: 0 !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+      color: #64748b !important;
+      font: 11px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+    }
+
+    .ai-turbo-text-preview-actions {
+      flex: 0 0 auto !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+    }
+
+    .ai-turbo-text-preview-action {
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      padding: 5px 12px !important;
+      border: 1px solid rgba(153, 166, 161, 0.2) !important;
+      border-radius: 7px !important;
+      background: rgba(255, 255, 255, 0.06) !important;
+      color: #e2e8f0 !important;
+      font: 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      cursor: pointer !important;
+      white-space: nowrap !important;
+    }
+
+    .ai-turbo-text-preview-action:hover {
+      border-color: rgba(101, 210, 164, 0.36) !important;
+      color: #72d6ab !important;
+    }
+
     @media (prefers-reduced-motion: reduce) {
       .ai-turbo-vf-tray,
       .ai-turbo-vf-pill,
@@ -8620,8 +9559,10 @@ ${CODE_FENCE}`;
     }
   `;
   function injectEngineStyles(options = {}) {
-    const css = options.geminiNativeRender ? `${BASE_ENGINE_CSS}
-${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
+    const baseCss = `${BASE_ENGINE_CSS}
+${SIDEBAR_PEEK_CSS}`;
+    const css = options.geminiNativeRender ? `${baseCss}
+${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     const existingStyle = document.getElementById(STYLE_ID);
     if (existingStyle?.isConnected) {
       if (existingStyle.textContent !== css) existingStyle.textContent = css;
@@ -8662,6 +9603,9 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
         fullTurnSyncRequested = true;
         requestUpdate();
       }
+    });
+    const sidebarPeek = createSidebarPeek({
+      sidebar: currentPlatform.sidebar ?? null
     });
     const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
     const navigationTracker = createNavigationTracker(window.location);
@@ -8728,8 +9672,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
     const chatCapsules = createChatCapsuleUtils({
       el,
       withSelfMutation,
-      state,
-      isUserTurn
+      state
     });
     const toolScope = createToolPopupScope();
     const restoreCoordinator = createRestoreCoordinator();
@@ -8840,6 +9783,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       for (const turnElement of addedTurns) {
         chatCapsules.collapseInChatFileBlocks(turnElement);
       }
+      chatCapsules.sweep(turns);
       state.totalTurns = turns.length;
       state.indexedTurns = turnTextIndex.getRecords();
       return turns;
@@ -9114,6 +10058,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       observer?.disconnect();
       codeBlocks.disconnectCodeLayoutObserver();
       motionQuiet.teardown();
+      sidebarPeek.teardown();
       if (scheduleTimer) {
         window.cancelAnimationFrame(scheduleTimer);
         window.clearTimeout(scheduleTimer);
@@ -9141,7 +10086,9 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       virtualFiles.stopSyncLoop();
       codeBlocks.unmountAllCodeControls();
       withSelfMutation(() => {
-        document.querySelectorAll(".ai-turbo-chat-capsule, .ai-turbo-chat-user-prompt").forEach((node) => node.remove());
+        document.querySelectorAll(
+          ".ai-turbo-chat-file-row, .ai-turbo-chat-capsule, .ai-turbo-chat-user-prompt"
+        ).forEach((node) => node.remove());
         document.querySelectorAll(".ai-turbo-chat-folded-target").forEach((node) => {
           if (!(node instanceof HTMLElement)) return;
           node.classList.remove("ai-turbo-chat-folded-target");
@@ -9156,6 +10103,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
           node.style.removeProperty("--turbo-cached-h");
         });
       });
+      chatCapsules.reset();
       document.getElementById(HUD_ID)?.remove();
       document.getElementById(STYLE_ID)?.remove();
       document.getElementById("ai-turbo-vf-tray")?.remove();
@@ -9178,13 +10126,9 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
         (event) => {
           if (isEngineDormant()) return;
           if (event.key === "Escape") {
-            const previewModal = document.getElementById(
-              "ai-turbo-vf-preview-modal"
-            );
-            if (previewModal) {
+            if (closeTextPreview()) {
               event.preventDefault();
               event.stopPropagation();
-              previewModal.remove();
               return;
             }
             if (state.hudOpen) {
@@ -9229,6 +10173,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       injectStyles();
       hud?.buildHUD();
       codeBlocks.observeCodeLayout();
+      sidebarPeek.bind(document);
       if (currentPlatform === PLATFORMS.gemini) motionQuiet.bind(document);
       observeDom();
       patchHistoryForSpaNavigation();
