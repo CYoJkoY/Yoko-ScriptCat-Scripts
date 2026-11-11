@@ -25,6 +25,10 @@ function selectorsOf(css: string): string[] {
 
 const CONTENT_SELECTOR =
   "model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text)";
+const SIDEBAR_EFFECT_SELECTORS =
+  "bard-sidenav, bard-sidenav side-navigation, side-navigation, side-navigation-content, sidenav-with-history-container, conversations-list";
+const SIDEBAR_CONTAIN_SELECTORS =
+  "side-navigation-content, sidenav-with-history-container, conversations-list, conversations-list > *";
 const EXPECTED_SELECTORS = [
   `${CONTENT_SELECTOR} > *`,
   `${CONTENT_SELECTOR} > :is(pre, table, blockquote)`,
@@ -32,6 +36,9 @@ const EXPECTED_SELECTORS = [
   "model-response code-block",
   ":is(top-bar, top-bar-actions, input-area, input-area-v2, side-navigation, chat-window, mat-toolbar, code-block, .top-bar, .input-area, .toolbar)",
   `${CONTENT_SELECTOR}, ${CONTENT_SELECTOR} *`,
+  SIDEBAR_EFFECT_SELECTORS,
+  "bard-sidenav",
+  SIDEBAR_CONTAIN_SELECTORS,
 ];
 
 beforeEach(() => {
@@ -61,6 +68,15 @@ describe("Gemini native message render isolation", () => {
     );
     expect(css).toContain(
       `${EXPECTED_SELECTORS[5]} { animation: none !important; transition: none !important; will-change: auto !important; }`,
+    );
+    expect(css).toContain(
+      `${SIDEBAR_EFFECT_SELECTORS} { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }`,
+    );
+    expect(css).toContain(
+      "bard-sidenav { transition-duration: 120ms !important; transition-timing-function: cubic-bezier(0.2, 0, 0, 1) !important; }",
+    );
+    expect(css).toContain(
+      `${SIDEBAR_CONTAIN_SELECTORS} { contain: layout style !important; }`,
     );
   });
 
@@ -140,6 +156,11 @@ describe("Gemini native message render isolation", () => {
     expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(/contain\s*:[^;]*\bpaint\b/i);
     expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(
       /contain\s*:\s*(?:strict|content)\b/i,
+    );
+    // The history list keeps its native height estimate: contain-intrinsic-size
+    // would make its scrollbar jump while rows mount during the sidebar motion.
+    expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(
+      /conversations-list[^{]*\{[^}]*content-visibility/,
     );
   });
 });

@@ -4,7 +4,6 @@ export const HUD_STYLES = `
 
     :host {
       color-scheme: dark;
-      --hud-panel-bg: rgba(12, 16, 18, 0.94);
       --hud-panel-solid: #0c1012;
       --hud-text: #e2ebe6;
       --hud-title: #f8fafc;
@@ -46,7 +45,6 @@ export const HUD_STYLES = `
 
     :host([data-hud-theme="light"]) {
       color-scheme: light;
-      --hud-panel-bg: rgba(255, 255, 255, 0.96);
       --hud-panel-solid: #ffffff;
       --hud-text: #1f2a26;
       --hud-title: #0f172a;
@@ -151,8 +149,6 @@ export const HUD_STYLES = `
       position: absolute;
       inset: 0;
       background: var(--hud-scrim);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -183,7 +179,7 @@ export const HUD_STYLES = `
       box-shadow: var(--hud-shadow);
       color: var(--hud-text);
       transform: scale(0.96);
-      transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+      transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       outline: none;
     }
@@ -191,14 +187,8 @@ export const HUD_STYLES = `
       .hud-panel { max-height: min(720px, calc(100dvh - 24px)); }
     }
     .modal-backdrop.open .hud-panel { transform: scale(1); }
-
-    @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-      .hud-panel {
-        background: var(--hud-panel-bg);
-        -webkit-backdrop-filter: blur(18px) saturate(140%);
-        backdrop-filter: blur(18px) saturate(140%);
-      }
-    }
+    /* The panel stays opaque: an 18px backdrop blur repaints the whole page
+       behind it on every frame of the open and close animation. */
 
     .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .brand-title { font-size: 13px; font-weight: 700; color: var(--hud-title); }

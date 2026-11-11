@@ -1,6 +1,7 @@
 import { readUserscriptInfo } from "../../../shared/userscript/globals";
 import { createTurnUtils } from "./core/turns";
 import { createTurnTextIndex } from "./core/turn-index";
+import { createMotionQuiet } from "./core/motion-quiet";
 import { classifyMutations } from "./core/mutation-classify";
 import {
   createEngineState,
@@ -71,6 +72,15 @@ export function initializeEngine(): void {
   } = createTurnUtils(currentPlatform);
 
   const state: EngineState = createEngineState();
+  // Gemini slides its history sidebar by animating width; engine resyncs wait
+  // for that motion to settle so they never compete with it.
+  const motionQuiet = createMotionQuiet({
+    onQuietEnd: () => {
+      if (isEngineDormant()) return;
+      fullTurnSyncRequested = true;
+      requestUpdate();
+    },
+  });
   const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
   // 用户手动恢复过的轮次：即使仍在保留轮次之外也不再脱水，避免阅读被打断
   const restoredTurns = new Set<Element>();
@@ -516,6 +526,12 @@ export function initializeEngine(): void {
 
   function runScheduledUpdate(): void {
     scheduleTimer = null;
+    // A sidebar transition started after this frame was booked. Defer the
+    // whole pass; the quiet window closes with one full resync.
+    if (motionQuiet.isQuiet()) {
+      fullTurnSyncRequested = true;
+      return;
+    }
     lastUpdateTime = performance.now();
     clearRenderedCache();
 
@@ -538,6 +554,12 @@ export function initializeEngine(): void {
   }
 
   function requestUpdate(): void {
+    if (motionQuiet.isQuiet()) {
+      // Skipping the pass is only safe because the closing window forces a
+      // full turn sync, so no mutation is left unapplied.
+      fullTurnSyncRequested = true;
+      return;
+    }
     if (scheduleTimer) return;
     const elapsed = performance.now() - lastUpdateTime;
     if (elapsed >= THROTTLE_INTERVAL) {
@@ -556,6 +578,12 @@ export function initializeEngine(): void {
     observer?.disconnect();
     observer = new MutationObserver((records) => {
       if (selfMutationDepth > 0) return;
+      if (motionQuiet.isQuiet()) {
+        // Classifying a sidebar mount costs more than it returns: the closing
+        // window resyncs every turn from scratch.
+        fullTurnSyncRequested = true;
+        return;
+      }
       handleMutationRecords(records);
     });
 
@@ -620,6 +648,7 @@ export function initializeEngine(): void {
 
     observer?.disconnect();
     codeBlocks.disconnectCodeLayoutObserver();
+    motionQuiet.teardown();
     if (scheduleTimer) {
       window.cancelAnimationFrame(scheduleTimer);
       window.clearTimeout(scheduleTimer);
@@ -766,6 +795,7 @@ export function initializeEngine(): void {
     injectStyles();
     hud?.buildHUD();
     codeBlocks.observeCodeLayout();
+    if (currentPlatform === PLATFORMS.gemini) motionQuiet.bind(document);
     observeDom();
     patchHistoryForSpaNavigation();
     bindGlobalListeners();

@@ -51,6 +51,37 @@ export const GEMINI_NATIVE_RENDER_CSS = `
       transition: none !important;
       will-change: auto !important;
     }
+
+    /* The history sidebar animates its width, so every frame of that motion
+       relayouts the chat column while the panel shadow and glass repaint. Keep
+       the native width animation, shorten it, and drop the depth effects that
+       only add paint. */
+    bard-sidenav,
+    bard-sidenav side-navigation,
+    side-navigation,
+    side-navigation-content,
+    sidenav-with-history-container,
+    conversations-list {
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
+    bard-sidenav {
+      transition-duration: 120ms !important;
+      transition-timing-function: cubic-bezier(0.2, 0, 0, 1) !important;
+    }
+
+    /* Layout containment keeps an opening list from invalidating siblings
+       outside the panel. Render skipping stays off here: an estimated
+       contain-intrinsic-size would make the scroll height of the history list
+       jump while rows mount. */
+    side-navigation-content,
+    sidenav-with-history-container,
+    conversations-list,
+    conversations-list > * {
+      contain: layout style !important;
+    }
 `;
 
 const BASE_ENGINE_CSS = `
