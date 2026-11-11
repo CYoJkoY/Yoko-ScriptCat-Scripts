@@ -1,16 +1,37 @@
 import { CODE_PREVIEW_HEIGHT, STYLE_ID } from "../config";
 
-export function injectEngineStyles() {
-  // The host may rebuild <head> during account switching, which drops the
-  // style node with it. Reuse a live node, otherwise restore one so the HUD
-  // never stays on screen without the engine stylesheet.
-  const existingStyle = document.getElementById(STYLE_ID);
-  if (existingStyle?.isConnected) return;
-  existingStyle?.remove();
+/**
+ * Gemini keeps every answer block of a conversation in the DOM at once, so the
+ * browser lays out and paints thousands of offscreen blocks while a long chat
+ * loads, streams, or is switched to. Block level `content-visibility` lets the
+ * browser skip that work for blocks outside the viewport. The nodes, their
+ * text, selection, and native controls all stay intact.
+ *
+ * Only `.markdown` children and native `code-block` elements are isolated.
+ * Isolating a whole turn would clip native popovers, menus, and focus rings
+ * that legitimately overflow the turn box.
+ */
+export const GEMINI_NATIVE_RENDER_CSS = `
+    model-response .markdown > * {
+      content-visibility: auto !important;
+      contain-intrinsic-size: auto 3rem !important;
+    }
 
-  const styleElement = document.createElement("style");
-  styleElement.id = STYLE_ID;
-  styleElement.textContent = `
+    model-response .markdown > :is(pre, table, blockquote) {
+      contain-intrinsic-size: auto 8rem !important;
+    }
+
+    model-response .markdown > :is(img, video, canvas, iframe) {
+      contain-intrinsic-size: auto 12rem !important;
+    }
+
+    model-response code-block {
+      content-visibility: auto !important;
+      contain-intrinsic-size: auto 10rem !important;
+    }
+`;
+
+const BASE_ENGINE_CSS = `
     .ai-turbo-dehydrated {
       content-visibility: hidden !important;
       contain: layout paint style !important;
@@ -435,6 +456,31 @@ export function injectEngineStyles() {
       }
     }
   `;
+
+export type EngineStyleOptions = {
+  /** Append the Gemini native message render isolation rules. */
+  geminiNativeRender?: boolean;
+};
+
+export function injectEngineStyles(options: EngineStyleOptions = {}): void {
+  const css = options.geminiNativeRender
+    ? `${BASE_ENGINE_CSS}\n${GEMINI_NATIVE_RENDER_CSS}`
+    : BASE_ENGINE_CSS;
+
+  // The host may rebuild <head> during account switching, which drops the
+  // style node with it. Reuse a live node, otherwise restore one so the HUD
+  // never stays on screen without the engine stylesheet. A reused node is
+  // rewritten in place when the platform rules change.
+  const existingStyle = document.getElementById(STYLE_ID);
+  if (existingStyle?.isConnected) {
+    if (existingStyle.textContent !== css) existingStyle.textContent = css;
+    return;
+  }
+  existingStyle?.remove();
+
+  const styleElement = document.createElement("style");
+  styleElement.id = STYLE_ID;
+  styleElement.textContent = css;
 
   (document.head || document.documentElement).appendChild(styleElement);
 }

@@ -26,6 +26,7 @@ import { injectEngineStyles } from "./ui/styles";
 import {
   CODE_SCAN_INTERVAL,
   HUD_ID,
+  PLATFORMS,
   STYLE_ID,
   TEXT_INDEX_FRAME_BUDGET,
   TEXT_INDEX_INTERVAL,
@@ -50,6 +51,12 @@ export function initializeEngine(): void {
   if (!detectedPlatform) return;
   // Bind the narrowed platform once so closures keep the non-null type.
   const currentPlatform: PlatformDefinition = detectedPlatform;
+  // Gemini keeps whole conversations mounted, so its native message blocks get
+  // CSS render isolation on top of the shared engine stylesheet.
+  const injectStyles = (): void =>
+    injectEngineStyles({
+      geminiNativeRender: currentPlatform === PLATFORMS.gemini,
+    });
   const {
     clearRenderedCache,
     extractTurnText,
@@ -240,7 +247,7 @@ export function initializeEngine(): void {
     flushTextIndex: () => flushTextIndex({ force: true }),
     activeFileCount: () => virtualFiles.activeFileCount(),
     clearFiles: () => virtualFiles.clearFiles(),
-    injectStyles: injectEngineStyles,
+    injectStyles,
   });
 
   function scheduleTrayPosition(): void {
@@ -746,7 +753,7 @@ export function initializeEngine(): void {
     setEngineActive(true);
 
     loadSavedConfig(state);
-    injectEngineStyles();
+    injectStyles();
     hud?.buildHUD();
     codeBlocks.observeCodeLayout();
     observeDom();
