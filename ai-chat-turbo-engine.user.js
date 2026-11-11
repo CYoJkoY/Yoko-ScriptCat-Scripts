@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.17.3
+// @version      0.17.4
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -62,6 +62,7 @@
   var LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
   var TURN_MARKER_ATTRIBUTES = /* @__PURE__ */ new Set([
     "data-testid",
+    "data-test-id",
     "data-turn",
     "data-turn-key",
     "data-message-author-role",
@@ -374,6 +375,12 @@
         ".model-response",
         ".user-query-container",
         ".model-response-container"
+      ],
+      userTurnSelectors: [
+        "user-query",
+        '[data-test-id="user-query"]',
+        ".user-query",
+        ".user-query-container"
       ],
       codeSelectors: ["code-block", "pre"],
       contentSelectors: [
@@ -969,6 +976,30 @@
   }
 
   // scripts/ai-chat-turbo-engine/src/core/text.ts
+  var TRANSCRIPT_IGNORED_SELECTORS = [
+    REASONING_SELECTOR,
+    ".ai-turbo-chat-file-row",
+    ".ai-turbo-chat-capsule",
+    ".ai-turbo-code-bar",
+    "#ai-turbo-vf-tray",
+    "#ai-turbo-vf-preview-modal",
+    "button",
+    "[role='toolbar']",
+    "script",
+    "style",
+    "svg",
+    "[hidden]"
+  ].join(", ");
+  var BLOCK_TEXT_LOCAL_NAMES = new Set(
+    Array.from(BLOCK_TEXT_TAGS, (tag) => tag.toLowerCase())
+  );
+  var TRANSCRIPT_IGNORED_LOCAL_NAMES = /* @__PURE__ */ new Set([
+    "button",
+    "model-thoughts",
+    "script",
+    "style",
+    "svg"
+  ]);
   function normalizeText(sourceText) {
     return String(sourceText || "").replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
   }
@@ -1005,58 +1036,61 @@
     if (!(rootElement instanceof Element) || matchesReasoningElement(rootElement)) {
       return "";
     }
-    const ignoredSelectors = [
-      REASONING_SELECTOR,
-      ".ai-turbo-chat-file-row",
-      ".ai-turbo-chat-capsule",
-      ".ai-turbo-code-bar",
-      "#ai-turbo-vf-tray",
-      "#ai-turbo-vf-preview-modal",
-      "button",
-      "[role='toolbar']",
-      "script",
-      "style",
-      "svg",
-      "[hidden]"
-    ].join(", ");
+    const chunks = [];
     const preservedCodeBlocks = [];
     function walk(node) {
       if (node.nodeType === Node.TEXT_NODE) {
-        return node.nodeValue || "";
+        const value = node.nodeValue;
+        if (value) chunks.push(value);
+        return;
       }
       if (!(node instanceof Element)) {
-        return Array.from(node.childNodes).map(walk).join("");
+        for (const child of node.childNodes) walk(child);
+        return;
       }
-      try {
-        if (node !== rootElement && node.matches(ignoredSelectors)) return "";
-      } catch (error) {
-        reportRecoverableError("test ignored transcript selectors", error);
+      const tag = node.localName;
+      if (node !== rootElement) {
+        if (TRANSCRIPT_IGNORED_LOCAL_NAMES.has(tag) || node.hasAttribute("hidden")) {
+          return;
+        }
+        try {
+          if (node.matches(TRANSCRIPT_IGNORED_SELECTORS)) return;
+        } catch (error) {
+          reportRecoverableError("test ignored transcript selectors", error);
+        }
       }
-      const tag = node.tagName.toUpperCase();
-      if (tag === "BR") return "\n";
-      if (tag === "PRE") {
+      if (tag === "br") {
+        chunks.push("\n");
+        return;
+      }
+      if (tag === "pre") {
         const codeText = node.textContent || "";
+        const codeChild = node.querySelector("code");
         const codeClasses = [
           node.className || "",
-          node.querySelector("code")?.className || "",
+          codeChild?.className || "",
           node.getAttribute("data-language") || "",
-          node.querySelector("code")?.getAttribute("data-language") || "",
-          node.querySelector("code")?.getAttribute("lang") || ""
+          codeChild?.getAttribute("data-language") || "",
+          codeChild?.getAttribute("lang") || ""
         ].join(" ");
         const languageMatch = /language-([a-z0-9+#.-]+)/i.exec(codeClasses);
         const language = languageMatch ? (languageMatch[1] ?? "text").toLowerCase() : "text";
         const token = `TURBO_CODE_${preservedCodeBlocks.length}`;
         preservedCodeBlocks.push({ token, codeText, language });
-        return `
+        chunks.push(`
 ${CODE_FENCE}${language}
 ${token}
 ${CODE_FENCE}
-`;
+`);
+        return;
       }
-      const content = Array.from(node.childNodes).map(walk).join("");
-      return BLOCK_TEXT_TAGS.has(tag) ? "\n" + content + "\n" : content;
+      const isBlock = BLOCK_TEXT_LOCAL_NAMES.has(tag);
+      if (isBlock) chunks.push("\n");
+      for (const child of node.childNodes) walk(child);
+      if (isBlock) chunks.push("\n");
     }
-    const text = normalizeText(walk(rootElement));
+    walk(rootElement);
+    const text = normalizeText(chunks.join(""));
     if (preservedCodeBlocks.length === 0) return text;
     return text.replace(/\uE000TURBO_CODE_(\d+)\uE001/g, (token, rawIndex) => {
       const block = preservedCodeBlocks[Number(rawIndex)];
@@ -1068,6 +1102,7 @@ ${CODE_FENCE}
   function createTurnUtils(platform) {
     let activeTurnSelectorGroup = null;
     const renderedCheckCache = /* @__PURE__ */ new Map();
+    const userTurnSelectorText = (platform.userTurnSelectors || []).join(", ");
     let cachedTurns = null;
     function invalidateTurnCache() {
       cachedTurns = null;
@@ -1107,19 +1142,13 @@ ${CODE_FENCE}
       if (roleValues.some((role) => /^(assistant|model|system)$/i.test(role))) {
         return false;
       }
-      const platformUserSelectors = platform.userTurnSelectors || [];
-      for (const selector of platformUserSelectors) {
-        if (turnElement.matches(selector) || turnElement.querySelector(selector)) {
-          return true;
-        }
+      if (userTurnSelectorText && (turnElement.matches(userTurnSelectorText) || turnElement.querySelector(userTurnSelectorText))) {
+        return true;
       }
       let ancestor = turnElement.parentElement;
       let ancestorDepth = 0;
       while (ancestor && ancestorDepth < 3) {
-        const currentAncestor = ancestor;
-        if (platformUserSelectors.some(
-          (selector) => currentAncestor.matches(selector)
-        )) {
+        if (userTurnSelectorText && ancestor.matches(userTurnSelectorText)) {
           return true;
         }
         ancestor = ancestor.parentElement;
@@ -1163,12 +1192,8 @@ ${CODE_FENCE}
       if (roleValues.some((role) => /^(assistant|model)$/i.test(role))) {
         return "assistant";
       }
-      for (const selector of platform.userTurnSelectors || []) {
-        try {
-          if (turnElement.matches(selector)) return "user";
-        } catch (error) {
-          reportRecoverableError("test user turn selector", error);
-        }
+      if (userTurnSelectorText && turnElement.matches(userTurnSelectorText)) {
+        return "user";
       }
       return isUserTurn(turnElement) ? "user" : "assistant";
     }
@@ -1573,13 +1598,33 @@ ${CODE_FENCE}
         continue;
       }
       requestUpdate = true;
-      for (const node of [...record.addedNodes, ...record.removedNodes]) {
+      for (const node of record.addedNodes) {
         if (!(node instanceof Element)) continue;
         if (matchesTurn(node)) turnStructureChanged = true;
-        if (record.addedNodes.length) codeRoots.add(node);
+        codeRoots.add(node);
+      }
+      for (const node of record.removedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (matchesTurn(node)) turnStructureChanged = true;
       }
     }
     return { requestUpdate, turnStructureChanged, dirtyTurns, codeRoots };
+  }
+
+  // scripts/ai-chat-turbo-engine/src/core/navigation.ts
+  function navigationKey(location2) {
+    return `${location2.pathname}${location2.search}`;
+  }
+  function createNavigationTracker(initialLocation) {
+    let lastKey = navigationKey(initialLocation);
+    return {
+      observe(location2) {
+        const nextKey = navigationKey(location2);
+        if (nextKey === lastKey) return false;
+        lastKey = nextKey;
+        return true;
+      }
+    };
   }
 
   // shared/storage/keyValue.ts
@@ -1798,6 +1843,12 @@ ${CODE_FENCE}
     let codeResizeObserver = null;
     let codeViewportObserver = null;
     let barsDirty = false;
+    const codeSelectorText = (currentPlatform.codeSelectors || ["pre"]).join(
+      ","
+    );
+    const userTurnSelectorText = (currentPlatform.userTurnSelectors || []).join(
+      ","
+    );
     const CODE_VIEWPORT_MARGIN = "800px 0px";
     function normalizeCodeElement(candidate) {
       if (!(candidate instanceof HTMLElement)) return null;
@@ -1808,18 +1859,18 @@ ${CODE_FENCE}
       }
       return candidate;
     }
+    function isInsideUserTurn(candidate) {
+      if (!userTurnSelectorText) return false;
+      try {
+        return candidate.matches(userTurnSelectorText) || Boolean(candidate.closest(userTurnSelectorText));
+      } catch (error) {
+        reportRecoverableError("test code card boundary", error);
+        return false;
+      }
+    }
     function toCodeElement(candidate) {
       if (candidate.closest(".ai-turbo-dehydrated")) return null;
-      const belongsToUserTurn = (currentPlatform.userTurnSelectors || []).some(
-        (selector) => {
-          try {
-            return candidate.matches(selector) || Boolean(candidate.closest(selector));
-          } catch (error) {
-            reportRecoverableError("test code card boundary", error);
-            return false;
-          }
-        }
-      );
+      const belongsToUserTurn = isInsideUserTurn(candidate);
       if (candidate.classList.contains("ai-turbo-chat-folded-target") || belongsToUserTurn || candidate.closest(
         ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], [data-content-search-unit-key$=':user'], [data-user-message-bubble='true'], [data-testid='collapsible-user-message-root'], .font-user-message"
       )) {
@@ -1830,38 +1881,27 @@ ${CODE_FENCE}
       if (isGeminiThoughtElement(codeElement)) return null;
       return codeElement;
     }
-    function getCodeSelectors() {
-      return currentPlatform.codeSelectors || ["pre"];
-    }
     function collectCodeElements(rootNode) {
       const collected = [];
-      for (const selector of getCodeSelectors()) {
-        const closest = rootNode.closest(selector);
-        if (closest) {
-          const codeElement = toCodeElement(closest);
-          if (codeElement) collected.push(codeElement);
-        }
-        if (rootNode.matches(selector)) {
-          const codeElement = toCodeElement(rootNode);
-          if (codeElement) collected.push(codeElement);
-        }
-        rootNode.querySelectorAll(selector).forEach((candidate) => {
-          const codeElement = toCodeElement(candidate);
-          if (codeElement) collected.push(codeElement);
-        });
+      const nearest = rootNode.closest(codeSelectorText);
+      if (nearest) {
+        const codeElement = toCodeElement(nearest);
+        if (codeElement) collected.push(codeElement);
       }
+      rootNode.querySelectorAll(codeSelectorText).forEach((candidate) => {
+        const codeElement = toCodeElement(candidate);
+        if (codeElement) collected.push(codeElement);
+      });
       return filterOutNested(collected).filter(
         (element) => element instanceof HTMLElement
       );
     }
     function getCodeBlocks(rootNode = document) {
       const collected = [];
-      for (const selector of getCodeSelectors()) {
-        rootNode.querySelectorAll(selector).forEach((candidate) => {
-          const codeElement = toCodeElement(candidate);
-          if (codeElement) collected.push(codeElement);
-        });
-      }
+      rootNode.querySelectorAll(codeSelectorText).forEach((candidate) => {
+        const codeElement = toCodeElement(candidate);
+        if (codeElement) collected.push(codeElement);
+      });
       return filterOutNested(collected).filter(
         (element) => element instanceof HTMLElement
       );
@@ -8624,6 +8664,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       }
     });
     const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
+    const navigationTracker = createNavigationTracker(window.location);
     const restoredTurns = /* @__PURE__ */ new Set();
     const dehydratedTurns = /* @__PURE__ */ new Set();
     let isSubmitting = false;
@@ -8967,6 +9008,13 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
       dehydratedTurns.clear();
       fullTurnSyncRequested = true;
     }
+    function applyRouteNavigation() {
+      if (!navigationTracker.observe(window.location)) return false;
+      resetTurnIndexForNavigation();
+      codeBlocks.requestCodeScan();
+      requestUpdate();
+      return true;
+    }
     function runScheduledUpdate() {
       scheduleTimer = null;
       if (motionQuiet.isQuiet()) {
@@ -9034,9 +9082,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
         const result = originalPushState.apply(this, args);
         window.setTimeout(() => {
           if (syncEngineActivation()) return;
-          resetTurnIndexForNavigation();
-          codeBlocks.requestCodeScan();
-          requestUpdate();
+          if (!applyRouteNavigation()) return;
           reasoning.scheduleReasoningRestore();
           toolMemory.scheduleRestore();
         }, 0);
@@ -9046,17 +9092,13 @@ ${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
         const result = originalReplaceState.apply(this, args);
         window.setTimeout(() => {
           if (syncEngineActivation()) return;
-          resetTurnIndexForNavigation();
-          codeBlocks.requestCodeScan();
-          requestUpdate();
+          applyRouteNavigation();
         }, 0);
         return result;
       };
       window.addEventListener("popstate", () => {
         if (syncEngineActivation()) return;
-        resetTurnIndexForNavigation();
-        codeBlocks.requestCodeScan();
-        requestUpdate();
+        if (!applyRouteNavigation()) return;
         reasoning.scheduleReasoningRestore();
         toolMemory.scheduleRestore();
       });
