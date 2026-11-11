@@ -84,6 +84,14 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   let codeViewportObserver: IntersectionObserver | null = null;
   let barsDirty = false;
 
+  /* Join once: each candidate used to repeat a closest walk per selector. */
+  const codeSelectorText = (currentPlatform.codeSelectors || ["pre"]).join(
+    ",",
+  );
+  const userTurnSelectorText = (currentPlatform.userTurnSelectors || []).join(
+    ",",
+  );
+
   /* Measure a little ahead of the viewport so bars appear before they are
      needed, without touching the hundreds of blocks far outside it. */
   const CODE_VIEWPORT_MARGIN = "800px 0px";
@@ -100,22 +108,24 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     return candidate;
   }
 
+  function isInsideUserTurn(candidate: Element): boolean {
+    if (!userTurnSelectorText) return false;
+    try {
+      return (
+        candidate.matches(userTurnSelectorText) ||
+        Boolean(candidate.closest(userTurnSelectorText))
+      );
+    } catch (error: unknown) {
+      reportRecoverableError("test code card boundary", error);
+      return false;
+    }
+  }
+
   function toCodeElement(candidate: Element): HTMLElement | null {
     /* Dehydrated turns stay unrendered; measuring them would force layout. */
     if (candidate.closest(".ai-turbo-dehydrated")) return null;
 
-    const belongsToUserTurn = (currentPlatform.userTurnSelectors || []).some(
-      (selector) => {
-        try {
-          return (
-            candidate.matches(selector) || Boolean(candidate.closest(selector))
-          );
-        } catch (error: unknown) {
-          reportRecoverableError("test code card boundary", error);
-          return false;
-        }
-      },
-    );
+    const belongsToUserTurn = isInsideUserTurn(candidate);
 
     if (
       candidate.classList.contains("ai-turbo-chat-folded-target") ||
@@ -132,28 +142,20 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     return codeElement;
   }
 
-  function getCodeSelectors(): readonly string[] {
-    return currentPlatform.codeSelectors || ["pre"];
-  }
-
   function collectCodeElements(rootNode: Element): HTMLElement[] {
     const collected: HTMLElement[] = [];
 
-    for (const selector of getCodeSelectors()) {
-      const closest = rootNode.closest(selector);
-      if (closest) {
-        const codeElement = toCodeElement(closest);
-        if (codeElement) collected.push(codeElement);
-      }
-      if (rootNode.matches(selector)) {
-        const codeElement = toCodeElement(rootNode);
-        if (codeElement) collected.push(codeElement);
-      }
-      rootNode.querySelectorAll(selector).forEach((candidate) => {
-        const codeElement = toCodeElement(candidate);
-        if (codeElement) collected.push(codeElement);
-      });
+    /* closest() includes the root itself, and one union query walks the
+       subtree once even when `pre` is nested inside a Gemini `code-block`. */
+    const nearest = rootNode.closest(codeSelectorText);
+    if (nearest) {
+      const codeElement = toCodeElement(nearest);
+      if (codeElement) collected.push(codeElement);
     }
+    rootNode.querySelectorAll(codeSelectorText).forEach((candidate) => {
+      const codeElement = toCodeElement(candidate);
+      if (codeElement) collected.push(codeElement);
+    });
 
     return filterOutNested(collected).filter(
       (element): element is HTMLElement => element instanceof HTMLElement,
@@ -163,12 +165,10 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   function getCodeBlocks(rootNode: ParentNode = document): HTMLElement[] {
     const collected: HTMLElement[] = [];
 
-    for (const selector of getCodeSelectors()) {
-      rootNode.querySelectorAll(selector).forEach((candidate) => {
-        const codeElement = toCodeElement(candidate);
-        if (codeElement) collected.push(codeElement);
-      });
-    }
+    rootNode.querySelectorAll(codeSelectorText).forEach((candidate) => {
+      const codeElement = toCodeElement(candidate);
+      if (codeElement) collected.push(codeElement);
+    });
 
     return filterOutNested(collected).filter(
       (element): element is HTMLElement => element instanceof HTMLElement,

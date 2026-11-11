@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PLATFORMS } from "../scripts/ai-chat-turbo-engine/src/config";
 import { classifyMutations } from "../scripts/ai-chat-turbo-engine/src/core/mutation-classify";
+import { createNavigationTracker } from "../scripts/ai-chat-turbo-engine/src/core/navigation";
 import { createTurnTextIndex } from "../scripts/ai-chat-turbo-engine/src/core/turn-index";
 import { createTurnUtils } from "../scripts/ai-chat-turbo-engine/src/core/turns";
 import { createEngineState } from "../scripts/ai-chat-turbo-engine/src/state";
@@ -144,6 +145,71 @@ describe("Gemini turn discovery", () => {
 
     const turns = createTurnUtils(PLATFORMS.gemini);
     expect(turns.getTurns()).toEqual([response]);
+  });
+
+  it("recognizes the singular data-test-id turn markers and roles", () => {
+    const query = document.createElement("div");
+    query.setAttribute("data-test-id", "user-query");
+    query.textContent = "question";
+    const response = document.createElement("div");
+    response.setAttribute("data-test-id", "model-response");
+    response.textContent = "answer";
+    document.body.append(query, response);
+
+    const turns = createTurnUtils(PLATFORMS.gemini);
+    expect(turns.getTurns()).toEqual([query, response]);
+    expect(turns.isUserTurn(query)).toBe(true);
+    expect(turns.isUserTurn(response)).toBe(false);
+    expect(turns.getTurnRole(query)).toBe("user");
+    expect(turns.getTurnRole(response)).toBe("assistant");
+  });
+});
+
+describe("conversation route tracking", () => {
+  it("ignores hash writes and same-route history churn", () => {
+    const tracker = createNavigationTracker({
+      pathname: "/app/abc",
+      search: "?hl=en",
+      hash: "",
+    });
+
+    expect(
+      tracker.observe({
+        pathname: "/app/abc",
+        search: "?hl=en",
+        hash: "#settings",
+      }),
+    ).toBe(false);
+    expect(
+      tracker.observe({
+        pathname: "/app/abc",
+        search: "?hl=en",
+        hash: "",
+      }),
+    ).toBe(false);
+  });
+
+  it("reports path or query changes as another conversation", () => {
+    const tracker = createNavigationTracker({
+      pathname: "/app/abc",
+      search: "?hl=en",
+      hash: "",
+    });
+
+    expect(
+      tracker.observe({
+        pathname: "/app/def",
+        search: "?hl=en",
+        hash: "",
+      }),
+    ).toBe(true);
+    expect(
+      tracker.observe({
+        pathname: "/app/def",
+        search: "?hl=zh",
+        hash: "",
+      }),
+    ).toBe(true);
   });
 });
 
@@ -327,6 +393,19 @@ describe("mutation classification", () => {
 
     expect(result.requestUpdate).toBe(true);
     expect(result.turnStructureChanged).toBe(true);
+
+    const singularResult = classifyMutations(
+      [
+        mutation({
+          type: "attributes",
+          target: wrapper,
+          attributeName: "data-test-id",
+        }),
+      ],
+      context(null),
+    );
+    expect(singularResult.requestUpdate).toBe(true);
+    expect(singularResult.turnStructureChanged).toBe(true);
   });
 });
 
@@ -394,6 +473,42 @@ describe("code block mounting", () => {
     expect(document.querySelector(".ai-turbo-code-bar")).toBeNull();
     expect(pre.classList.contains("ai-turbo-code-target")).toBe(false);
     expect(state.foldedCodeCount).toBe(0);
+  });
+
+  it("mounts a nested code-block and its pre only once", () => {
+    const state = createEngineState();
+    const turn = document.createElement("model-response");
+    const codeBlock = document.createElement("code-block");
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.className = "language-ts";
+    code.textContent = "const answer = 42;";
+    pre.append(code);
+    codeBlock.append(pre);
+    turn.append(codeBlock);
+    document.body.append(turn);
+
+    Object.defineProperty(pre, "scrollHeight", {
+      configurable: true,
+      get: () => 420,
+    });
+
+    const codeBlocks = createCodeBlockUtils({
+      currentPlatform: PLATFORMS.gemini,
+      state,
+      el,
+      withSelfMutation: (task) => task(),
+      filterOutNested,
+      isGeminiThoughtElement: () => false,
+      requestUpdate: vi.fn(),
+    });
+    codeBlocks.requestCodeScanForTurn(turn);
+    codeBlocks.flushCodeBlockScan();
+
+    expect(document.querySelectorAll(".ai-turbo-code-bar")).toHaveLength(1);
+    expect(codeBlock.classList.contains("ai-turbo-code-target")).toBe(true);
+    expect(pre.classList.contains("ai-turbo-code-target")).toBe(false);
+    expect(state.foldedCodeCount).toBe(1);
   });
 
   it("does not scan the document when the layout observer starts", () => {

@@ -10,6 +10,7 @@ export const LOAD_RING_RADIUS = 16.2;
 export const LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
 export const TURN_MARKER_ATTRIBUTES = new Set([
   "data-testid",
+  "data-test-id",
   "data-turn",
   "data-turn-key",
   "data-message-author-role",
@@ -373,6 +374,12 @@ export const PLATFORMS = {
       ".model-response",
       ".user-query-container",
       ".model-response-container",
+    ],
+    userTurnSelectors: [
+      "user-query",
+      '[data-test-id="user-query"]',
+      ".user-query",
+      ".user-query-container",
     ],
     codeSelectors: ["code-block", "pre"],
     contentSelectors: [

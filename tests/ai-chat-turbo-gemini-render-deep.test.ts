@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BLOCK_TEXT_TAGS,
   CODE_FENCE,
   PLATFORMS,
+  REASONING_SELECTOR,
   STYLE_ID,
   VF_TOKEN_START,
 } from "../scripts/ai-chat-turbo-engine/src/config";
@@ -291,7 +293,7 @@ describe("deferred code subtree expansion", () => {
     expect(codeBlocks.isCodeScanPending()).toBe(true);
 
     codeBlocks.flushCodeBlockScan();
-    expect(querySpy).toHaveBeenCalledTimes(2);
+    expect(querySpy).toHaveBeenCalledTimes(1);
     expect(document.querySelectorAll(".ai-turbo-code-bar")).toHaveLength(1);
   });
 });
@@ -330,6 +332,75 @@ describe("text extraction cost", () => {
       .trim();
   }
 
+  function legacyElementToPlainText(rootElement: Element): string {
+    const ignoredSelectors = [
+      REASONING_SELECTOR,
+      ".ai-turbo-chat-file-row",
+      ".ai-turbo-chat-capsule",
+      ".ai-turbo-code-bar",
+      "#ai-turbo-vf-tray",
+      "#ai-turbo-vf-preview-modal",
+      "button",
+      "[role='toolbar']",
+      "script",
+      "style",
+      "svg",
+      "[hidden]",
+    ].join(", ");
+    const preservedCodeBlocks: {
+      token: string;
+      codeText: string;
+      language: string;
+    }[] = [];
+
+    function walk(node: Node): string {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return node.nodeValue || "";
+      }
+      if (!(node instanceof Element)) {
+        return Array.from(node.childNodes).map(walk).join("");
+      }
+
+      try {
+        if (node !== rootElement && node.matches(ignoredSelectors)) {
+          return "";
+        }
+      } catch {
+        return "";
+      }
+
+      const tag = node.tagName.toUpperCase();
+      if (tag === "BR") return "\n";
+      if (tag === "PRE") {
+        const codeText = node.textContent || "";
+        const codeClasses = [
+          node.className || "",
+          node.querySelector("code")?.className || "",
+          node.getAttribute("data-language") || "",
+          node.querySelector("code")?.getAttribute("data-language") || "",
+          node.querySelector("code")?.getAttribute("lang") || "",
+        ].join(" ");
+        const languageMatch = /language-([a-z0-9+#.-]+)/i.exec(codeClasses);
+        const language = languageMatch
+          ? (languageMatch[1] ?? "text").toLowerCase()
+          : "text";
+        const token = `\uE000TURBO_CODE_${preservedCodeBlocks.length}\uE001`;
+        preservedCodeBlocks.push({ token, codeText, language });
+        return `\n${CODE_FENCE}${language}\n${token}\n${CODE_FENCE}\n`;
+      }
+
+      const content = Array.from(node.childNodes).map(walk).join("");
+      return BLOCK_TEXT_TAGS.has(tag) ? "\n" + content + "\n" : content;
+    }
+
+    const text = legacyNormalize(walk(rootElement));
+    if (preservedCodeBlocks.length === 0) return text;
+    return text.replace(/\uE000TURBO_CODE_(\d+)\uE001/g, (token, rawIndex) => {
+      const block = preservedCodeBlocks[Number(rawIndex)];
+      return block ? block.codeText : token;
+    });
+  }
+
   it("normalizes line ends exactly like the previous implementation", () => {
     const samples = [
       "alpha  \r\nbeta\t\r\n\r\n\r\ngamma\u00a0delta",
@@ -341,6 +412,57 @@ describe("text extraction cost", () => {
     for (const sample of samples) {
       expect(normalizeText(sample)).toBe(legacyNormalize(sample));
     }
+  });
+
+  it("walks ignored, block, br, and pre nodes exactly as before", () => {
+    const root = document.createElement("model-response");
+    const intro = document.createElement("p");
+    intro.append("Intro", document.createElement("br"), "Second line");
+
+    const hidden = document.createElement("div");
+    hidden.hidden = true;
+    hidden.textContent = "hidden text";
+    const toolbar = document.createElement("div");
+    toolbar.setAttribute("role", "toolbar");
+    toolbar.textContent = "copy code";
+    const button = document.createElement("button");
+    button.textContent = "Copy";
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.textContent = "icon";
+    const thoughts = document.createElement("model-thoughts");
+    thoughts.textContent = "private reasoning";
+    const engineBar = document.createElement("div");
+    engineBar.className = "ai-turbo-code-bar";
+    engineBar.textContent = "code actions";
+
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.className = "language-ts";
+    code.textContent = "const answer = 42;";
+    pre.append(code);
+
+    const list = document.createElement("ul");
+    const firstItem = document.createElement("li");
+    firstItem.textContent = "first";
+    const secondItem = document.createElement("li");
+    secondItem.append(document.createElement("span"), "second");
+    list.append(firstItem, secondItem);
+
+    root.append(
+      intro,
+      hidden,
+      toolbar,
+      button,
+      svg,
+      thoughts,
+      engineBar,
+      pre,
+      list,
+      document.createComment("comment"),
+    );
+    document.body.append(root);
+
+    expect(elementToPlainText(root)).toBe(legacyElementToPlainText(root));
   });
 
   it("restores every code fence in one pass", () => {

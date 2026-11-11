@@ -80,11 +80,15 @@ export function classifyMutations(
 
     requestUpdate = true;
 
-    for (const node of [...record.addedNodes, ...record.removedNodes]) {
+    for (const node of record.addedNodes) {
       if (!(node instanceof Element)) continue;
       if (matchesTurn(node)) turnStructureChanged = true;
       /* Only queue what was added; the parent may hold the whole history. */
-      if (record.addedNodes.length) codeRoots.add(node);
+      codeRoots.add(node);
+    }
+    for (const node of record.removedNodes) {
+      if (!(node instanceof Element)) continue;
+      if (matchesTurn(node)) turnStructureChanged = true;
     }
   }
 

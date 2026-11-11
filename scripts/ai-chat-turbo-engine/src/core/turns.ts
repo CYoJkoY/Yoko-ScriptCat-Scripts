@@ -20,6 +20,11 @@ export function createTurnUtils(platform: PlatformDefinition) {
   let activeTurnSelectorGroup: readonly string[] | null = null;
   const renderedCheckCache = new Map<Element, boolean>();
   /*
+   * Join the user-turn selectors once. Testing them individually walked the
+   * same ancestors once per selector for every Gemini turn.
+   */
+  const userTurnSelectorText = (platform.userTurnSelectors || []).join(", ");
+  /*
    * Turn discovery is a document-wide query. Conversation switches and new
    * turns invalidate this list; streamed text and engine repaints reuse it.
    */
@@ -73,26 +78,19 @@ export function createTurnUtils(platform: PlatformDefinition) {
       return false;
     }
 
-    const platformUserSelectors = platform.userTurnSelectors || [];
-    for (const selector of platformUserSelectors) {
-      if (
-        turnElement.matches(selector) ||
-        turnElement.querySelector(selector)
-      ) {
-        return true;
-      }
+    if (
+      userTurnSelectorText &&
+      (turnElement.matches(userTurnSelectorText) ||
+        turnElement.querySelector(userTurnSelectorText))
+    ) {
+      return true;
     }
 
     // Some platforms mark the wrapper's parent rather than the message-content node.
     let ancestor = turnElement.parentElement;
     let ancestorDepth = 0;
     while (ancestor && ancestorDepth < 3) {
-      const currentAncestor = ancestor;
-      if (
-        platformUserSelectors.some((selector) =>
-          currentAncestor.matches(selector),
-        )
-      ) {
+      if (userTurnSelectorText && ancestor.matches(userTurnSelectorText)) {
         return true;
       }
       ancestor = ancestor.parentElement;
@@ -154,12 +152,8 @@ export function createTurnUtils(platform: PlatformDefinition) {
       return "assistant";
     }
 
-    for (const selector of platform.userTurnSelectors || []) {
-      try {
-        if (turnElement.matches(selector)) return "user";
-      } catch (error: unknown) {
-        reportRecoverableError("test user turn selector", error);
-      }
+    if (userTurnSelectorText && turnElement.matches(userTurnSelectorText)) {
+      return "user";
     }
     return isUserTurn(turnElement) ? "user" : "assistant";
   }

@@ -3,6 +3,7 @@ import { createTurnUtils } from "./core/turns";
 import { createTurnTextIndex } from "./core/turn-index";
 import { createMotionQuiet } from "./core/motion-quiet";
 import { classifyMutations } from "./core/mutation-classify";
+import { createNavigationTracker } from "./core/navigation";
 import {
   createEngineState,
   loadSavedConfig,
@@ -82,6 +83,7 @@ export function initializeEngine(): void {
     },
   });
   const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
+  const navigationTracker = createNavigationTracker(window.location);
   // 用户手动恢复过的轮次：即使仍在保留轮次之外也不再脱水，避免阅读被打断
   const restoredTurns = new Set<Element>();
   // 由引擎施加过脱水的轮次；恢复（含点击）时据此补扫该轮的代码块
@@ -524,6 +526,19 @@ export function initializeEngine(): void {
     fullTurnSyncRequested = true;
   }
 
+  /**
+   * Apply a history change only when it points at another conversation.
+   * Gemini emits history writes while an answer streams; clearing the index
+   * for those re-extracts the whole conversation after every write.
+   */
+  function applyRouteNavigation(): boolean {
+    if (!navigationTracker.observe(window.location)) return false;
+    resetTurnIndexForNavigation();
+    codeBlocks.requestCodeScan();
+    requestUpdate();
+    return true;
+  }
+
   function runScheduledUpdate(): void {
     scheduleTimer = null;
     // A sidebar transition started after this frame was booked. Defer the
@@ -606,9 +621,7 @@ export function initializeEngine(): void {
       const result = originalPushState.apply(this, args);
       window.setTimeout(() => {
         if (syncEngineActivation()) return;
-        resetTurnIndexForNavigation();
-        codeBlocks.requestCodeScan();
-        requestUpdate();
+        if (!applyRouteNavigation()) return;
         reasoning.scheduleReasoningRestore();
         toolMemory.scheduleRestore();
       }, 0);
@@ -619,18 +632,14 @@ export function initializeEngine(): void {
       const result = originalReplaceState.apply(this, args);
       window.setTimeout(() => {
         if (syncEngineActivation()) return;
-        resetTurnIndexForNavigation();
-        codeBlocks.requestCodeScan();
-        requestUpdate();
+        applyRouteNavigation();
       }, 0);
       return result;
     };
 
     window.addEventListener("popstate", () => {
       if (syncEngineActivation()) return;
-      resetTurnIndexForNavigation();
-      codeBlocks.requestCodeScan();
-      requestUpdate();
+      if (!applyRouteNavigation()) return;
       reasoning.scheduleReasoningRestore();
       toolMemory.scheduleRestore();
     });
