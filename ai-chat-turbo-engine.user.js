@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.17.0
+// @version      0.17.3
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -76,11 +76,6 @@
     "data-chatgpt-agent-turn-start",
     "data-app-shell-main-surface"
   ]);
-  var TURN_SELECTOR_ATTRIBUTES = /* @__PURE__ */ new Set([
-    ...TURN_MARKER_ATTRIBUTES,
-    "class",
-    "id"
-  ]);
   var CHATGPT_SHELL_ROOT_SELECTOR = '[data-app-shell-main-surface] [data-thread-find-target="conversation"]';
   var CHATGPT_SHELL_TURN_SELECTOR = '[data-app-shell-main-surface] [data-thread-find-target="conversation"] [data-turn-key]';
   var CHATGPT_TRANSCRIPT_ROOT_SELECTOR = "ol[data-conversation-transcript]";
@@ -116,6 +111,10 @@
   var COMPOSER_VISUAL_MAX_DEPTH = 5;
   var STREAMING_IDLE_DELAY = 1500;
   var THROTTLE_INTERVAL = 80;
+  var TEXT_INDEX_INTERVAL = 450;
+  var TEXT_INDEX_FRAME_BUDGET = 8;
+  var CODE_SCAN_INTERVAL = 250;
+  var TURN_DISCOVERY_RETRY_INTERVAL = 1e3;
   var CODE_FENCE = "```";
   var VF_TOKEN_START = "[[TURBO_VFILE_START:";
   var VF_TOKEN_END = ":TURBO_VFILE_END]]";
@@ -356,6 +355,16 @@
     },
     gemini: {
       name: "Gemini",
+      turnSelectorGroups: [
+        ["user-query", "model-response"],
+        ['[data-test-id="user-query"]', '[data-test-id="model-response"]'],
+        [
+          ".user-query",
+          ".model-response",
+          ".user-query-container",
+          ".model-response-container"
+        ]
+      ],
       turnSelectors: [
         "user-query",
         "model-response",
@@ -961,7 +970,7 @@
 
   // scripts/ai-chat-turbo-engine/src/core/text.ts
   function normalizeText(sourceText) {
-    return String(sourceText || "").replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n").split("\n").map((line) => line.replace(/[ \t]+$/g, "")).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    return String(sourceText || "").replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
   }
   function escapeHtml(text) {
     return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
@@ -1047,23 +1056,22 @@ ${CODE_FENCE}
       const content = Array.from(node.childNodes).map(walk).join("");
       return BLOCK_TEXT_TAGS.has(tag) ? "\n" + content + "\n" : content;
     }
-    let text = normalizeText(walk(rootElement));
-    for (const block of preservedCodeBlocks) {
-      const placeholder = `${CODE_FENCE}${block.language}
-${block.token}
-${CODE_FENCE}`;
-      const preserved = `${CODE_FENCE}${block.language}
-${block.codeText}
-${CODE_FENCE}`;
-      text = text.replace(placeholder, preserved);
-    }
-    return text;
+    const text = normalizeText(walk(rootElement));
+    if (preservedCodeBlocks.length === 0) return text;
+    return text.replace(/\uE000TURBO_CODE_(\d+)\uE001/g, (token, rawIndex) => {
+      const block = preservedCodeBlocks[Number(rawIndex)];
+      return block ? block.codeText : token;
+    });
   }
 
   // scripts/ai-chat-turbo-engine/src/core/turns.ts
   function createTurnUtils(platform) {
     let activeTurnSelectorGroup = null;
     const renderedCheckCache = /* @__PURE__ */ new Map();
+    let cachedTurns = null;
+    function invalidateTurnCache() {
+      cachedTurns = null;
+    }
     function clearRenderedCache() {
       renderedCheckCache.clear();
     }
@@ -1183,8 +1191,12 @@ ${CODE_FENCE}`;
     }
     function filterOutNested(elements) {
       const ordered = uniqueDomOrdered(elements);
-      const candidateSet = new Set(ordered);
-      return ordered.filter((element) => {
+      return filterNestedInDocumentOrder(ordered);
+    }
+    function filterNestedInDocumentOrder(elements) {
+      if (elements.length < 2) return [...elements];
+      const candidateSet = new Set(elements);
+      return elements.filter((element) => {
         let parent = element.parentElement;
         while (parent) {
           if (candidateSet.has(parent)) return false;
@@ -1306,14 +1318,20 @@ ${CODE_FENCE}`;
     function getTurns() {
       const currentChatGPTTurns = getCurrentChatGPTTurns();
       if (currentChatGPTTurns !== null) return currentChatGPTTurns;
-      const collected = [];
-      for (const selector of getActiveTurnSelectors()) {
-        document.querySelectorAll(selector).forEach((elem) => collected.push(elem));
+      const cached = cachedTurns;
+      if (cached !== null && cached.every((turn) => turn.isConnected)) {
+        return cached;
       }
-      const unnested = filterOutNested(collected);
-      return unnested.filter(
+      const selectors = getActiveTurnSelectors();
+      if (selectors.length === 0) return [];
+      const collected = Array.from(
+        document.querySelectorAll(selectors.join(","))
+      );
+      const resolved = filterNestedInDocumentOrder(collected).filter(
         (element) => (platform.name !== "ChatGPT" || isRenderedChatGPTElement(element)) && !isGeminiThoughtElement(element) && !matchesReasoningElement(element)
       );
+      cachedTurns = resolved;
+      return resolved;
     }
     function findContentElement(turnElement) {
       const selectorGroups = [];
@@ -1330,18 +1348,16 @@ ${CODE_FENCE}`;
       return turnElement;
     }
     function extractTurnText(turnElement) {
-      let raw = elementToPlainText(turnElement);
+      const raw = elementToPlainText(turnElement);
       const vfIdx = raw.indexOf(VF_TOKEN_START);
-      if (vfIdx !== -1) {
-        let userPart = raw.slice(0, vfIdx).replace(/```[a-z]*\s*$/i, "").trim();
-        if (userPart === "请查阅并分析以下文本内容：" || userPart === "请查阅以下文本：") {
-          userPart = "";
-        }
-        const match = raw.match(VF_REGEX);
-        const fileName = match ? ` [📎 ${match[1]}]` : " [📎 附件文件]";
-        raw = (userPart || "附件文本") + fileName;
+      if (vfIdx === -1) return raw;
+      let userPart = raw.slice(0, vfIdx).replace(/```[a-z]*\s*$/i, "").trim();
+      if (userPart === "请查阅并分析以下文本内容：" || userPart === "请查阅以下文本：") {
+        userPart = "";
       }
-      return normalizeText(raw);
+      const match = raw.match(VF_REGEX);
+      const fileName = match ? ` [📎 ${match[1]}]` : " [📎 附件文件]";
+      return normalizeText((userPart || "附件文本") + fileName);
     }
     function getActiveTurnSelectors() {
       const selectorGroups = platform.turnSelectorGroups;
@@ -1363,6 +1379,7 @@ ${CODE_FENCE}`;
     }
     function invalidateActiveTurnSelectorGroup() {
       activeTurnSelectorGroup = null;
+      cachedTurns = null;
     }
     return {
       isGeminiThoughtElement,
@@ -1375,8 +1392,123 @@ ${CODE_FENCE}`;
       extractTurnText,
       getActiveTurnSelectors,
       invalidateActiveTurnSelectorGroup,
+      invalidateTurnCache,
       clearRenderedCache
     };
+  }
+
+  // scripts/ai-chat-turbo-engine/src/core/turn-index.ts
+  function createTurnTextIndex(options) {
+    const records = /* @__PURE__ */ new Map();
+    const pending = /* @__PURE__ */ new Set();
+    let snapshot = [];
+    function reconcile(turns) {
+      const live = new Set(turns);
+      for (const element of Array.from(records.keys())) {
+        if (live.has(element)) continue;
+        records.delete(element);
+        pending.delete(element);
+      }
+      snapshot = turns.map((element, index) => {
+        let record = records.get(element);
+        if (!record) {
+          record = { id: index, element, text: "" };
+          records.set(element, record);
+          pending.add(element);
+        }
+        record.id = index;
+        return record;
+      });
+    }
+    function markDirty(turn) {
+      if (!records.has(turn)) return;
+      pending.add(turn);
+    }
+    function hasTurn(turn) {
+      return records.has(turn);
+    }
+    function getRecords() {
+      return snapshot;
+    }
+    function flush(flushOptions = {}) {
+      const budgetMs = flushOptions.budgetMs;
+      const startedAt = budgetMs === void 0 ? 0 : performance.now();
+      for (const element of pending) {
+        if (budgetMs !== void 0 && performance.now() - startedAt >= budgetMs) {
+          break;
+        }
+        pending.delete(element);
+        const record = records.get(element);
+        if (!record || !element.isConnected) continue;
+        record.text = options.extract(element);
+      }
+      return pending.size;
+    }
+    function pendingCount() {
+      return pending.size;
+    }
+    function clear() {
+      records.clear();
+      pending.clear();
+      snapshot = [];
+    }
+    return {
+      reconcile,
+      markDirty,
+      hasTurn,
+      getRecords,
+      flush,
+      pendingCount,
+      clear
+    };
+  }
+
+  // scripts/ai-chat-turbo-engine/src/core/mutation-classify.ts
+  function classifyMutations(records, context) {
+    const dirtyTurns = /* @__PURE__ */ new Set();
+    const codeRoots = /* @__PURE__ */ new Set();
+    let requestUpdate = false;
+    let turnStructureChanged = false;
+    const matchesTurn = (element) => {
+      if (!context.turnSelector) return false;
+      try {
+        return element.matches(context.turnSelector);
+      } catch {
+        return false;
+      }
+    };
+    for (const record of records) {
+      const target = record.target;
+      if (target instanceof Element && context.isIgnoredTarget(target)) {
+        continue;
+      }
+      const indexedTurn = context.findTurnAncestor(target);
+      if (record.type === "attributes") {
+        const attributeName = record.attributeName ?? "";
+        if (!TURN_MARKER_ATTRIBUTES.has(attributeName)) continue;
+        if (indexedTurn) continue;
+        turnStructureChanged = true;
+        requestUpdate = true;
+        continue;
+      }
+      if (indexedTurn) {
+        dirtyTurns.add(indexedTurn);
+        const codeRoot = target instanceof Element ? target : target.parentElement;
+        if (codeRoot) codeRoots.add(codeRoot);
+        continue;
+      }
+      if (record.type === "characterData") {
+        requestUpdate = true;
+        continue;
+      }
+      requestUpdate = true;
+      for (const node of [...record.addedNodes, ...record.removedNodes]) {
+        if (!(node instanceof Element)) continue;
+        if (matchesTurn(node)) turnStructureChanged = true;
+        if (record.addedNodes.length) codeRoots.add(node);
+      }
+    }
+    return { requestUpdate, turnStructureChanged, dirtyTurns, codeRoots };
   }
 
   // shared/storage/keyValue.ts
@@ -1587,8 +1719,15 @@ ${CODE_FENCE}`;
     } = deps;
     const codeState = /* @__PURE__ */ new Map();
     const dirtyCodeBlocks = /* @__PURE__ */ new Set();
+    const observedCodeBlocks = /* @__PURE__ */ new Set();
+    const pendingCodeRoots = /* @__PURE__ */ new Set();
+    const watchedCodeBlocks = /* @__PURE__ */ new Set();
+    const viewportReadyCodeBlocks = /* @__PURE__ */ new Set();
     let codeScanRequested = true;
     let codeResizeObserver = null;
+    let codeViewportObserver = null;
+    let barsDirty = false;
+    const CODE_VIEWPORT_MARGIN = "800px 0px";
     function normalizeCodeElement(candidate) {
       if (!(candidate instanceof HTMLElement)) return null;
       const geminiBlock = candidate.closest("code-block");
@@ -1598,28 +1737,58 @@ ${CODE_FENCE}`;
       }
       return candidate;
     }
+    function toCodeElement(candidate) {
+      if (candidate.closest(".ai-turbo-dehydrated")) return null;
+      const belongsToUserTurn = (currentPlatform.userTurnSelectors || []).some(
+        (selector) => {
+          try {
+            return candidate.matches(selector) || Boolean(candidate.closest(selector));
+          } catch (error) {
+            reportRecoverableError("test code card boundary", error);
+            return false;
+          }
+        }
+      );
+      if (candidate.classList.contains("ai-turbo-chat-folded-target") || belongsToUserTurn || candidate.closest(
+        ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], [data-content-search-unit-key$=':user'], [data-user-message-bubble='true'], [data-testid='collapsible-user-message-root'], .font-user-message"
+      )) {
+        return null;
+      }
+      const codeElement = normalizeCodeElement(candidate);
+      if (!codeElement) return null;
+      if (isGeminiThoughtElement(codeElement)) return null;
+      return codeElement;
+    }
+    function getCodeSelectors() {
+      return currentPlatform.codeSelectors || ["pre"];
+    }
+    function collectCodeElements(rootNode) {
+      const collected = [];
+      for (const selector of getCodeSelectors()) {
+        const closest = rootNode.closest(selector);
+        if (closest) {
+          const codeElement = toCodeElement(closest);
+          if (codeElement) collected.push(codeElement);
+        }
+        if (rootNode.matches(selector)) {
+          const codeElement = toCodeElement(rootNode);
+          if (codeElement) collected.push(codeElement);
+        }
+        rootNode.querySelectorAll(selector).forEach((candidate) => {
+          const codeElement = toCodeElement(candidate);
+          if (codeElement) collected.push(codeElement);
+        });
+      }
+      return filterOutNested(collected).filter(
+        (element) => element instanceof HTMLElement
+      );
+    }
     function getCodeBlocks(rootNode = document) {
       const collected = [];
-      const selectors = currentPlatform.codeSelectors || ["pre"];
-      for (const selector of selectors) {
+      for (const selector of getCodeSelectors()) {
         rootNode.querySelectorAll(selector).forEach((candidate) => {
-          const belongsToUserTurn = (currentPlatform.userTurnSelectors || []).some((selector2) => {
-            try {
-              return candidate.matches(selector2) || Boolean(candidate.closest(selector2));
-            } catch (error) {
-              reportRecoverableError("test code card boundary", error);
-              return false;
-            }
-          });
-          if (candidate.classList.contains("ai-turbo-chat-folded-target") || belongsToUserTurn || candidate.closest(
-            ".ai-turbo-chat-folded-target, .ai-turbo-chat-capsule, user-query, [data-message-author-role='user'], [data-content-search-unit-key$=':user'], [data-user-message-bubble='true'], [data-testid='collapsible-user-message-root'], .font-user-message"
-          )) {
-            return;
-          }
-          const codeElement = normalizeCodeElement(candidate);
-          if (!codeElement) return;
-          if (isGeminiThoughtElement(codeElement)) return;
-          collected.push(codeElement);
+          const codeElement = toCodeElement(candidate);
+          if (codeElement) collected.push(codeElement);
         });
       }
       return filterOutNested(collected).filter(
@@ -1650,6 +1819,8 @@ ${CODE_FENCE}`;
       return "代码";
     }
     function getCodeElementHeight(codeElement) {
+      const rectHeight = Math.round(codeElement.getBoundingClientRect().height);
+      if (rectHeight > 0) return rectHeight;
       const pre = codeElement.querySelector("pre");
       return Math.max(
         codeElement.scrollHeight || 0,
@@ -1718,6 +1889,57 @@ ${CODE_FENCE}`;
       entry.toggleButton.textContent = entry.expanded ? "收起代码" : `展开 ${lineCount ? `${lineCount.toLocaleString()} 行` : "代码"}`;
       entry.toggleButton.setAttribute("aria-expanded", String(entry.expanded));
     }
+    function observeCodeElement(codeElement) {
+      if (!codeResizeObserver || observedCodeBlocks.has(codeElement)) return;
+      observedCodeBlocks.add(codeElement);
+      codeResizeObserver.observe(codeElement);
+    }
+    function unobserveCodeElement(codeElement) {
+      if (!observedCodeBlocks.delete(codeElement)) return;
+      codeResizeObserver?.unobserve(codeElement);
+    }
+    function supportsViewportObservation() {
+      return "IntersectionObserver" in window;
+    }
+    function observeCodeViewport(codeElement) {
+      if (!codeViewportObserver || watchedCodeBlocks.has(codeElement)) return;
+      watchedCodeBlocks.add(codeElement);
+      codeViewportObserver.observe(codeElement);
+    }
+    function unobserveCodeViewport(codeElement) {
+      viewportReadyCodeBlocks.delete(codeElement);
+      if (!watchedCodeBlocks.delete(codeElement)) return;
+      codeViewportObserver?.unobserve(codeElement);
+    }
+    function ensureCodeViewportObserver() {
+      if (codeViewportObserver || !supportsViewportObservation()) return;
+      codeViewportObserver = new IntersectionObserver(
+        (entries) => {
+          let queued = false;
+          for (const viewportEntry of entries) {
+            if (!viewportEntry.isIntersecting) continue;
+            const target = viewportEntry.target;
+            if (!(target instanceof HTMLElement)) continue;
+            unobserveCodeViewport(target);
+            if (!target.isConnected) continue;
+            dirtyCodeBlocks.add(normalizeCodeElement(target) ?? target);
+            viewportReadyCodeBlocks.add(target);
+            queued = true;
+          }
+          if (queued) requestUpdate();
+        },
+        { rootMargin: CODE_VIEWPORT_MARGIN, threshold: 0 }
+      );
+    }
+    function releaseCodeViewportWatchers() {
+      for (const watched of Array.from(watchedCodeBlocks)) {
+        unobserveCodeViewport(watched);
+      }
+      codeViewportObserver?.disconnect();
+      codeViewportObserver = null;
+      watchedCodeBlocks.clear();
+      viewportReadyCodeBlocks.clear();
+    }
     function unmountCodeControls(codeElement) {
       const entry = codeState.get(codeElement);
       if (!entry) return;
@@ -1734,6 +1956,10 @@ ${CODE_FENCE}`;
         codeElement.style.removeProperty("display");
       });
       codeState.delete(codeElement);
+      dirtyCodeBlocks.delete(codeElement);
+      unobserveCodeElement(codeElement);
+      unobserveCodeViewport(codeElement);
+      barsDirty = true;
     }
     function isNativeCodeHeaderNode(node) {
       if (!(node instanceof HTMLElement)) return false;
@@ -1913,6 +2139,8 @@ ${CODE_FENCE}`;
       });
       applyFoldStyles(entry, codeElement);
       updateCodeMeta(entry, codeElement);
+      observeCodeElement(codeElement);
+      barsDirty = true;
     }
     function sweepOrphanBars() {
       const activeBars = new Set(
@@ -1931,7 +2159,19 @@ ${CODE_FENCE}`;
         }
       });
     }
+    function expandPendingCodeRoots() {
+      if (pendingCodeRoots.size === 0) return [];
+      const expanded = [];
+      for (const root of pendingCodeRoots) {
+        if (!root.isConnected) continue;
+        if (root.closest(".ai-turbo-dehydrated")) continue;
+        expanded.push(...collectCodeElements(root));
+      }
+      pendingCodeRoots.clear();
+      return expanded;
+    }
     function syncCodeBlocks(forceScan, dirtyCandidates) {
+      const queuedRootCandidates = expandPendingCodeRoots();
       if (!state.collapseCode) {
         for (const [codeElement] of codeState) {
           unmountCodeControls(codeElement);
@@ -1939,6 +2179,8 @@ ${CODE_FENCE}`;
         state.foldedCodeCount = 0;
         codeScanRequested = false;
         dirtyCodeBlocks.clear();
+        queuedRootCandidates.length = 0;
+        releaseCodeViewportWatchers();
         sweepOrphanBars();
         return;
       }
@@ -1947,9 +2189,13 @@ ${CODE_FENCE}`;
           unmountCodeControls(codeElement);
         }
       }
-      const rawCandidates = forceScan ? getCodeBlocks() : Array.from(dirtyCandidates).map(normalizeCodeElement).filter(
-        (elem) => elem instanceof HTMLElement && elem.isConnected
-      );
+      const rawCandidates = [
+        ...forceScan ? getCodeBlocks() : [],
+        ...queuedRootCandidates,
+        ...Array.from(dirtyCandidates).map(normalizeCodeElement).filter(
+          (elem) => elem instanceof HTMLElement && elem.isConnected && !elem.closest(".ai-turbo-dehydrated")
+        )
+      ];
       const candidates = filterOutNested(rawCandidates).filter(
         (element) => element instanceof HTMLElement
       );
@@ -1960,14 +2206,17 @@ ${CODE_FENCE}`;
             continue;
           }
           updateCodeMeta(entry, codeElement);
+        } else if (codeViewportObserver && !viewportReadyCodeBlocks.has(codeElement)) {
+          observeCodeViewport(codeElement);
         } else {
+          viewportReadyCodeBlocks.delete(codeElement);
           mountCodeControls(codeElement);
         }
-        if (codeResizeObserver) {
-          codeResizeObserver.observe(codeElement);
-        }
       }
-      sweepOrphanBars();
+      if (barsDirty) {
+        sweepOrphanBars();
+        barsDirty = false;
+      }
       state.foldedCodeCount = Array.from(codeState.values()).filter(
         (entry) => !entry.expanded
       ).length;
@@ -1975,8 +2224,10 @@ ${CODE_FENCE}`;
       dirtyCodeBlocks.clear();
     }
     function observeCodeLayout() {
+      ensureCodeViewportObserver();
       if (!("ResizeObserver" in window)) return;
       codeResizeObserver?.disconnect();
+      observedCodeBlocks.clear();
       codeResizeObserver = new ResizeObserver((entries) => {
         for (const resizeEntry of entries) {
           const normalized = normalizeCodeElement(resizeEntry.target);
@@ -1986,9 +2237,9 @@ ${CODE_FENCE}`;
         }
         if (entries.length) requestUpdate();
       });
-      getCodeBlocks().forEach((codeElement) => {
-        codeResizeObserver?.observe(codeElement);
-      });
+      for (const codeElement of codeState.keys()) {
+        observeCodeElement(codeElement);
+      }
     }
     function flushCodeBlockScan() {
       syncCodeBlocks(codeScanRequested, dirtyCodeBlocks);
@@ -1997,16 +2248,69 @@ ${CODE_FENCE}`;
       for (const codeElement of Array.from(codeState.keys())) {
         unmountCodeControls(codeElement);
       }
+      pendingCodeRoots.clear();
+      dirtyCodeBlocks.clear();
+      releaseCodeViewportWatchers();
     }
     function disconnectCodeLayoutObserver() {
       codeResizeObserver?.disconnect();
       codeResizeObserver = null;
+      observedCodeBlocks.clear();
+      pendingCodeRoots.clear();
+      dirtyCodeBlocks.clear();
+      releaseCodeViewportWatchers();
     }
     function requestCodeScan() {
       codeScanRequested = true;
     }
     function markCodeBlockDirty(codeElement) {
+      if (codeElement.closest(".ai-turbo-dehydrated")) return;
       dirtyCodeBlocks.add(codeElement);
+    }
+    function requestCodeScanForTurn(turnElement) {
+      if (!state.collapseCode) return;
+      if (turnElement.closest(".ai-turbo-dehydrated")) return;
+      let queued = false;
+      for (const codeElement of collectCodeElements(turnElement)) {
+        dirtyCodeBlocks.add(codeElement);
+        queued = true;
+      }
+      if (queued) requestUpdate();
+    }
+    function suspendTurnCodeBlocks(turnElement) {
+      for (const codeElement of Array.from(codeState.keys())) {
+        if (codeElement === turnElement || turnElement.contains(codeElement)) {
+          unmountCodeControls(codeElement);
+        }
+      }
+      for (const codeElement of Array.from(dirtyCodeBlocks)) {
+        if (codeElement === turnElement || turnElement.contains(codeElement)) {
+          dirtyCodeBlocks.delete(codeElement);
+        }
+      }
+      for (const watched of Array.from(watchedCodeBlocks)) {
+        if (watched === turnElement || turnElement.contains(watched)) {
+          unobserveCodeViewport(watched);
+        }
+      }
+      for (const root of Array.from(pendingCodeRoots)) {
+        if (root === turnElement || turnElement.contains(root)) {
+          pendingCodeRoots.delete(root);
+        }
+      }
+      state.foldedCodeCount = Array.from(codeState.values()).filter(
+        (entry) => !entry.expanded
+      ).length;
+    }
+    function markCodeSubtreesDirty(roots) {
+      for (const root of roots) {
+        if (!root.isConnected) continue;
+        if (root.closest(".ai-turbo-dehydrated")) continue;
+        pendingCodeRoots.add(root);
+      }
+    }
+    function isCodeScanPending() {
+      return codeScanRequested || dirtyCodeBlocks.size > 0 || pendingCodeRoots.size > 0;
     }
     return {
       normalizeCodeElement,
@@ -2015,7 +2319,11 @@ ${CODE_FENCE}`;
       observeCodeLayout,
       disconnectCodeLayoutObserver,
       requestCodeScan,
-      markCodeBlockDirty
+      requestCodeScanForTurn,
+      suspendTurnCodeBlocks,
+      markCodeSubtreesDirty,
+      markCodeBlockDirty,
+      isCodeScanPending
     };
   }
 
@@ -5082,6 +5390,7 @@ ${CODE_FENCE}`;
       handoffStatusNode = node;
     }
     function exportCleanContext(onSuccess) {
+      deps.flushTextIndex?.();
       const turns = getTurns();
       if (!turns.length) {
         window.alert("未检测到有效对话内容");
@@ -5241,6 +5550,7 @@ ${contentText}`);
       return isHandoffYamlShape(yaml) ? yaml : null;
     }
     function extractLatestHandoffText() {
+      deps.flushTextIndex?.();
       const turns = getTurns();
       let latestAssistantTurn = null;
       for (let index = turns.length - 1; index >= 0; index--) {
@@ -5868,10 +6178,11 @@ ${contentText}`);
     .search-input::placeholder { color: var(--hud-muted); }
     .search-input:focus { border-color: var(--hud-normal-border); }
     .results { max-height: 132px; overflow-y: auto; margin-top: 6px; display: grid; gap: 4px; }
-    .result-item, .result-empty { padding: 6px 8px; font-size: 10px; border-radius: 7px; background: var(--hud-card-bg); color: var(--hud-text); border: none; text-align: left; cursor: pointer; }
-    .result-item { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .result-item, .result-empty, .result-pending { padding: 6px 8px; font-size: 10px; border-radius: 7px; background: var(--hud-card-bg); color: var(--hud-text); border: none; text-align: left; }
+    .result-item { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
     .result-item:hover { background: var(--hud-hover); color: var(--hud-accent); }
-    .result-empty { text-align: center; color: var(--hud-muted); }
+    .result-empty, .result-pending { text-align: center; color: var(--hud-muted); }
+    .result-pending { font-style: italic; }
     .footer-hint { margin-top: 12px; font-size: 9.5px; color: var(--hud-subtle); text-align: center; }
     .settings-hint { margin: 4px 0 2px; color: var(--hud-muted); font-size: 9.5px; line-height: 1.5; }
     kbd { padding: 2px 4px; border: 1px solid var(--hud-border); border-radius: 4px; color: var(--hud-muted); font-family: ui-monospace, monospace; }
@@ -6025,6 +6336,7 @@ ${contentText}`);
       requestFullTurnSync,
       saveConfig,
       markRestoredTurn,
+      flushTextIndex,
       activeFileCount,
       clearFiles,
       injectStyles
@@ -6035,6 +6347,7 @@ ${contentText}`);
     let searchInput = null;
     let searchResultsBox = null;
     let searchDebounceTimer = null;
+    let searchRefreshTimer = null;
     let announceTimer = null;
     let themeObserver = null;
     let themeMediaQuery = null;
@@ -6242,48 +6555,70 @@ ${contentText}`);
       if (!searchResultsBox) return;
       searchResultsBox.textContent = "";
       if (!queryText) return;
+      const pendingCount = flushTextIndex();
       const normalizedQuery = queryText.toLowerCase();
       const matches = state.indexedTurns.filter((record) => record.text.toLowerCase().includes(normalizedQuery)).slice(0, SEARCH_LIMIT);
       if (!matches.length) {
-        searchResultsBox.appendChild(
-          el("div", { className: "result-empty" }, ["没有匹配的消息"])
-        );
-        return;
-      }
-      for (const record of matches) {
-        const previewText = record.text || "（无文本）";
-        const resultText = previewText.length > SEARCH_PREVIEW_LIMIT ? previewText.slice(0, SEARCH_PREVIEW_LIMIT) + "…" : previewText;
-        const resultButton = el(
-          "button",
-          {
-            type: "button",
-            className: "result-item"
-          },
-          ["#" + String(record.id + 1) + "  " + resultText]
-        );
-        resultButton.addEventListener("click", () => {
-          const targetElement = record.element;
-          if (!(targetElement instanceof Element)) return;
-          markRestoredTurn(targetElement);
-          targetElement.classList.remove("ai-turbo-dehydrated");
-          if (targetElement instanceof HTMLElement) {
-            targetElement.style.removeProperty("--turbo-cached-h");
-          }
-          togglePanel(false);
-          targetElement.scrollIntoView({
-            behavior: "smooth",
-            block: "center"
+        if (pendingCount === 0) {
+          searchResultsBox.appendChild(
+            el("div", { className: "result-empty" }, ["没有匹配的消息"])
+          );
+          return;
+        }
+      } else {
+        for (const record of matches) {
+          const previewText = record.text || "（无文本）";
+          const resultText = previewText.length > SEARCH_PREVIEW_LIMIT ? previewText.slice(0, SEARCH_PREVIEW_LIMIT) + "…" : previewText;
+          const resultButton = el(
+            "button",
+            {
+              type: "button",
+              className: "result-item"
+            },
+            ["#" + String(record.id + 1) + "  " + resultText]
+          );
+          resultButton.addEventListener("click", () => {
+            const targetElement = record.element;
+            if (!(targetElement instanceof Element)) return;
+            markRestoredTurn(targetElement);
+            targetElement.classList.remove("ai-turbo-dehydrated");
+            if (targetElement instanceof HTMLElement) {
+              targetElement.style.removeProperty("--turbo-cached-h");
+            }
+            togglePanel(false);
+            targetElement.scrollIntoView({
+              behavior: "smooth",
+              block: "center"
+            });
+            codeBlocks.requestCodeScanForTurn(targetElement);
+            if (targetElement instanceof HTMLElement) {
+              targetElement.style.outline = "2px solid rgba(52, 211, 153, 0.85)";
+              targetElement.style.outlineOffset = "4px";
+              window.setTimeout(() => {
+                targetElement.style.outline = "";
+                targetElement.style.outlineOffset = "";
+              }, 1800);
+            }
           });
-          if (targetElement instanceof HTMLElement) {
-            targetElement.style.outline = "2px solid rgba(52, 211, 153, 0.85)";
-            targetElement.style.outlineOffset = "4px";
-            window.setTimeout(() => {
-              targetElement.style.outline = "";
-              targetElement.style.outlineOffset = "";
-            }, 1800);
-          }
-        });
-        searchResultsBox.appendChild(resultButton);
+          searchResultsBox.appendChild(resultButton);
+        }
+      }
+      if (pendingCount > 0) {
+        searchResultsBox.appendChild(
+          el(
+            "div",
+            { className: "result-pending", role: "status", "aria-live": "polite" },
+            ["正在索引 " + String(pendingCount) + " 条消息…"]
+          )
+        );
+        if (searchRefreshTimer !== null) {
+          window.clearTimeout(searchRefreshTimer);
+        }
+        searchRefreshTimer = window.setTimeout(() => {
+          searchRefreshTimer = null;
+          const currentQuery = searchInput?.value.trim() ?? "";
+          if (currentQuery === queryText) renderSearchResults(currentQuery);
+        }, 200);
       }
     }
     function initPillDrag(pill) {
@@ -6562,7 +6897,7 @@ ${contentText}`);
         const inputElement = searchInput;
         searchDebounceTimer = window.setTimeout(() => {
           renderSearchResults(inputElement?.value.trim() ?? "");
-        }, 100);
+        }, 120);
       });
       searchResultsBox = el("div", { className: "results" });
       const searchSection = el("div", { className: "section" }, [
@@ -6929,6 +7264,10 @@ ${contentText}`);
       if (announceTimer !== null) {
         window.clearTimeout(announceTimer);
         announceTimer = null;
+      }
+      if (searchRefreshTimer !== null) {
+        window.clearTimeout(searchRefreshTimer);
+        searchRefreshTimer = null;
       }
       cleanupPillDrag?.();
       cleanupPillDrag = null;
@@ -7686,13 +8025,44 @@ ${CODE_FENCE}`;
   }
 
   // scripts/ai-chat-turbo-engine/src/ui/styles.ts
-  function injectEngineStyles() {
-    const existingStyle = document.getElementById(STYLE_ID);
-    if (existingStyle?.isConnected) return;
-    existingStyle?.remove();
-    const styleElement = document.createElement("style");
-    styleElement.id = STYLE_ID;
-    styleElement.textContent = `
+  var GEMINI_NATIVE_RENDER_CSS = `
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > * {
+      content-visibility: auto !important;
+      contain: layout style !important;
+      contain-intrinsic-size: auto 3rem !important;
+    }
+
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(pre, table, blockquote) {
+      contain-intrinsic-size: auto 8rem !important;
+    }
+
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(img, video, canvas, iframe) {
+      contain-intrinsic-size: auto 12rem !important;
+    }
+
+    model-response code-block {
+      content-visibility: auto !important;
+      contain: layout style !important;
+      contain-intrinsic-size: auto 10rem !important;
+    }
+
+    /* Frosted panels blur the page underneath on every repaint. Long answers
+       repaint continuously, so the native glass costs more than it shows. */
+    :is(top-bar, top-bar-actions, input-area, input-area-v2, side-navigation, chat-window, mat-toolbar, code-block, .top-bar, .input-area, .toolbar) {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
+    /* Streaming markdown ships decorative transitions and animations that
+       restart with every appended token. */
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text),
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) * {
+      animation: none !important;
+      transition: none !important;
+      will-change: auto !important;
+    }
+`;
+  var BASE_ENGINE_CSS = `
     .ai-turbo-dehydrated {
       content-visibility: hidden !important;
       contain: layout paint style !important;
@@ -8117,6 +8487,18 @@ ${CODE_FENCE}`;
       }
     }
   `;
+  function injectEngineStyles(options = {}) {
+    const css = options.geminiNativeRender ? `${BASE_ENGINE_CSS}
+${GEMINI_NATIVE_RENDER_CSS}` : BASE_ENGINE_CSS;
+    const existingStyle = document.getElementById(STYLE_ID);
+    if (existingStyle?.isConnected) {
+      if (existingStyle.textContent !== css) existingStyle.textContent = css;
+      return;
+    }
+    existingStyle?.remove();
+    const styleElement = document.createElement("style");
+    styleElement.id = STYLE_ID;
+    styleElement.textContent = css;
     (document.head || document.documentElement).appendChild(styleElement);
   }
 
@@ -8126,6 +8508,9 @@ ${CODE_FENCE}`;
     const detectedPlatform = detectPlatform();
     if (!detectedPlatform) return;
     const currentPlatform = detectedPlatform;
+    const injectStyles = () => injectEngineStyles({
+      geminiNativeRender: currentPlatform === PLATFORMS.gemini
+    });
     const {
       clearRenderedCache,
       extractTurnText,
@@ -8134,19 +8519,24 @@ ${CODE_FENCE}`;
       getTurnRole,
       getTurns,
       invalidateActiveTurnSelectorGroup,
+      invalidateTurnCache,
       isGeminiThoughtElement,
       isUserTurn
     } = createTurnUtils(currentPlatform);
     const state = createEngineState();
-    const turnIndex = /* @__PURE__ */ new Map();
-    const restoredTurns = /* @__PURE__ */ new WeakSet();
+    const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
+    const restoredTurns = /* @__PURE__ */ new Set();
+    const dehydratedTurns = /* @__PURE__ */ new Set();
     let isSubmitting = false;
     let observer = null;
     let scheduleTimer = null;
+    let textIndexTimer = null;
+    let textIndexFrame = null;
+    let codeScanTimer = null;
+    let turnDiscoveryTimer = null;
     let lastUpdateTime = 0;
+    let lastCodeScanTime = 0;
     let fullTurnSyncRequested = true;
-    let dirtyTurns = /* @__PURE__ */ new Set();
-    let previousTurns = [];
     let selfMutationDepth = 0;
     let globalListenersBound = false;
     let historyPatched = false;
@@ -8262,7 +8652,8 @@ ${CODE_FENCE}`;
       isSubmitting: () => isSubmitting,
       setSubmitting: (value) => {
         isSubmitting = value;
-      }
+      },
+      flushTextIndex
     });
     let hud = null;
     hud = createHudUtils({
@@ -8283,57 +8674,38 @@ ${CODE_FENCE}`;
       },
       saveConfig: () => saveCurrentConfig(state),
       markRestoredTurn: (turnElement) => restoredTurns.add(turnElement),
+      flushTextIndex: () => flushTextIndex({ force: true }),
       activeFileCount: () => virtualFiles.activeFileCount(),
       clearFiles: () => virtualFiles.clearFiles(),
-      injectStyles: injectEngineStyles
+      injectStyles
     });
     function scheduleTrayPosition() {
       virtualFiles.schedulePosition();
     }
-    function syncTurnIndex(forceFull) {
+    const IGNORED_MUTATION_TARGET_SELECTOR = "#" + HUD_ID + ", .ai-turbo-code-bar, #ai-turbo-vf-tray, .ai-turbo-chat-capsule, #ai-turbo-vf-preview-modal";
+    function isIgnoredMutationTarget(target) {
+      return Boolean(target.closest(IGNORED_MUTATION_TARGET_SELECTOR));
+    }
+    function reconcileTurnIndex() {
       const turns = getTurns();
-      const structuralChange = forceFull || turns.length !== previousTurns.length || turns.some((turnElement, index) => turnElement !== previousTurns[index]);
-      if (forceFull) {
-        turnIndex.clear();
-      } else if (structuralChange) {
-        const liveTurns = new Set(turns);
-        for (const indexedTurn of [...turnIndex.keys()]) {
-          if (!liveTurns.has(indexedTurn)) turnIndex.delete(indexedTurn);
-        }
+      const liveTurns = new Set(turns);
+      for (const restoredTurn of restoredTurns) {
+        if (!liveTurns.has(restoredTurn)) restoredTurns.delete(restoredTurn);
       }
-      for (const turnElement of turns) {
+      for (const dehydratedTurn of dehydratedTurns) {
+        if (!liveTurns.has(dehydratedTurn)) dehydratedTurns.delete(dehydratedTurn);
+      }
+      const addedTurns = turns.filter((turn) => !turnTextIndex.hasTurn(turn));
+      turnTextIndex.reconcile(turns);
+      for (const turnElement of addedTurns) {
         chatCapsules.collapseInChatFileBlocks(turnElement);
-        const record = turnIndex.get(turnElement);
-        if (!record) {
-          turnIndex.set(turnElement, {
-            id: turnIndex.size,
-            element: turnElement,
-            text: extractTurnText(turnElement)
-          });
-        } else if (dirtyTurns.has(turnElement)) {
-          record.text = extractTurnText(turnElement);
-        }
-      }
-      for (const turnElement of dirtyTurns) {
-        if (!turnIndex.has(turnElement)) {
-          fullTurnSyncRequested = true;
-        }
       }
       state.totalTurns = turns.length;
-      state.indexedTurns = turns.map((turnElement, index) => {
-        const record = turnIndex.get(turnElement);
-        if (record) {
-          record.id = index;
-          return record;
-        }
-        const fallbackRecord = {
-          id: index,
-          element: turnElement,
-          text: extractTurnText(turnElement)
-        };
-        turnIndex.set(turnElement, fallbackRecord);
-        return fallbackRecord;
-      });
+      state.indexedTurns = turnTextIndex.getRecords();
+      return turns;
+    }
+    function syncTurnIndex() {
+      const turns = reconcileTurnIndex();
       const cutoff = state.pruneEnabled ? Math.max(0, turns.length - state.keepTurns) : 0;
       const toDehydrate = [];
       const toHydrate = [];
@@ -8342,140 +8714,159 @@ ${CODE_FENCE}`;
         const isDehydrated = turnElement.classList.contains(
           "ai-turbo-dehydrated"
         );
-        if (shouldDehydrate && !isDehydrated && turnElement instanceof HTMLElement) {
-          toDehydrate.push({
-            elem: turnElement,
-            height: turnElement.offsetHeight || 120
-          });
-        } else if (!shouldDehydrate && isDehydrated && turnElement instanceof HTMLElement) {
-          toHydrate.push(turnElement);
+        if (shouldDehydrate && !isDehydrated) {
+          if (turnElement instanceof HTMLElement) toDehydrate.push(turnElement);
+          return;
+        }
+        const leftDehydration = !isDehydrated && dehydratedTurns.has(turnElement);
+        if (!shouldDehydrate && isDehydrated || leftDehydration) {
+          if (turnElement instanceof HTMLElement) toHydrate.push(turnElement);
         }
       });
+      const heights = toDehydrate.map(
+        (turnElement) => turnElement.offsetHeight || 120
+      );
       withSelfMutation(() => {
-        for (let i = 0; i < toDehydrate.length; i++) {
-          const item = toDehydrate[i];
-          item.elem.style.setProperty("--turbo-cached-h", `${item.height}px`);
-          item.elem.classList.add("ai-turbo-dehydrated");
+        for (let index = 0; index < toDehydrate.length; index++) {
+          toDehydrate[index].style.setProperty(
+            "--turbo-cached-h",
+            String(heights[index]) + "px"
+          );
+          toDehydrate[index].classList.add("ai-turbo-dehydrated");
         }
-        for (let i = 0; i < toHydrate.length; i++) {
-          toHydrate[i].classList.remove("ai-turbo-dehydrated");
-          toHydrate[i].style.removeProperty("--turbo-cached-h");
+        for (const turnElement of toHydrate) {
+          turnElement.classList.remove("ai-turbo-dehydrated");
+          turnElement.style.removeProperty("--turbo-cached-h");
         }
       });
+      for (const turnElement of toDehydrate) {
+        dehydratedTurns.add(turnElement);
+        codeBlocks.suspendTurnCodeBlocks(turnElement);
+      }
+      for (const turnElement of toHydrate) {
+        dehydratedTurns.delete(turnElement);
+        codeBlocks.requestCodeScanForTurn(turnElement);
+      }
       state.hiddenCount = turns.reduce(
         (count, turnElement) => count + Number(turnElement.classList.contains("ai-turbo-dehydrated")),
         0
       );
-      previousTurns = turns;
-      dirtyTurns.clear();
-      fullTurnSyncRequested = false;
+      if (turnTextIndex.pendingCount() > 0) requestTextIndexSoon();
     }
     function findIndexedTurnAncestor(mutationNode) {
       let ancestor = mutationNode instanceof Element ? mutationNode : mutationNode.parentElement;
       while (ancestor) {
-        if (turnIndex.has(ancestor)) return ancestor;
+        if (turnTextIndex.hasTurn(ancestor)) return ancestor;
         ancestor = ancestor.parentElement;
       }
       return null;
     }
-    function collectMutationTargets(records) {
-      const turnSelector = getActiveTurnSelectors().join(",");
-      const allTurnSelectors = [
-        ...currentPlatform.turnSelectors || [],
-        ...(currentPlatform.turnSelectorGroups || []).flat()
-      ];
-      const allTurnSelector = [...new Set(allTurnSelectors)].join(",");
-      const turnMarkerSelector = [
-        '[data-testid^="conversation-turn-"]',
-        "[data-turn]",
-        "[data-turn-key]",
-        "[data-message-author-role]",
-        "[data-message-role]",
-        "[data-conversation-role]",
-        "[data-role]",
-        '[data-content-search-unit-key$=":user"]',
-        '[data-content-search-unit-key$=":assistant"]',
-        '[data-thread-find-target="conversation"]',
-        "ol[data-conversation-transcript]",
-        '[data-user-message-bubble="true"]',
-        "[data-chatgpt-agent-turn-start]"
-      ].join(",");
-      const anyTurnSelector = `${allTurnSelector},${turnMarkerSelector}`;
-      const codeSelectors = currentPlatform.codeSelectors || ["pre"];
-      let structuralChange = false;
-      let shouldRequestUpdate = false;
-      for (const mutationRecord of records) {
-        const mutationTarget = mutationRecord.target;
-        if (mutationTarget instanceof Element && mutationTarget.closest(
-          `#${HUD_ID}, .ai-turbo-code-bar, #ai-turbo-vf-tray, .ai-turbo-chat-capsule, #ai-turbo-vf-preview-modal`
-        )) {
-          continue;
-        }
-        if (mutationRecord.type === "attributes") {
-          const attributeName = mutationRecord.attributeName || "";
-          if (!(mutationTarget instanceof Element)) continue;
-          const isSelectorAttribute = attributeName === "class" || attributeName === "id";
-          const isMarkerAttribute = TURN_MARKER_ATTRIBUTES.has(attributeName);
-          const isIndexedTurn = turnIndex.has(mutationTarget);
-          const matchesKnownTurn = isIndexedTurn || Boolean(allTurnSelector) && (mutationTarget.matches(allTurnSelector) || mutationTarget.matches(turnMarkerSelector) || mutationTarget.matches('[data-testid^="conversation-turn-"]'));
-          if (isMarkerAttribute) shouldRequestUpdate = true;
-          if (matchesKnownTurn && (isMarkerAttribute || isSelectorAttribute)) {
-            invalidateActiveTurnSelectorGroup();
-            structuralChange = true;
-            shouldRequestUpdate = true;
-          }
-          continue;
-        }
-        shouldRequestUpdate = true;
-        const indexedTurn = findIndexedTurnAncestor(mutationTarget);
-        const possibleTurn = indexedTurn || (mutationTarget instanceof Element ? mutationTarget.closest(turnSelector) : mutationTarget.parentElement?.closest(turnSelector));
-        if (possibleTurn instanceof Element && !isGeminiThoughtElement(possibleTurn) && !matchesReasoningElement(possibleTurn)) {
-          dirtyTurns.add(possibleTurn);
-        }
-        let possibleCode = null;
-        if (mutationTarget instanceof Element) {
-          for (const selector of codeSelectors) {
-            const candidate = mutationTarget.matches(selector) ? mutationTarget : mutationTarget.closest(selector);
-            if (candidate instanceof HTMLElement) {
-              possibleCode = codeBlocks.normalizeCodeElement(candidate);
-              break;
-            }
-          }
-        }
-        if (possibleCode instanceof HTMLElement) {
-          codeBlocks.markCodeBlockDirty(possibleCode);
-        }
-        if (mutationRecord.type !== "childList") continue;
-        for (const changedNode of [
-          ...mutationRecord.addedNodes,
-          ...mutationRecord.removedNodes
-        ]) {
-          if (!(changedNode instanceof Element)) continue;
-          if (changedNode.matches(anyTurnSelector) || changedNode.querySelector(anyTurnSelector)) {
-            structuralChange = true;
-          }
-          for (const selector of codeSelectors) {
-            if (changedNode.matches(selector)) {
-              const elNorm = codeBlocks.normalizeCodeElement(changedNode);
-              if (elNorm instanceof HTMLElement) {
-                codeBlocks.markCodeBlockDirty(elNorm);
-              }
-            }
-            changedNode.querySelectorAll(selector).forEach((c) => {
-              const elNorm = codeBlocks.normalizeCodeElement(c);
-              if (elNorm instanceof HTMLElement) {
-                codeBlocks.markCodeBlockDirty(elNorm);
-              }
-            });
-          }
-        }
+    function runTextIndexFrame() {
+      if (isEngineDormant()) return;
+      const remaining = turnTextIndex.flush({
+        budgetMs: TEXT_INDEX_FRAME_BUDGET
+      });
+      if (remaining > 0) {
+        textIndexFrame = window.requestAnimationFrame(() => {
+          textIndexFrame = null;
+          runTextIndexFrame();
+        });
+        return;
       }
-      if (structuralChange) {
+      hud?.updateHudDashboard();
+    }
+    function requestTextIndexSoon() {
+      if (textIndexTimer !== null || textIndexFrame !== null) return;
+      textIndexTimer = window.setTimeout(() => {
+        textIndexTimer = null;
+        runTextIndexFrame();
+      }, TEXT_INDEX_INTERVAL);
+    }
+    function flushTextIndex(options = {}) {
+      if (isEngineDormant()) return 0;
+      reconcileTurnIndex();
+      if (options.force === true) {
+        const remaining2 = turnTextIndex.flush();
+        hud?.updateHudDashboard();
+        return remaining2;
+      }
+      const remaining = turnTextIndex.flush({
+        budgetMs: TEXT_INDEX_FRAME_BUDGET
+      });
+      if (remaining > 0 && textIndexTimer === null && textIndexFrame === null) {
+        textIndexFrame = window.requestAnimationFrame(() => {
+          textIndexFrame = null;
+          runTextIndexFrame();
+        });
+      }
+      hud?.updateHudDashboard();
+      return remaining;
+    }
+    function scheduleCodeScan() {
+      if (codeScanTimer !== null) return;
+      const elapsed = performance.now() - lastCodeScanTime;
+      codeScanTimer = window.setTimeout(() => {
+        codeScanTimer = null;
+        if (isEngineDormant()) return;
+        lastCodeScanTime = performance.now();
+        codeBlocks.flushCodeBlockScan();
+        hud?.updateHudDashboard();
+        if (codeBlocks.isCodeScanPending()) scheduleCodeScan();
+      }, Math.max(0, CODE_SCAN_INTERVAL - elapsed));
+    }
+    function handleMutationRecords(records) {
+      const classification = classifyMutations(records, {
+        turnSelector: getActiveTurnSelectors().join(","),
+        isIgnoredTarget: isIgnoredMutationTarget,
+        findTurnAncestor: findIndexedTurnAncestor
+      });
+      if (classification.turnStructureChanged) {
         invalidateActiveTurnSelectorGroup();
         fullTurnSyncRequested = true;
-        codeBlocks.requestCodeScan();
       }
-      return shouldRequestUpdate || structuralChange;
+      if (classification.requestUpdate || classification.turnStructureChanged) {
+        invalidateTurnCache();
+      }
+      if (classification.dirtyTurns.size > 0) {
+        for (const turnElement of classification.dirtyTurns) {
+          turnTextIndex.markDirty(turnElement);
+        }
+        requestTextIndexSoon();
+      }
+      if (classification.codeRoots.size > 0) {
+        codeBlocks.markCodeSubtreesDirty(classification.codeRoots);
+        scheduleCodeScan();
+      }
+      if (classification.requestUpdate) requestUpdate();
+    }
+    function syncTurnDiscoveryFallback() {
+      if (state.totalTurns > 0) {
+        if (turnDiscoveryTimer !== null) {
+          window.clearInterval(turnDiscoveryTimer);
+          turnDiscoveryTimer = null;
+        }
+        return;
+      }
+      if (turnDiscoveryTimer !== null) return;
+      turnDiscoveryTimer = window.setInterval(() => {
+        if (isEngineDormant()) return;
+        if (state.totalTurns > 0) {
+          if (turnDiscoveryTimer !== null) {
+            window.clearInterval(turnDiscoveryTimer);
+            turnDiscoveryTimer = null;
+          }
+          return;
+        }
+        invalidateActiveTurnSelectorGroup();
+        requestUpdate();
+      }, TURN_DISCOVERY_RETRY_INTERVAL);
+    }
+    function resetTurnIndexForNavigation() {
+      invalidateActiveTurnSelectorGroup();
+      turnTextIndex.clear();
+      restoredTurns.clear();
+      dehydratedTurns.clear();
+      fullTurnSyncRequested = true;
     }
     function runScheduledUpdate() {
       scheduleTimer = null;
@@ -8486,14 +8877,11 @@ ${CODE_FENCE}`;
         requestUpdate();
         return;
       }
-      const currentTurnSet = new Set(previousTurns);
-      for (const dirtyTurn of dirtyTurns) {
-        if (!(dirtyTurn instanceof Element) || !currentTurnSet.has(dirtyTurn)) {
-          fullTurnSyncRequested = true;
-        }
-      }
-      syncTurnIndex(fullTurnSyncRequested);
-      codeBlocks.flushCodeBlockScan();
+      const structuralSync = fullTurnSyncRequested;
+      fullTurnSyncRequested = false;
+      syncTurnIndex();
+      if (structuralSync) syncTurnDiscoveryFallback();
+      if (codeBlocks.isCodeScanPending()) scheduleCodeScan();
       toolMemory.maybeRestore();
       hud?.updateHudDashboard();
       hud?.ensureHUDMounted();
@@ -8516,13 +8904,13 @@ ${CODE_FENCE}`;
       observer?.disconnect();
       observer = new MutationObserver((records) => {
         if (selfMutationDepth > 0) return;
-        if (collectMutationTargets(records)) requestUpdate();
+        handleMutationRecords(records);
       });
       observer.observe(observeRoot, {
         childList: true,
         characterData: true,
         attributes: true,
-        attributeFilter: Array.from(TURN_SELECTOR_ATTRIBUTES),
+        attributeFilter: Array.from(TURN_MARKER_ATTRIBUTES),
         subtree: true
       });
     }
@@ -8535,8 +8923,7 @@ ${CODE_FENCE}`;
         const result = originalPushState.apply(this, args);
         window.setTimeout(() => {
           if (syncEngineActivation()) return;
-          invalidateActiveTurnSelectorGroup();
-          fullTurnSyncRequested = true;
+          resetTurnIndexForNavigation();
           codeBlocks.requestCodeScan();
           requestUpdate();
           reasoning.scheduleReasoningRestore();
@@ -8548,8 +8935,7 @@ ${CODE_FENCE}`;
         const result = originalReplaceState.apply(this, args);
         window.setTimeout(() => {
           if (syncEngineActivation()) return;
-          invalidateActiveTurnSelectorGroup();
-          fullTurnSyncRequested = true;
+          resetTurnIndexForNavigation();
           codeBlocks.requestCodeScan();
           requestUpdate();
         }, 0);
@@ -8557,8 +8943,7 @@ ${CODE_FENCE}`;
       };
       window.addEventListener("popstate", () => {
         if (syncEngineActivation()) return;
-        invalidateActiveTurnSelectorGroup();
-        fullTurnSyncRequested = true;
+        resetTurnIndexForNavigation();
         codeBlocks.requestCodeScan();
         requestUpdate();
         reasoning.scheduleReasoningRestore();
@@ -8580,6 +8965,25 @@ ${CODE_FENCE}`;
         window.clearTimeout(scheduleTimer);
         scheduleTimer = null;
       }
+      if (textIndexTimer !== null) {
+        window.clearTimeout(textIndexTimer);
+        textIndexTimer = null;
+      }
+      if (textIndexFrame !== null) {
+        window.cancelAnimationFrame(textIndexFrame);
+        textIndexFrame = null;
+      }
+      if (codeScanTimer !== null) {
+        window.clearTimeout(codeScanTimer);
+        codeScanTimer = null;
+      }
+      if (turnDiscoveryTimer !== null) {
+        window.clearInterval(turnDiscoveryTimer);
+        turnDiscoveryTimer = null;
+      }
+      turnTextIndex.clear();
+      restoredTurns.clear();
+      dehydratedTurns.clear();
       virtualFiles.stopSyncLoop();
       codeBlocks.unmountAllCodeControls();
       withSelfMutation(() => {
@@ -8668,7 +9072,7 @@ ${CODE_FENCE}`;
       if (isAuthOrRedirectRoute()) return;
       setEngineActive(true);
       loadSavedConfig(state);
-      injectEngineStyles();
+      injectStyles();
       hud?.buildHUD();
       codeBlocks.observeCodeLayout();
       observeDom();
@@ -8698,6 +9102,7 @@ ${CODE_FENCE}`;
       }
       fullTurnSyncRequested = true;
       codeBlocks.requestCodeScan();
+      syncTurnDiscoveryFallback();
       requestUpdate();
       handoff.resumePendingHandoffPrompt();
       if (!loadListenerBound) {
