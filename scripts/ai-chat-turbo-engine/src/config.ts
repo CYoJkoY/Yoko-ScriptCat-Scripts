@@ -244,6 +244,7 @@ export const BLOCK_TEXT_TAGS = new Set([
 export interface PlatformDefinition {
   readonly name: string;
   readonly supportsToolMemory?: boolean;
+  readonly sidebar?: SidebarPeekDefinition;
   readonly turnSelectors: readonly string[];
   readonly turnSelectorGroups?: readonly (readonly string[])[];
   readonly userTurnSelectors?: readonly string[];
@@ -254,9 +255,45 @@ export interface PlatformDefinition {
   readonly sendButtonSelectors: readonly string[];
 }
 
+/**
+ * Describes the native navigation rail used by the hover peek. The rail is
+ * never cloned or rebuilt: the engine only marks it while it is collapsed and
+ * lets CSS widen it to a capped width.
+ */
+export interface SidebarPeekDefinition {
+  readonly selectors: readonly string[];
+  readonly triggers?: readonly string[];
+  readonly peekWidth?: number;
+  readonly collapsedMaxWidth?: number;
+  /**
+   * Negative margin that cancels the width growth when the rail's parent
+   * clips overflow, so the engine cannot measure the row itself.
+   */
+  readonly shift?: number;
+  /**
+   * Descendants whose inline hidden display declaration has to be lifted while
+   * the rail peeks. The value is replaced with display: flex !important and the
+   * original declaration is restored on leave.
+   */
+  readonly reveal?: readonly string[];
+}
+
 export const PLATFORMS = {
   chatgpt: {
     name: "ChatGPT",
+    sidebar: {
+      selectors: ["aside.app-shell-left-panel"],
+      triggers: [
+        'button[aria-label="显示侧边栏"]',
+        'button[aria-label*="Show sidebar" i]',
+        'button[aria-label*="Expand sidebar" i]',
+      ],
+      // The expanded panel is mounted but its scroller keeps an inline
+      // display: none !important until the site opens it itself.
+      reveal: ["#app-shell-sidebar > div:nth-child(2) > div:first-child"],
+      peekWidth: 340,
+      collapsedMaxWidth: 96,
+    },
     turnSelectorGroups: [
       [CHATGPT_SHELL_TURN_SELECTOR],
       [CHATGPT_TRANSCRIPT_MESSAGE_SELECTOR],
@@ -355,6 +392,19 @@ export const PLATFORMS = {
   },
   gemini: {
     name: "Gemini",
+    sidebar: {
+      selectors: ["bard-sidenav", ".bard-sidenav", "side-navigation"],
+      triggers: [
+        '[data-test-id="side-nav-sparkle-button"]',
+        '[data-test-id="side-nav-menu-button"]',
+        ".side-nav-menu-button",
+        'button[aria-label*="打开边栏"]',
+        'button[aria-label*="收起边栏"]',
+        'button[aria-label*="侧边栏"]',
+      ],
+      peekWidth: 248,
+      collapsedMaxWidth: 96,
+    },
     turnSelectorGroups: [
       ["user-query", "model-response"],
       ['[data-test-id="user-query"]', '[data-test-id="model-response"]'],
@@ -429,33 +479,6 @@ export const PLATFORMS = {
       'button[aria-label*="发送"]',
     ],
   },
-  claude: {
-    name: "Claude",
-    turnSelectors: [
-      "div.font-user-message",
-      ".font-claude-response",
-      ".font-claude-message",
-      "div[data-test-render-count]",
-    ],
-    codeSelectors: ["pre"],
-    contentSelectors: [
-      ".standard-markdown",
-      ".progressive-markdown",
-      ".markdown",
-      '[class*="font-claude"]',
-    ],
-    inputSelectors: [
-      "div.ProseMirror[contenteditable='true']",
-      'div[contenteditable="true"]',
-    ],
-    sendButtonSelectors: [
-      'button[aria-label*="Send Message"]',
-      'button[aria-label*="发送消息"]',
-      'button[aria-label*="Send"]',
-      'button[aria-label*="发送"]',
-      "fieldset button:last-child",
-    ],
-  },
   deepseek: {
     name: "DeepSeek",
     turnSelectors: [
@@ -512,42 +535,73 @@ export const PLATFORMS = {
   },
   copilot: {
     name: "Microsoft Copilot",
+    // The rail is a Fluent NavDrawer that the site widens itself. Its width
+    // rule sits in the `application` cascade layer with !important, so the
+    // stylesheet override joins the site's first layer instead. The rail
+    // stays mounted and keeps its own listeners while peeking.
+    sidebar: {
+      selectors: [
+        'div.fai-CopilotNavDrawer[role="navigation"]',
+        'div.fui-NavDrawer[role="navigation"]',
+      ],
+      triggers: [
+        '[data-testid="nav-toggle-button"]',
+        'button[aria-label="展开边栏"]',
+        'button[aria-label="折叠边栏"]',
+        'button[aria-label*="Expand sidebar" i]',
+        'button[aria-label*="Collapse sidebar" i]',
+      ],
+      peekWidth: 256,
+      collapsedMaxWidth: 96,
+    },
     turnSelectors: [
-      '[class*="user-message"]',
-      '[class*="assistant-message"]',
-      '[data-testid*="message"]',
+      "div.fai-UserMessage",
+      "div.fai-CopilotMessage",
     ],
     userTurnSelectors: [
-      '[class*="user-message"]',
-      '[data-testid*="user-message"]',
-      '[data-message-author-role="user"]',
+      "div.fai-UserMessage",
     ],
     userContentSelectors: [
-      '[class*="user-message"]',
-      '[data-testid*="user-message"]',
+      'div.fai-UserMessage [data-testid="chatOutput"]',
+      'div.fai-UserMessage [class*="user-message"]',
     ],
     codeSelectors: ["pre"],
     contentSelectors: [
-      ".ac-textBlock",
+      ".fai-CopilotMessage__content",
       ".markdown",
       ".prose",
-      '[class*="message-content"]',
+      ".ac-textBlock",
     ],
     inputSelectors: [
-      "textarea[placeholder]",
+      'span.fai-EditorInput__input[role="textbox"]',
+      'span.fai-EditorInput__input[contenteditable="true"]',
       'div[contenteditable="true"][role="textbox"]',
       'div[contenteditable="true"]',
+      "textarea[placeholder]",
       "textarea",
     ],
     sendButtonSelectors: [
-      'button[data-testid*="send"]',
-      'button[aria-label*="Send"]',
+      'button[aria-label="发送"]',
+      'button.fai-SendButton',
+      'button[aria-label*="Send" i]',
       'button[aria-label*="发送"]',
+      'button[data-testid*="send"]',
       'button[type="submit"]',
     ],
   },
   perplexity: {
     name: "Perplexity",
+    sidebar: {
+      selectors: ["div.w-sideBarWidth"],
+      triggers: [
+        'button[aria-label="展开侧边栏"]',
+        'button[aria-label="打开侧边栏"]',
+        'button[aria-label*="Expand sidebar" i]',
+        'button[aria-label*="Open sidebar" i]',
+      ],
+      peekWidth: 240,
+      collapsedMaxWidth: 88,
+    },
     turnSelectors: [
       '[data-testid="chat-message"]',
       '[data-testid*="chat-message"]',
@@ -721,6 +775,16 @@ export const PLATFORMS = {
   },
   qwen: {
     name: "Qwen Chat",
+    sidebar: {
+      selectors: ["#sidebar.sidebar"],
+      triggers: [
+        'button[aria-label="切换侧边栏"]',
+        'button[aria-label="展开侧边栏"]',
+        'button[aria-label*="sidebar" i]',
+      ],
+      peekWidth: 240,
+      collapsedMaxWidth: 96,
+    },
     turnSelectors: [
       ".chat-user-message-container",
       ".chat-user-message",
@@ -840,6 +904,12 @@ export const PLATFORMS = {
   },
   glm: {
     name: "ChatGLM / 智谱清言",
+    sidebar: {
+      selectors: ["aside.el-aside.aside-container"],
+      triggers: [".aside-header .operation-btn"],
+      peekWidth: 260,
+      collapsedMaxWidth: 88,
+    },
     turnSelectors: [
       ".question-txt.dots",
       '[data-message-author="user"]',
@@ -900,6 +970,15 @@ export const PLATFORMS = {
   },
   zai: {
     name: "Z.ai (GLM)",
+    sidebar: {
+      selectors: ["#sidebar"],
+      triggers: ['button[aria-label="切换侧边栏"]'],
+      // The row that holds the rail clips overflow, so the growth is cancelled
+      // by a fixed margin instead of a measurement.
+      shift: -178,
+      peekWidth: 238,
+      collapsedMaxWidth: 88,
+    },
     turnSelectors: [
       ".chat-user",
       ".chat-assistant",

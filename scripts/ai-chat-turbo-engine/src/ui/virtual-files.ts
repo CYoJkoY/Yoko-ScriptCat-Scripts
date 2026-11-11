@@ -11,6 +11,7 @@ import { fastCountLines } from "../core/text";
 import type { EngineState } from "../state";
 import type { ElementFactory } from "./code-blocks";
 import { createUiIcon } from "./icons";
+import { showTextPreview } from "./text-preview";
 
 export interface VirtualFileItem {
   id: string;
@@ -279,98 +280,13 @@ export function createVirtualFileUtils(
   }
 
   function showTextPreviewModal(fileItem: VirtualFileItem): void {
-    document.getElementById("ai-turbo-vf-preview-modal")?.remove();
-
-    const previewBackdrop = el("div", {
-      id: "ai-turbo-vf-preview-modal",
-      className: "ai-turbo-modal-backdrop",
-      onclick: (event: Event) => {
-        if (event.target === previewBackdrop) previewBackdrop.remove();
-      },
+    showTextPreview({
+      el,
+      name: fileItem.name,
+      meta: `${fileItem.lineCount.toLocaleString("zh-CN")} 行 · ${(fileItem.size / 1024).toFixed(1)} KB`,
+      content: fileItem.content,
+      note: "发送时会提交完整文本",
     });
-
-    const titleSpan = el(
-      "span",
-      {
-        style:
-          "font:600 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#f8fafc;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
-      },
-      [
-        `📄 ${fileItem.name} (${fileItem.lineCount.toLocaleString()} 行 · ${(fileItem.size / 1024).toFixed(1)} KB)`,
-      ],
-    );
-
-    const closeBtn = el(
-      "button",
-      {
-        type: "button",
-        style:
-          "background:transparent;border:0;color:#94a3b8;cursor:pointer;font-size:16px;line-height:1;padding:4px;border-radius:4px;",
-        onclick: () => previewBackdrop.remove(),
-      },
-      ["✕"],
-    );
-
-    const header = el(
-      "div",
-      {
-        style:
-          "flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid rgba(148,163,184,0.15);background:rgba(18,24,38,0.98);",
-      },
-      [titleSpan, closeBtn],
-    );
-
-    const bodyText = el(
-      "pre",
-      {
-        style:
-          "flex:1 1 auto;min-height:0;margin:0;padding:16px;overflow-y:auto;overflow-x:auto;background:rgba(5,8,15,0.7);font:12px/1.6 ui-monospace,monospace;color:#cbd5e1;white-space:pre-wrap;word-break:break-all;",
-      },
-      [
-        fileItem.content.slice(0, 8000) +
-          (fileItem.content.length > 8000
-            ? "\n\n... (预览仅截取前 8,000 字符，发送时将提交完整全部文本)"
-            : ""),
-      ],
-    );
-
-    const footerText = el(
-      "span",
-      { style: "font:11px sans-serif;color:#64748b;" },
-      ["按 Esc 键或点击外部任意区域即可快速关闭"],
-    );
-
-    const footerCloseBtn = el(
-      "button",
-      {
-        type: "button",
-        style:
-          "background:rgba(255,255,255,0.08);border:1px solid rgba(148,163,184,0.25);color:#e2e8f0;padding:4px 14px;border-radius:6px;font:11px sans-serif;cursor:pointer;",
-        onclick: () => previewBackdrop.remove(),
-      },
-      ["关闭"],
-    );
-
-    const footer = el(
-      "div",
-      {
-        style:
-          "flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-top:1px solid rgba(148,163,184,0.15);background:rgba(18,24,38,0.98);",
-      },
-      [footerText, footerCloseBtn],
-    );
-
-    const modalBox = el(
-      "div",
-      {
-        style:
-          "background:#0d121c;border:1px solid rgba(52,211,153,0.35);box-shadow:0 24px 60px rgba(0,0,0,0.85);border-radius:14px;width:720px;max-width:94vw;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;",
-      },
-      [header, bodyText, footer],
-    );
-
-    previewBackdrop.appendChild(modalBox);
-    document.body.appendChild(previewBackdrop);
   }
 
   function renderVirtualFileTray(): void {

@@ -116,13 +116,10 @@ export function detectPlatform(): PlatformDefinition | null {
   ) {
     return PLATFORMS.grok;
   }
-  if (hostnameMatches(hostname, ["claude.ai"])) {
-    return PLATFORMS.claude;
-  }
   if (hostnameMatches(hostname, ["deepseek.com"])) {
     return PLATFORMS.deepseek;
   }
-  if (hostnameMatches(hostname, ["copilot.microsoft.com"])) {
+  if (hostnameMatches(hostname, ["copilot.com", "copilot.microsoft.com"])) {
     return PLATFORMS.copilot;
   }
   if (hostnameMatches(hostname, ["perplexity.ai"])) {

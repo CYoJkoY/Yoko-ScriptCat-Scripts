@@ -2,6 +2,7 @@ import { readUserscriptInfo } from "../../../shared/userscript/globals";
 import { createTurnUtils } from "./core/turns";
 import { createTurnTextIndex } from "./core/turn-index";
 import { createMotionQuiet } from "./core/motion-quiet";
+import { createSidebarPeek } from "./core/sidebar-peek";
 import { classifyMutations } from "./core/mutation-classify";
 import { createNavigationTracker } from "./core/navigation";
 import {
@@ -20,6 +21,7 @@ import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
 import { createHandoffUtils } from "./core/handoff";
 import { createHudUtils, type HudUtils } from "./ui/hud";
 import { createChatCapsuleUtils } from "./ui/chat-capsules";
+import { closeTextPreview } from "./ui/text-preview";
 import {
   createVirtualFileUtils,
   type VirtualFileUtils,
@@ -81,6 +83,9 @@ export function initializeEngine(): void {
       fullTurnSyncRequested = true;
       requestUpdate();
     },
+  });
+  const sidebarPeek = createSidebarPeek({
+    sidebar: currentPlatform.sidebar ?? null,
   });
   const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
   const navigationTracker = createNavigationTracker(window.location);
@@ -163,7 +168,6 @@ export function initializeEngine(): void {
     el,
     withSelfMutation,
     state,
-    isUserTurn,
   });
 
   // 从完整消息容器中提取文本；不再只取第一个 Markdown 子节点或截断到 800 字符。
@@ -299,6 +303,7 @@ export function initializeEngine(): void {
     for (const turnElement of addedTurns) {
       chatCapsules.collapseInChatFileBlocks(turnElement);
     }
+    chatCapsules.sweep(turns);
 
     state.totalTurns = turns.length;
     state.indexedTurns = turnTextIndex.getRecords();
@@ -658,6 +663,7 @@ export function initializeEngine(): void {
     observer?.disconnect();
     codeBlocks.disconnectCodeLayoutObserver();
     motionQuiet.teardown();
+    sidebarPeek.teardown();
     if (scheduleTimer) {
       window.cancelAnimationFrame(scheduleTimer);
       window.clearTimeout(scheduleTimer);
@@ -688,7 +694,9 @@ export function initializeEngine(): void {
 
     withSelfMutation(() => {
       document
-        .querySelectorAll(".ai-turbo-chat-capsule, .ai-turbo-chat-user-prompt")
+        .querySelectorAll(
+          ".ai-turbo-chat-file-row, .ai-turbo-chat-capsule, .ai-turbo-chat-user-prompt",
+        )
         .forEach((node) => node.remove());
       document
         .querySelectorAll(".ai-turbo-chat-folded-target")
@@ -708,6 +716,8 @@ export function initializeEngine(): void {
           node.style.removeProperty("--turbo-cached-h");
         });
     });
+
+    chatCapsules.reset();
 
     document.getElementById(HUD_ID)?.remove();
     document.getElementById(STYLE_ID)?.remove();
@@ -738,13 +748,9 @@ export function initializeEngine(): void {
       (event) => {
         if (isEngineDormant()) return;
         if (event.key === "Escape") {
-          const previewModal = document.getElementById(
-            "ai-turbo-vf-preview-modal",
-          );
-          if (previewModal) {
+          if (closeTextPreview()) {
             event.preventDefault();
             event.stopPropagation();
-            previewModal.remove();
             return;
           }
           if (state.hudOpen) {
@@ -804,6 +810,7 @@ export function initializeEngine(): void {
     injectStyles();
     hud?.buildHUD();
     codeBlocks.observeCodeLayout();
+    sidebarPeek.bind(document);
     if (currentPlatform === PLATFORMS.gemini) motionQuiet.bind(document);
     observeDom();
     patchHistoryForSpaNavigation();

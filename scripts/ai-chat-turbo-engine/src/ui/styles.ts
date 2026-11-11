@@ -84,6 +84,159 @@ export const GEMINI_NATIVE_RENDER_CSS = `
     }
 `;
 
+/**
+ * Hover peek for a collapsed native navigation rail. The engine only sets an
+ * attribute plus two custom properties; the rail keeps its nodes, state, and
+ * listeners, so nothing is rebuilt when the pointer arrives or leaves.
+ *
+ * The shift variable carries a negative margin equal to the width growth. It
+ * keeps a static rail from pushing the chat column aside, which is the layout
+ * cost that a native expand pays. Site blocks below only re-expose the content
+ * that each site removes while collapsed.
+ */
+export const SIDEBAR_PEEK_CSS = `
+    [data-ai-turbo-sidebar-peek] {
+      width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      z-index: 5 !important;
+      transition: none !important;
+    }
+
+    [data-ai-turbo-sidebar-peek="left"] {
+      margin-right: var(--ai-turbo-sidebar-peek-shift, 0px) !important;
+    }
+
+    [data-ai-turbo-sidebar-peek="right"] {
+      margin-left: var(--ai-turbo-sidebar-peek-shift, 0px) !important;
+    }
+
+    /* ChatGPT keeps the expanded panel mounted at opacity 0 next to the rail.
+       Its inner scroller is lifted by the peek module because that node holds
+       an inline hidden-display rule, which a stylesheet cannot beat. */
+    aside.app-shell-left-panel[data-ai-turbo-sidebar-peek] #app-shell-sidebar > div:nth-child(2) {
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      transition: none !important;
+    }
+
+    /* Qwen hides history rows through visibility on their wrapper levels, so
+       every level between the rail and the title has to re-enter. */
+    #sidebar.sidebar[data-ai-turbo-sidebar-peek] {
+      max-width: var(--ai-turbo-sidebar-peek-width, 240px) !important;
+    }
+
+    #sidebar.sidebar[data-ai-turbo-sidebar-peek] :is(.session-list-wrapper, .sidebar-entry-list-content) {
+      visibility: visible !important;
+      opacity: 1 !important;
+      transition: none !important;
+    }
+
+    #sidebar.sidebar[data-ai-turbo-sidebar-peek] :is(.sidebar-entry-list-text, .chat-item-title-text, .folder-name) {
+      visibility: visible !important;
+      opacity: 1 !important;
+      transition: none !important;
+    }
+
+    /* ChatGLM shrinks every entry to its icon and removes the label box. */
+    aside.el-aside.aside-container[data-ai-turbo-sidebar-peek] :is(.aside-subject, .aside-subjects) {
+      width: auto !important;
+    }
+
+    aside.el-aside.aside-container[data-ai-turbo-sidebar-peek] .subject-text {
+      display: flex !important;
+      transition: none !important;
+    }
+
+    /* Z.ai pins its inner shell to the collapsed width and blurs labels. */
+    #sidebar[data-ai-turbo-sidebar-peek] > [role="presentation"] {
+      width: var(--ai-turbo-sidebar-peek-width, 238px) !important;
+      transition: none !important;
+    }
+
+    #sidebar[data-ai-turbo-sidebar-peek] [data-slot="sidebar-label"] {
+      max-width: none !important;
+      opacity: 1 !important;
+      filter: none !important;
+      transition: none !important;
+    }
+
+    #sidebar[data-ai-turbo-sidebar-peek] [data-testid="sidebar-scroll-region"] {
+      opacity: 1 !important;
+      transition: none !important;
+    }
+
+    #sidebar[data-ai-turbo-sidebar-peek] [role="presentation"] :is(button.w-full, a.w-full) {
+      width: 100% !important;
+      transition: none !important;
+    }
+
+    /* Perplexity clips its nav at the collapsed width inside the spacing
+       wrapper, so the wrapper rule alone keeps the labels cut off. */
+    div.w-sideBarWidth[data-ai-turbo-sidebar-peek] nav {
+      width: var(--ai-turbo-sidebar-peek-width, 240px) !important;
+      transition: none !important;
+    }
+
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed {
+      width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      transition: none !important;
+    }
+
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed :is(.label-and-badge, .title-text) {
+      visibility: visible !important;
+      opacity: 1 !important;
+      transition: none !important;
+    }
+
+    /* Gemini hides the whole history scroller while collapsed, so restoring a
+       single label is not enough; the list itself has to re-enter the flow. */
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed infinite-scroller,
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed infinite-scroller * {
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed mat-nav-list {
+      display: flex !important;
+      flex-direction: column !important;
+      transition: none !important;
+    }
+
+    /* Copilot pins the rail width with !important inside its application
+       cascade layer, which outranks every unlayered !important declaration.
+       Only a layered !important can win, so these rules join the site's first
+       layer: foundation already holds that position, so the site's own layer
+       order stays exactly as declared whether this sheet is parsed before or
+       after the site styles. The rail's own rail-width variable has to move
+       as well, otherwise the drawer body keeps the collapsed geometry even
+       when the outer box grows. */
+    @layer foundation {
+      div.fui-NavDrawer[data-ai-turbo-sidebar-peek] {
+        --m365-nav-rail-width: var(--ai-turbo-sidebar-peek-width, 256px);
+        width: var(--ai-turbo-sidebar-peek-width, 256px) !important;
+        min-width: var(--ai-turbo-sidebar-peek-width, 256px) !important;
+        max-width: var(--ai-turbo-sidebar-peek-width, 256px) !important;
+      }
+
+      div.fui-NavDrawer[data-ai-turbo-sidebar-peek] .fui-NavDrawerBody {
+        width: auto !important;
+        transition: none !important;
+      }
+
+      div.fui-NavDrawer[data-ai-turbo-sidebar-peek] a.fui-NavItem {
+        min-width: 0 !important;
+        max-width: none !important;
+        transition: none !important;
+      }
+    }
+
+    /* The collapsed drawer removes the label box from layout. */
+    div.fui-NavDrawer[data-ai-turbo-sidebar-peek] a.fui-NavItem > span:last-child {
+      display: block !important;
+      opacity: 1 !important;
+      transition: none !important;
+    }
+`;
+
 const BASE_ENGINE_CSS = `
     .ai-turbo-dehydrated {
       content-visibility: hidden !important;
@@ -442,18 +595,63 @@ const BASE_ENGINE_CSS = `
     }
 
     .ai-turbo-chat-capsule {
+      appearance: none !important;
+      -webkit-appearance: none !important;
       display: inline-flex !important;
       align-items: center !important;
       gap: 8px !important;
-      padding: 6px 14px !important;
+      min-width: 0 !important;
+      padding: 6px 10px 6px 11px !important;
       margin: 0 !important;
-      max-width: min(100%, 680px) !important;
+      max-width: 100% !important;
       background: #111619 !important;
       border: 1px solid rgba(153, 166, 161, 0.18) !important;
       border-left: 2px solid rgba(101, 210, 164, 0.7) !important;
       border-radius: 10px !important;
       box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16) !important;
+      color: #e7eeea !important;
+      font: inherit !important;
+      text-align: left !important;
+      cursor: pointer !important;
       user-select: none !important;
+      transition:
+        border-color 120ms ease,
+        background 120ms ease !important;
+    }
+
+    .ai-turbo-chat-capsule-icon {
+      flex: 0 0 auto !important;
+      display: inline-flex !important;
+      color: #72d6ab !important;
+    }
+
+    .ai-turbo-chat-capsule-name {
+      min-width: 0 !important;
+      max-width: 260px !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+      color: #f1f5f9 !important;
+      font: 600 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+    }
+
+    .ai-turbo-chat-capsule-meta {
+      flex: 0 0 auto !important;
+      padding: 2px 6px !important;
+      border-radius: 4px !important;
+      background: rgba(101, 210, 164, 0.12) !important;
+      color: #72d6ab !important;
+      font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+      white-space: nowrap !important;
+    }
+
+    .ai-turbo-chat-capsule-action {
+      flex: 0 0 auto !important;
+      padding-left: 8px !important;
+      border-left: 1px solid rgba(153, 166, 161, 0.16) !important;
+      color: #9fb3ab !important;
+      font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      white-space: nowrap !important;
     }
 
     .ai-turbo-chat-file-row {
@@ -474,14 +672,44 @@ const BASE_ENGINE_CSS = `
       pointer-events: auto !important;
     }
 
+    .ai-turbo-chat-file-stack {
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: flex-end !important;
+      gap: 6px !important;
+      min-width: 0 !important;
+      max-width: 100% !important;
+    }
+
+    .ai-turbo-chat-user-prompt {
+      max-width: 100% !important;
+      margin: 0 0 2px !important;
+      color: inherit !important;
+      font: inherit !important;
+      line-height: 1.5 !important;
+      white-space: pre-wrap !important;
+      overflow-wrap: anywhere !important;
+      text-align: left !important;
+      user-select: text !important;
+    }
+
     .ai-turbo-chat-file-row .ai-turbo-chat-capsule {
       flex: 0 1 auto !important;
       min-width: 0 !important;
       max-width: min(680px, 100%) !important;
     }
 
-    .ai-turbo-chat-capsule:hover {
-      border-color: rgba(101, 210, 164, 0.3) !important;
+    .ai-turbo-chat-capsule:hover,
+    .ai-turbo-chat-capsule:focus-visible {
+      border-color: rgba(101, 210, 164, 0.42) !important;
+      background: #161d21 !important;
+      outline: none !important;
+    }
+
+    .ai-turbo-chat-capsule:focus-visible {
+      box-shadow:
+        0 0 0 2px rgba(101, 210, 164, 0.45),
+        0 5px 16px rgba(0, 0, 0, 0.16) !important;
     }
 
     .ai-turbo-modal-backdrop {
@@ -496,6 +724,134 @@ const BASE_ENGINE_CSS = `
       justify-content: center !important;
       padding: 24px !important;
       box-sizing: border-box !important;
+    }
+
+    .ai-turbo-text-preview-dialog {
+      display: flex !important;
+      flex-direction: column !important;
+      width: 760px !important;
+      max-width: 94vw !important;
+      max-height: 86vh !important;
+      overflow: hidden !important;
+      box-sizing: border-box !important;
+      background: #0d121c !important;
+      border: 1px solid rgba(101, 210, 164, 0.32) !important;
+      border-radius: 14px !important;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85) !important;
+      color: #cbd5e1 !important;
+      font: 12px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+    }
+
+    .ai-turbo-text-preview-header {
+      flex: 0 0 auto !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 12px !important;
+      padding: 12px 14px 12px 18px !important;
+      border-bottom: 1px solid rgba(153, 166, 161, 0.15) !important;
+      background: rgba(18, 24, 38, 0.98) !important;
+    }
+
+    .ai-turbo-text-preview-heading {
+      min-width: 0 !important;
+      display: flex !important;
+      align-items: baseline !important;
+      gap: 10px !important;
+    }
+
+    .ai-turbo-text-preview-name {
+      min-width: 0 !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+      color: #f8fafc !important;
+      font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+    }
+
+    .ai-turbo-text-preview-meta {
+      flex: 0 0 auto !important;
+      color: #72d6ab !important;
+      font: 10.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+      white-space: nowrap !important;
+    }
+
+    .ai-turbo-text-preview-close {
+      flex: 0 0 auto !important;
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      padding: 4px 7px !important;
+      border: 0 !important;
+      border-radius: 6px !important;
+      background: transparent !important;
+      color: #94a3b8 !important;
+      font: 15px/1 sans-serif !important;
+      cursor: pointer !important;
+    }
+
+    .ai-turbo-text-preview-close:hover {
+      color: #e2e8f0 !important;
+      background: rgba(255, 255, 255, 0.08) !important;
+    }
+
+    .ai-turbo-text-preview-body {
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      padding: 16px !important;
+      overflow: auto !important;
+      background: rgba(5, 8, 15, 0.7) !important;
+      color: #cbd5e1 !important;
+      font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace !important;
+      white-space: pre-wrap !important;
+      overflow-wrap: anywhere !important;
+      tab-size: 4 !important;
+      user-select: text !important;
+    }
+
+    .ai-turbo-text-preview-footer {
+      flex: 0 0 auto !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 12px !important;
+      padding: 10px 14px 10px 18px !important;
+      border-top: 1px solid rgba(153, 166, 161, 0.15) !important;
+      background: rgba(18, 24, 38, 0.98) !important;
+    }
+
+    .ai-turbo-text-preview-info {
+      min-width: 0 !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+      color: #64748b !important;
+      font: 11px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+    }
+
+    .ai-turbo-text-preview-actions {
+      flex: 0 0 auto !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+    }
+
+    .ai-turbo-text-preview-action {
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      padding: 5px 12px !important;
+      border: 1px solid rgba(153, 166, 161, 0.2) !important;
+      border-radius: 7px !important;
+      background: rgba(255, 255, 255, 0.06) !important;
+      color: #e2e8f0 !important;
+      font: 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      cursor: pointer !important;
+      white-space: nowrap !important;
+    }
+
+    .ai-turbo-text-preview-action:hover {
+      border-color: rgba(101, 210, 164, 0.36) !important;
+      color: #72d6ab !important;
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -516,9 +872,10 @@ export type EngineStyleOptions = {
 };
 
 export function injectEngineStyles(options: EngineStyleOptions = {}): void {
+  const baseCss = `${BASE_ENGINE_CSS}\n${SIDEBAR_PEEK_CSS}`;
   const css = options.geminiNativeRender
-    ? `${BASE_ENGINE_CSS}\n${GEMINI_NATIVE_RENDER_CSS}`
-    : BASE_ENGINE_CSS;
+    ? `${baseCss}\n${GEMINI_NATIVE_RENDER_CSS}`
+    : baseCss;
 
   // The host may rebuild <head> during account switching, which drops the
   // style node with it. Reuse a live node, otherwise restore one so the HUD
