@@ -17,16 +17,21 @@ function normalize(css: string): string {
 }
 
 function selectorsOf(css: string): string[] {
-  return Array.from(css.matchAll(/([^{}]+)\{/g)).map((match) =>
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  return Array.from(withoutComments.matchAll(/([^{}]+)\{/g)).map((match) =>
     (match[1] ?? "").replace(/\s+/g, " ").trim(),
   );
 }
 
+const CONTENT_SELECTOR =
+  "model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text)";
 const EXPECTED_SELECTORS = [
-  "model-response .markdown > *",
-  "model-response .markdown > :is(pre, table, blockquote)",
-  "model-response .markdown > :is(img, video, canvas, iframe)",
+  `${CONTENT_SELECTOR} > *`,
+  `${CONTENT_SELECTOR} > :is(pre, table, blockquote)`,
+  `${CONTENT_SELECTOR} > :is(img, video, canvas, iframe)`,
   "model-response code-block",
+  ":is(top-bar, top-bar-actions, input-area, input-area-v2, side-navigation, chat-window, mat-toolbar, code-block, .top-bar, .input-area, .toolbar)",
+  `${CONTENT_SELECTOR}, ${CONTENT_SELECTOR} *`,
 ];
 
 beforeEach(() => {
@@ -40,16 +45,22 @@ describe("Gemini native message render isolation", () => {
 
     const css = normalize(readStyleText());
     expect(css).toContain(
-      "model-response .markdown > * { content-visibility: auto !important; contain-intrinsic-size: auto 3rem !important; }",
+      `${CONTENT_SELECTOR} > * { content-visibility: auto !important; contain: layout style !important; contain-intrinsic-size: auto 3rem !important; }`,
     );
     expect(css).toContain(
-      "model-response .markdown > :is(pre, table, blockquote) { contain-intrinsic-size: auto 8rem !important; }",
+      `${CONTENT_SELECTOR} > :is(pre, table, blockquote) { contain-intrinsic-size: auto 8rem !important; }`,
     );
     expect(css).toContain(
-      "model-response .markdown > :is(img, video, canvas, iframe) { contain-intrinsic-size: auto 12rem !important; }",
+      `${CONTENT_SELECTOR} > :is(img, video, canvas, iframe) { contain-intrinsic-size: auto 12rem !important; }`,
     );
     expect(css).toContain(
-      "model-response code-block { content-visibility: auto !important; contain-intrinsic-size: auto 10rem !important; }",
+      "model-response code-block { content-visibility: auto !important; contain: layout style !important; contain-intrinsic-size: auto 10rem !important; }",
+    );
+    expect(css).toContain(
+      `${EXPECTED_SELECTORS[4]} { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }`,
+    );
+    expect(css).toContain(
+      `${EXPECTED_SELECTORS[5]} { animation: none !important; transition: none !important; will-change: auto !important; }`,
     );
   });
 
@@ -78,7 +89,7 @@ describe("Gemini native message render isolation", () => {
 
     injectEngineStyles({ geminiNativeRender: true });
     expect(document.getElementById(STYLE_ID)).toBe(first);
-    expect(first?.textContent).toContain("model-response .markdown > *");
+    expect(first?.textContent).toContain(`${CONTENT_SELECTOR} > *`);
   });
 
   it("restores the stylesheet after the host drops the style node", () => {
@@ -101,12 +112,17 @@ describe("Gemini native message render isolation", () => {
     expect(css).not.toContain(".ai-turbo-dehydrated { content-visibility: auto");
   });
 
-  it("scopes isolation to markdown blocks and code blocks only", () => {
-    expect(selectorsOf(GEMINI_NATIVE_RENDER_CSS)).toEqual(EXPECTED_SELECTORS);
+  it("scopes isolation to block content and never to a whole turn", () => {
+    const selectors = selectorsOf(GEMINI_NATIVE_RENDER_CSS);
+    expect(selectors).toEqual(EXPECTED_SELECTORS);
     expect(GEMINI_NATIVE_RENDER_CSS.match(/content-visibility/g)).toHaveLength(2);
-    for (const selector of selectorsOf(GEMINI_NATIVE_RENDER_CSS)) {
-      expect(selector === "model-response" || selector === "user-query").toBe(false);
-      expect(selector.startsWith("model-response .markdown > ") || selector === "model-response code-block").toBe(true);
+    expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(
+      /(?:^|\n)\s*(?:model-response|user-query)\s*\{/
+    );
+    for (const selector of selectors) {
+      expect(selector).not.toBe("model-response");
+      expect(selector).not.toBe("user-query");
+      expect(selector.startsWith("model-response >")).toBe(false);
     }
   });
 
@@ -117,7 +133,13 @@ describe("Gemini native message render isolation", () => {
     expect(css).not.toMatch(/display\s*:\s*none/i);
     expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(/display\s*:/i);
     expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(/[;{\n]\s*(?:visibility|opacity)\s*:/i);
+    expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(
+      /content-visibility\s*:\s*hidden/i,
+    );
     // Paint containment on a whole turn would clip native menus and focus rings.
-    expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(/contain\s*:|content-visibility\s*:\s*hidden/i);
+    expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(/contain\s*:[^;]*\bpaint\b/i);
+    expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(
+      /contain\s*:\s*(?:strict|content)\b/i,
+    );
   });
 });

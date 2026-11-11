@@ -5,9 +5,9 @@ export function normalizeText(sourceText: string): string {
   return String(sourceText || "")
     .replace(/\u00a0/g, " ")
     .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+$/g, ""))
-    .join("\n")
+    /* Line ends and blank runs are rewritten in one pass each: a long answer
+       is normalized on every text index tick, so no per-line array is built. */
+    .replace(/[ \t]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -119,11 +119,12 @@ export function elementToPlainText(rootElement: unknown): string {
     return BLOCK_TEXT_TAGS.has(tag) ? "\n" + content + "\n" : content;
   }
 
-  let text = normalizeText(walk(rootElement));
-  for (const block of preservedCodeBlocks) {
-    const placeholder = `${CODE_FENCE}${block.language}\n${block.token}\n${CODE_FENCE}`;
-    const preserved = `${CODE_FENCE}${block.language}\n${block.codeText}\n${CODE_FENCE}`;
-    text = text.replace(placeholder, preserved);
-  }
-  return text;
+  const text = normalizeText(walk(rootElement));
+  if (preservedCodeBlocks.length === 0) return text;
+  /* One pass restores every fence placeholder. Replacing one block at a time
+     rescanned the whole message once per code block. */
+  return text.replace(/\uE000TURBO_CODE_(\d+)\uE001/g, (token, rawIndex) => {
+    const block = preservedCodeBlocks[Number(rawIndex)];
+    return block ? block.codeText : token;
+  });
 }

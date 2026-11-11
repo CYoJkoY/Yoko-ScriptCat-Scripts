@@ -74,8 +74,19 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   const codeState = new Map<HTMLElement, CodeEntry>();
   const dirtyCodeBlocks = new Set<HTMLElement>();
   const observedCodeBlocks = new Set<HTMLElement>();
+  /* Subtrees queued by mutations; expanded in the scan window, never inline. */
+  const pendingCodeRoots = new Set<Element>();
+  const watchedCodeBlocks = new Set<HTMLElement>();
+  /* Blocks that left the viewport observer and may now be measured once. */
+  const viewportReadyCodeBlocks = new Set<HTMLElement>();
   let codeScanRequested = true;
   let codeResizeObserver: ResizeObserver | null = null;
+  let codeViewportObserver: IntersectionObserver | null = null;
+  let barsDirty = false;
+
+  /* Measure a little ahead of the viewport so bars appear before they are
+     needed, without touching the hundreds of blocks far outside it. */
+  const CODE_VIEWPORT_MARGIN = "800px 0px";
 
   function normalizeCodeElement(candidate: Element): HTMLElement | null {
     if (!(candidate instanceof HTMLElement)) return null;
@@ -200,6 +211,11 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   }
 
   function getCodeElementHeight(codeElement: HTMLElement): number {
+    /* One box read is enough for the 300px threshold. The scroll sizes below
+       only cover jsdom and fully hidden elements, where the rect is zero. */
+    const rectHeight = Math.round(codeElement.getBoundingClientRect().height);
+    if (rectHeight > 0) return rectHeight;
+
     const pre = codeElement.querySelector("pre");
     return Math.max(
       codeElement.scrollHeight || 0,
@@ -303,6 +319,59 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     codeResizeObserver?.unobserve(codeElement);
   }
 
+  function supportsViewportObservation(): boolean {
+    return "IntersectionObserver" in window;
+  }
+
+  /**
+   * Fold controls are expensive to build and need a real height. Registering
+   * the block keeps loading and switching cheap: only blocks close to the
+   * viewport are ever measured, and everything else stays untouched.
+   */
+  function observeCodeViewport(codeElement: HTMLElement): void {
+    if (!codeViewportObserver || watchedCodeBlocks.has(codeElement)) return;
+    watchedCodeBlocks.add(codeElement);
+    codeViewportObserver.observe(codeElement);
+  }
+
+  function unobserveCodeViewport(codeElement: HTMLElement): void {
+    viewportReadyCodeBlocks.delete(codeElement);
+    if (!watchedCodeBlocks.delete(codeElement)) return;
+    codeViewportObserver?.unobserve(codeElement);
+  }
+
+  function ensureCodeViewportObserver(): void {
+    if (codeViewportObserver || !supportsViewportObservation()) return;
+
+    codeViewportObserver = new IntersectionObserver(
+      (entries) => {
+        let queued = false;
+        for (const viewportEntry of entries) {
+          if (!viewportEntry.isIntersecting) continue;
+          const target = viewportEntry.target;
+          if (!(target instanceof HTMLElement)) continue;
+          unobserveCodeViewport(target);
+          if (!target.isConnected) continue;
+          dirtyCodeBlocks.add(normalizeCodeElement(target) ?? target);
+          viewportReadyCodeBlocks.add(target);
+          queued = true;
+        }
+        if (queued) requestUpdate();
+      },
+      { rootMargin: CODE_VIEWPORT_MARGIN, threshold: 0 },
+    );
+  }
+
+  function releaseCodeViewportWatchers(): void {
+    for (const watched of Array.from(watchedCodeBlocks)) {
+      unobserveCodeViewport(watched);
+    }
+    codeViewportObserver?.disconnect();
+    codeViewportObserver = null;
+    watchedCodeBlocks.clear();
+    viewportReadyCodeBlocks.clear();
+  }
+
   function unmountCodeControls(codeElement: HTMLElement): void {
     const entry = codeState.get(codeElement);
     if (!entry) return;
@@ -321,6 +390,8 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     codeState.delete(codeElement);
     dirtyCodeBlocks.delete(codeElement);
     unobserveCodeElement(codeElement);
+    unobserveCodeViewport(codeElement);
+    barsDirty = true;
   }
 
   function isNativeCodeHeaderNode(node: Element): boolean {
@@ -578,6 +649,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     applyFoldStyles(entry, codeElement);
     updateCodeMeta(entry, codeElement);
     observeCodeElement(codeElement);
+    barsDirty = true;
   }
 
   function sweepOrphanBars(): void {
@@ -601,10 +673,27 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     });
   }
 
+  /** Expand the mutation-queued subtrees into code elements, once. */
+  function expandPendingCodeRoots(): HTMLElement[] {
+    if (pendingCodeRoots.size === 0) return [];
+    const expanded: HTMLElement[] = [];
+    for (const root of pendingCodeRoots) {
+      if (!root.isConnected) continue;
+      if (root.closest(".ai-turbo-dehydrated")) continue;
+      expanded.push(...collectCodeElements(root));
+    }
+    pendingCodeRoots.clear();
+    return expanded;
+  }
+
   function syncCodeBlocks(
     forceScan: boolean,
     dirtyCandidates: ReadonlySet<HTMLElement>,
   ): void {
+    /* Mutation callbacks only queue roots; the walk happens here, once per
+       scan window, instead of inside a conversation switch burst. */
+    const queuedRootCandidates = expandPendingCodeRoots();
+
     if (!state.collapseCode) {
       for (const [codeElement] of codeState) {
         unmountCodeControls(codeElement);
@@ -612,6 +701,8 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
       state.foldedCodeCount = 0;
       codeScanRequested = false;
       dirtyCodeBlocks.clear();
+      queuedRootCandidates.length = 0;
+      releaseCodeViewportWatchers();
       sweepOrphanBars();
       return;
     }
@@ -622,16 +713,18 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
       }
     }
 
-    const rawCandidates = forceScan
-      ? getCodeBlocks()
-      : Array.from(dirtyCandidates)
-          .map(normalizeCodeElement)
-          .filter(
-            (elem): elem is HTMLElement =>
-              elem instanceof HTMLElement &&
-              elem.isConnected &&
-              !elem.closest(".ai-turbo-dehydrated"),
-          );
+    const rawCandidates = [
+      ...(forceScan ? getCodeBlocks() : []),
+      ...queuedRootCandidates,
+      ...Array.from(dirtyCandidates)
+        .map(normalizeCodeElement)
+        .filter(
+          (elem): elem is HTMLElement =>
+            elem instanceof HTMLElement &&
+            elem.isConnected &&
+            !elem.closest(".ai-turbo-dehydrated"),
+        ),
+    ];
 
     const candidates = filterOutNested(rawCandidates).filter(
       (element): element is HTMLElement => element instanceof HTMLElement,
@@ -647,13 +740,21 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
           continue;
         }
         updateCodeMeta(entry, codeElement);
+      } else if (
+        codeViewportObserver &&
+        !viewportReadyCodeBlocks.has(codeElement)
+      ) {
+        observeCodeViewport(codeElement);
       } else {
+        viewportReadyCodeBlocks.delete(codeElement);
         mountCodeControls(codeElement);
       }
-
     }
 
-    sweepOrphanBars();
+    if (barsDirty) {
+      sweepOrphanBars();
+      barsDirty = false;
+    }
 
     state.foldedCodeCount = Array.from(codeState.values()).filter(
       (entry) => !entry.expanded,
@@ -663,6 +764,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   }
 
   function observeCodeLayout(): void {
+    ensureCodeViewportObserver();
     if (!("ResizeObserver" in window)) return;
     codeResizeObserver?.disconnect();
     observedCodeBlocks.clear();
@@ -691,12 +793,18 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
     for (const codeElement of Array.from(codeState.keys())) {
       unmountCodeControls(codeElement);
     }
+    pendingCodeRoots.clear();
+    dirtyCodeBlocks.clear();
+    releaseCodeViewportWatchers();
   }
 
   function disconnectCodeLayoutObserver(): void {
     codeResizeObserver?.disconnect();
     codeResizeObserver = null;
     observedCodeBlocks.clear();
+    pendingCodeRoots.clear();
+    dirtyCodeBlocks.clear();
+    releaseCodeViewportWatchers();
   }
 
   function requestCodeScan(): void {
@@ -742,6 +850,16 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
         dirtyCodeBlocks.delete(codeElement);
       }
     }
+    for (const watched of Array.from(watchedCodeBlocks)) {
+      if (watched === turnElement || turnElement.contains(watched)) {
+        unobserveCodeViewport(watched);
+      }
+    }
+    for (const root of Array.from(pendingCodeRoots)) {
+      if (root === turnElement || turnElement.contains(root)) {
+        pendingCodeRoots.delete(root);
+      }
+    }
     state.foldedCodeCount = Array.from(codeState.values()).filter(
       (entry) => !entry.expanded,
     ).length;
@@ -750,14 +868,15 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   function markCodeSubtreesDirty(roots: Iterable<Element>): void {
     for (const root of roots) {
       if (!root.isConnected) continue;
-      for (const codeElement of collectCodeElements(root)) {
-        dirtyCodeBlocks.add(codeElement);
-      }
+      if (root.closest(".ai-turbo-dehydrated")) continue;
+      pendingCodeRoots.add(root);
     }
   }
 
   function isCodeScanPending(): boolean {
-    return codeScanRequested || dirtyCodeBlocks.size > 0;
+    return (
+      codeScanRequested || dirtyCodeBlocks.size > 0 || pendingCodeRoots.size > 0
+    );
   }
 
   return {

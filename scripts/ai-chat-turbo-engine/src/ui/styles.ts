@@ -7,27 +7,49 @@ import { CODE_PREVIEW_HEIGHT, STYLE_ID } from "../config";
  * browser skip that work for blocks outside the viewport. The nodes, their
  * text, selection, and native controls all stay intact.
  *
- * Only `.markdown` children and native `code-block` elements are isolated.
+ * Two generations of markup are covered: the `.markdown` container and the
+ * `message-content` custom element. `contain: layout style` keeps a streaming
+ * append from invalidating the layout of every sibling block.
+ *
+ * Only block children and native `code-block` elements are isolated.
  * Isolating a whole turn would clip native popovers, menus, and focus rings
  * that legitimately overflow the turn box.
  */
 export const GEMINI_NATIVE_RENDER_CSS = `
-    model-response .markdown > * {
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > * {
       content-visibility: auto !important;
+      contain: layout style !important;
       contain-intrinsic-size: auto 3rem !important;
     }
 
-    model-response .markdown > :is(pre, table, blockquote) {
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(pre, table, blockquote) {
       contain-intrinsic-size: auto 8rem !important;
     }
 
-    model-response .markdown > :is(img, video, canvas, iframe) {
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(img, video, canvas, iframe) {
       contain-intrinsic-size: auto 12rem !important;
     }
 
     model-response code-block {
       content-visibility: auto !important;
+      contain: layout style !important;
       contain-intrinsic-size: auto 10rem !important;
+    }
+
+    /* Frosted panels blur the page underneath on every repaint. Long answers
+       repaint continuously, so the native glass costs more than it shows. */
+    :is(top-bar, top-bar-actions, input-area, input-area-v2, side-navigation, chat-window, mat-toolbar, code-block, .top-bar, .input-area, .toolbar) {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
+    /* Streaming markdown ships decorative transitions and animations that
+       restart with every appended token. */
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text),
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) * {
+      animation: none !important;
+      transition: none !important;
+      will-change: auto !important;
     }
 `;
 

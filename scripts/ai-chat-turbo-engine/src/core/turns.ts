@@ -19,6 +19,15 @@ export interface TurnRecord {
 export function createTurnUtils(platform: PlatformDefinition) {
   let activeTurnSelectorGroup: readonly string[] | null = null;
   const renderedCheckCache = new Map<Element, boolean>();
+  /*
+   * Turn discovery is a document-wide query. Conversation switches and new
+   * turns invalidate this list; streamed text and engine repaints reuse it.
+   */
+  let cachedTurns: Element[] | null = null;
+
+  function invalidateTurnCache(): void {
+    cachedTurns = null;
+  }
 
   /** Drop one update pass of layout truth; callers run this before a sync. */
   function clearRenderedCache(): void {
@@ -367,6 +376,11 @@ export function createTurnUtils(platform: PlatformDefinition) {
     const currentChatGPTTurns = getCurrentChatGPTTurns();
     if (currentChatGPTTurns !== null) return currentChatGPTTurns;
 
+    const cached = cachedTurns;
+    if (cached !== null && cached.every((turn) => turn.isConnected)) {
+      return cached;
+    }
+
     const selectors = getActiveTurnSelectors();
     if (selectors.length === 0) return [];
 
@@ -379,13 +393,15 @@ export function createTurnUtils(platform: PlatformDefinition) {
       document.querySelectorAll(selectors.join(",")),
     );
 
-    return filterNestedInDocumentOrder(collected).filter(
+    const resolved = filterNestedInDocumentOrder(collected).filter(
       (element) =>
         (platform.name !== "ChatGPT" ||
           isRenderedChatGPTElement(element)) &&
         !isGeminiThoughtElement(element) &&
         !matchesReasoningElement(element),
     );
+    cachedTurns = resolved;
+    return resolved;
   }
 
   function findContentElement(turnElement: Element): Element {
@@ -410,24 +426,25 @@ export function createTurnUtils(platform: PlatformDefinition) {
   }
 
   function extractTurnText(turnElement: Element): string {
-    let raw = elementToPlainText(turnElement);
+    const raw = elementToPlainText(turnElement);
     const vfIdx = raw.indexOf(VF_TOKEN_START);
-    if (vfIdx !== -1) {
-      let userPart = raw
-        .slice(0, vfIdx)
-        .replace(/```[a-z]*\s*$/i, "")
-        .trim();
-      if (
-        userPart === "请查阅并分析以下文本内容：" ||
-        userPart === "请查阅以下文本："
-      ) {
-        userPart = "";
-      }
-      const match = raw.match(VF_REGEX);
-      const fileName = match ? ` [📎 ${match[1]}]` : " [📎 附件文件]";
-      raw = (userPart || "附件文本") + fileName;
+    if (vfIdx === -1) return raw;
+
+    /* The plain-text walk already normalized this string; only the virtual
+       file summary is new text and needs one more pass. */
+    let userPart = raw
+      .slice(0, vfIdx)
+      .replace(/```[a-z]*\s*$/i, "")
+      .trim();
+    if (
+      userPart === "请查阅并分析以下文本内容：" ||
+      userPart === "请查阅以下文本："
+    ) {
+      userPart = "";
     }
-    return normalizeText(raw);
+    const match = raw.match(VF_REGEX);
+    const fileName = match ? ` [📎 ${match[1]}]` : " [📎 附件文件]";
+    return normalizeText((userPart || "附件文本") + fileName);
   }
 
   function getActiveTurnSelectors(): readonly string[] {
@@ -456,6 +473,7 @@ export function createTurnUtils(platform: PlatformDefinition) {
 
   function invalidateActiveTurnSelectorGroup() {
     activeTurnSelectorGroup = null;
+    cachedTurns = null;
   }
 
   return {
@@ -469,6 +487,7 @@ export function createTurnUtils(platform: PlatformDefinition) {
     extractTurnText,
     getActiveTurnSelectors,
     invalidateActiveTurnSelectorGroup,
+    invalidateTurnCache,
     clearRenderedCache,
   };
 }

@@ -65,6 +65,7 @@ export function initializeEngine(): void {
     getTurnRole,
     getTurns,
     invalidateActiveTurnSelectorGroup,
+    invalidateTurnCache,
     isGeminiThoughtElement,
     isUserTurn,
   } = createTurnUtils(currentPlatform);
@@ -451,6 +452,15 @@ export function initializeEngine(): void {
     if (classification.turnStructureChanged) {
       invalidateActiveTurnSelectorGroup();
       fullTurnSyncRequested = true;
+    }
+
+    /*
+     * Anything outside an indexed turn can add or remove conversations. The
+     * streaming fast path keeps the cached list, so a running answer never
+     * pays for a document-wide turn query.
+     */
+    if (classification.requestUpdate || classification.turnStructureChanged) {
+      invalidateTurnCache();
     }
 
     if (classification.dirtyTurns.size > 0) {
