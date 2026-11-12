@@ -146,6 +146,7 @@ function createHud(
     flushTextIndex,
     activeFileCount: () => 0,
     clearFiles: vi.fn(),
+    syncSidebarPeek: vi.fn(),
     injectStyles: vi.fn(),
   };
   const hud = createHudUtils(deps);

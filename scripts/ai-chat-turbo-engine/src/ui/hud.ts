@@ -87,6 +87,8 @@ export interface HudDeps {
   flushTextIndex: () => number;
   activeFileCount: () => number;
   clearFiles: () => void;
+  /** Drop an active hover peek after the preference is switched off. */
+  syncSidebarPeek: () => void;
   injectStyles: () => void;
 }
 
@@ -283,6 +285,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
   let chkPrune: HTMLInputElement | null = null;
   let chkCollapse: HTMLInputElement | null = null;
   let chkVirtualFile: HTMLInputElement | null = null;
+  let chkSidebarPeek: HTMLInputElement | null = null;
   let chkReasoning: HTMLInputElement | null = null;
   let chkTools: HTMLInputElement | null = null;
 
@@ -342,6 +345,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     if (chkPrune) chkPrune.checked = state.pruneEnabled;
     if (chkCollapse) chkCollapse.checked = state.collapseCode;
     if (chkVirtualFile) chkVirtualFile.checked = state.virtualFileEnabled;
+    if (chkSidebarPeek) chkSidebarPeek.checked = state.sidebarPeekEnabled;
     if (chkReasoning) chkReasoning.checked = state.rememberReasoning;
     if (chkTools) chkTools.checked = state.rememberTools;
   }
@@ -356,6 +360,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     }
     resetPersistedConfig(state);
     syncControls();
+    deps.syncSidebarPeek();
     saveConfig();
     syncTheme();
     if (!state.virtualFileEnabled) clearFiles();
@@ -998,6 +1003,10 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       id: "hud-virtual-file",
       type: "checkbox",
     });
+    chkSidebarPeek = el("input", {
+      id: "hud-sidebar-peek",
+      type: "checkbox",
+    });
     chkReasoning = el("input", { id: "hud-reasoning", type: "checkbox" });
 
     const switchRow = (
@@ -1016,6 +1025,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     chkPrune.checked = state.pruneEnabled;
     chkCollapse.checked = state.collapseCode;
     chkVirtualFile.checked = state.virtualFileEnabled;
+    chkSidebarPeek.checked = state.sidebarPeekEnabled;
     chkReasoning.checked = state.rememberReasoning;
 
     chkPrune.addEventListener("change", () => {
@@ -1051,6 +1061,16 @@ export function createHudUtils(deps: HudDeps): HudUtils {
           "，设置已保存",
       );
     });
+    chkSidebarPeek.addEventListener("change", () => {
+      state.sidebarPeekEnabled = chkSidebarPeek?.checked ?? true;
+      saveConfig();
+      deps.syncSidebarPeek();
+      announce(
+        "悬停展开侧栏" +
+          (state.sidebarPeekEnabled ? "已开启" : "已关闭") +
+          "，设置已保存",
+      );
+    });
     chkReasoning.addEventListener("change", () => {
       state.rememberReasoning = chkReasoning?.checked ?? true;
       saveConfig();
@@ -1067,6 +1087,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       switchRow("hud-prune", "安全视口脱水", chkPrune),
       switchRow("hud-collapse", "长代码自动折叠", chkCollapse),
       switchRow("hud-virtual-file", "长文本伪文件胶囊", chkVirtualFile),
+      switchRow("hud-sidebar-peek", "悬停展开侧栏", chkSidebarPeek),
       switchRow("hud-reasoning", "记住推理强度", chkReasoning),
       reasoningStatusNode,
     ];
@@ -1384,6 +1405,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     chkPrune = null;
     chkCollapse = null;
     chkVirtualFile = null;
+    chkSidebarPeek = null;
     chkReasoning = null;
     chkTools = null;
     focusBeforeOpen = null;

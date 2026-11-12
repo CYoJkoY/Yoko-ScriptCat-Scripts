@@ -16,6 +16,7 @@ export interface PersistedEngineConfig {
   messageLimit: number;
   collapseCode: boolean;
   virtualFileEnabled: boolean;
+  sidebarPeekEnabled: boolean;
   rememberReasoning: boolean;
   rememberTools: boolean;
   hudTheme: HudTheme;
@@ -27,6 +28,7 @@ const DEFAULT_PERSISTED_CONFIG: PersistedEngineConfig = {
   messageLimit: DEFAULT_MESSAGE_LIMIT,
   collapseCode: true,
   virtualFileEnabled: true,
+  sidebarPeekEnabled: true,
   rememberReasoning: true,
   rememberTools: true,
   hudTheme: "auto",
@@ -105,6 +107,9 @@ export function loadSavedConfig(state: EngineState): void {
     if (typeof parsed.virtualFileEnabled === "boolean") {
       state.virtualFileEnabled = parsed.virtualFileEnabled;
     }
+    if (typeof parsed.sidebarPeekEnabled === "boolean") {
+      state.sidebarPeekEnabled = parsed.sidebarPeekEnabled;
+    }
     if (typeof parsed.rememberReasoning === "boolean") {
       state.rememberReasoning = parsed.rememberReasoning;
     }
@@ -136,6 +141,7 @@ export function saveCurrentConfig(state: EngineState): void {
       pruneEnabled: state.pruneEnabled,
       collapseCode: state.collapseCode,
       virtualFileEnabled: state.virtualFileEnabled,
+      sidebarPeekEnabled: state.sidebarPeekEnabled,
       rememberReasoning: state.rememberReasoning,
       rememberTools: state.rememberTools,
       hudTheme: state.hudTheme,

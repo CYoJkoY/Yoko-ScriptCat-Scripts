@@ -86,6 +86,7 @@ export function initializeEngine(): void {
   });
   const sidebarPeek = createSidebarPeek({
     sidebar: currentPlatform.sidebar ?? null,
+    enabled: () => state.sidebarPeekEnabled,
   });
   const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
   const navigationTracker = createNavigationTracker(window.location);
@@ -264,6 +265,7 @@ export function initializeEngine(): void {
     flushTextIndex: () => flushTextIndex({ force: true }),
     activeFileCount: () => virtualFiles.activeFileCount(),
     clearFiles: () => virtualFiles.clearFiles(),
+    syncSidebarPeek: () => sidebarPeek.syncEnabled(),
     injectStyles,
   });
 

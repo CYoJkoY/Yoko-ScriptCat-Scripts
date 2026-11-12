@@ -13,6 +13,41 @@ export const SIDEBAR_PEEK_SHIFT_VAR = "--ai-turbo-sidebar-peek-shift";
 export const SIDEBAR_PEEK_SHOW_DELAY_MS = 70;
 /** Grace period that keeps the rail open while the pointer crosses a gap. */
 export const SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
+/**
+ * Width of the strip at the viewport edge that stands in for a rail the site
+ * removes or slides out of the document. Without it those rails have no box
+ * to hover, so an approach from the screen edge never starts a peek.
+ */
+export const SIDEBAR_PEEK_EDGE_ZONE_PX = 8;
+/** How far outside a visible rail the pointer may rest and still count. */
+export const SIDEBAR_PEEK_PROXIMITY_PX = 10;
+/** Longest a site menu opened from the peek may hold it open. */
+export const SIDEBAR_PEEK_POPOVER_HOLD_MS = 30_000;
+/** Narrow viewports cap the peek at this share of their width. */
+export const SIDEBAR_PEEK_WIDTH_RATIO = 0.42;
+
+/**
+ * Menus and dialogs that sites portal to the body while the rail is open.
+ * A press or a parked pointer inside one is still the peek being used.
+ */
+const POPOVER_SELECTOR = [
+  '[role="menu"]',
+  '[role="listbox"]',
+  '[role="dialog"]',
+  ".ant-dropdown",
+  ".ant-modal-root",
+  "[data-radix-popper-content-wrapper]",
+].join(", ");
+
+/** How often a held peek re-checks whether the site menu is still open. */
+const POPOVER_RECHECK_MS = 400;
+
+/**
+ * Minimum gap between pointer-move probes. The hover intent delay is longer
+ * than this, so throttling loses no approach; it only keeps a cursor swept
+ * along the edge from forcing a layout read on every single event.
+ */
+const POINTER_PROBE_INTERVAL_MS = 40;
 
 const DEFAULT_PEEK_WIDTH = 248;
 const DEFAULT_COLLAPSED_MAX_WIDTH = 96;
@@ -61,6 +96,8 @@ interface ClipTarget {
 export interface SidebarPeekOptions {
   /** Platform rail description, or null when the site has no hover rail. */
   readonly sidebar: SidebarPeekDefinition | null;
+  /** Live preference read; false keeps the peek dormant without unbinding. */
+  readonly enabled?: () => boolean;
   readonly showDelayMs?: number;
   readonly hideDelayMs?: number;
 }
@@ -70,6 +107,8 @@ export interface SidebarPeek {
   bind: (doc: Document) => void;
   /** Stop watching, cancel pending timers, and restore the native rail. */
   teardown: () => void;
+  /** Re-read the live preference and drop an active peek when it is off. */
+  syncEnabled: () => void;
   /** Whether the rail currently carries the peek attribute. */
   isPeeking: () => boolean;
 }
@@ -115,12 +154,21 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   let expandedByPeek = false;
   let pointerX = Number.NaN;
   let pointerY = Number.NaN;
+  let activePeekWidth = peekWidth;
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let holdRemainingMs = 0;
+  let rescanNeeded = false;
+  let lastProbeMs = Number.NEGATIVE_INFINITY;
 
-  const enabled = sidebarSelector !== "";
+  const hasRail = sidebarSelector !== "";
+
+  function isEnabled(): boolean {
+    return hasRail && (options.enabled?.() ?? true);
+  }
 
   function resolveRail(): HTMLElement | null {
     const doc = boundDocument;
-    if (!enabled || doc === null) return null;
+    if (!isEnabled() || doc === null) return null;
     if (resolvedRail !== null && resolvedRail.isConnected) return resolvedRail;
     if (resolveDocument !== doc) {
       resolveDocument = doc;
@@ -176,6 +224,56 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     return rect.left + rect.width / 2 < viewport / 2 ? "left" : "right";
   }
 
+  /** The peek a viewport can afford, so a phone keeps a usable chat column. */
+  function peekWidthFor(node: HTMLElement): number {
+    const doc = node.ownerDocument;
+    const viewport =
+      doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+    if (viewport <= 0) return peekWidth;
+    const cap = Math.round(viewport * SIDEBAR_PEEK_WIDTH_RATIO);
+    return Math.max(1, Math.min(peekWidth, cap));
+  }
+
+  /**
+   * A rail the site removes or slides out of the document has no box to
+   * hover, and a narrow one is easy to miss by a few pixels. Both cases are
+   * answered geometrically: a rail that is still laid out on screen gets its
+   * box extended by a small band, and a rail that is not gets the edge strip
+   * where it would appear.
+   */
+  function nearRail(x: number, y: number): HTMLElement | null {
+    const rail = resolveRail();
+    if (rail === null) return null;
+    const doc = rail.ownerDocument;
+    const view = doc.defaultView;
+    const viewportWidth =
+      doc.documentElement.clientWidth || view?.innerWidth || 0;
+    const viewportHeight =
+      doc.documentElement.clientHeight || view?.innerHeight || 0;
+    const rect = rail.getBoundingClientRect();
+    const onScreen = rect.width > 0 && rect.right > 1 && rect.left < viewportWidth - 1;
+    if (onScreen) {
+      return x >= rect.left - SIDEBAR_PEEK_PROXIMITY_PX &&
+        x <= rect.right + SIDEBAR_PEEK_PROXIMITY_PX &&
+        y >= rect.top - SIDEBAR_PEEK_PROXIMITY_PX &&
+        y <= rect.bottom + SIDEBAR_PEEK_PROXIMITY_PX
+        ? rail
+        : null;
+    }
+    const side = sideOf(rail);
+    const insideStrip =
+      side === "left"
+        ? x >= 0 && x <= SIDEBAR_PEEK_EDGE_ZONE_PX
+        : x >= viewportWidth - SIDEBAR_PEEK_EDGE_ZONE_PX && x <= viewportWidth;
+    if (!insideStrip) return null;
+    const top = rect.height > 0 ? Math.max(0, rect.top) : 0;
+    const bottom = rect.height > 0 ? Math.min(viewportHeight, rect.bottom) : viewportHeight;
+    return y >= top - SIDEBAR_PEEK_PROXIMITY_PX &&
+      y <= bottom + SIDEBAR_PEEK_PROXIMITY_PX
+      ? rail
+      : null;
+  }
+
   /**
    * Widening a rail that sits in a row would push the chat column aside, which
    * is the reflow this feature exists to avoid. A single negative margin of the
@@ -183,7 +281,11 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * because their width is already out of flow, and a clipped parent gets the
    * platform's configured shift instead of a measurement.
    */
-  function measureShift(node: HTMLElement, collapsedWidth: number): number {
+  function measureShift(
+    node: HTMLElement,
+    collapsedWidth: number,
+    width: number,
+  ): number {
     const view = node.ownerDocument.defaultView;
     if (view === null) return 0;
     if (!Number.isFinite(collapsedWidth) || collapsedWidth <= 0) return 0;
@@ -205,7 +307,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     if (!isFlex && !isGrid && !isBlockFlow) return 0;
     if (isFlex && !parentStyle.flexDirection.startsWith("row")) return 0;
     if (parentStyle.overflow !== "visible") return 0;
-    const shift = Math.round(collapsedWidth - peekWidth);
+    const shift = Math.round(collapsedWidth - width);
     return shift < 0 ? shift : 0;
   }
 
@@ -246,7 +348,18 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     }
   }
 
+  function cancelHold(): void {
+    if (holdTimer !== null) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+    holdRemainingMs = 0;
+  }
+
   function releaseActive(): void {
+    cancelHide();
+    cancelHold();
+    rescanNeeded = false;
     const node = active;
     if (node === null) return;
     active = null;
@@ -389,7 +502,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     ) {
       const style = view.getComputedStyle(node);
       if (style.overflow === "visible") continue;
-      if (node.getBoundingClientRect().width >= peekWidth) continue;
+      if (node.getBoundingClientRect().width >= activePeekWidth) continue;
       clipTargets.push({
         node,
         overflowX: readSnapshot(node, "overflow-x"),
@@ -416,8 +529,15 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     if (active === node) return;
     releaseActive();
     const collapsedWidth = node.getBoundingClientRect().width;
-    const measured = measureShift(node, collapsedWidth);
-    const shift = measured < 0 ? measured : definition?.shift ?? 0;
+    const width = peekWidthFor(node);
+    activePeekWidth = width;
+    const measured = measureShift(node, collapsedWidth, width);
+    const configuredShift = definition?.shift ?? 0;
+    // A configured shift stands in for a measurement the site's clipping
+    // parent makes unreliable; it has to shrink with the width it cancels.
+    const fallbackShift =
+      width === peekWidth ? configuredShift : configuredShift + (peekWidth - width);
+    const shift = measured < 0 ? measured : fallbackShift;
     widthSnapshot = readSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR);
     shiftSnapshot = readSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR);
     if (definition?.revealRail === true) {
@@ -438,7 +558,8 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
       node.style.setProperty("visibility", "visible", "important");
     }
     active = node;
-    node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${peekWidth}px`);
+    rescanNeeded = true;
+    node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${width}px`);
     node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
     node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
     liftReveal(node);
@@ -484,8 +605,89 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
       // pointer; the resulting synthetic pointerout must not close it while
       // the cursor still rests on the panel.
       if (pointerStillOverRail(rail)) return;
+      // A menu the peek opened lives outside the rail in the body, so the
+      // pointer leaving the rail is not the user leaving the peek.
+      if (sitePopover() !== null) {
+        holdForPopover(rail);
+        return;
+      }
       releaseActive();
     }, hideDelayMs);
+  }
+
+  /** The first visible site menu or dialog the rail may have opened. */
+  function sitePopover(): HTMLElement | null {
+    const doc = boundDocument;
+    const view = doc?.defaultView ?? null;
+    if (doc === null || view === null) return null;
+    const rail = resolvedRail;
+    for (const found of Array.from(doc.querySelectorAll(POPOVER_SELECTOR))) {
+      if (!(found instanceof HTMLElement)) continue;
+      if (rail !== null && rail.contains(found)) continue;
+      // A dialog that wraps the whole app would otherwise read as a menu the
+      // rail opened, and hold every peek open for the full budget.
+      if (rail !== null && found.contains(rail)) continue;
+      if (!isVisiblePopover(found, view)) continue;
+      return found;
+    }
+    return null;
+  }
+
+  /**
+   * Sites keep closed menus mounted far more often than not. Size, the
+   * accessibility flag, and the computed display are what separate a menu the
+   * user can see from a wrapper that merely exists in the document.
+   */
+  function isVisiblePopover(node: HTMLElement, view: Window): boolean {
+    if (node.hidden) return false;
+    if (node.getAttribute("aria-hidden") === "true") return false;
+    if (node.closest("[inert]") !== null) return false;
+    const style = view.getComputedStyle(node);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+    const rect = node.getBoundingClientRect();
+    return rect.width > 1 && rect.height > 1;
+  }
+
+  /** The visible portaled menu under a press, when it is not the rail itself. */
+  function popoverFor(target: Element): HTMLElement | null {
+    const view = boundDocument?.defaultView ?? null;
+    if (view === null) return null;
+    const found = target.closest(POPOVER_SELECTOR);
+    if (!(found instanceof HTMLElement)) return null;
+    const rail = resolvedRail;
+    if (rail !== null && (rail.contains(found) || found.contains(rail))) {
+      return null;
+    }
+    return isVisiblePopover(found, view) ? found : null;
+  }
+
+  /**
+   * Keeps the peek up while a portaled menu is open and closes it once the
+   * menu goes away. The budget bounds a site dialog the user left open, so a
+   * single peek cannot outlive its own hover by more than the hold window.
+   */
+  function holdForPopover(rail: HTMLElement): void {
+    if (holdTimer !== null) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+    if (holdRemainingMs <= 0) holdRemainingMs = SIDEBAR_PEEK_POPOVER_HOLD_MS;
+    const step = Math.min(POPOVER_RECHECK_MS, holdRemainingMs);
+    holdRemainingMs -= step;
+    holdTimer = setTimeout(() => {
+      holdTimer = null;
+      if (active !== rail) return;
+      const popover = sitePopover();
+      if (popover !== null && holdRemainingMs > 0) {
+        holdForPopover(rail);
+        return;
+      }
+      holdRemainingMs = 0;
+      if (pointerStillOverRail(rail)) return;
+      releaseActive();
+    }, step);
   }
 
   function pointerStillOverRail(rail: HTMLElement): boolean {
@@ -518,7 +720,48 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     if (rail === null) return;
     if (active === rail) {
       liftInert(rail);
-      suppressOverlap();
+      if (rescanNeeded) {
+        rescanNeeded = false;
+        suppressOverlap();
+      }
+    }
+    scheduleShow(rail);
+  }
+
+  /**
+   * Hovering a rail the site has removed, moved off screen, or shrunk to a
+   * sliver is unreliable: the pointer misses the box by a few pixels and no
+   * pointerover ever names the rail. The same intent is read from the pointer
+   * position instead, which is what makes the edge approach work on every
+   * platform rather than only those with a wide collapsed rail.
+   */
+  function handlePointerMove(event: Event): void {
+    if (!isMousePointer(event)) return;
+    const mouse = event as MouseEvent;
+    pointerX = mouse.clientX;
+    pointerY = mouse.clientY;
+    if (active !== null) return;
+    const doc = boundDocument;
+    if (doc === null) return;
+    const viewport =
+      doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+    // A cursor in the middle of the page is not heading for an edge rail. One
+    // cheap comparison keeps the layout read in nearRail off the common path.
+    const band = Math.max(120, collapsedMaxWidth + SIDEBAR_PEEK_PROXIMITY_PX);
+    if (viewport > 0 && pointerX > band && pointerX < viewport - band) {
+      if (pendingRail !== null) cancelShow();
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && railFor(target) !== null) return;
+    const now = performance.now();
+    if (now - lastProbeMs < POINTER_PROBE_INTERVAL_MS) return;
+    lastProbeMs = now;
+    const rail = nearRail(pointerX, pointerY);
+    if (rail === null) {
+      // The pointer slid past the rail before the intent delay elapsed.
+      if (pendingRail !== null) cancelShow();
+      return;
     }
     scheduleShow(rail);
   }
@@ -539,6 +782,15 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   function handlePointerDown(event: Event): void {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    // A press inside a menu the peek opened belongs to the peek, even though
+    // the site portals that menu outside the rail.
+    if (active !== null && popoverFor(target) !== null) {
+      cancelHide();
+      // The click may close the menu or keep it open for another choice; the
+      // watcher decides on the next tick instead of leaving the peek pinned.
+      holdForPopover(active);
+      return;
+    }
     const rail = railFor(target);
     if (rail === null) {
       cancelShow();
@@ -547,7 +799,14 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     }
     // A press inside the peek keeps it open for the click that follows. A press
     // on the native toggle would expand the rail, so the peek steps aside.
-    if (active === rail && !rail.contains(target)) releaseActive();
+    if (active === rail && !rail.contains(target)) {
+      if (triggerSelector !== "" && target.closest(triggerSelector) !== null) {
+        // The site's own press decides the end state. Undoing the peek with a
+        // synthetic collapse first would toggle the rail twice.
+        expandedByPeek = false;
+      }
+      releaseActive();
+    }
   }
 
   function handleFocusIn(event: Event): void {
@@ -576,12 +835,14 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     // The native toggle is about to open the rail for real; the peek has to
     // step aside so its negative margin does not overlap the expanded panel.
     cancelShow();
+    expandedByPeek = false;
     releaseActive();
   }
 
   function handleMutations(): void {
     const node = active;
     if (node === null) return;
+    rescanNeeded = true;
     if (expandedByPeek) {
       if (!node.isConnected) releaseActive();
       return;
@@ -592,9 +853,10 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   function bind(doc: Document): void {
     if (boundDocument === doc) return;
     teardown();
-    if (!enabled) return;
+    if (!hasRail) return;
     boundDocument = doc;
     doc.addEventListener("pointerover", handlePointerOver);
+    doc.addEventListener("pointermove", handlePointerMove);
     doc.addEventListener("pointerout", handlePointerOut);
     doc.addEventListener("pointerdown", handlePointerDown);
     doc.addEventListener("focusin", handleFocusIn);
@@ -621,6 +883,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     }
     if (boundDocument !== null) {
       boundDocument.removeEventListener("pointerover", handlePointerOver);
+      boundDocument.removeEventListener("pointermove", handlePointerMove);
       boundDocument.removeEventListener("pointerout", handlePointerOut);
       boundDocument.removeEventListener("pointerdown", handlePointerDown);
       boundDocument.removeEventListener("focusin", handleFocusIn);
@@ -634,6 +897,11 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   return {
     bind,
     teardown,
+    syncEnabled: () => {
+      if (isEnabled()) return;
+      cancelShow();
+      releaseActive();
+    },
     isPeeking: () => active !== null,
   };
 }

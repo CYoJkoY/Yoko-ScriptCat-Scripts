@@ -100,7 +100,18 @@ export const SIDEBAR_PEEK_CSS = `
       /* Doubao and Qianwen paint a site header above the rail; a raised
          stacking level lets the peeked rail take the pointer there. */
       z-index: 120 !important;
-      transition: none !important;
+      /* Only the shadow animates. Width has to stay instant: a width
+         transition relayouts the whole chat column on every frame. */
+      transition: box-shadow 120ms ease-out !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18) !important;
+    }
+
+    /* The shadow reads as "this panel is a temporary overlay", but users who
+       asked for less motion get the plain instant rail. */
+    @media (prefers-reduced-motion: reduce) {
+      [data-ai-turbo-sidebar-peek] {
+        transition: none !important;
+      }
     }
 
     [data-ai-turbo-sidebar-peek="left"] {
