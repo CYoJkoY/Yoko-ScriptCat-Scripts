@@ -97,7 +97,9 @@ export const GEMINI_NATIVE_RENDER_CSS = `
 export const SIDEBAR_PEEK_CSS = `
     [data-ai-turbo-sidebar-peek] {
       width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
-      z-index: 5 !important;
+      /* Doubao and Qianwen paint a site header above the rail; a raised
+         stacking level lets the peeked rail take the pointer there. */
+      z-index: 120 !important;
       transition: none !important;
     }
 
@@ -107,6 +109,14 @@ export const SIDEBAR_PEEK_CSS = `
 
     [data-ai-turbo-sidebar-peek="right"] {
       margin-left: var(--ai-turbo-sidebar-peek-shift, 0px) !important;
+    }
+
+    /* DeepSeek disables the hidden rail as a whole, so re-enabling only the
+       rail box would still leave every entry inert. A rail that peeks is
+       meant to be used, so its controls accept presses for that moment. */
+    [data-ai-turbo-sidebar-peek],
+    [data-ai-turbo-sidebar-peek] * {
+      pointer-events: auto !important;
     }
 
     /* ChatGPT keeps the expanded panel mounted at opacity 0 next to the rail.
@@ -176,8 +186,30 @@ export const SIDEBAR_PEEK_CSS = `
       transition: none !important;
     }
 
+    /* Poe clips each row to its icon button while the rail is narrow, which
+       removes the label box from layout. The rows only need their text back;
+       the rail width and its negative margin come from the generic rules. */
+    aside[class*="SidebarLayout_sidebar"][data-ai-turbo-sidebar-peek] [data-pdl-sidebar-menu-button] {
+      gap: 8px !important;
+    }
+
+    aside[class*="SidebarLayout_sidebar"][data-ai-turbo-sidebar-peek] [data-pdl-sidebar-menu-button] > span {
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+    }
+
     bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed {
       width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      transition: none !important;
+    }
+
+    /* Gemini renders its history only after the native open control runs; the
+       peek presses it and caps the expansion, so the transition has to be off
+       for both the collapsed and the opened container. */
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container {
       transition: none !important;
     }
 

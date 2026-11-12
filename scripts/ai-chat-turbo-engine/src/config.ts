@@ -276,6 +276,29 @@ export interface SidebarPeekDefinition {
    * original declaration is restored on leave.
    */
   readonly reveal?: readonly string[];
+  /**
+   * Set when the site keeps the whole rail at display: none instead of
+   * shrinking it. The peek then treats a zero-width rail as collapsed and
+   * lifts its inline display for the hovered moment.
+   */
+  readonly revealRail?: boolean;
+  /**
+   * Chrome outside the rail that overlaps it while the rail is hidden, such as
+   * DeepSeek's floating toolbar. Each match is made transparent and
+   * click-through for the hovered moment so the revealed rail keeps its own
+   * controls and its header stays readable.
+   */
+  readonly suppress?: readonly string[];
+  /**
+   * Sites that only render their history rows in the expanded state. The peek
+   * presses the site's own expand control after showing the rail and presses
+   * the collapse control when the pointer leaves, so the rows keep the site's
+   * own data and listeners. The width cap still keeps the panel narrow.
+   */
+  readonly nativeExpand?: {
+    readonly expand: string;
+    readonly collapse: string;
+  };
 }
 
 export const PLATFORMS = {
@@ -402,6 +425,14 @@ export const PLATFORMS = {
         'button[aria-label*="收起边栏"]',
         'button[aria-label*="侧边栏"]',
       ],
+      // Gemini builds its history rows only after the native open control is
+      // pressed; a wider collapsed rail shows the labels but no rows.
+      nativeExpand: {
+        expand:
+          'button[aria-label*="打开边栏"], button[aria-label*="Open sidebar" i]',
+        collapse:
+          'button[aria-label*="关闭边栏"], button[aria-label*="Close sidebar" i]',
+      },
       peekWidth: 248,
       collapsedMaxWidth: 96,
     },
@@ -464,6 +495,20 @@ export const PLATFORMS = {
   },
   grok: {
     name: "Grok",
+    sidebar: {
+      selectors: ["#app-sidebar", 'aside[aria-label="应用导航"]'],
+      triggers: ['button[aria-label="切换侧边栏"]'],
+      // Grok keeps a zero-width slot until its own toggle runs, and only the
+      // expanded state renders the history rows. The peek presses that toggle
+      // and presses it again on leave. The rail overlays the chat column
+      // instead of pushing it, so no negative margin is needed.
+      nativeExpand: {
+        expand: 'button[aria-label="切换侧边栏"]',
+        collapse: 'button[aria-label="切换侧边栏"]',
+      },
+      peekWidth: 254,
+      collapsedMaxWidth: 96,
+    },
     turnSelectors: [
       'div[data-testid*="message-container"]',
       'div[data-testid*="conversation-turn"]',
@@ -481,6 +526,28 @@ export const PLATFORMS = {
   },
   deepseek: {
     name: "DeepSeek",
+    sidebar: {
+      selectors: [
+        "div.b8812f16.a2f3d50e",
+        // Fallback for a hash rotation: the rail is the first column of the
+        // app row, next to the compact top bar that holds the native toggle.
+        "#root > div > div > div > div > div:nth-child(2)",
+      ],
+      triggers: [
+        ".ca6d4be1 .ds-button",
+        '#root div[role="button"][aria-label*="边栏"]',
+        '#root > div > div > div > div > div:first-child [role="button"]',
+      ],
+      // The compact top bar is drawn over the hidden rail; once the rail is
+      // revealed the bar covers its logo and would swallow the first presses.
+      suppress: [".ca6d4be1"],
+      // The site keeps the whole rail at display: none, so the peek has to
+      // bring it back and cancel the full native width with a fixed margin.
+      revealRail: true,
+      shift: -261,
+      peekWidth: 261,
+      collapsedMaxWidth: 96,
+    },
     turnSelectors: [
       ".ds-message",
       "div[data-um-id]",
@@ -641,6 +708,16 @@ export const PLATFORMS = {
   },
   poe: {
     name: "Poe",
+    sidebar: {
+      selectors: ['aside[class*="SidebarLayout_sidebar"]'],
+      triggers: ['button[aria-label="切换侧边栏折叠"]'],
+      // Poe's row wrapper keeps the rail in a flex row that clips overflow,
+      // so the growth is cancelled by a fixed margin instead of a
+      // measurement.
+      shift: -180,
+      peekWidth: 248,
+      collapsedMaxWidth: 88,
+    },
     turnSelectors: [
       ".Message",
       ".ChatMessage",
@@ -680,6 +757,20 @@ export const PLATFORMS = {
   },
   doubao: {
     name: "Doubao",
+    sidebar: {
+      selectors: ["nav.panel-fvxXfj", "#chat-route-main nav"],
+      triggers: [
+        'button[aria-label="显示侧栏"]',
+        'button[aria-label="收起侧栏"]',
+        "[data-sidebar-hover-trigger]",
+      ],
+      // The rail stays in the DOM at full width, slid out of its zero-width
+      // column, so the peek has to undo the transform, the transparency and
+      // the clip on that column.
+      revealRail: true,
+      peekWidth: 280,
+      collapsedMaxWidth: 96,
+    },
     turnSelectors: [
       '[data-testid="send_message"]',
       '[data-testid="receive_message"]',
@@ -730,6 +821,19 @@ export const PLATFORMS = {
   yuanbao: {
     name: "Tencent Yuanbao / 腾讯元宝",
     supportsToolMemory: true,
+    sidebar: {
+      selectors: [".yb-nav__content-wrapper"],
+      triggers: [
+        '[aria-label="打开侧栏"]',
+        '.yb-nav [aria-label="收起侧栏"]',
+        ".yb-nav [data-testid*=\"sidebar\"]",
+      ],
+      // Yuanbao hides the whole wrapper with a transform and visibility on a
+      // layer whose width is already laid out, so nothing has to be shifted.
+      revealRail: true,
+      peekWidth: 260,
+      collapsedMaxWidth: 96,
+    },
     turnSelectors: [
       ".agent-chat__list__item--human",
       ".agent-chat__list__item--ai",
@@ -849,6 +953,20 @@ export const PLATFORMS = {
   },
   qianwen: {
     name: "Qianwen / 千问",
+    sidebar: {
+      selectors: ["aside#new-nav-tab-wrapper"],
+      triggers: [
+        'button[aria-label="收起侧边栏"]',
+        '[data-icon-type="qwpcicon-sidebarRight"]',
+        'button[aria-label*="侧边栏"]',
+      ],
+      // Qianwen collapses the aside to w-0 and keeps the panel absolutely
+      // positioned beside it; the fixed margin keeps the chat column's
+      // measurements untouched.
+      shift: -240,
+      peekWidth: 240,
+      collapsedMaxWidth: 8,
+    },
     turnSelectors: [
       '[class*="questionItem"]',
       '[class*="answerItem"]',
