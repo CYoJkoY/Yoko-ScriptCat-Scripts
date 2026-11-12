@@ -379,6 +379,12 @@
           'button[aria-label*="收起边栏"]',
           'button[aria-label*="侧边栏"]'
         ],
+        // Gemini builds its history rows only after the native open control is
+        // pressed; a wider collapsed rail shows the labels but no rows.
+        nativeExpand: {
+          expand: 'button[aria-label*="打开边栏"], button[aria-label*="Open sidebar" i]',
+          collapse: 'button[aria-label*="关闭边栏"], button[aria-label*="Close sidebar" i]'
+        },
         peekWidth: 248,
         collapsedMaxWidth: 96
       },
@@ -441,6 +447,20 @@
     },
     grok: {
       name: "Grok",
+      sidebar: {
+        selectors: ["#app-sidebar", 'aside[aria-label="应用导航"]'],
+        triggers: ['button[aria-label="切换侧边栏"]'],
+        // Grok keeps a zero-width slot until its own toggle runs, and only the
+        // expanded state renders the history rows. The peek presses that toggle
+        // and presses it again on leave. The rail overlays the chat column
+        // instead of pushing it, so no negative margin is needed.
+        nativeExpand: {
+          expand: 'button[aria-label="切换侧边栏"]',
+          collapse: 'button[aria-label="切换侧边栏"]'
+        },
+        peekWidth: 254,
+        collapsedMaxWidth: 96
+      },
       turnSelectors: [
         'div[data-testid*="message-container"]',
         'div[data-testid*="conversation-turn"]',
@@ -458,6 +478,28 @@
     },
     deepseek: {
       name: "DeepSeek",
+      sidebar: {
+        selectors: [
+          "div.b8812f16.a2f3d50e",
+          // Fallback for a hash rotation: the rail is the first column of the
+          // app row, next to the compact top bar that holds the native toggle.
+          "#root > div > div > div > div > div:nth-child(2)"
+        ],
+        triggers: [
+          ".ca6d4be1 .ds-button",
+          '#root div[role="button"][aria-label*="边栏"]',
+          '#root > div > div > div > div > div:first-child [role="button"]'
+        ],
+        // The compact top bar is drawn over the hidden rail; once the rail is
+        // revealed the bar covers its logo and would swallow the first presses.
+        suppress: [".ca6d4be1"],
+        // The site keeps the whole rail at display: none, so the peek has to
+        // bring it back and cancel the full native width with a fixed margin.
+        revealRail: true,
+        shift: -261,
+        peekWidth: 261,
+        collapsedMaxWidth: 96
+      },
       turnSelectors: [
         ".ds-message",
         "div[data-um-id]",
@@ -618,6 +660,16 @@
     },
     poe: {
       name: "Poe",
+      sidebar: {
+        selectors: ['aside[class*="SidebarLayout_sidebar"]'],
+        triggers: ['button[aria-label="切换侧边栏折叠"]'],
+        // Poe's row wrapper keeps the rail in a flex row that clips overflow,
+        // so the growth is cancelled by a fixed margin instead of a
+        // measurement.
+        shift: -180,
+        peekWidth: 248,
+        collapsedMaxWidth: 88
+      },
       turnSelectors: [
         ".Message",
         ".ChatMessage",
@@ -657,6 +709,20 @@
     },
     doubao: {
       name: "Doubao",
+      sidebar: {
+        selectors: ["nav.panel-fvxXfj", "#chat-route-main nav"],
+        triggers: [
+          'button[aria-label="显示侧栏"]',
+          'button[aria-label="收起侧栏"]',
+          "[data-sidebar-hover-trigger]"
+        ],
+        // The rail stays in the DOM at full width, slid out of its zero-width
+        // column, so the peek has to undo the transform, the transparency and
+        // the clip on that column.
+        revealRail: true,
+        peekWidth: 280,
+        collapsedMaxWidth: 96
+      },
       turnSelectors: [
         '[data-testid="send_message"]',
         '[data-testid="receive_message"]',
@@ -707,6 +773,19 @@
     yuanbao: {
       name: "Tencent Yuanbao / 腾讯元宝",
       supportsToolMemory: true,
+      sidebar: {
+        selectors: [".yb-nav__content-wrapper"],
+        triggers: [
+          '[aria-label="打开侧栏"]',
+          '.yb-nav [aria-label="收起侧栏"]',
+          '.yb-nav [data-testid*="sidebar"]'
+        ],
+        // Yuanbao hides the whole wrapper with a transform and visibility on a
+        // layer whose width is already laid out, so nothing has to be shifted.
+        revealRail: true,
+        peekWidth: 260,
+        collapsedMaxWidth: 96
+      },
       turnSelectors: [
         ".agent-chat__list__item--human",
         ".agent-chat__list__item--ai",
@@ -826,6 +905,20 @@
     },
     qianwen: {
       name: "Qianwen / 千问",
+      sidebar: {
+        selectors: ["aside#new-nav-tab-wrapper"],
+        triggers: [
+          'button[aria-label="收起侧边栏"]',
+          '[data-icon-type="qwpcicon-sidebarRight"]',
+          'button[aria-label*="侧边栏"]'
+        ],
+        // Qianwen collapses the aside to w-0 and keeps the panel absolutely
+        // positioned beside it; the fixed margin keeps the chat column's
+        // measurements untouched.
+        shift: -240,
+        peekWidth: 240,
+        collapsedMaxWidth: 8
+      },
       turnSelectors: [
         '[class*="questionItem"]',
         '[class*="answerItem"]',
@@ -1656,6 +1749,16 @@ ${CODE_FENCE}
     let hideTimer = null;
     let pendingRail = null;
     let revealTargets = [];
+    let inertTargets = [];
+    let railDisplaySnapshot = null;
+    let railOpacitySnapshot = null;
+    let railTransformSnapshot = null;
+    let railVisibilitySnapshot = null;
+    let suppressTargets = [];
+    let clipTargets = [];
+    let expandedByPeek = false;
+    let pointerX = Number.NaN;
+    let pointerY = Number.NaN;
     const enabled = sidebarSelector !== "";
     function resolveRail() {
       const doc = boundDocument;
@@ -1689,8 +1792,13 @@ ${CODE_FENCE}
         if (COLLAPSED_CLASS_TOKENS.has(token)) return true;
         if (EXPANDED_CLASS_TOKENS.has(token)) return false;
       }
-      const width = node.getBoundingClientRect().width;
-      return width > 0 && width <= collapsedMaxWidth;
+      const rect = node.getBoundingClientRect();
+      if (rect.width === 0) return true;
+      if (rect.right <= 1) return true;
+      const doc = node.ownerDocument;
+      const viewport = doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+      if (viewport > 0 && rect.left >= viewport - 1) return true;
+      return rect.width <= collapsedMaxWidth;
     }
     function sideOf(node) {
       const doc = node.ownerDocument;
@@ -1747,12 +1855,51 @@ ${CODE_FENCE}
       const node = active;
       if (node === null) return;
       active = null;
+      if (expandedByPeek) {
+        expandedByPeek = false;
+        const collapseSelector = definition?.nativeExpand?.collapse ?? "";
+        const collapse = collapseSelector === "" ? null : node.ownerDocument.querySelector(collapseSelector);
+        if (collapse instanceof HTMLElement) collapse.click();
+      }
       node.removeAttribute(SIDEBAR_PEEK_ATTRIBUTE);
       restoreSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR, widthSnapshot);
       restoreSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR, shiftSnapshot);
+      if (railDisplaySnapshot !== null) {
+        restoreSnapshot(node, "display", railDisplaySnapshot);
+        railDisplaySnapshot = null;
+      }
+      if (railOpacitySnapshot !== null) {
+        restoreSnapshot(node, "opacity", railOpacitySnapshot);
+        railOpacitySnapshot = null;
+      }
+      if (railTransformSnapshot !== null) {
+        restoreSnapshot(node, "transform", railTransformSnapshot);
+        railTransformSnapshot = null;
+      }
+      if (railVisibilitySnapshot !== null) {
+        restoreSnapshot(node, "visibility", railVisibilitySnapshot);
+        railVisibilitySnapshot = null;
+      }
       widthSnapshot = null;
       shiftSnapshot = null;
+      restoreInert();
       restoreReveal();
+      restoreSuppress();
+      restoreClip();
+    }
+    function liftInert(rail) {
+      for (const found of Array.from(rail.querySelectorAll("[inert]"))) {
+        if (!(found instanceof HTMLElement)) continue;
+        if (inertTargets.includes(found)) continue;
+        inertTargets.push(found);
+        found.removeAttribute("inert");
+      }
+    }
+    function restoreInert() {
+      if (inertTargets.length === 0) return;
+      const targets = inertTargets;
+      inertTargets = [];
+      for (const node of targets) node.setAttribute("inert", "");
     }
     function liftReveal(rail) {
       if (revealSelector === "") return;
@@ -1772,6 +1919,61 @@ ${CODE_FENCE}
         restoreSnapshot(target.node, "display", target.display);
       }
     }
+    function suppressOverlap() {
+      const selectors = definition?.suppress;
+      const doc = boundDocument;
+      if (selectors === void 0 || selectors.length === 0 || doc === null) {
+        return;
+      }
+      const selector = selectors.join(", ");
+      for (const found of Array.from(doc.querySelectorAll(selector))) {
+        if (!(found instanceof HTMLElement)) continue;
+        if (suppressTargets.some((target) => target.node === found)) continue;
+        suppressTargets.push({
+          node: found,
+          opacity: readSnapshot(found, "opacity"),
+          pointerEvents: readSnapshot(found, "pointer-events")
+        });
+        found.style.setProperty("opacity", "0", "important");
+        found.style.setProperty("pointer-events", "none", "important");
+      }
+    }
+    function restoreSuppress() {
+      if (suppressTargets.length === 0) return;
+      const targets = suppressTargets;
+      suppressTargets = [];
+      for (const target of targets) {
+        restoreSnapshot(target.node, "opacity", target.opacity);
+        restoreSnapshot(target.node, "pointer-events", target.pointerEvents);
+      }
+    }
+    function liftClip(rail) {
+      if (definition?.revealRail !== true) return;
+      const doc = boundDocument;
+      const view = rail.ownerDocument.defaultView;
+      if (doc === null || view === null) return;
+      for (let node = rail.parentElement; node !== null && node !== doc.body; node = node.parentElement) {
+        const style = view.getComputedStyle(node);
+        if (style.overflow === "visible") continue;
+        if (node.getBoundingClientRect().width >= peekWidth) continue;
+        clipTargets.push({
+          node,
+          overflowX: readSnapshot(node, "overflow-x"),
+          overflowY: readSnapshot(node, "overflow-y")
+        });
+        node.style.setProperty("overflow-x", "visible", "important");
+        node.style.setProperty("overflow-y", "visible", "important");
+      }
+    }
+    function restoreClip() {
+      if (clipTargets.length === 0) return;
+      const targets = clipTargets;
+      clipTargets = [];
+      for (const target of targets) {
+        restoreSnapshot(target.node, "overflow-x", target.overflowX);
+        restoreSnapshot(target.node, "overflow-y", target.overflowY);
+      }
+    }
     function applyPeek(node) {
       cancelShow();
       cancelHide();
@@ -1782,11 +1984,37 @@ ${CODE_FENCE}
       const shift = measured < 0 ? measured : definition?.shift ?? 0;
       widthSnapshot = readSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR);
       shiftSnapshot = readSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR);
+      if (definition?.revealRail === true) {
+        railDisplaySnapshot = readSnapshot(node, "display");
+        railOpacitySnapshot = readSnapshot(node, "opacity");
+        railTransformSnapshot = readSnapshot(node, "transform");
+        railVisibilitySnapshot = readSnapshot(node, "visibility");
+        const view = node.ownerDocument.defaultView;
+        const display = view === null ? "none" : view.getComputedStyle(node).display;
+        if (display === "none") {
+          node.style.setProperty("display", "flex", "important");
+        }
+        node.style.setProperty("opacity", "1", "important");
+        node.style.setProperty("transform", "none", "important");
+        node.style.setProperty("visibility", "visible", "important");
+      }
       active = node;
       node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${peekWidth}px`);
       node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
       node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
       liftReveal(node);
+      liftInert(node);
+      liftClip(node);
+      suppressOverlap();
+      if (definition?.nativeExpand !== void 0) {
+        const expand = node.ownerDocument.querySelector(
+          definition.nativeExpand.expand
+        );
+        if (expand instanceof HTMLElement) {
+          expandedByPeek = true;
+          expand.click();
+        }
+      }
     }
     function scheduleShow(rail) {
       cancelHide();
@@ -1810,8 +2038,18 @@ ${CODE_FENCE}
       hideTimer = setTimeout(() => {
         hideTimer = null;
         if (active !== rail) return;
+        if (pointerStillOverRail(rail)) return;
         releaseActive();
       }, hideDelayMs);
+    }
+    function pointerStillOverRail(rail) {
+      if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return false;
+      const doc = rail.ownerDocument;
+      if (typeof doc.elementFromPoint !== "function") return false;
+      const hit = doc.elementFromPoint(pointerX, pointerY);
+      if (!(hit instanceof Element)) return false;
+      if (rail.contains(hit)) return true;
+      return triggerSelector !== "" && hit.closest(triggerSelector) !== null;
     }
     function isMousePointer(event) {
       const pointerType = event.pointerType;
@@ -1819,14 +2057,22 @@ ${CODE_FENCE}
     }
     function handlePointerOver(event) {
       if (!isMousePointer(event)) return;
+      pointerX = event.clientX;
+      pointerY = event.clientY;
       const target = event.target;
       if (!(target instanceof Element)) return;
       const rail = railFor(target);
       if (rail === null) return;
+      if (active === rail) {
+        liftInert(rail);
+        suppressOverlap();
+      }
       scheduleShow(rail);
     }
     function handlePointerOut(event) {
       if (!isMousePointer(event)) return;
+      pointerX = event.clientX;
+      pointerY = event.clientY;
       const target = event.target;
       if (!(target instanceof Element)) return;
       const rail = railFor(target);
@@ -1874,6 +2120,10 @@ ${CODE_FENCE}
     function handleMutations() {
       const node = active;
       if (node === null) return;
+      if (expandedByPeek) {
+        if (!node.isConnected) releaseActive();
+        return;
+      }
       if (!node.isConnected || hasExpandedToken(node)) releaseActive();
     }
     function bind(doc) {
@@ -8791,7 +9041,9 @@ ${CODE_FENCE}`;
   var SIDEBAR_PEEK_CSS = `
     [data-ai-turbo-sidebar-peek] {
       width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
-      z-index: 5 !important;
+      /* Doubao and Qianwen paint a site header above the rail; a raised
+         stacking level lets the peeked rail take the pointer there. */
+      z-index: 120 !important;
       transition: none !important;
     }
 
@@ -8801,6 +9053,14 @@ ${CODE_FENCE}`;
 
     [data-ai-turbo-sidebar-peek="right"] {
       margin-left: var(--ai-turbo-sidebar-peek-shift, 0px) !important;
+    }
+
+    /* DeepSeek disables the hidden rail as a whole, so re-enabling only the
+       rail box would still leave every entry inert. A rail that peeks is
+       meant to be used, so its controls accept presses for that moment. */
+    [data-ai-turbo-sidebar-peek],
+    [data-ai-turbo-sidebar-peek] * {
+      pointer-events: auto !important;
     }
 
     /* ChatGPT keeps the expanded panel mounted at opacity 0 next to the rail.
@@ -8870,8 +9130,30 @@ ${CODE_FENCE}`;
       transition: none !important;
     }
 
+    /* Poe clips each row to its icon button while the rail is narrow, which
+       removes the label box from layout. The rows only need their text back;
+       the rail width and its negative margin come from the generic rules. */
+    aside[class*="SidebarLayout_sidebar"][data-ai-turbo-sidebar-peek] [data-pdl-sidebar-menu-button] {
+      gap: 8px !important;
+    }
+
+    aside[class*="SidebarLayout_sidebar"][data-ai-turbo-sidebar-peek] [data-pdl-sidebar-menu-button] > span {
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+    }
+
     bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed {
       width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      transition: none !important;
+    }
+
+    /* Gemini renders its history only after the native open control runs; the
+       peek presses it and caps the expansion, so the transition has to be off
+       for both the collapsed and the opened container. */
+    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container {
       transition: none !important;
     }
 
