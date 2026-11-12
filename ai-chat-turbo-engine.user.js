@@ -1713,6 +1713,20 @@ ${CODE_FENCE}
   var SIDEBAR_PEEK_SHIFT_VAR = "--ai-turbo-sidebar-peek-shift";
   var SIDEBAR_PEEK_SHOW_DELAY_MS = 70;
   var SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
+  var SIDEBAR_PEEK_EDGE_ZONE_PX = 8;
+  var SIDEBAR_PEEK_PROXIMITY_PX = 10;
+  var SIDEBAR_PEEK_POPOVER_HOLD_MS = 3e4;
+  var SIDEBAR_PEEK_WIDTH_RATIO = 0.42;
+  var POPOVER_SELECTOR = [
+    '[role="menu"]',
+    '[role="listbox"]',
+    '[role="dialog"]',
+    ".ant-dropdown",
+    ".ant-modal-root",
+    "[data-radix-popper-content-wrapper]"
+  ].join(", ");
+  var POPOVER_RECHECK_MS = 400;
+  var POINTER_PROBE_INTERVAL_MS = 40;
   var DEFAULT_PEEK_WIDTH = 248;
   var DEFAULT_COLLAPSED_MAX_WIDTH = 96;
   var COLLAPSED_CLASS_TOKENS = /* @__PURE__ */ new Set([
@@ -1759,10 +1773,18 @@ ${CODE_FENCE}
     let expandedByPeek = false;
     let pointerX = Number.NaN;
     let pointerY = Number.NaN;
-    const enabled = sidebarSelector !== "";
+    let activePeekWidth = peekWidth;
+    let holdTimer = null;
+    let holdRemainingMs = 0;
+    let rescanNeeded = false;
+    let lastProbeMs = Number.NEGATIVE_INFINITY;
+    const hasRail = sidebarSelector !== "";
+    function isEnabled() {
+      return hasRail && (options.enabled?.() ?? true);
+    }
     function resolveRail() {
       const doc = boundDocument;
-      if (!enabled || doc === null) return null;
+      if (!isEnabled() || doc === null) return null;
       if (resolvedRail !== null && resolvedRail.isConnected) return resolvedRail;
       if (resolveDocument !== doc) {
         resolveDocument = doc;
@@ -1807,7 +1829,33 @@ ${CODE_FENCE}
       const rect = node.getBoundingClientRect();
       return rect.left + rect.width / 2 < viewport / 2 ? "left" : "right";
     }
-    function measureShift(node, collapsedWidth) {
+    function peekWidthFor(node) {
+      const doc = node.ownerDocument;
+      const viewport = doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+      if (viewport <= 0) return peekWidth;
+      const cap = Math.round(viewport * SIDEBAR_PEEK_WIDTH_RATIO);
+      return Math.max(1, Math.min(peekWidth, cap));
+    }
+    function nearRail(x, y) {
+      const rail = resolveRail();
+      if (rail === null) return null;
+      const doc = rail.ownerDocument;
+      const view = doc.defaultView;
+      const viewportWidth = doc.documentElement.clientWidth || view?.innerWidth || 0;
+      const viewportHeight = doc.documentElement.clientHeight || view?.innerHeight || 0;
+      const rect = rail.getBoundingClientRect();
+      const onScreen = rect.width > 0 && rect.right > 1 && rect.left < viewportWidth - 1;
+      if (onScreen) {
+        return x >= rect.left - SIDEBAR_PEEK_PROXIMITY_PX && x <= rect.right + SIDEBAR_PEEK_PROXIMITY_PX && y >= rect.top - SIDEBAR_PEEK_PROXIMITY_PX && y <= rect.bottom + SIDEBAR_PEEK_PROXIMITY_PX ? rail : null;
+      }
+      const side = sideOf(rail);
+      const insideStrip = side === "left" ? x >= 0 && x <= SIDEBAR_PEEK_EDGE_ZONE_PX : x >= viewportWidth - SIDEBAR_PEEK_EDGE_ZONE_PX && x <= viewportWidth;
+      if (!insideStrip) return null;
+      const top = rect.height > 0 ? Math.max(0, rect.top) : 0;
+      const bottom = rect.height > 0 ? Math.min(viewportHeight, rect.bottom) : viewportHeight;
+      return y >= top - SIDEBAR_PEEK_PROXIMITY_PX && y <= bottom + SIDEBAR_PEEK_PROXIMITY_PX ? rail : null;
+    }
+    function measureShift(node, collapsedWidth, width) {
       const view = node.ownerDocument.defaultView;
       if (view === null) return 0;
       if (!Number.isFinite(collapsedWidth) || collapsedWidth <= 0) return 0;
@@ -1822,7 +1870,7 @@ ${CODE_FENCE}
       if (!isFlex && !isGrid && !isBlockFlow) return 0;
       if (isFlex && !parentStyle.flexDirection.startsWith("row")) return 0;
       if (parentStyle.overflow !== "visible") return 0;
-      const shift = Math.round(collapsedWidth - peekWidth);
+      const shift = Math.round(collapsedWidth - width);
       return shift < 0 ? shift : 0;
     }
     function readSnapshot(node, property) {
@@ -1851,7 +1899,17 @@ ${CODE_FENCE}
         hideTimer = null;
       }
     }
+    function cancelHold() {
+      if (holdTimer !== null) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+      holdRemainingMs = 0;
+    }
     function releaseActive() {
+      cancelHide();
+      cancelHold();
+      rescanNeeded = false;
       const node = active;
       if (node === null) return;
       active = null;
@@ -1955,7 +2013,7 @@ ${CODE_FENCE}
       for (let node = rail.parentElement; node !== null && node !== doc.body; node = node.parentElement) {
         const style = view.getComputedStyle(node);
         if (style.overflow === "visible") continue;
-        if (node.getBoundingClientRect().width >= peekWidth) continue;
+        if (node.getBoundingClientRect().width >= activePeekWidth) continue;
         clipTargets.push({
           node,
           overflowX: readSnapshot(node, "overflow-x"),
@@ -1980,8 +2038,12 @@ ${CODE_FENCE}
       if (active === node) return;
       releaseActive();
       const collapsedWidth = node.getBoundingClientRect().width;
-      const measured = measureShift(node, collapsedWidth);
-      const shift = measured < 0 ? measured : definition?.shift ?? 0;
+      const width = peekWidthFor(node);
+      activePeekWidth = width;
+      const measured = measureShift(node, collapsedWidth, width);
+      const configuredShift = definition?.shift ?? 0;
+      const fallbackShift = width === peekWidth ? configuredShift : configuredShift + (peekWidth - width);
+      const shift = measured < 0 ? measured : fallbackShift;
       widthSnapshot = readSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR);
       shiftSnapshot = readSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR);
       if (definition?.revealRail === true) {
@@ -1999,7 +2061,8 @@ ${CODE_FENCE}
         node.style.setProperty("visibility", "visible", "important");
       }
       active = node;
-      node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${peekWidth}px`);
+      rescanNeeded = true;
+      node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${width}px`);
       node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
       node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
       liftReveal(node);
@@ -2039,8 +2102,69 @@ ${CODE_FENCE}
         hideTimer = null;
         if (active !== rail) return;
         if (pointerStillOverRail(rail)) return;
+        if (sitePopover() !== null) {
+          holdForPopover(rail);
+          return;
+        }
         releaseActive();
       }, hideDelayMs);
+    }
+    function sitePopover() {
+      const doc = boundDocument;
+      const view = doc?.defaultView ?? null;
+      if (doc === null || view === null) return null;
+      const rail = resolvedRail;
+      for (const found of Array.from(doc.querySelectorAll(POPOVER_SELECTOR))) {
+        if (!(found instanceof HTMLElement)) continue;
+        if (rail !== null && rail.contains(found)) continue;
+        if (rail !== null && found.contains(rail)) continue;
+        if (!isVisiblePopover(found, view)) continue;
+        return found;
+      }
+      return null;
+    }
+    function isVisiblePopover(node, view) {
+      if (node.hidden) return false;
+      if (node.getAttribute("aria-hidden") === "true") return false;
+      if (node.closest("[inert]") !== null) return false;
+      const style = view.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      return rect.width > 1 && rect.height > 1;
+    }
+    function popoverFor(target) {
+      const view = boundDocument?.defaultView ?? null;
+      if (view === null) return null;
+      const found = target.closest(POPOVER_SELECTOR);
+      if (!(found instanceof HTMLElement)) return null;
+      const rail = resolvedRail;
+      if (rail !== null && (rail.contains(found) || found.contains(rail))) {
+        return null;
+      }
+      return isVisiblePopover(found, view) ? found : null;
+    }
+    function holdForPopover(rail) {
+      if (holdTimer !== null) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+      if (holdRemainingMs <= 0) holdRemainingMs = SIDEBAR_PEEK_POPOVER_HOLD_MS;
+      const step = Math.min(POPOVER_RECHECK_MS, holdRemainingMs);
+      holdRemainingMs -= step;
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (active !== rail) return;
+        const popover = sitePopover();
+        if (popover !== null && holdRemainingMs > 0) {
+          holdForPopover(rail);
+          return;
+        }
+        holdRemainingMs = 0;
+        if (pointerStillOverRail(rail)) return;
+        releaseActive();
+      }, step);
     }
     function pointerStillOverRail(rail) {
       if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return false;
@@ -2065,7 +2189,36 @@ ${CODE_FENCE}
       if (rail === null) return;
       if (active === rail) {
         liftInert(rail);
-        suppressOverlap();
+        if (rescanNeeded) {
+          rescanNeeded = false;
+          suppressOverlap();
+        }
+      }
+      scheduleShow(rail);
+    }
+    function handlePointerMove(event) {
+      if (!isMousePointer(event)) return;
+      const mouse = event;
+      pointerX = mouse.clientX;
+      pointerY = mouse.clientY;
+      if (active !== null) return;
+      const doc = boundDocument;
+      if (doc === null) return;
+      const viewport = doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+      const band = Math.max(120, collapsedMaxWidth + SIDEBAR_PEEK_PROXIMITY_PX);
+      if (viewport > 0 && pointerX > band && pointerX < viewport - band) {
+        if (pendingRail !== null) cancelShow();
+        return;
+      }
+      const target = event.target;
+      if (target instanceof Element && railFor(target) !== null) return;
+      const now = performance.now();
+      if (now - lastProbeMs < POINTER_PROBE_INTERVAL_MS) return;
+      lastProbeMs = now;
+      const rail = nearRail(pointerX, pointerY);
+      if (rail === null) {
+        if (pendingRail !== null) cancelShow();
+        return;
       }
       scheduleShow(rail);
     }
@@ -2084,13 +2237,23 @@ ${CODE_FENCE}
     function handlePointerDown(event) {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      if (active !== null && popoverFor(target) !== null) {
+        cancelHide();
+        holdForPopover(active);
+        return;
+      }
       const rail = railFor(target);
       if (rail === null) {
         cancelShow();
         releaseActive();
         return;
       }
-      if (active === rail && !rail.contains(target)) releaseActive();
+      if (active === rail && !rail.contains(target)) {
+        if (triggerSelector !== "" && target.closest(triggerSelector) !== null) {
+          expandedByPeek = false;
+        }
+        releaseActive();
+      }
     }
     function handleFocusIn(event) {
       const target = event.target;
@@ -2115,11 +2278,13 @@ ${CODE_FENCE}
         return;
       }
       cancelShow();
+      expandedByPeek = false;
       releaseActive();
     }
     function handleMutations() {
       const node = active;
       if (node === null) return;
+      rescanNeeded = true;
       if (expandedByPeek) {
         if (!node.isConnected) releaseActive();
         return;
@@ -2129,9 +2294,10 @@ ${CODE_FENCE}
     function bind(doc) {
       if (boundDocument === doc) return;
       teardown();
-      if (!enabled) return;
+      if (!hasRail) return;
       boundDocument = doc;
       doc.addEventListener("pointerover", handlePointerOver);
+      doc.addEventListener("pointermove", handlePointerMove);
       doc.addEventListener("pointerout", handlePointerOut);
       doc.addEventListener("pointerdown", handlePointerDown);
       doc.addEventListener("focusin", handleFocusIn);
@@ -2157,6 +2323,7 @@ ${CODE_FENCE}
       }
       if (boundDocument !== null) {
         boundDocument.removeEventListener("pointerover", handlePointerOver);
+        boundDocument.removeEventListener("pointermove", handlePointerMove);
         boundDocument.removeEventListener("pointerout", handlePointerOut);
         boundDocument.removeEventListener("pointerdown", handlePointerDown);
         boundDocument.removeEventListener("focusin", handleFocusIn);
@@ -2169,6 +2336,11 @@ ${CODE_FENCE}
     return {
       bind,
       teardown,
+      syncEnabled: () => {
+        if (isEnabled()) return;
+        cancelShow();
+        releaseActive();
+      },
       isPeeking: () => active !== null
     };
   }
@@ -2352,6 +2524,7 @@ ${CODE_FENCE}
     messageLimit: DEFAULT_MESSAGE_LIMIT,
     collapseCode: true,
     virtualFileEnabled: true,
+    sidebarPeekEnabled: true,
     rememberReasoning: true,
     rememberTools: true,
     hudTheme: "auto"
@@ -2402,6 +2575,9 @@ ${CODE_FENCE}
       if (typeof parsed.virtualFileEnabled === "boolean") {
         state.virtualFileEnabled = parsed.virtualFileEnabled;
       }
+      if (typeof parsed.sidebarPeekEnabled === "boolean") {
+        state.sidebarPeekEnabled = parsed.sidebarPeekEnabled;
+      }
       if (typeof parsed.rememberReasoning === "boolean") {
         state.rememberReasoning = parsed.rememberReasoning;
       }
@@ -2426,6 +2602,7 @@ ${CODE_FENCE}
         pruneEnabled: state.pruneEnabled,
         collapseCode: state.collapseCode,
         virtualFileEnabled: state.virtualFileEnabled,
+        sidebarPeekEnabled: state.sidebarPeekEnabled,
         rememberReasoning: state.rememberReasoning,
         rememberTools: state.rememberTools,
         hudTheme: state.hudTheme
@@ -7073,6 +7250,7 @@ ${contentText}`);
     let chkPrune = null;
     let chkCollapse = null;
     let chkVirtualFile = null;
+    let chkSidebarPeek = null;
     let chkReasoning = null;
     let chkTools = null;
     function announce(message) {
@@ -7125,6 +7303,7 @@ ${contentText}`);
       if (chkPrune) chkPrune.checked = state.pruneEnabled;
       if (chkCollapse) chkCollapse.checked = state.collapseCode;
       if (chkVirtualFile) chkVirtualFile.checked = state.virtualFileEnabled;
+      if (chkSidebarPeek) chkSidebarPeek.checked = state.sidebarPeekEnabled;
       if (chkReasoning) chkReasoning.checked = state.rememberReasoning;
       if (chkTools) chkTools.checked = state.rememberTools;
     }
@@ -7136,6 +7315,7 @@ ${contentText}`);
       }
       resetPersistedConfig(state);
       syncControls();
+      deps.syncSidebarPeek();
       saveConfig();
       syncTheme();
       if (!state.virtualFileEnabled) clearFiles();
@@ -7660,6 +7840,10 @@ ${contentText}`);
         id: "hud-virtual-file",
         type: "checkbox"
       });
+      chkSidebarPeek = el("input", {
+        id: "hud-sidebar-peek",
+        type: "checkbox"
+      });
       chkReasoning = el("input", { id: "hud-reasoning", type: "checkbox" });
       const switchRow = (id, labelText, input) => el("div", { className: "control-row" }, [
         el("label", { for: id, className: "control-label" }, [labelText]),
@@ -7671,6 +7855,7 @@ ${contentText}`);
       chkPrune.checked = state.pruneEnabled;
       chkCollapse.checked = state.collapseCode;
       chkVirtualFile.checked = state.virtualFileEnabled;
+      chkSidebarPeek.checked = state.sidebarPeekEnabled;
       chkReasoning.checked = state.rememberReasoning;
       chkPrune.addEventListener("change", () => {
         state.pruneEnabled = chkPrune?.checked ?? true;
@@ -7699,6 +7884,14 @@ ${contentText}`);
           "长文本伪文件胶囊" + (state.virtualFileEnabled ? "已开启" : "已关闭") + "，设置已保存"
         );
       });
+      chkSidebarPeek.addEventListener("change", () => {
+        state.sidebarPeekEnabled = chkSidebarPeek?.checked ?? true;
+        saveConfig();
+        deps.syncSidebarPeek();
+        announce(
+          "悬停展开侧栏" + (state.sidebarPeekEnabled ? "已开启" : "已关闭") + "，设置已保存"
+        );
+      });
       chkReasoning.addEventListener("change", () => {
         state.rememberReasoning = chkReasoning?.checked ?? true;
         saveConfig();
@@ -7712,6 +7905,7 @@ ${contentText}`);
         switchRow("hud-prune", "安全视口脱水", chkPrune),
         switchRow("hud-collapse", "长代码自动折叠", chkCollapse),
         switchRow("hud-virtual-file", "长文本伪文件胶囊", chkVirtualFile),
+        switchRow("hud-sidebar-peek", "悬停展开侧栏", chkSidebarPeek),
         switchRow("hud-reasoning", "记住推理强度", chkReasoning),
         reasoningStatusNode
       ];
@@ -7997,6 +8191,7 @@ ${contentText}`);
       chkPrune = null;
       chkCollapse = null;
       chkVirtualFile = null;
+      chkSidebarPeek = null;
       chkReasoning = null;
       chkTools = null;
       focusBeforeOpen = null;
@@ -9044,7 +9239,18 @@ ${CODE_FENCE}`;
       /* Doubao and Qianwen paint a site header above the rail; a raised
          stacking level lets the peeked rail take the pointer there. */
       z-index: 120 !important;
-      transition: none !important;
+      /* Only the shadow animates. Width has to stay instant: a width
+         transition relayouts the whole chat column on every frame. */
+      transition: box-shadow 120ms ease-out !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18) !important;
+    }
+
+    /* The shadow reads as "this panel is a temporary overlay", but users who
+       asked for less motion get the plain instant rail. */
+    @media (prefers-reduced-motion: reduce) {
+      [data-ai-turbo-sidebar-peek] {
+        transition: none !important;
+      }
     }
 
     [data-ai-turbo-sidebar-peek="left"] {
@@ -9887,7 +10093,8 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       }
     });
     const sidebarPeek = createSidebarPeek({
-      sidebar: currentPlatform.sidebar ?? null
+      sidebar: currentPlatform.sidebar ?? null,
+      enabled: () => state.sidebarPeekEnabled
     });
     const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
     const navigationTracker = createNavigationTracker(window.location);
@@ -10042,6 +10249,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       flushTextIndex: () => flushTextIndex({ force: true }),
       activeFileCount: () => virtualFiles.activeFileCount(),
       clearFiles: () => virtualFiles.clearFiles(),
+      syncSidebarPeek: () => sidebarPeek.syncEnabled(),
       injectStyles
     });
     function scheduleTrayPosition() {
