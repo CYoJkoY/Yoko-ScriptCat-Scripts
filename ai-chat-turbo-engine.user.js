@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.19.0
+// @version      0.20.0
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -106,6 +106,7 @@
   var SEARCH_PREVIEW_LIMIT = 180;
   var SEARCH_LIMIT = 10;
   var STORAGE_KEY_POS = "ai_turbo_pill_pos";
+  var STORAGE_KEY_DOCK = "ai_turbo_hud_dock";
   var STORAGE_KEY_CONFIG = "ai_turbo_engine_config";
   var VIRTUAL_FILE_THRESHOLD = 1500;
   var COMPOSER_VISUAL_GAP = 48;
@@ -258,6 +259,9 @@
   var PLATFORMS = {
     chatgpt: {
       name: "ChatGPT",
+      hosts: ["chatgpt.com", "chat.openai.com"],
+      shellTurnRoots: true,
+      codeCardChrome: true,
       sidebar: {
         selectors: ["aside.app-shell-left-panel"],
         triggers: [
@@ -369,6 +373,9 @@
     },
     gemini: {
       name: "Gemini",
+      hosts: ["gemini.google.com"],
+      nativeTurnRoots: true,
+      quietMotion: true,
       sidebar: {
         selectors: ["bard-sidenav", ".bard-sidenav", "side-navigation"],
         triggers: [
@@ -447,6 +454,8 @@
     },
     grok: {
       name: "Grok",
+      hosts: ["grok.com"],
+      hostPaths: { "x.com": "/i/grok" },
       sidebar: {
         selectors: ["#app-sidebar", 'aside[aria-label="应用导航"]'],
         triggers: ['button[aria-label="切换侧边栏"]'],
@@ -478,6 +487,7 @@
     },
     deepseek: {
       name: "DeepSeek",
+      hosts: ["chat.deepseek.com"],
       sidebar: {
         selectors: [
           "div.b8812f16.a2f3d50e",
@@ -554,6 +564,7 @@
     },
     copilot: {
       name: "Microsoft Copilot",
+      hosts: ["copilot.com", "copilot.microsoft.com"],
       // The rail is a Fluent NavDrawer that the site widens itself. Its width
       // rule sits in the `application` cascade layer with !important, so the
       // stylesheet override joins the site's first layer instead. The rail
@@ -610,6 +621,7 @@
     },
     perplexity: {
       name: "Perplexity",
+      hosts: ["perplexity.ai", "www.perplexity.ai"],
       sidebar: {
         selectors: ["div.w-sideBarWidth"],
         triggers: [
@@ -660,6 +672,7 @@
     },
     poe: {
       name: "Poe",
+      hosts: ["poe.com"],
       sidebar: {
         selectors: ['aside[class*="SidebarLayout_sidebar"]'],
         triggers: ['button[aria-label="切换侧边栏折叠"]'],
@@ -709,6 +722,7 @@
     },
     doubao: {
       name: "Doubao",
+      hosts: ["doubao.com", "www.doubao.com"],
       sidebar: {
         selectors: ["nav.panel-fvxXfj", "#chat-route-main nav"],
         triggers: [
@@ -772,6 +786,7 @@
     },
     yuanbao: {
       name: "Tencent Yuanbao / 腾讯元宝",
+      hosts: ["yuanbao.tencent.com"],
       supportsToolMemory: true,
       sidebar: {
         selectors: [".yb-nav__content-wrapper"],
@@ -831,6 +846,7 @@
     },
     qwen: {
       name: "Qwen Chat",
+      hosts: ["chat.qwen.ai"],
       sidebar: {
         selectors: ["#sidebar.sidebar"],
         triggers: [
@@ -905,6 +921,7 @@
     },
     qianwen: {
       name: "Qianwen / 千问",
+      hosts: ["qianwen.com", "www.qianwen.com"],
       sidebar: {
         selectors: ["aside#new-nav-tab-wrapper"],
         triggers: [
@@ -974,6 +991,7 @@
     },
     glm: {
       name: "ChatGLM / 智谱清言",
+      hosts: ["chatglm.cn"],
       sidebar: {
         selectors: ["aside.el-aside.aside-container"],
         triggers: [".aside-header .operation-btn"],
@@ -1040,6 +1058,7 @@
     },
     zai: {
       name: "Z.ai (GLM)",
+      hosts: ["chat.z.ai"],
       sidebar: {
         selectors: ["#sidebar"],
         triggers: ['button[aria-label="切换侧边栏"]'],
@@ -1111,6 +1130,45 @@
       ]
     }
   };
+  var PLATFORM_ENTRIES = Object.entries(PLATFORMS);
+  function hostnameMatches(hostname, domains) {
+    return domains.some(
+      (domain) => hostname === domain || hostname.endsWith("." + domain)
+    );
+  }
+  function findPlatformForLocation(hostname, pathname) {
+    const host = hostname.toLowerCase();
+    const path = pathname || "/";
+    const declaresHost = (declared) => declared.some((candidate) => candidate.toLowerCase() === host);
+    for (const [, platform] of PLATFORM_ENTRIES) {
+      for (const [suffix, prefix] of Object.entries(platform.hostPaths ?? {})) {
+        if (suffix.toLowerCase() === host && path.startsWith(prefix)) {
+          return platform;
+        }
+      }
+      if (declaresHost(platform.hosts)) {
+        return platform;
+      }
+    }
+    return null;
+  }
+  function buildPlatformMatchPatterns() {
+    const patterns = [];
+    const seen = /* @__PURE__ */ new Set();
+    const add = (pattern) => {
+      if (seen.has(pattern)) return;
+      seen.add(pattern);
+      patterns.push(pattern);
+    };
+    for (const [, platform] of PLATFORM_ENTRIES) {
+      for (const host of platform.hosts) add(`https://${host}/*`);
+      for (const [host, prefix] of Object.entries(platform.hostPaths ?? {})) {
+        add(`https://${host}${prefix}*`);
+      }
+    }
+    return patterns;
+  }
+  var PLATFORM_MATCH_PATTERNS = buildPlatformMatchPatterns();
 
   // scripts/ai-chat-turbo-engine/src/core/diagnostics.ts
   var REPORT_LIMIT = 50;
@@ -1259,7 +1317,7 @@ ${CODE_FENCE}
       renderedCheckCache.clear();
     }
     function isGeminiThoughtElement(element) {
-      if (platform !== PLATFORMS.gemini || !(element instanceof Element))
+      if (!platform.nativeTurnRoots || !(element instanceof Element))
         return false;
       return Boolean(
         element.closest(
@@ -1456,7 +1514,7 @@ ${CODE_FENCE}
       );
     }
     function getCurrentChatGPTTurns() {
-      if (platform.name !== "ChatGPT") return null;
+      if (!platform.shellTurnRoots) return null;
       const shellRoots = Array.from(
         document.querySelectorAll(CHATGPT_SHELL_ROOT_SELECTOR)
       ).filter(isRenderedChatGPTElement);
@@ -1501,7 +1559,7 @@ ${CODE_FENCE}
         document.querySelectorAll(selectors.join(","))
       );
       const resolved = filterNestedInDocumentOrder(collected).filter(
-        (element) => (platform.name !== "ChatGPT" || isRenderedChatGPTElement(element)) && !isGeminiThoughtElement(element) && !matchesReasoningElement(element)
+        (element) => (!platform.shellTurnRoots || isRenderedChatGPTElement(element)) && !isGeminiThoughtElement(element) && !matchesReasoningElement(element)
       );
       cachedTurns = resolved;
       return resolved;
@@ -2925,7 +2983,7 @@ ${CODE_FENCE}
       return classBasedFallback instanceof HTMLElement && classBasedFallback.isConnected && classBasedFallback.contains(codeElement) ? classBasedFallback : null;
     }
     function getCodeControlAnchor(codeElement) {
-      if (currentPlatform !== PLATFORMS.chatgpt) return codeElement;
+      if (!currentPlatform.codeCardChrome) return codeElement;
       return getChatGPTCodeCardAnchor(codeElement);
     }
     function positionCodeControl(entry, codeElement) {
@@ -2968,7 +3026,7 @@ ${CODE_FENCE}
       const measuredH = getCodeElementHeight(codeElement);
       if (measuredH <= CODE_COLLAPSE_HEIGHT) return;
       const anchor = getCodeControlAnchor(codeElement);
-      if (currentPlatform === PLATFORMS.chatgpt && (!(anchor instanceof HTMLElement) || anchor === codeElement)) {
+      if (currentPlatform.codeCardChrome && (!(anchor instanceof HTMLElement) || anchor === codeElement)) {
         return;
       }
       let sibling = codeElement.previousElementSibling;
@@ -3005,7 +3063,7 @@ ${CODE_FENCE}
       const bar = el(
         "div",
         {
-          className: currentPlatform === PLATFORMS.chatgpt ? "ai-turbo-code-bar ai-turbo-code-bar-chatgpt" : "ai-turbo-code-bar"
+          className: currentPlatform.codeCardChrome ? "ai-turbo-code-bar ai-turbo-code-bar-chatgpt" : "ai-turbo-code-bar"
         },
         [metaWrap, actionsWrap]
       );
@@ -3104,7 +3162,7 @@ ${CODE_FENCE}
       for (const codeElement of candidates) {
         const entry = codeState.get(codeElement);
         if (entry) {
-          if (currentPlatform === PLATFORMS.chatgpt && !positionCodeControl(entry, codeElement)) {
+          if (currentPlatform.codeCardChrome && !positionCodeControl(entry, codeElement)) {
             continue;
           }
           updateCodeMeta(entry, codeElement);
@@ -3230,11 +3288,6 @@ ${CODE_FENCE}
   }
 
   // scripts/ai-chat-turbo-engine/src/core/auth.ts
-  function hostnameMatches(hostname, domains) {
-    return domains.some(
-      (domain) => hostname === domain || hostname.endsWith("." + domain)
-    );
-  }
   var AUTH_ROUTE_SEGMENTS = /* @__PURE__ */ new Set([
     "auth",
     "auth0",
@@ -3310,48 +3363,10 @@ ${CODE_FENCE}
     return !engineActive || isAuthOrRedirectRoute();
   }
   function detectPlatform() {
-    const hostname = window.location.hostname.toLowerCase();
-    const pathname = window.location.pathname;
-    if (hostnameMatches(hostname, ["chatgpt.com", "chat.openai.com"])) {
-      return PLATFORMS.chatgpt;
-    }
-    if (hostnameMatches(hostname, ["gemini.google.com"])) {
-      return PLATFORMS.gemini;
-    }
-    if (hostnameMatches(hostname, ["grok.com"]) || hostname === "x.com" && pathname.startsWith("/i/grok")) {
-      return PLATFORMS.grok;
-    }
-    if (hostnameMatches(hostname, ["deepseek.com"])) {
-      return PLATFORMS.deepseek;
-    }
-    if (hostnameMatches(hostname, ["copilot.com", "copilot.microsoft.com"])) {
-      return PLATFORMS.copilot;
-    }
-    if (hostnameMatches(hostname, ["perplexity.ai"])) {
-      return PLATFORMS.perplexity;
-    }
-    if (hostnameMatches(hostname, ["poe.com"])) {
-      return PLATFORMS.poe;
-    }
-    if (hostnameMatches(hostname, ["doubao.com"])) {
-      return PLATFORMS.doubao;
-    }
-    if (hostnameMatches(hostname, ["yuanbao.tencent.com"])) {
-      return PLATFORMS.yuanbao;
-    }
-    if (hostnameMatches(hostname, ["chat.qwen.ai"])) {
-      return PLATFORMS.qwen;
-    }
-    if (hostnameMatches(hostname, ["qianwen.com"])) {
-      return PLATFORMS.qianwen;
-    }
-    if (hostnameMatches(hostname, ["chatglm.cn"])) {
-      return PLATFORMS.glm;
-    }
-    if (hostnameMatches(hostname, ["chat.z.ai"])) {
-      return PLATFORMS.zai;
-    }
-    return null;
+    return findPlatformForLocation(
+      window.location.hostname,
+      window.location.pathname
+    );
   }
 
   // scripts/ai-chat-turbo-engine/src/core/restore-coordination.ts
@@ -6958,6 +6973,36 @@ ${contentText}`);
       transform: translateY(-1px) scale(1.02);
     }
 
+    /*
+     * Docked mode folds the 48px pill into a slim tab on the chosen edge.
+     * The ring and count stay visible, so the collapsed state still reports
+     * load without opening the panel.
+     */
+    :host([data-hud-dock]) .docked-pill {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 9px;
+      width: 30px;
+      height: 86px;
+      padding-top: 9px;
+      border-radius: 14px;
+      transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+    }
+    :host([data-hud-dock="left"]) .docked-pill { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+    :host([data-hud-dock="right"]) .docked-pill { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    :host([data-hud-dock]) .turbo-gauge { width: 26px; height: 26px; }
+    :host([data-hud-dock]) .pill-load-ring { width: 26px; height: 26px; }
+    :host([data-hud-dock]) .turbo-count { font-size: 10px; letter-spacing: -0.3px; }
+    :host([data-hud-dock]) .docked-pill:hover { transform: none; }
+    .dock-mark {
+      display: none;
+      font: 700 8px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0.12em;
+      color: var(--turbo-muted);
+    }
+    :host([data-hud-dock]) .dock-mark { display: block; }
+
     .modal-backdrop {
       position: absolute;
       inset: 0;
@@ -7000,6 +7045,32 @@ ${contentText}`);
       .hud-panel { max-height: min(720px, calc(100dvh - 24px)); }
     }
     .modal-backdrop.open .hud-panel { transform: scale(1); }
+    /*
+     * A docked panel slides out of the same edge as the collapsed tab. It
+     * spans the viewport height, so long settings lists scroll inside the
+     * sheet while the page keeps its own scroll position.
+     */
+    .modal-backdrop[data-dock] {
+      padding: 0;
+      align-items: stretch;
+    }
+    .modal-backdrop[data-dock="left"] { justify-content: flex-start; }
+    .modal-backdrop[data-dock="right"] { justify-content: flex-end; }
+    .modal-backdrop[data-dock] .hud-panel {
+      width: min(392px, 100vw);
+      height: 100%;
+      max-height: none;
+      padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+      border-width: 0 1px 0 0;
+      border-radius: 0;
+      transform: translateX(-102%);
+      transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .modal-backdrop[data-dock="right"] .hud-panel {
+      border-width: 0 0 0 1px;
+      transform: translateX(102%);
+    }
+    .modal-backdrop[data-dock].open .hud-panel { transform: none; }
     /* The panel stays opaque: an 18px backdrop blur repaints the whole page
        behind it on every frame of the open and close animation. */
 
@@ -7008,6 +7079,10 @@ ${contentText}`);
     .brand-subtitle { font-size: 10px; color: var(--hud-muted); margin-top: 1px; }
     .close-btn { background: transparent; border: 0; color: var(--hud-muted); cursor: pointer; padding: 4px 6px; border-radius: 6px; }
     .close-btn:hover { color: var(--hud-title); background: var(--hud-hover); }
+    .header-actions { display: inline-flex; align-items: center; gap: 2px; }
+    .dock-btn { background: transparent; border: 0; color: var(--hud-muted); cursor: pointer; padding: 4px 7px; border-radius: 6px; font: 600 10px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .dock-btn:hover { color: var(--hud-title); background: var(--hud-hover); }
+    .dock-btn[aria-pressed="true"] { color: var(--hud-accent); background: var(--hud-hover); }
 
     .status-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
     .status-item { min-width: 0; padding: 9px 6px; border: 1px solid var(--hud-border-soft); border-radius: 9px; background: var(--hud-card-bg); text-align: center; }
@@ -7098,7 +7173,7 @@ ${contentText}`);
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .modal-backdrop, .hud-panel, .docked-pill, .pill-load-progress, .slider, .advanced > summary::before { transition: none !important; }
+      .modal-backdrop, .hud-panel, .modal-backdrop[data-dock] .hud-panel, .docked-pill, .pill-load-progress, .slider, .advanced > summary::before { transition: none !important; }
     }
   `;
 
@@ -7116,6 +7191,9 @@ ${contentText}`);
     "data-mode",
     "data-color-scheme"
   ];
+  var DOCK_EDGE_SNAP = 26;
+  var DOCK_TAB_WIDTH = 30;
+  var DOCK_TAB_HEIGHT = 86;
   function isPillPosition(value) {
     if (typeof value !== "object" || value === null) return false;
     if (!("x" in value) || !("y" in value)) return false;
@@ -7243,6 +7321,48 @@ ${contentText}`);
     let cleanupPillDrag = null;
     let suppressPillClick = false;
     let focusBeforeOpen = null;
+    let dockSide = null;
+    let dockController = null;
+    function parseDockSide(value) {
+      return value === "left" || value === "right" ? value : null;
+    }
+    function readDockSide() {
+      try {
+        return parseDockSide(positionStore.read(STORAGE_KEY_DOCK));
+      } catch (error) {
+        reportRecoverableError("restore HUD dock", error);
+        return null;
+      }
+    }
+    function persistDockSide(side) {
+      if (side) positionStore.write(STORAGE_KEY_DOCK, side);
+      else positionStore.remove(STORAGE_KEY_DOCK);
+    }
+    function syncDockChrome() {
+      if (!hudStats) return;
+      if (hudRootElement) {
+        if (dockSide) hudRootElement.setAttribute("data-hud-dock", dockSide);
+        else hudRootElement.removeAttribute("data-hud-dock");
+      }
+      if (dockSide) hudStats.backdrop.setAttribute("data-dock", dockSide);
+      else hudStats.backdrop.removeAttribute("data-dock");
+      const docked = dockSide !== null;
+      hudStats.dockButton.textContent = docked ? "取消贴边" : "贴边";
+      hudStats.dockButton.title = docked ? "取消贴边，恢复悬浮仪表" : "贴到屏幕边缘，收成侧边信息条";
+      hudStats.dockButton.setAttribute("aria-pressed", docked ? "true" : "false");
+      hudStats.dockButton.setAttribute(
+        "aria-label",
+        docked ? "取消贴边，恢复悬浮仪表" : "把信息面板贴到屏幕边缘"
+      );
+    }
+    function setDockSide(side) {
+      if (dockSide === side) return;
+      const wasDocked = dockSide !== null;
+      dockSide = side;
+      persistDockSide(side);
+      syncDockChrome();
+      dockController?.(side, wasDocked);
+    }
     let keepValue = null;
     let messageLimitInput = null;
     let themeSelect = null;
@@ -7350,10 +7470,10 @@ ${contentText}`);
       const loadTone = resolveLoadTone(state.totalTurns, state.messageLimit);
       const loadToneLabel = loadTone === "critical" ? "已达到提醒上限" : loadTone === "warning" ? "接近提醒上限" : "负载正常";
       hudStats.pillRoot.dataset["loadTone"] = loadTone;
-      hudStats.pillRoot.title = "负载 " + state.totalTurns + "/" + state.messageLimit + "（" + loadToneLabel + "）；点击打开面板，拖动可移动";
+      hudStats.pillRoot.title = "负载 " + state.totalTurns + "/" + state.messageLimit + "（" + loadToneLabel + "）；点击打开面板，拖动可移动，拖到屏幕边缘会收成侧边条";
       hudStats.pillRoot.setAttribute(
         "aria-label",
-        "长对话负载 " + state.totalTurns + "/" + state.messageLimit + "，" + loadToneLabel + "；消息 " + state.totalTurns + "，已脱水 " + state.hiddenCount + "，代码折叠 " + state.foldedCodeCount + "，虚拟文件 " + fileCount + "；点击打开面板，拖动可移动"
+        "长对话负载 " + state.totalTurns + "/" + state.messageLimit + "，" + loadToneLabel + "；消息 " + state.totalTurns + "，已脱水 " + state.hiddenCount + "，代码折叠 " + state.foldedCodeCount + "，虚拟文件 " + fileCount + "；点击打开面板，拖动可移动，拖到屏幕边缘会收成侧边条"
       );
       hudStats.totalStatusItem.dataset["loadTone"] = loadTone;
       hudStats.pillCount.textContent = String(state.totalTurns);
@@ -7545,6 +7665,21 @@ ${contentText}`);
         pill.style.left = String(posX) + "px";
         pill.style.top = String(posY) + "px";
       };
+      const applyDock = (side) => {
+        const width = pill.offsetWidth || DOCK_TAB_WIDTH;
+        const height = pill.offsetHeight || DOCK_TAB_HEIGHT;
+        const maxY = Math.max(8, window.innerHeight - height - 8);
+        posY = Math.min(maxY, Math.max(8, posY));
+        pill.style.left = side === "left" ? "0px" : String(Math.max(0, window.innerWidth - width)) + "px";
+        pill.style.top = String(posY) + "px";
+      };
+      const resolveDockSide = () => {
+        const width = pill.offsetWidth || 48;
+        const rightGap = window.innerWidth - (posX + width);
+        if (posX <= DOCK_EDGE_SNAP) return "left";
+        if (rightGap <= DOCK_EDGE_SNAP) return "right";
+        return null;
+      };
       const persist = () => {
         positionStore.writeJson(STORAGE_KEY_POS, { x: posX, y: posY });
       };
@@ -7559,6 +7694,21 @@ ${contentText}`);
       let startY = 0;
       let originX = 0;
       let originY = 0;
+      dockController = (side, wasDocked = false) => {
+        if (side) {
+          applyDock(side);
+          return;
+        }
+        if (wasDocked) {
+          const width = pill.offsetWidth || 48;
+          if (posX <= DOCK_EDGE_SNAP) posX = 24;
+          else if (posX + width >= window.innerWidth - DOCK_EDGE_SNAP) {
+            posX = window.innerWidth - width - 24;
+          }
+        }
+        clamp();
+        apply();
+      };
       const removeMoveListeners = () => {
         window.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", onPointerUp);
@@ -7594,7 +7744,16 @@ ${contentText}`);
         finishDrag();
         if (dragged) {
           suppressPillClick = true;
-          persist();
+          const nextDock = resolveDockSide();
+          if (nextDock) {
+            setDockSide(nextDock);
+            persist();
+          } else {
+            if (dockSide) setDockSide(null);
+            clamp();
+            apply();
+            persist();
+          }
         }
         event.preventDefault();
       }
@@ -7604,6 +7763,8 @@ ${contentText}`);
         finishDrag();
         if (dragged) {
           suppressPillClick = true;
+          if (dockSide) applyDock(dockSide);
+          else apply();
           persist();
         }
       }
@@ -7614,6 +7775,11 @@ ${contentText}`);
         dragStarted = false;
         startX = event.clientX;
         startY = event.clientY;
+        if (dockSide) {
+          const rect = pill.getBoundingClientRect();
+          posX = rect.left;
+          posY = rect.top;
+        }
         originX = posX;
         originY = posY;
         window.addEventListener("pointermove", onPointerMove);
@@ -7621,6 +7787,10 @@ ${contentText}`);
         window.addEventListener("pointercancel", onPointerCancel);
       };
       const onViewportResize = () => {
+        if (dockSide) {
+          applyDock(dockSide);
+          return;
+        }
         const beforeX2 = posX;
         const beforeY2 = posY;
         clamp();
@@ -7630,12 +7800,16 @@ ${contentText}`);
       pill.addEventListener("pointerdown", onPointerDown);
       window.addEventListener("resize", onViewportResize, { passive: true });
       window.visualViewport?.addEventListener("resize", onViewportResize);
+      dockSide = readDockSide();
+      syncDockChrome();
+      dockController(dockSide);
       return () => {
         removeMoveListeners();
         pill.removeEventListener("pointerdown", onPointerDown);
         window.removeEventListener("resize", onViewportResize);
         window.visualViewport?.removeEventListener("resize", onViewportResize);
         pill.classList.remove("dragging");
+        dockController = null;
         pointerDown = false;
         dragStarted = false;
       };
@@ -7706,7 +7880,8 @@ ${contentText}`);
           el("span", { className: "turbo-gauge", "aria-hidden": "true" }, [
             pillLoadRing,
             el("span", { className: "turbo-readout" }, [pillCountValue])
-          ])
+          ]),
+          el("span", { className: "dock-mark", "aria-hidden": "true" }, ["AI"])
         ]
       );
       pill.addEventListener("click", (event) => {
@@ -8066,6 +8241,28 @@ ${contentText}`);
         ["✕"]
       );
       btnClose.addEventListener("click", () => togglePanel(false));
+      const btnDock = el(
+        "button",
+        {
+          className: "dock-btn",
+          type: "button",
+          title: "贴到屏幕边缘，收成侧边信息条",
+          "aria-label": "把信息面板贴到屏幕边缘",
+          "aria-pressed": "false"
+        },
+        ["贴边"]
+      );
+      btnDock.addEventListener("click", () => {
+        if (dockSide) {
+          setDockSide(null);
+          announce("已取消贴边，恢复悬浮仪表");
+          return;
+        }
+        const pillCenter = pill.offsetLeft + pill.offsetWidth / 2;
+        const side = pillCenter < window.innerWidth / 2 ? "left" : "right";
+        setDockSide(side);
+        announce(side === "left" ? "已贴到左侧边缘" : "已贴到右侧边缘");
+      });
       const panelHeader = el("div", { className: "header" }, [
         el("div", {}, [
           el("div", { className: "brand-title", id: "hud-title" }, [
@@ -8075,7 +8272,7 @@ ${contentText}`);
             currentPlatform.name + " · v" + VERSION
           ])
         ]),
-        btnClose
+        el("div", { className: "header-actions" }, [btnDock, btnClose])
       ]);
       const footerHint = el("div", { className: "footer-hint" }, [
         el("kbd", {}, ["Alt"]),
@@ -8141,6 +8338,7 @@ ${contentText}`);
         panel,
         backdrop,
         pillRoot: pill,
+        dockButton: btnDock,
         pillCount: pillCountValue,
         pillLoadProgress,
         liveRegion,
@@ -8544,6 +8742,11 @@ ${contentText}`);
     }
     function isMountHealthy(mount) {
       if (!mount.row.isConnected) return false;
+      if (mount.expanded) {
+        return mount.row.classList.contains("is-expanded") && mount.hidden.every(
+          (node) => node.isConnected && node.classList.contains("ai-turbo-chat-folded-target") && node.style.getPropertyValue("display") !== "none"
+        );
+      }
       for (const node of mount.hidden) {
         if (!node.isConnected) return false;
         if (!node.classList.contains("ai-turbo-chat-folded-target")) {
@@ -8552,6 +8755,30 @@ ${contentText}`);
         if (node.style.getPropertyValue("display") !== "none") return false;
       }
       return true;
+    }
+    function setExpanded(mount, expanded) {
+      if (mount.expanded === expanded) return;
+      withSelfMutation(() => {
+        mount.expanded = expanded;
+        mount.row.classList.toggle("is-expanded", expanded);
+        mount.toggle.textContent = expanded ? "收起为文件" : "展开原文";
+        mount.toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+        mount.toggle.title = expanded ? "把这段消息折叠回虚拟文件" : "显示这段消息的原始文本";
+        for (const node of mount.hidden) {
+          if (!node.isConnected) continue;
+          if (expanded) {
+            node.style.removeProperty("display");
+            node.style.removeProperty("contain");
+            continue;
+          }
+          node.style.setProperty("display", "none", "important");
+          node.style.setProperty("contain", "strict", "important");
+        }
+        if (mount.prompt) {
+          if (expanded) mount.prompt.style.setProperty("display", "none", "important");
+          else mount.prompt.style.removeProperty("display");
+        }
+      });
     }
     function syncRowVisibility(turn, mount) {
       const collapsed = turn.classList.contains("ai-turbo-dehydrated");
@@ -8656,6 +8883,20 @@ ${contentText}`);
         parsed.files.forEach((file, index) => {
           stack.appendChild(createCapsule(turnElement, file, index));
         });
+        const toggle = el("button", {
+          type: "button",
+          className: "ai-turbo-chat-file-toggle",
+          title: "显示这段消息的原始文本",
+          "aria-expanded": "false"
+        });
+        toggle.textContent = "展开原文";
+        stack.appendChild(toggle);
+        toggle.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const mount2 = mounts.get(turnElement);
+          if (mount2) setExpanded(mount2, !mount2.expanded);
+        });
         row.appendChild(stack);
         turnElement.insertAdjacentElement("afterend", row);
         return {
@@ -8663,7 +8904,9 @@ ${contentText}`);
           prompt: promptNode,
           hidden: containers,
           fileCount: parsed.files.length,
-          collapsed: false
+          collapsed: false,
+          expanded: false,
+          toggle
         };
       });
       mounts.set(turnElement, mount);
@@ -8748,7 +8991,7 @@ ${contentText}`);
       const tick = (ts) => {
         virtualFileTraySyncRaf = 0;
         const tray = document.getElementById("ai-turbo-vf-tray");
-        if (!tray || !tray.isConnected || !activeVirtualFiles.length) {
+        if (!tray || !tray.isConnected) {
           return;
         }
         if (ts - virtualFileTraySyncLastTs >= VF_TRAY_SYNC_INTERVAL) {
@@ -8896,10 +9139,80 @@ ${contentText}`);
         note: "发送时会提交完整文本"
       });
     }
+    function readComposerText(inputElement) {
+      if (!inputElement) return "";
+      if (inputElement instanceof HTMLTextAreaElement) return inputElement.value;
+      if (inputElement instanceof HTMLInputElement) return inputElement.value;
+      return (inputElement.innerText || inputElement.textContent || "").replace(/\u00a0/g, " ");
+    }
+    function composerTextIsConvertible(inputElement) {
+      return readComposerText(inputElement).trim().length >= VIRTUAL_FILE_THRESHOLD;
+    }
+    function handleComposerInput(target) {
+      if (isEngineDormant2() || !state.virtualFileEnabled) return;
+      if (!(target instanceof Node)) return;
+      if (!isEditableTarget(target)) return;
+      const input = composer.getChatInput();
+      if (!input) return;
+      if (!input.contains(target)) return;
+      const wanted = activeVirtualFiles.length > 0 || composerTextIsConvertible(input);
+      const present = document.getElementById("ai-turbo-vf-tray") !== null;
+      if (wanted === present) return;
+      trayIsDirty = true;
+      renderVirtualFileTray();
+    }
+    function isEditableTarget(target) {
+      if (target instanceof HTMLTextAreaElement) return true;
+      if (target instanceof HTMLInputElement) return true;
+      return target instanceof HTMLElement && target.isContentEditable;
+    }
+    function buildVirtualFile(text, prefix) {
+      const size = new Blob([text]).size;
+      const kbSize = (size / 1024).toFixed(1);
+      return {
+        id: `vf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        name: `${prefix}_${kbSize}kb.txt`,
+        size,
+        charCount: text.length,
+        lineCount: fastCountLines(text),
+        content: text,
+        timestamp: Date.now()
+      };
+    }
+    function moveComposerTextToFiles() {
+      const input = composer.getChatInput();
+      if (!input) return false;
+      const text = readComposerText(input).trim();
+      if (!text) return false;
+      activeVirtualFiles.push(buildVirtualFile(text, "composer_text"));
+      suspendObservers();
+      withSelfMutation(() => {
+        composer.insertTextAtomic(input, "");
+      });
+      updateHudDashboard();
+      trayIsDirty = true;
+      renderVirtualFileTray();
+      return true;
+    }
+    function convertFileToText(fileItem) {
+      const input = composer.getChatInput();
+      if (!input) return;
+      const current = readComposerText(input).trim();
+      const next = current ? `${current}
+
+${fileItem.content}` : fileItem.content;
+      suspendObservers();
+      withSelfMutation(() => {
+        composer.insertTextAtomic(input, next);
+      });
+      removeVirtualFile(fileItem.id);
+    }
     function renderVirtualFileTray() {
       let tray = document.getElementById("ai-turbo-vf-tray");
       resetVirtualFileTraySignature();
-      if (!activeVirtualFiles.length) {
+      const input = composer.getChatInput();
+      const convertOnly = activeVirtualFiles.length === 0;
+      if (convertOnly && (!state.virtualFileEnabled || isEngineDormant2() || !composerTextIsConvertible(input))) {
         const currentTray = tray;
         if (currentTray) {
           withSelfMutation(() => currentTray.remove());
@@ -8909,7 +9222,6 @@ ${contentText}`);
         updateHudDashboard();
         return;
       }
-      const input = composer.getChatInput();
       if (!input) return;
       const container = composer.getInputContainer(input);
       if (!container || !container.isConnected) {
@@ -8926,6 +9238,33 @@ ${contentText}`);
           document.body.appendChild(tray);
         }
         tray.textContent = "";
+        const headingChildren = [
+          el(
+            "span",
+            {
+              className: "ai-turbo-vf-heading-icon"
+            },
+            [createUiIcon("bolt", 13)]
+          ),
+          el(
+            "span",
+            {
+              className: "ai-turbo-vf-heading-title"
+            },
+            ["虚拟文件"]
+          )
+        ];
+        if (activeVirtualFiles.length) {
+          headingChildren.push(
+            el(
+              "span",
+              {
+                className: "ai-turbo-vf-heading-count"
+              },
+              [`${activeVirtualFiles.length}`]
+            )
+          );
+        }
         const header = el(
           "div",
           {
@@ -8937,36 +9276,34 @@ ${contentText}`);
               {
                 className: "ai-turbo-vf-heading"
               },
+              headingChildren
+            ),
+            el(
+              "div",
+              {
+                className: "ai-turbo-vf-header-actions"
+              },
               [
                 el(
                   "span",
                   {
-                    className: "ai-turbo-vf-heading-icon"
+                    className: "ai-turbo-vf-heading-hint"
                   },
-                  [createUiIcon("bolt", 13)]
+                  [
+                    activeVirtualFiles.length ? "发送时作为上下文附加" : "输入框里有长文本"
+                  ]
                 ),
                 el(
-                  "span",
+                  "button",
                   {
-                    className: "ai-turbo-vf-heading-title"
+                    type: "button",
+                    className: "ai-turbo-vf-convert-composer",
+                    title: "把输入框里的文本收进虚拟文件",
+                    "aria-label": "把输入框里的文本转为虚拟文件"
                   },
-                  ["虚拟文件"]
-                ),
-                el(
-                  "span",
-                  {
-                    className: "ai-turbo-vf-heading-count"
-                  },
-                  [`${activeVirtualFiles.length}`]
+                  ["文本转文件"]
                 )
               ]
-            ),
-            el(
-              "span",
-              {
-                className: "ai-turbo-vf-heading-hint"
-              },
-              ["发送时作为上下文附加"]
             )
           ]
         );
@@ -8975,6 +9312,11 @@ ${contentText}`);
         });
         tray.appendChild(header);
         tray.appendChild(fileList);
+        header.querySelector(".ai-turbo-vf-convert-composer")?.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          moveComposerTextToFiles();
+        });
         for (const item of activeVirtualFiles) {
           const sizeText = `${(item.size / 1024).toFixed(1)} KB`;
           const nameLabel = el(
@@ -9006,6 +9348,21 @@ ${contentText}`);
             event.preventDefault();
             event.stopPropagation();
             showTextPreviewModal(item);
+          });
+          const btnConvert = el(
+            "button",
+            {
+              type: "button",
+              className: "ai-turbo-vf-action ai-turbo-vf-action-label ai-turbo-vf-action-convert",
+              title: "把该文件放回输入框作为普通文本",
+              "aria-label": `将 ${item.name} 转为普通文本`
+            },
+            ["转文本"]
+          );
+          btnConvert.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            convertFileToText(item);
           });
           const btnDelete = el(
             "button",
@@ -9054,7 +9411,7 @@ ${contentText}`);
                 {
                   className: "ai-turbo-vf-actions"
                 },
-                [btnPreview, btnDelete]
+                [btnPreview, btnConvert, btnDelete]
               )
             ]
           );
@@ -9160,6 +9517,7 @@ ${CODE_FENCE}`;
       activeFileCount,
       isTrayDirty,
       handlePasteIntercept,
+      handleComposerInput,
       fuseAndSubmit
     };
   }
@@ -9658,6 +10016,34 @@ ${CODE_FENCE}`;
       font: 9.5px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
     }
 
+    .ai-turbo-vf-header-actions {
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      min-width: 0 !important;
+    }
+
+    .ai-turbo-vf-convert-composer {
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      flex: 0 0 auto !important;
+      padding: 3px 8px !important;
+      border: 1px solid rgba(101, 210, 164, 0.28) !important;
+      border-radius: 999px !important;
+      background: rgba(101, 210, 164, 0.07) !important;
+      color: #86d8b4 !important;
+      font: 600 10px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      cursor: pointer !important;
+    }
+
+    .ai-turbo-vf-convert-composer:hover,
+    .ai-turbo-vf-convert-composer:focus-visible {
+      border-color: rgba(101, 210, 164, 0.55) !important;
+      background: rgba(101, 210, 164, 0.14) !important;
+      color: #d8f0e5 !important;
+      outline: none !important;
+    }
+
     .ai-turbo-vf-list {
       display: flex !important;
       flex-wrap: wrap !important;
@@ -9759,6 +10145,18 @@ ${CODE_FENCE}`;
       color: #77827d !important;
       cursor: pointer !important;
       transition: background 120ms ease, color 120ms ease !important;
+    }
+
+    .ai-turbo-vf-action-label {
+      width: auto !important;
+      padding: 0 7px !important;
+      font: 600 10px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      white-space: nowrap !important;
+    }
+
+    .ai-turbo-vf-action-convert:hover {
+      color: #86d8b4 !important;
+      background: rgba(101, 210, 164, 0.09) !important;
     }
 
     .ai-turbo-vf-action:hover {
@@ -9878,6 +10276,32 @@ ${CODE_FENCE}`;
       flex: 0 1 auto !important;
       min-width: 0 !important;
       max-width: min(680px, 100%) !important;
+    }
+
+    .ai-turbo-chat-file-toggle {
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      align-self: flex-end !important;
+      margin: 0 !important;
+      padding: 3px 8px !important;
+      background: transparent !important;
+      border: 1px solid rgba(153, 166, 161, 0.2) !important;
+      border-radius: 999px !important;
+      color: #9fb3ab !important;
+      font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      cursor: pointer !important;
+      user-select: none !important;
+    }
+
+    .ai-turbo-chat-file-toggle:hover,
+    .ai-turbo-chat-file-toggle:focus-visible {
+      border-color: rgba(101, 210, 164, 0.45) !important;
+      color: #d8e1dc !important;
+      outline: none !important;
+    }
+
+    .ai-turbo-chat-file-toggle:focus-visible {
+      box-shadow: 0 0 0 2px rgba(101, 210, 164, 0.4) !important;
     }
 
     .ai-turbo-chat-capsule:hover,
@@ -10070,7 +10494,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     if (!detectedPlatform) return;
     const currentPlatform = detectedPlatform;
     const injectStyles = () => injectEngineStyles({
-      geminiNativeRender: currentPlatform === PLATFORMS.gemini
+      geminiNativeRender: currentPlatform.nativeTurnRoots === true
     });
     const {
       clearRenderedCache,
@@ -10642,6 +11066,11 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
         true
       );
       window.addEventListener(
+        "input",
+        (event) => virtualFiles.handleComposerInput(event.target),
+        true
+      );
+      window.addEventListener(
         "keydown",
         (event) => sendIntercept.handleSendIntercept(event),
         true
@@ -10664,7 +11093,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       hud?.buildHUD();
       codeBlocks.observeCodeLayout();
       sidebarPeek.bind(document);
-      if (currentPlatform === PLATFORMS.gemini) motionQuiet.bind(document);
+      if (currentPlatform.quietMotion) motionQuiet.bind(document);
       observeDom();
       patchHistoryForSpaNavigation();
       bindGlobalListeners();
