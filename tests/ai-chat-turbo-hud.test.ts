@@ -4,6 +4,7 @@ import {
   HUD_ID,
   PLATFORMS,
   STORAGE_KEY_CONFIG,
+  STORAGE_KEY_DOCK,
   STORAGE_KEY_POS,
 } from "../scripts/ai-chat-turbo-engine/src/config";
 import {
@@ -527,6 +528,73 @@ describe("HUD pill dragging", () => {
     expect(
       JSON.parse(window.localStorage.getItem(STORAGE_KEY_POS) ?? "null"),
     ).toEqual({ x: 344, y: 244 });
+  });
+});
+
+describe("HUD dock", () => {
+  it("folds into the left edge when released inside the snap band", () => {
+    window.localStorage.setItem(
+      STORAGE_KEY_POS,
+      JSON.stringify({ x: 100, y: 100 }),
+    );
+    const { pill, shadow } = createHud();
+
+    pressPointer(pill, "pointerdown", 200, 200);
+    pressPointer(window, "pointermove", 108, 200);
+    pressPointer(window, "pointerup", 108, 200);
+
+    const root = document.getElementById(HUD_ID);
+    expect(root?.getAttribute("data-hud-dock")).toBe("left");
+    expect(window.localStorage.getItem(STORAGE_KEY_DOCK)).toBe("left");
+    expect(pill.style.left).toBe("0px");
+    expect(shadow.getElementById("backdrop")?.getAttribute("data-dock")).toBe(
+      "left",
+    );
+    const dockButton = shadow.querySelector<HTMLButtonElement>(".dock-btn");
+    expect(dockButton?.textContent).toBe("取消贴边");
+    expect(dockButton?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("docks against the right edge when a drag ends there", () => {
+    window.localStorage.setItem(
+      STORAGE_KEY_POS,
+      JSON.stringify({ x: 100, y: 100 }),
+    );
+    const { pill } = createHud();
+
+    pressPointer(pill, "pointerdown", 200, 200);
+    pressPointer(window, "pointermove", 1060, 200);
+    pressPointer(window, "pointerup", 1060, 200);
+
+    expect(document.getElementById(HUD_ID)?.getAttribute("data-hud-dock")).toBe(
+      "right",
+    );
+    expect(pill.style.left).toBe("994px");
+  });
+
+  it("restores a saved dock and returns to the floating pill on demand", () => {
+    window.localStorage.setItem(STORAGE_KEY_DOCK, "right");
+    const { pill, shadow } = createHud();
+
+    expect(pill.style.left).toBe("994px");
+    expect(
+      document.getElementById(HUD_ID)?.getAttribute("data-hud-dock"),
+    ).toBe("right");
+
+    const dockButton = shadow.querySelector<HTMLButtonElement>(".dock-btn");
+    if (!dockButton) throw new Error("Missing dock button");
+    dockButton.click();
+
+    expect(
+      document.getElementById(HUD_ID)?.hasAttribute("data-hud-dock"),
+    ).toBe(false);
+    expect(shadow.getElementById("backdrop")?.hasAttribute("data-dock")).toBe(
+      false,
+    );
+    expect(window.localStorage.getItem(STORAGE_KEY_DOCK)).toBeNull();
+    expect(pill.style.left).toBe("952px");
+    expect(dockButton.textContent).toBe("贴边");
+    expect(dockButton.getAttribute("aria-pressed")).toBe("false");
   });
 });
 

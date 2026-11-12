@@ -30,7 +30,6 @@ import { injectEngineStyles } from "./ui/styles";
 import {
   CODE_SCAN_INTERVAL,
   HUD_ID,
-  PLATFORMS,
   STYLE_ID,
   TEXT_INDEX_FRAME_BUDGET,
   TEXT_INDEX_INTERVAL,
@@ -59,7 +58,7 @@ export function initializeEngine(): void {
   // CSS render isolation on top of the shared engine stylesheet.
   const injectStyles = (): void =>
     injectEngineStyles({
-      geminiNativeRender: currentPlatform === PLATFORMS.gemini,
+      geminiNativeRender: currentPlatform.nativeTurnRoots === true,
     });
   const {
     clearRenderedCache,
@@ -786,6 +785,11 @@ export function initializeEngine(): void {
       true,
     );
     window.addEventListener(
+      "input",
+      (event) => virtualFiles.handleComposerInput(event.target),
+      true,
+    );
+    window.addEventListener(
       "keydown",
       (event) => sendIntercept.handleSendIntercept(event),
       true,
@@ -813,7 +817,7 @@ export function initializeEngine(): void {
     hud?.buildHUD();
     codeBlocks.observeCodeLayout();
     sidebarPeek.bind(document);
-    if (currentPlatform === PLATFORMS.gemini) motionQuiet.bind(document);
+    if (currentPlatform.quietMotion) motionQuiet.bind(document);
     observeDom();
     patchHistoryForSpaNavigation();
     bindGlobalListeners();

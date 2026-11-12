@@ -226,6 +226,64 @@ describe("sent virtual file capsules", () => {
     ).toBe("beta");
   });
 
+  it("switches a sent message between the capsules and its plain text", () => {
+    const turn = buildTurn(
+      buildMessage("还原成普通消息", [
+        { name: "a.txt", lines: 1, bytes: 10, content: "alpha" },
+      ]),
+    );
+    capsules.collapseInChatFileBlocks(turn);
+
+    const hidden = turn.querySelector<HTMLParagraphElement>("p");
+    const prompt = turn.querySelector<HTMLElement>(
+      ".ai-turbo-chat-user-prompt",
+    );
+    const toggle = document.querySelector<HTMLButtonElement>(
+      ".ai-turbo-chat-file-toggle",
+    );
+    if (!hidden || !prompt || !toggle) throw new Error("Missing capsule toggle");
+
+    expect(toggle.textContent).toBe("展开原文");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(hidden.style.getPropertyValue("display")).toBe("none");
+
+    toggle.click();
+
+    expect(toggle.textContent).toBe("收起为文件");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(hidden.style.getPropertyValue("display")).toBe("");
+    expect(hidden.style.getPropertyValue("contain")).toBe("");
+    expect(prompt.style.getPropertyValue("display")).toBe("none");
+
+    toggle.click();
+
+    expect(toggle.textContent).toBe("展开原文");
+    expect(hidden.style.getPropertyValue("display")).toBe("none");
+    expect(prompt.style.getPropertyValue("display")).toBe("");
+  });
+
+  it("keeps an expanded message expanded while the host stays stable", () => {
+    const turn = buildTurn(
+      buildMessage("保持展开", [
+        { name: "a.txt", lines: 1, bytes: 10, content: "alpha" },
+      ]),
+    );
+    capsules.collapseInChatFileBlocks(turn);
+    const hidden = turn.querySelector("p");
+    const toggle = document.querySelector<HTMLButtonElement>(
+      ".ai-turbo-chat-file-toggle",
+    );
+    if (!hidden || !toggle) throw new Error("Missing capsule toggle");
+    toggle.click();
+
+    capsules.sweep([turn]);
+
+    expect(hidden.style.getPropertyValue("display")).toBe("");
+    expect(document.querySelectorAll(".ai-turbo-chat-file-row")).toHaveLength(1);
+    expect(toggle.textContent).toBe("收起为文件");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("closes the preview on Escape and on a backdrop click", () => {
     const turn = buildTurn(
       buildMessage("再读一遍", [

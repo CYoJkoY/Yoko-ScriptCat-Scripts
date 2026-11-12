@@ -145,6 +145,36 @@ export const HUD_STYLES = `
       transform: translateY(-1px) scale(1.02);
     }
 
+    /*
+     * Docked mode folds the 48px pill into a slim tab on the chosen edge.
+     * The ring and count stay visible, so the collapsed state still reports
+     * load without opening the panel.
+     */
+    :host([data-hud-dock]) .docked-pill {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 9px;
+      width: 30px;
+      height: 86px;
+      padding-top: 9px;
+      border-radius: 14px;
+      transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+    }
+    :host([data-hud-dock="left"]) .docked-pill { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+    :host([data-hud-dock="right"]) .docked-pill { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    :host([data-hud-dock]) .turbo-gauge { width: 26px; height: 26px; }
+    :host([data-hud-dock]) .pill-load-ring { width: 26px; height: 26px; }
+    :host([data-hud-dock]) .turbo-count { font-size: 10px; letter-spacing: -0.3px; }
+    :host([data-hud-dock]) .docked-pill:hover { transform: none; }
+    .dock-mark {
+      display: none;
+      font: 700 8px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0.12em;
+      color: var(--turbo-muted);
+    }
+    :host([data-hud-dock]) .dock-mark { display: block; }
+
     .modal-backdrop {
       position: absolute;
       inset: 0;
@@ -187,6 +217,32 @@ export const HUD_STYLES = `
       .hud-panel { max-height: min(720px, calc(100dvh - 24px)); }
     }
     .modal-backdrop.open .hud-panel { transform: scale(1); }
+    /*
+     * A docked panel slides out of the same edge as the collapsed tab. It
+     * spans the viewport height, so long settings lists scroll inside the
+     * sheet while the page keeps its own scroll position.
+     */
+    .modal-backdrop[data-dock] {
+      padding: 0;
+      align-items: stretch;
+    }
+    .modal-backdrop[data-dock="left"] { justify-content: flex-start; }
+    .modal-backdrop[data-dock="right"] { justify-content: flex-end; }
+    .modal-backdrop[data-dock] .hud-panel {
+      width: min(392px, 100vw);
+      height: 100%;
+      max-height: none;
+      padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+      border-width: 0 1px 0 0;
+      border-radius: 0;
+      transform: translateX(-102%);
+      transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .modal-backdrop[data-dock="right"] .hud-panel {
+      border-width: 0 0 0 1px;
+      transform: translateX(102%);
+    }
+    .modal-backdrop[data-dock].open .hud-panel { transform: none; }
     /* The panel stays opaque: an 18px backdrop blur repaints the whole page
        behind it on every frame of the open and close animation. */
 
@@ -195,6 +251,10 @@ export const HUD_STYLES = `
     .brand-subtitle { font-size: 10px; color: var(--hud-muted); margin-top: 1px; }
     .close-btn { background: transparent; border: 0; color: var(--hud-muted); cursor: pointer; padding: 4px 6px; border-radius: 6px; }
     .close-btn:hover { color: var(--hud-title); background: var(--hud-hover); }
+    .header-actions { display: inline-flex; align-items: center; gap: 2px; }
+    .dock-btn { background: transparent; border: 0; color: var(--hud-muted); cursor: pointer; padding: 4px 7px; border-radius: 6px; font: 600 10px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .dock-btn:hover { color: var(--hud-title); background: var(--hud-hover); }
+    .dock-btn[aria-pressed="true"] { color: var(--hud-accent); background: var(--hud-hover); }
 
     .status-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
     .status-item { min-width: 0; padding: 9px 6px; border: 1px solid var(--hud-border-soft); border-radius: 9px; background: var(--hud-card-bg); text-align: center; }
@@ -285,7 +345,7 @@ export const HUD_STYLES = `
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .modal-backdrop, .hud-panel, .docked-pill, .pill-load-progress, .slider, .advanced > summary::before { transition: none !important; }
+      .modal-backdrop, .hud-panel, .modal-backdrop[data-dock] .hud-panel, .docked-pill, .pill-load-progress, .slider, .advanced > summary::before { transition: none !important; }
     }
   `;
 

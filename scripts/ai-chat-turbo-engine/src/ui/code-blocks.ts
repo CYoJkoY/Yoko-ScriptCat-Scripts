@@ -4,7 +4,6 @@ import {
   CHATGPT_CODE_HEADER_MARKER_SELECTOR,
   CODE_COLLAPSE_HEIGHT,
   CODE_PREVIEW_HEIGHT,
-  PLATFORMS,
   STREAMING_IDLE_DELAY,
   type PlatformDefinition,
 } from "../config";
@@ -495,7 +494,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
   }
 
   function getCodeControlAnchor(codeElement: HTMLElement): HTMLElement | null {
-    if (currentPlatform !== PLATFORMS.chatgpt) return codeElement;
+    if (!currentPlatform.codeCardChrome) return codeElement;
     return getChatGPTCodeCardAnchor(codeElement);
   }
 
@@ -557,7 +556,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
 
     const anchor = getCodeControlAnchor(codeElement);
     if (
-      currentPlatform === PLATFORMS.chatgpt &&
+      currentPlatform.codeCardChrome &&
       (!(anchor instanceof HTMLElement) || anchor === codeElement)
     ) {
       return;
@@ -604,7 +603,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
       "div",
       {
         className:
-          currentPlatform === PLATFORMS.chatgpt
+          currentPlatform.codeCardChrome
             ? "ai-turbo-code-bar ai-turbo-code-bar-chatgpt"
             : "ai-turbo-code-bar",
       },
@@ -734,7 +733,7 @@ export function createCodeBlockUtils(deps: CodeBlockDeps): CodeBlockUtils {
       const entry = codeState.get(codeElement);
       if (entry) {
         if (
-          currentPlatform === PLATFORMS.chatgpt &&
+          currentPlatform.codeCardChrome &&
           !positionCodeControl(entry, codeElement)
         ) {
           continue;

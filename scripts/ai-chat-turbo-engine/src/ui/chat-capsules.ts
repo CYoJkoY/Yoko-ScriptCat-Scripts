@@ -216,6 +216,8 @@ export function createChatCapsuleUtils(
     hidden: HTMLElement[];
     fileCount: number;
     collapsed: boolean;
+    expanded: boolean;
+    toggle: HTMLButtonElement;
   }
 
   let mounts = new WeakMap<Element, CapsuleMount>();
@@ -244,6 +246,17 @@ export function createChatCapsuleUtils(
 
   function isMountHealthy(mount: CapsuleMount): boolean {
     if (!mount.row.isConnected) return false;
+    if (mount.expanded) {
+      return (
+        mount.row.classList.contains("is-expanded") &&
+        mount.hidden.every(
+          (node) =>
+            node.isConnected &&
+            node.classList.contains("ai-turbo-chat-folded-target") &&
+            node.style.getPropertyValue("display") !== "none",
+        )
+      );
+    }
     for (const node of mount.hidden) {
       if (!node.isConnected) return false;
       if (!node.classList.contains("ai-turbo-chat-folded-target")) {
@@ -252,6 +265,42 @@ export function createChatCapsuleUtils(
       if (node.style.getPropertyValue("display") !== "none") return false;
     }
     return true;
+  }
+
+  /**
+   * Switch one sent message between the file cards and its original text.
+   * The raw markup is never rewritten: only the inline hiding applied to the
+   * token containers is lifted, so switching back restores the exact same
+   * message and the host keeps its own listeners.
+   */
+  function setExpanded(mount: CapsuleMount, expanded: boolean): void {
+    if (mount.expanded === expanded) return;
+
+    withSelfMutation(() => {
+      mount.expanded = expanded;
+      mount.row.classList.toggle("is-expanded", expanded);
+      mount.toggle.textContent = expanded ? "收起为文件" : "展开原文";
+      mount.toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+      mount.toggle.title = expanded
+        ? "把这段消息折叠回虚拟文件"
+        : "显示这段消息的原始文本";
+
+      for (const node of mount.hidden) {
+        if (!node.isConnected) continue;
+        if (expanded) {
+          node.style.removeProperty("display");
+          node.style.removeProperty("contain");
+          continue;
+        }
+        node.style.setProperty("display", "none", "important");
+        node.style.setProperty("contain", "strict", "important");
+      }
+
+      if (mount.prompt) {
+        if (expanded) mount.prompt.style.setProperty("display", "none", "important");
+        else mount.prompt.style.removeProperty("display");
+      }
+    });
   }
 
   function syncRowVisibility(
@@ -394,6 +443,21 @@ export function createChatCapsuleUtils(
       parsed.files.forEach((file, index) => {
         stack.appendChild(createCapsule(turnElement, file, index));
       });
+
+      const toggle = el("button", {
+        type: "button",
+        className: "ai-turbo-chat-file-toggle",
+        title: "显示这段消息的原始文本",
+        "aria-expanded": "false",
+      });
+      toggle.textContent = "展开原文";
+      stack.appendChild(toggle);
+      toggle.addEventListener("click", (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const mount = mounts.get(turnElement);
+        if (mount) setExpanded(mount, !mount.expanded);
+      });
       row.appendChild(stack);
 
       turnElement.insertAdjacentElement("afterend", row);
@@ -404,6 +468,8 @@ export function createChatCapsuleUtils(
         hidden: containers,
         fileCount: parsed.files.length,
         collapsed: false,
+        expanded: false,
+        toggle,
       };
     });
 

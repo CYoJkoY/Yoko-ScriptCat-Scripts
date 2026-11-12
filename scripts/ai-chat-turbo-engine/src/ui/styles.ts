@@ -520,6 +520,34 @@ const BASE_ENGINE_CSS = `
       font: 9.5px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
     }
 
+    .ai-turbo-vf-header-actions {
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      min-width: 0 !important;
+    }
+
+    .ai-turbo-vf-convert-composer {
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      flex: 0 0 auto !important;
+      padding: 3px 8px !important;
+      border: 1px solid rgba(101, 210, 164, 0.28) !important;
+      border-radius: 999px !important;
+      background: rgba(101, 210, 164, 0.07) !important;
+      color: #86d8b4 !important;
+      font: 600 10px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      cursor: pointer !important;
+    }
+
+    .ai-turbo-vf-convert-composer:hover,
+    .ai-turbo-vf-convert-composer:focus-visible {
+      border-color: rgba(101, 210, 164, 0.55) !important;
+      background: rgba(101, 210, 164, 0.14) !important;
+      color: #d8f0e5 !important;
+      outline: none !important;
+    }
+
     .ai-turbo-vf-list {
       display: flex !important;
       flex-wrap: wrap !important;
@@ -621,6 +649,18 @@ const BASE_ENGINE_CSS = `
       color: #77827d !important;
       cursor: pointer !important;
       transition: background 120ms ease, color 120ms ease !important;
+    }
+
+    .ai-turbo-vf-action-label {
+      width: auto !important;
+      padding: 0 7px !important;
+      font: 600 10px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      white-space: nowrap !important;
+    }
+
+    .ai-turbo-vf-action-convert:hover {
+      color: #86d8b4 !important;
+      background: rgba(101, 210, 164, 0.09) !important;
     }
 
     .ai-turbo-vf-action:hover {
@@ -740,6 +780,32 @@ const BASE_ENGINE_CSS = `
       flex: 0 1 auto !important;
       min-width: 0 !important;
       max-width: min(680px, 100%) !important;
+    }
+
+    .ai-turbo-chat-file-toggle {
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      align-self: flex-end !important;
+      margin: 0 !important;
+      padding: 3px 8px !important;
+      background: transparent !important;
+      border: 1px solid rgba(153, 166, 161, 0.2) !important;
+      border-radius: 999px !important;
+      color: #9fb3ab !important;
+      font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      cursor: pointer !important;
+      user-select: none !important;
+    }
+
+    .ai-turbo-chat-file-toggle:hover,
+    .ai-turbo-chat-file-toggle:focus-visible {
+      border-color: rgba(101, 210, 164, 0.45) !important;
+      color: #d8e1dc !important;
+      outline: none !important;
+    }
+
+    .ai-turbo-chat-file-toggle:focus-visible {
+      box-shadow: 0 0 0 2px rgba(101, 210, 164, 0.4) !important;
     }
 
     .ai-turbo-chat-capsule:hover,

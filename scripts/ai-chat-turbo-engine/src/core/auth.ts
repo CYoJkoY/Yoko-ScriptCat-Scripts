@@ -1,9 +1,7 @@
-import { PLATFORMS, type PlatformDefinition } from "../config";
-export function hostnameMatches(hostname: string, domains: readonly string[]): boolean {
-  return domains.some(
-    (domain) => hostname === domain || hostname.endsWith("." + domain),
-  );
-}
+import {
+  findPlatformForLocation,
+  type PlatformDefinition,
+} from "../config";
 
 // Login, account chooser, and OAuth callback routes are not chat pages.
 // Only path segments are inspected; query params such as next or redirect
@@ -101,51 +99,9 @@ export function isEngineDormant(): boolean {
 }
 
 export function detectPlatform(): PlatformDefinition | null {
-  const hostname = window.location.hostname.toLowerCase();
-  const pathname = window.location.pathname;
-
-  if (hostnameMatches(hostname, ["chatgpt.com", "chat.openai.com"])) {
-    return PLATFORMS.chatgpt;
-  }
-  if (hostnameMatches(hostname, ["gemini.google.com"])) {
-    return PLATFORMS.gemini;
-  }
-  if (
-    hostnameMatches(hostname, ["grok.com"]) ||
-    (hostname === "x.com" && pathname.startsWith("/i/grok"))
-  ) {
-    return PLATFORMS.grok;
-  }
-  if (hostnameMatches(hostname, ["deepseek.com"])) {
-    return PLATFORMS.deepseek;
-  }
-  if (hostnameMatches(hostname, ["copilot.com", "copilot.microsoft.com"])) {
-    return PLATFORMS.copilot;
-  }
-  if (hostnameMatches(hostname, ["perplexity.ai"])) {
-    return PLATFORMS.perplexity;
-  }
-  if (hostnameMatches(hostname, ["poe.com"])) {
-    return PLATFORMS.poe;
-  }
-  if (hostnameMatches(hostname, ["doubao.com"])) {
-    return PLATFORMS.doubao;
-  }
-  if (hostnameMatches(hostname, ["yuanbao.tencent.com"])) {
-    return PLATFORMS.yuanbao;
-  }
-  if (hostnameMatches(hostname, ["chat.qwen.ai"])) {
-    return PLATFORMS.qwen;
-  }
-  if (hostnameMatches(hostname, ["qianwen.com"])) {
-    return PLATFORMS.qianwen;
-  }
-  if (hostnameMatches(hostname, ["chatglm.cn"])) {
-    return PLATFORMS.glm;
-  }
-  if (hostnameMatches(hostname, ["chat.z.ai"])) {
-    return PLATFORMS.zai;
-  }
-  return null;
+  return findPlatformForLocation(
+    window.location.hostname,
+    window.location.pathname,
+  );
 }
 

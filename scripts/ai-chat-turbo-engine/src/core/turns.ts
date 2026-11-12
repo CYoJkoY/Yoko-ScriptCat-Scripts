@@ -1,4 +1,4 @@
-import { CHATGPT_SHELL_ROOT_SELECTOR, CHATGPT_TRANSCRIPT_ROOT_SELECTOR, PLATFORMS, VF_REGEX, VF_TOKEN_START, type PlatformDefinition } from '../config';
+import { CHATGPT_SHELL_ROOT_SELECTOR, CHATGPT_TRANSCRIPT_ROOT_SELECTOR, VF_REGEX, VF_TOKEN_START, type PlatformDefinition } from '../config';
 import { reportRecoverableError } from './diagnostics';
 import { elementToPlainText, matchesReasoningElement, normalizeText } from './text';
 
@@ -40,7 +40,7 @@ export function createTurnUtils(platform: PlatformDefinition) {
   }
 
   function isGeminiThoughtElement(element: unknown): boolean {
-    if (platform !== PLATFORMS.gemini || !(element instanceof Element))
+    if (!platform.nativeTurnRoots || !(element instanceof Element))
       return false;
     return Boolean(
       element.closest(
@@ -322,7 +322,7 @@ export function createTurnUtils(platform: PlatformDefinition) {
   }
 
   function getCurrentChatGPTTurns(): Element[] | null {
-    if (platform.name !== "ChatGPT") return null;
+    if (!platform.shellTurnRoots) return null;
 
     const shellRoots = Array.from(
       document.querySelectorAll(CHATGPT_SHELL_ROOT_SELECTOR),
@@ -389,7 +389,7 @@ export function createTurnUtils(platform: PlatformDefinition) {
 
     const resolved = filterNestedInDocumentOrder(collected).filter(
       (element) =>
-        (platform.name !== "ChatGPT" ||
+        (!platform.shellTurnRoots ||
           isRenderedChatGPTElement(element)) &&
         !isGeminiThoughtElement(element) &&
         !matchesReasoningElement(element),

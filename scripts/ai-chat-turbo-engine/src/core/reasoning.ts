@@ -8,9 +8,10 @@ import {
   YUANBAO_MODEL_MENU_SELECTOR,
   YUANBAO_MODEL_ROW_SELECTOR,
   YUANBAO_MODEL_TRIGGER_SELECTOR,
+  hostnameMatches,
   isToolControlElement,
 } from "../config";
-import { hostnameMatches, isEngineDormant } from "./auth";
+import { isEngineDormant } from "./auth";
 import { reportRecoverableError } from "./diagnostics";
 import {
   createRestoreCoordinator,

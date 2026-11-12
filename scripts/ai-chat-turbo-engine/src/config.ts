@@ -57,6 +57,8 @@ export const CHATGPT_CODE_CARD_MAX_ANCESTORS = 10;
 export const SEARCH_PREVIEW_LIMIT = 180;
 export const SEARCH_LIMIT = 10;
 export const STORAGE_KEY_POS = "ai_turbo_pill_pos";
+/** Screen edge the HUD is docked to, absent when it floats freely. */
+export const STORAGE_KEY_DOCK = "ai_turbo_hud_dock";
 export const STORAGE_KEY_CONFIG = "ai_turbo_engine_config";
 export const VIRTUAL_FILE_THRESHOLD = 1500;
 /** Gap in px between the composer top edge and a sibling that belongs to it. */
@@ -243,6 +245,27 @@ export const BLOCK_TEXT_TAGS = new Set([
 
 export interface PlatformDefinition {
   readonly name: string;
+  /**
+   * Hostname suffixes where this platform lives. The userscript header and
+   * runtime detection both read this list, so a new site is declared once.
+   */
+  readonly hosts: readonly string[];
+  /**
+   * Shared hosts that only serve one platform under a path prefix, such as
+   * x.com/i/grok. Keys are hostname suffixes, values are required prefixes.
+   */
+  readonly hostPaths?: Readonly<Record<string, string>>;
+  /** The site renders turns as custom elements that own their own frames. */
+  readonly nativeTurnRoots?: boolean;
+  /**
+   * The site keeps conversation turns in a shell/transcript container whose
+   * structure is worth resolving before the generic selector query.
+   */
+  readonly shellTurnRoots?: boolean;
+  /** Code blocks expose a ChatGPT-style outer card with a header toolbar. */
+  readonly codeCardChrome?: boolean;
+  /** Streaming repaints the whole transcript, so host motion is paused. */
+  readonly quietMotion?: boolean;
   readonly supportsToolMemory?: boolean;
   readonly sidebar?: SidebarPeekDefinition;
   readonly turnSelectors: readonly string[];
@@ -304,6 +327,9 @@ export interface SidebarPeekDefinition {
 export const PLATFORMS = {
   chatgpt: {
     name: "ChatGPT",
+    hosts: ["chatgpt.com", "chat.openai.com"],
+    shellTurnRoots: true,
+    codeCardChrome: true,
     sidebar: {
       selectors: ["aside.app-shell-left-panel"],
       triggers: [
@@ -415,6 +441,9 @@ export const PLATFORMS = {
   },
   gemini: {
     name: "Gemini",
+    hosts: ["gemini.google.com"],
+    nativeTurnRoots: true,
+    quietMotion: true,
     sidebar: {
       selectors: ["bard-sidenav", ".bard-sidenav", "side-navigation"],
       triggers: [
@@ -495,6 +524,8 @@ export const PLATFORMS = {
   },
   grok: {
     name: "Grok",
+    hosts: ["grok.com"],
+    hostPaths: { "x.com": "/i/grok" },
     sidebar: {
       selectors: ["#app-sidebar", 'aside[aria-label="应用导航"]'],
       triggers: ['button[aria-label="切换侧边栏"]'],
@@ -526,6 +557,7 @@ export const PLATFORMS = {
   },
   deepseek: {
     name: "DeepSeek",
+    hosts: ["chat.deepseek.com"],
     sidebar: {
       selectors: [
         "div.b8812f16.a2f3d50e",
@@ -602,6 +634,7 @@ export const PLATFORMS = {
   },
   copilot: {
     name: "Microsoft Copilot",
+    hosts: ["copilot.com", "copilot.microsoft.com"],
     // The rail is a Fluent NavDrawer that the site widens itself. Its width
     // rule sits in the `application` cascade layer with !important, so the
     // stylesheet override joins the site's first layer instead. The rail
@@ -658,6 +691,7 @@ export const PLATFORMS = {
   },
   perplexity: {
     name: "Perplexity",
+    hosts: ["perplexity.ai", "www.perplexity.ai"],
     sidebar: {
       selectors: ["div.w-sideBarWidth"],
       triggers: [
@@ -708,6 +742,7 @@ export const PLATFORMS = {
   },
   poe: {
     name: "Poe",
+    hosts: ["poe.com"],
     sidebar: {
       selectors: ['aside[class*="SidebarLayout_sidebar"]'],
       triggers: ['button[aria-label="切换侧边栏折叠"]'],
@@ -757,6 +792,7 @@ export const PLATFORMS = {
   },
   doubao: {
     name: "Doubao",
+    hosts: ["doubao.com", "www.doubao.com"],
     sidebar: {
       selectors: ["nav.panel-fvxXfj", "#chat-route-main nav"],
       triggers: [
@@ -820,6 +856,7 @@ export const PLATFORMS = {
   },
   yuanbao: {
     name: "Tencent Yuanbao / 腾讯元宝",
+    hosts: ["yuanbao.tencent.com"],
     supportsToolMemory: true,
     sidebar: {
       selectors: [".yb-nav__content-wrapper"],
@@ -879,6 +916,7 @@ export const PLATFORMS = {
   },
   qwen: {
     name: "Qwen Chat",
+    hosts: ["chat.qwen.ai"],
     sidebar: {
       selectors: ["#sidebar.sidebar"],
       triggers: [
@@ -953,6 +991,7 @@ export const PLATFORMS = {
   },
   qianwen: {
     name: "Qianwen / 千问",
+    hosts: ["qianwen.com", "www.qianwen.com"],
     sidebar: {
       selectors: ["aside#new-nav-tab-wrapper"],
       triggers: [
@@ -1022,6 +1061,7 @@ export const PLATFORMS = {
   },
   glm: {
     name: "ChatGLM / 智谱清言",
+    hosts: ["chatglm.cn"],
     sidebar: {
       selectors: ["aside.el-aside.aside-container"],
       triggers: [".aside-header .operation-btn"],
@@ -1088,6 +1128,7 @@ export const PLATFORMS = {
   },
   zai: {
     name: "Z.ai (GLM)",
+    hosts: ["chat.z.ai"],
     sidebar: {
       selectors: ["#sidebar"],
       triggers: ['button[aria-label="切换侧边栏"]'],
@@ -1159,3 +1200,76 @@ export const PLATFORMS = {
     ],
   },
 } satisfies Record<string, PlatformDefinition>;
+
+export type PlatformKey = keyof typeof PLATFORMS;
+
+/** Registry order is the detection order and the header match order. */
+export const PLATFORM_ENTRIES = Object.entries(PLATFORMS) as Array<
+  [PlatformKey, PlatformDefinition]
+>;
+
+/** True when the host is one of the domains or sits below one of them. */
+export function hostnameMatches(
+  hostname: string,
+  domains: readonly string[],
+): boolean {
+  return domains.some(
+    (domain) => hostname === domain || hostname.endsWith("." + domain),
+  );
+}
+
+/**
+ * Pick the platform for one location from the registry alone. Every branch is
+ * data, so adding a site never edits detection code.
+ *
+ * Hosts are compared exactly: the registry lists the concrete origins that the
+ * generated @match patterns cover, and no other host receives the script.
+ */
+export function findPlatformForLocation(
+  hostname: string,
+  pathname: string,
+): PlatformDefinition | null {
+  const host = hostname.toLowerCase();
+  const path = pathname || "/";
+  const declaresHost = (declared: readonly string[]): boolean =>
+    declared.some((candidate) => candidate.toLowerCase() === host);
+
+  for (const [, platform] of PLATFORM_ENTRIES) {
+    for (const [suffix, prefix] of Object.entries(platform.hostPaths ?? {})) {
+      if (suffix.toLowerCase() === host && path.startsWith(prefix)) {
+        return platform;
+      }
+    }
+    if (declaresHost(platform.hosts)) {
+      return platform;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Userscript match patterns derived from the registry: every declared host
+ * gets one pattern and detection resolves exactly those hosts, so the header
+ * and the runtime cannot drift apart.
+ */
+export function buildPlatformMatchPatterns(): string[] {
+  const patterns: string[] = [];
+  const seen = new Set<string>();
+  const add = (pattern: string): void => {
+    if (seen.has(pattern)) return;
+    seen.add(pattern);
+    patterns.push(pattern);
+  };
+
+  for (const [, platform] of PLATFORM_ENTRIES) {
+    for (const host of platform.hosts) add(`https://${host}/*`);
+    for (const [host, prefix] of Object.entries(platform.hostPaths ?? {})) {
+      add(`https://${host}${prefix}*`);
+    }
+  }
+  return patterns;
+}
+
+export const PLATFORM_MATCH_PATTERNS: readonly string[] =
+  buildPlatformMatchPatterns();

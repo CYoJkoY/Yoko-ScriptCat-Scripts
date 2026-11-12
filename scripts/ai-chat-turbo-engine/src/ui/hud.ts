@@ -8,6 +8,7 @@ import {
   MESSAGE_LIMIT_MIN,
   SEARCH_LIMIT,
   SEARCH_PREVIEW_LIMIT,
+  STORAGE_KEY_DOCK,
   STORAGE_KEY_POS,
 } from "../config";
 import type { CodeBlockUtils, ElementFactory } from "./code-blocks";
@@ -41,6 +42,15 @@ const THEME_ATTRIBUTES = [
   "data-color-scheme",
 ] as const;
 
+/** Screen edge the HUD info display is folded into. */
+type HudDockSide = "left" | "right";
+
+/** Distance from an edge that turns a drag release into a dock. */
+const DOCK_EDGE_SNAP = 26;
+/** Visible width of the collapsed side tab while docked. */
+const DOCK_TAB_WIDTH = 30;
+const DOCK_TAB_HEIGHT = 86;
+
 interface HudRefs {
   total: HTMLElement;
   hidden: HTMLElement;
@@ -52,6 +62,7 @@ interface HudRefs {
   panel: HTMLElement;
   backdrop: HTMLElement;
   pillRoot: HTMLElement;
+  dockButton: HTMLButtonElement;
   pillCount: HTMLElement;
   pillLoadProgress: SVGElement;
   liveRegion: HTMLElement;
@@ -277,6 +288,64 @@ export function createHudUtils(deps: HudDeps): HudUtils {
   let cleanupPillDrag: (() => void) | null = null;
   let suppressPillClick = false;
   let focusBeforeOpen: HTMLElement | null = null;
+  let dockSide: HudDockSide | null = null;
+  /** Repositions the pill after the dock state changes; set while mounted. */
+  let dockController:
+    | ((side: HudDockSide | null, wasDocked?: boolean) => void)
+    | null = null;
+
+  function parseDockSide(value: unknown): HudDockSide | null {
+    return value === "left" || value === "right" ? value : null;
+  }
+
+  function readDockSide(): HudDockSide | null {
+    try {
+      return parseDockSide(positionStore.read(STORAGE_KEY_DOCK));
+    } catch (error: unknown) {
+      reportRecoverableError("restore HUD dock", error);
+      return null;
+    }
+  }
+
+  function persistDockSide(side: HudDockSide | null): void {
+    if (side) positionStore.write(STORAGE_KEY_DOCK, side);
+    else positionStore.remove(STORAGE_KEY_DOCK);
+  }
+
+  /**
+   * The dock state lives in two places: the host attribute drives the set of
+   * styles that fold the pill into a side tab, and the backdrop attribute turns
+   * the modal into a drawer sliding out of the same edge.
+   */
+  function syncDockChrome(): void {
+    if (!hudStats) return;
+    if (hudRootElement) {
+      if (dockSide) hudRootElement.setAttribute("data-hud-dock", dockSide);
+      else hudRootElement.removeAttribute("data-hud-dock");
+    }
+    if (dockSide) hudStats.backdrop.setAttribute("data-dock", dockSide);
+    else hudStats.backdrop.removeAttribute("data-dock");
+
+    const docked = dockSide !== null;
+    hudStats.dockButton.textContent = docked ? "取消贴边" : "贴边";
+    hudStats.dockButton.title = docked
+      ? "取消贴边，恢复悬浮仪表"
+      : "贴到屏幕边缘，收成侧边信息条";
+    hudStats.dockButton.setAttribute("aria-pressed", docked ? "true" : "false");
+    hudStats.dockButton.setAttribute(
+      "aria-label",
+      docked ? "取消贴边，恢复悬浮仪表" : "把信息面板贴到屏幕边缘",
+    );
+  }
+
+  function setDockSide(side: HudDockSide | null): void {
+    if (dockSide === side) return;
+    const wasDocked = dockSide !== null;
+    dockSide = side;
+    persistDockSide(side);
+    syncDockChrome();
+    dockController?.(side, wasDocked);
+  }
 
   let keepValue: HTMLElement | null = null;
   let messageLimitInput: HTMLInputElement | null = null;
@@ -420,7 +489,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       state.messageLimit +
       "（" +
       loadToneLabel +
-      "）；点击打开面板，拖动可移动";
+      "）；点击打开面板，拖动可移动，拖到屏幕边缘会收成侧边条";
     hudStats.pillRoot.setAttribute(
       "aria-label",
       "长对话负载 " +
@@ -437,7 +506,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
         state.foldedCodeCount +
         "，虚拟文件 " +
         fileCount +
-        "；点击打开面板，拖动可移动",
+        "；点击打开面板，拖动可移动，拖到屏幕边缘会收成侧边条",
     );
     hudStats.totalStatusItem.dataset["loadTone"] = loadTone;
     hudStats.pillCount.textContent = String(state.totalTurns);
@@ -677,6 +746,28 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       pill.style.top = String(posY) + "px";
     };
 
+    /** Pin the collapsed tab flush against one edge at the current height. */
+    const applyDock = (side: HudDockSide): void => {
+      const width = pill.offsetWidth || DOCK_TAB_WIDTH;
+      const height = pill.offsetHeight || DOCK_TAB_HEIGHT;
+      const maxY = Math.max(8, window.innerHeight - height - 8);
+      posY = Math.min(maxY, Math.max(8, posY));
+      pill.style.left =
+        side === "left"
+          ? "0px"
+          : String(Math.max(0, window.innerWidth - width)) + "px";
+      pill.style.top = String(posY) + "px";
+    };
+
+    /** A release inside the snap band folds the HUD into that edge. */
+    const resolveDockSide = (): HudDockSide | null => {
+      const width = pill.offsetWidth || 48;
+      const rightGap = window.innerWidth - (posX + width);
+      if (posX <= DOCK_EDGE_SNAP) return "left";
+      if (rightGap <= DOCK_EDGE_SNAP) return "right";
+      return null;
+    };
+
     const persist = (): void => {
       positionStore.writeJson(STORAGE_KEY_POS, { x: posX, y: posY });
     };
@@ -693,6 +784,27 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     let startY = 0;
     let originX = 0;
     let originY = 0;
+
+    /*
+     * The dock button and the drag release share one controller: docking
+     * rewrites the inline position to the edge, undocking nudges the pill back
+     * inside the snap band so the next release does not immediately redock.
+     */
+    dockController = (side, wasDocked = false): void => {
+      if (side) {
+        applyDock(side);
+        return;
+      }
+      if (wasDocked) {
+        const width = pill.offsetWidth || 48;
+        if (posX <= DOCK_EDGE_SNAP) posX = 24;
+        else if (posX + width >= window.innerWidth - DOCK_EDGE_SNAP) {
+          posX = window.innerWidth - width - 24;
+        }
+      }
+      clamp();
+      apply();
+    };
 
     const removeMoveListeners = (): void => {
       window.removeEventListener("pointermove", onPointerMove);
@@ -732,7 +844,16 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       finishDrag();
       if (dragged) {
         suppressPillClick = true;
-        persist();
+        const nextDock = resolveDockSide();
+        if (nextDock) {
+          setDockSide(nextDock);
+          persist();
+        } else {
+          if (dockSide) setDockSide(null);
+          clamp();
+          apply();
+          persist();
+        }
       }
       event.preventDefault();
     }
@@ -743,6 +864,8 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       finishDrag();
       if (dragged) {
         suppressPillClick = true;
+        if (dockSide) applyDock(dockSide);
+        else apply();
         persist();
       }
     }
@@ -754,6 +877,11 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       dragStarted = false;
       startX = event.clientX;
       startY = event.clientY;
+      if (dockSide) {
+        const rect = pill.getBoundingClientRect();
+        posX = rect.left;
+        posY = rect.top;
+      }
       originX = posX;
       originY = posY;
       window.addEventListener("pointermove", onPointerMove);
@@ -762,6 +890,10 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     };
 
     const onViewportResize = (): void => {
+      if (dockSide) {
+        applyDock(dockSide);
+        return;
+      }
       const beforeX = posX;
       const beforeY = posY;
       clamp();
@@ -773,12 +905,17 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     window.addEventListener("resize", onViewportResize, { passive: true });
     window.visualViewport?.addEventListener("resize", onViewportResize);
 
+    dockSide = readDockSide();
+    syncDockChrome();
+    dockController(dockSide);
+
     return () => {
       removeMoveListeners();
       pill.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("resize", onViewportResize);
       window.visualViewport?.removeEventListener("resize", onViewportResize);
       pill.classList.remove("dragging");
+      dockController = null;
       pointerDown = false;
       dragStarted = false;
     };
@@ -863,6 +1000,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
           pillLoadRing,
           el("span", { className: "turbo-readout" }, [pillCountValue]),
         ]),
+        el("span", { className: "dock-mark", "aria-hidden": "true" }, ["AI"]),
       ],
     );
 
@@ -1272,6 +1410,30 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     );
     btnClose.addEventListener("click", () => togglePanel(false));
 
+    const btnDock = el(
+      "button",
+      {
+        className: "dock-btn",
+        type: "button",
+        title: "贴到屏幕边缘，收成侧边信息条",
+        "aria-label": "把信息面板贴到屏幕边缘",
+        "aria-pressed": "false",
+      },
+      ["贴边"],
+    );
+    btnDock.addEventListener("click", () => {
+      if (dockSide) {
+        setDockSide(null);
+        announce("已取消贴边，恢复悬浮仪表");
+        return;
+      }
+      const pillCenter = pill.offsetLeft + pill.offsetWidth / 2;
+      const side: HudDockSide =
+        pillCenter < window.innerWidth / 2 ? "left" : "right";
+      setDockSide(side);
+      announce(side === "left" ? "已贴到左侧边缘" : "已贴到右侧边缘");
+    });
+
     const panelHeader = el("div", { className: "header" }, [
       el("div", {}, [
         el("div", { className: "brand-title", id: "hud-title" }, [
@@ -1281,7 +1443,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
           currentPlatform.name + " · v" + VERSION,
         ]),
       ]),
-      btnClose,
+      el("div", { className: "header-actions" }, [btnDock, btnClose]),
     ]);
 
     const footerHint = el("div", { className: "footer-hint" }, [
@@ -1353,6 +1515,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       panel,
       backdrop,
       pillRoot: pill,
+      dockButton: btnDock,
       pillCount: pillCountValue,
       pillLoadProgress,
       liveRegion,

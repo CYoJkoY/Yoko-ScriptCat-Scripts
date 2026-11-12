@@ -38,6 +38,8 @@ export interface VirtualFileUtils {
   stopSyncLoop(): void;
   schedulePosition(): void;
   renderVirtualFileTray(): void;
+  /** Keep the tray aligned with long text typed (not pasted) in the composer. */
+  handleComposerInput(target: EventTarget | null): void;
   clearFiles(): void;
   activeFileCount(): number;
   isTrayDirty(): boolean;
@@ -103,7 +105,7 @@ export function createVirtualFileUtils(
       virtualFileTraySyncRaf = 0;
 
       const tray = document.getElementById("ai-turbo-vf-tray");
-      if (!tray || !tray.isConnected || !activeVirtualFiles.length) {
+      if (!tray || !tray.isConnected) {
         return;
       }
 
@@ -289,12 +291,116 @@ export function createVirtualFileUtils(
     });
   }
 
+  function readComposerText(inputElement: HTMLElement | null): string {
+    if (!inputElement) return "";
+    if (inputElement instanceof HTMLTextAreaElement) return inputElement.value;
+    if (inputElement instanceof HTMLInputElement) return inputElement.value;
+    return (
+      inputElement.innerText || inputElement.textContent || ""
+    ).replace(/\u00a0/g, " ");
+  }
+
+  function composerTextIsConvertible(inputElement: HTMLElement | null): boolean {
+    return readComposerText(inputElement).trim().length >= VIRTUAL_FILE_THRESHOLD;
+  }
+
+  /**
+   * Typing a long text is the reverse of pasting one: the tray offers the
+   * conversion action as soon as the composer crosses the same threshold.
+   */
+  function handleComposerInput(target: EventTarget | null): void {
+    if (isEngineDormant() || !state.virtualFileEnabled) return;
+    if (!(target instanceof Node)) return;
+    if (!isEditableTarget(target)) return;
+
+    const input = composer.getChatInput();
+    if (!input) return;
+    if (!input.contains(target)) return;
+
+    const wanted =
+      activeVirtualFiles.length > 0 || composerTextIsConvertible(input);
+    const present =
+      document.getElementById("ai-turbo-vf-tray") !== null;
+    if (wanted === present) return;
+
+    trayIsDirty = true;
+    renderVirtualFileTray();
+  }
+
+  /** Composer typing arrives on a textarea, an input, or a contenteditable. */
+  function isEditableTarget(target: Node): boolean {
+    if (target instanceof HTMLTextAreaElement) return true;
+    if (target instanceof HTMLInputElement) return true;
+    return target instanceof HTMLElement && target.isContentEditable;
+  }
+
+  function buildVirtualFile(text: string, prefix: string): VirtualFileItem {
+    const size = new Blob([text]).size;
+    const kbSize = (size / 1024).toFixed(1);
+    return {
+      id: `vf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: `${prefix}_${kbSize}kb.txt`,
+      size,
+      charCount: text.length,
+      lineCount: fastCountLines(text),
+      content: text,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Move the composer text into the tray. The text itself is untouched, so
+   * pressing the tray's convert action again returns it to the composer.
+   */
+  function moveComposerTextToFiles(): boolean {
+    const input = composer.getChatInput();
+    if (!input) return false;
+
+    const text = readComposerText(input).trim();
+    if (!text) return false;
+
+    activeVirtualFiles.push(buildVirtualFile(text, "composer_text"));
+    suspendObservers();
+    withSelfMutation(() => {
+      composer.insertTextAtomic(input, "");
+    });
+
+    updateHudDashboard();
+    trayIsDirty = true;
+    renderVirtualFileTray();
+    return true;
+  }
+
+  /** Return one pending file to the composer as ordinary text. */
+  function convertFileToText(fileItem: VirtualFileItem): void {
+    const input = composer.getChatInput();
+    if (!input) return;
+
+    const current = readComposerText(input).trim();
+    const next = current
+      ? `${current}\n\n${fileItem.content}`
+      : fileItem.content;
+
+    suspendObservers();
+    withSelfMutation(() => {
+      composer.insertTextAtomic(input, next);
+    });
+    removeVirtualFile(fileItem.id);
+  }
+
   function renderVirtualFileTray(): void {
     let tray: HTMLElement | null = document.getElementById("ai-turbo-vf-tray");
 
     resetVirtualFileTraySignature();
 
-    if (!activeVirtualFiles.length) {
+    const input = composer.getChatInput();
+    const convertOnly = activeVirtualFiles.length === 0;
+    if (
+      convertOnly &&
+      (!state.virtualFileEnabled ||
+        isEngineDormant() ||
+        !composerTextIsConvertible(input))
+    ) {
       const currentTray = tray;
       if (currentTray) {
         withSelfMutation(() => currentTray.remove());
@@ -306,7 +412,6 @@ export function createVirtualFileUtils(
       return;
     }
 
-    const input = composer.getChatInput();
     if (!input) return;
     const container = composer.getInputContainer(input);
 
@@ -328,6 +433,34 @@ export function createVirtualFileUtils(
 
       tray.textContent = "";
 
+      const headingChildren: (string | Node)[] = [
+        el(
+          "span",
+          {
+            className: "ai-turbo-vf-heading-icon",
+          },
+          [createUiIcon("bolt", 13)],
+        ),
+        el(
+          "span",
+          {
+            className: "ai-turbo-vf-heading-title",
+          },
+          ["虚拟文件"],
+        ),
+      ];
+      if (activeVirtualFiles.length) {
+        headingChildren.push(
+          el(
+            "span",
+            {
+              className: "ai-turbo-vf-heading-count",
+            },
+            [`${activeVirtualFiles.length}`],
+          ),
+        );
+      }
+
       const header = el(
         "div",
         {
@@ -339,37 +472,37 @@ export function createVirtualFileUtils(
             {
               className: "ai-turbo-vf-heading",
             },
+            headingChildren,
+          ),
+
+          el(
+            "div",
+            {
+              className: "ai-turbo-vf-header-actions",
+            },
             [
               el(
                 "span",
                 {
-                  className: "ai-turbo-vf-heading-icon",
+                  className: "ai-turbo-vf-heading-hint",
                 },
-                [createUiIcon("bolt", 13)],
+                [
+                  activeVirtualFiles.length
+                    ? "发送时作为上下文附加"
+                    : "输入框里有长文本",
+                ],
               ),
               el(
-                "span",
+                "button",
                 {
-                  className: "ai-turbo-vf-heading-title",
+                  type: "button",
+                  className: "ai-turbo-vf-convert-composer",
+                  title: "把输入框里的文本收进虚拟文件",
+                  "aria-label": "把输入框里的文本转为虚拟文件",
                 },
-                ["虚拟文件"],
-              ),
-              el(
-                "span",
-                {
-                  className: "ai-turbo-vf-heading-count",
-                },
-                [`${activeVirtualFiles.length}`],
+                ["文本转文件"],
               ),
             ],
-          ),
-
-          el(
-            "span",
-            {
-              className: "ai-turbo-vf-heading-hint",
-            },
-            ["发送时作为上下文附加"],
           ),
         ],
       );
@@ -380,6 +513,14 @@ export function createVirtualFileUtils(
 
       tray.appendChild(header);
       tray.appendChild(fileList);
+
+      header
+        .querySelector<HTMLButtonElement>(".ai-turbo-vf-convert-composer")
+        ?.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          moveComposerTextToFiles();
+        });
 
       for (const item of activeVirtualFiles) {
         const sizeText = `${(item.size / 1024).toFixed(1)} KB`;
@@ -416,6 +557,24 @@ export function createVirtualFileUtils(
           event.preventDefault();
           event.stopPropagation();
           showTextPreviewModal(item);
+        });
+
+        const btnConvert = el(
+          "button",
+          {
+            type: "button",
+            className:
+              "ai-turbo-vf-action ai-turbo-vf-action-label ai-turbo-vf-action-convert",
+            title: "把该文件放回输入框作为普通文本",
+            "aria-label": `将 ${item.name} 转为普通文本`,
+          },
+          ["转文本"],
+        );
+
+        btnConvert.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          convertFileToText(item);
         });
 
         const btnDelete = el(
@@ -470,7 +629,7 @@ export function createVirtualFileUtils(
               {
                 className: "ai-turbo-vf-actions",
               },
-              [btnPreview, btnDelete],
+              [btnPreview, btnConvert, btnDelete],
             ),
           ],
         );
@@ -604,6 +763,7 @@ export function createVirtualFileUtils(
     activeFileCount,
     isTrayDirty,
     handlePasteIntercept,
+    handleComposerInput,
     fuseAndSubmit,
   };
 }
