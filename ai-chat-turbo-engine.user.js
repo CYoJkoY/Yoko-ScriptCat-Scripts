@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.20.0
+// @version      0.20.2
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -272,6 +272,18 @@
         // The expanded panel is mounted but its scroller keeps an inline
         // display: none !important until the site opens it itself.
         reveal: ["#app-shell-sidebar > div:nth-child(2) > div:first-child"],
+        // The collapsed rail mounts the expanded list behind an inline
+        // display:none and its renderer writes that rule back on the next
+        // commit, so a reveal alone loses the list again. The peek presses the
+        // site's own expand control: the site then owns the opened state and
+        // the rows keep their data and listeners.
+        nativeExpand: {
+          expand: 'button[aria-label="显示侧边栏"], button[aria-label*="Show sidebar" i], button[aria-label*="Expand sidebar" i]',
+          collapse: 'button[aria-label="隐藏侧边栏"], button[aria-label*="Hide sidebar" i], button[aria-label*="Close sidebar" i]'
+        },
+        // The rail host grows but the panel column keeps a collapsed width and
+        // its own scroller clips the labels, so both are stretched with it.
+        shells: ["#app-shell-sidebar", "#app-shell-sidebar > div:nth-child(2)"],
         peekWidth: 340,
         collapsedMaxWidth: 96
       },
@@ -392,6 +404,13 @@
           expand: 'button[aria-label*="打开边栏"], button[aria-label*="Open sidebar" i]',
           collapse: 'button[aria-label*="关闭边栏"], button[aria-label*="Close sidebar" i]'
         },
+        // The history container and its scrollport are pinned to the collapsed
+        // width; the native open control alone leaves both at the old size.
+        shells: [
+          "bard-sidenav",
+          ".sidenav-with-history-container",
+          ".overflow-container"
+        ],
         peekWidth: 248,
         collapsedMaxWidth: 96
       },
@@ -1767,14 +1786,17 @@ ${CODE_FENCE}
 
   // scripts/ai-chat-turbo-engine/src/core/sidebar-peek.ts
   var SIDEBAR_PEEK_ATTRIBUTE = "data-ai-turbo-sidebar-peek";
+  var SIDEBAR_PEEK_HOLD_ATTRIBUTE = "data-ai-turbo-sidebar-peek-hold";
   var SIDEBAR_PEEK_WIDTH_VAR = "--ai-turbo-sidebar-peek-width";
   var SIDEBAR_PEEK_SHIFT_VAR = "--ai-turbo-sidebar-peek-shift";
   var SIDEBAR_PEEK_SHOW_DELAY_MS = 70;
   var SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
-  var SIDEBAR_PEEK_EDGE_ZONE_PX = 8;
+  var SIDEBAR_PEEK_LANE_PX = 28;
   var SIDEBAR_PEEK_PROXIMITY_PX = 10;
   var SIDEBAR_PEEK_POPOVER_HOLD_MS = 3e4;
   var SIDEBAR_PEEK_WIDTH_RATIO = 0.42;
+  var SIDEBAR_PEEK_TRANSITION_HOLD_MS = 360;
+  var SIDEBAR_PEEK_RELIFT_LIMIT = 4;
   var POPOVER_SELECTOR = [
     '[role="menu"]',
     '[role="listbox"]',
@@ -1807,7 +1829,7 @@ ${CODE_FENCE}
     const hideDelayMs = options.hideDelayMs ?? SIDEBAR_PEEK_HIDE_DELAY_MS;
     const peekWidth = definition?.peekWidth ?? DEFAULT_PEEK_WIDTH;
     const collapsedMaxWidth = definition?.collapsedMaxWidth ?? DEFAULT_COLLAPSED_MAX_WIDTH;
-    const sidebarSelector = definition?.selectors.join(", ") ?? "";
+    const sidebarSelectors = definition?.selectors ?? [];
     const triggerSelector = definition?.triggers?.join(", ") ?? "";
     const revealSelector = definition?.reveal?.join(", ") ?? "";
     let boundDocument = null;
@@ -1828,6 +1850,15 @@ ${CODE_FENCE}
     let railVisibilitySnapshot = null;
     let suppressTargets = [];
     let clipTargets = [];
+    let shellTargets = [];
+    let revealShells = [];
+    let revealObserver = null;
+    let reliftTimer = null;
+    let reliftAttempts = 0;
+    let labelTargets = [];
+    let transitionTargets = [];
+    let collapseTarget = null;
+    let appliedHref = "";
     let expandedByPeek = false;
     let pointerX = Number.NaN;
     let pointerY = Number.NaN;
@@ -1836,7 +1867,15 @@ ${CODE_FENCE}
     let holdRemainingMs = 0;
     let rescanNeeded = false;
     let lastProbeMs = Number.NEGATIVE_INFINITY;
-    const hasRail = sidebarSelector !== "";
+    let probeTimer = null;
+    let activeShift = 0;
+    let reacquireTimer = null;
+    let reacquireAttempts = 0;
+    let transitionHoldTimer = null;
+    let transitionHoldNode = null;
+    let nativeCollapseTimer = null;
+    const preexistingPopovers = /* @__PURE__ */ new Set();
+    const hasRail = sidebarSelectors.length > 0;
     function isEnabled() {
       return hasRail && (options.enabled?.() ?? true);
     }
@@ -1848,8 +1887,14 @@ ${CODE_FENCE}
         resolveDocument = doc;
         resolvedRail = null;
       }
-      const found = doc.querySelector(sidebarSelector);
-      resolvedRail = found instanceof HTMLElement ? found : null;
+      resolvedRail = null;
+      for (const selector of sidebarSelectors) {
+        const found = doc.querySelector(selector);
+        if (found instanceof HTMLElement) {
+          resolvedRail = found;
+          break;
+        }
+      }
       return resolvedRail;
     }
     function railFor(node) {
@@ -1902,16 +1947,40 @@ ${CODE_FENCE}
       const viewportWidth = doc.documentElement.clientWidth || view?.innerWidth || 0;
       const viewportHeight = doc.documentElement.clientHeight || view?.innerHeight || 0;
       const rect = rail.getBoundingClientRect();
-      const onScreen = rect.width > 0 && rect.right > 1 && rect.left < viewportWidth - 1;
-      if (onScreen) {
-        return x >= rect.left - SIDEBAR_PEEK_PROXIMITY_PX && x <= rect.right + SIDEBAR_PEEK_PROXIMITY_PX && y >= rect.top - SIDEBAR_PEEK_PROXIMITY_PX && y <= rect.bottom + SIDEBAR_PEEK_PROXIMITY_PX ? rail : null;
-      }
       const side = sideOf(rail);
-      const insideStrip = side === "left" ? x >= 0 && x <= SIDEBAR_PEEK_EDGE_ZONE_PX : x >= viewportWidth - SIDEBAR_PEEK_EDGE_ZONE_PX && x <= viewportWidth;
-      if (!insideStrip) return null;
-      const top = rect.height > 0 ? Math.max(0, rect.top) : 0;
-      const bottom = rect.height > 0 ? Math.min(viewportHeight, rect.bottom) : viewportHeight;
-      return y >= top - SIDEBAR_PEEK_PROXIMITY_PX && y <= bottom + SIDEBAR_PEEK_PROXIMITY_PX ? rail : null;
+      const top = (rect.height > 0 ? rect.top : 0) - SIDEBAR_PEEK_PROXIMITY_PX;
+      const bottom = (rect.height > 0 ? rect.bottom : viewportHeight) + SIDEBAR_PEEK_PROXIMITY_PX;
+      if (y < top || y > bottom) return null;
+      const onScreen = rect.width > 0 && rect.right > 1 && rect.left < viewportWidth - 1;
+      if (side === "left") {
+        const end = Math.max(onScreen ? rect.right : 0, SIDEBAR_PEEK_LANE_PX);
+        const start2 = onScreen ? Math.min(rect.left, 0) : 0;
+        return x >= start2 - SIDEBAR_PEEK_PROXIMITY_PX && x <= end + SIDEBAR_PEEK_PROXIMITY_PX ? rail : null;
+      }
+      const start = Math.min(
+        onScreen ? rect.left : viewportWidth,
+        viewportWidth - SIDEBAR_PEEK_LANE_PX
+      );
+      return x >= start - SIDEBAR_PEEK_PROXIMITY_PX && x <= viewportWidth + SIDEBAR_PEEK_PROXIMITY_PX ? rail : null;
+    }
+    function rectHoldsPointer(rect, x, y) {
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      return x >= rect.left - SIDEBAR_PEEK_PROXIMITY_PX && x <= rect.right + SIDEBAR_PEEK_PROXIMITY_PX && y >= rect.top - SIDEBAR_PEEK_PROXIMITY_PX && y <= rect.bottom + SIDEBAR_PEEK_PROXIMITY_PX;
+    }
+    function withinPeekBand(rail, x, y) {
+      const rect = rail.getBoundingClientRect();
+      const side = sideOf(rail);
+      const reach = Math.max(rect.width, activePeekWidth);
+      const top = rect.height > 0 ? rect.top - SIDEBAR_PEEK_PROXIMITY_PX : -Infinity;
+      const bottom = rect.height > 0 ? rect.bottom + SIDEBAR_PEEK_PROXIMITY_PX : Infinity;
+      if (y >= top && y <= bottom) {
+        const inside = side === "left" ? x >= rect.left - SIDEBAR_PEEK_PROXIMITY_PX && x <= rect.left + reach + SIDEBAR_PEEK_PROXIMITY_PX : x <= rect.right + SIDEBAR_PEEK_PROXIMITY_PX && x >= rect.right - reach - SIDEBAR_PEEK_PROXIMITY_PX;
+        if (inside) return true;
+      }
+      for (const shell of shellTargets) {
+        if (rectHoldsPointer(shell.node.getBoundingClientRect(), x, y)) return true;
+      }
+      return false;
     }
     function measureShift(node, collapsedWidth, width) {
       const view = node.ownerDocument.defaultView;
@@ -1964,19 +2033,28 @@ ${CODE_FENCE}
       }
       holdRemainingMs = 0;
     }
-    function releaseActive() {
+    function releaseActive(reason = "hover") {
       cancelHide();
       cancelHold();
+      cancelReacquire();
+      cancelProbe();
       rescanNeeded = false;
+      preexistingPopovers.clear();
       const node = active;
       if (node === null) return;
       active = null;
+      const held = reason === "hover" || reason === "navigation";
+      if (held) holdTransitions(node);
+      let collapse = null;
       if (expandedByPeek) {
         expandedByPeek = false;
-        const collapseSelector = definition?.nativeExpand?.collapse ?? "";
-        const collapse = collapseSelector === "" ? null : node.ownerDocument.querySelector(collapseSelector);
-        if (collapse instanceof HTMLElement) collapse.click();
+        const control = collapseFor(node);
+        if (control !== null && reason !== "adopt" && (reason === "navigation" || stillOwned(node, control))) {
+          collapse = control;
+        }
       }
+      collapseTarget = null;
+      appliedHref = "";
       node.removeAttribute(SIDEBAR_PEEK_ATTRIBUTE);
       restoreSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR, widthSnapshot);
       restoreSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR, shiftSnapshot);
@@ -2002,6 +2080,109 @@ ${CODE_FENCE}
       restoreReveal();
       restoreSuppress();
       restoreClip();
+      restoreShells();
+      restoreLabels();
+      if (held) {
+        void node.getBoundingClientRect();
+        releaseTransitions();
+      }
+      if (collapse !== null) requestNativeCollapse(node, collapse);
+    }
+    function holdTransitions(rail) {
+      finishTransitionHold();
+      const nodes = [rail];
+      for (const target of shellTargets) nodes.push(target.node);
+      for (const target of revealShells) nodes.push(target.node);
+      for (const target of labelTargets) nodes.push(target.node);
+      for (const node of nodes) {
+        if (!node.isConnected) continue;
+        if (transitionTargets.some((entry) => entry.node === node)) continue;
+        transitionTargets.push({
+          node,
+          transition: readSnapshot(node, "transition")
+        });
+        node.style.setProperty("transition", "none", "important");
+      }
+      transitionHoldNode = rail;
+      rail.setAttribute(SIDEBAR_PEEK_HOLD_ATTRIBUTE, "");
+    }
+    function releaseTransitions() {
+      const targets = transitionTargets;
+      transitionTargets = [];
+      for (const target of targets) {
+        if (!target.node.isConnected) continue;
+        restoreSnapshot(target.node, "transition", target.transition);
+      }
+      const held = transitionHoldNode;
+      transitionHoldNode = null;
+      if (held === null) return;
+      if (transitionHoldTimer !== null) clearTimeout(transitionHoldTimer);
+      transitionHoldTimer = setTimeout(() => {
+        transitionHoldTimer = null;
+        transitionHoldNode = null;
+        held.removeAttribute(SIDEBAR_PEEK_HOLD_ATTRIBUTE);
+      }, SIDEBAR_PEEK_TRANSITION_HOLD_MS);
+    }
+    function finishTransitionHold() {
+      if (transitionHoldTimer !== null) {
+        clearTimeout(transitionHoldTimer);
+        transitionHoldTimer = null;
+      }
+      const node = transitionHoldNode;
+      transitionHoldNode = null;
+      if (node !== null) node.removeAttribute(SIDEBAR_PEEK_HOLD_ATTRIBUTE);
+    }
+    function requestNativeCollapse(rail, control) {
+      cancelNativeCollapse();
+      nativeCollapseTimer = setTimeout(() => {
+        nativeCollapseTimer = null;
+        if (!rail.isConnected) return;
+        if (control.ownerDocument !== rail.ownerDocument) return;
+        if (active === rail) return;
+        if (rail.getBoundingClientRect().width <= collapsedMaxWidth) return;
+        const target = isPaintedControl(control) ? control : firstPaintedControl(rail, definition?.nativeExpand?.collapse ?? "") ?? (control.isConnected ? control : null);
+        target?.click();
+      }, 0);
+    }
+    function cancelNativeCollapse() {
+      if (nativeCollapseTimer === null) return;
+      clearTimeout(nativeCollapseTimer);
+      nativeCollapseTimer = null;
+    }
+    function collapseFor(rail) {
+      const selector = definition?.nativeExpand?.collapse ?? "";
+      if (selector === "") return null;
+      const captured = collapseTarget;
+      if (captured !== null && isPaintedControl(captured)) return captured;
+      const scoped = firstPaintedControl(rail, selector);
+      if (scoped !== null) return scoped;
+      if (captured !== null && captured.isConnected) return captured;
+      return firstPaintedControl(rail.ownerDocument, selector);
+    }
+    function isPaintedControl(node) {
+      if (node === null) return false;
+      if (!(node instanceof HTMLElement)) return false;
+      if (!node.isConnected) return false;
+      if (node.closest("[inert]") !== null) return false;
+      if (node.hasAttribute("disabled")) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 1 && rect.height > 1;
+    }
+    function firstPaintedControl(root, selector) {
+      for (const found of Array.from(root.querySelectorAll(selector))) {
+        if (!(found instanceof HTMLElement)) continue;
+        if (isPaintedControl(found)) return found;
+      }
+      return null;
+    }
+    function stillOwned(rail, node) {
+      if (!node.isConnected) return false;
+      if (node.ownerDocument !== rail.ownerDocument) return false;
+      const view = rail.ownerDocument.defaultView;
+      if (appliedHref !== "" && view !== null && view.location.href !== appliedHref) {
+        return false;
+      }
+      return true;
     }
     function liftInert(rail) {
       for (const found of Array.from(rail.querySelectorAll("[inert]"))) {
@@ -2090,11 +2271,224 @@ ${CODE_FENCE}
         restoreSnapshot(target.node, "overflow-y", target.overflowY);
       }
     }
-    function applyPeek(node) {
+    function liftShells(rail, width) {
+      const selectors = definition?.shells;
+      if (selectors === void 0 || selectors.length === 0) return;
+      const seen = /* @__PURE__ */ new Set();
+      for (const selector of selectors) {
+        for (const found of Array.from(rail.querySelectorAll(selector))) {
+          if (!(found instanceof HTMLElement)) continue;
+          if (found === rail || seen.has(found)) continue;
+          seen.add(found);
+          stretchShell(found, shellWidthFor(rail, found, width));
+        }
+      }
+    }
+    function shellWidthFor(rail, node, width) {
+      const view = rail.ownerDocument.defaultView;
+      if (view === null) return width;
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 && rect.height <= 0) return width;
+      const border = parseFloat(view.getComputedStyle(rail).borderRightWidth);
+      const clipRight = rail.getBoundingClientRect().right - (Number.isFinite(border) ? border : 0);
+      const available = Math.floor(clipRight - rect.left) - 1;
+      if (available < 80 || available >= width) return width;
+      return available;
+    }
+    function stretchShell(node, width) {
+      shellTargets.push({
+        node,
+        width: readSnapshot(node, "width"),
+        minWidth: readSnapshot(node, "min-width"),
+        maxWidth: readSnapshot(node, "max-width"),
+        boxSizing: readSnapshot(node, "box-sizing")
+      });
+      const value = `${width}px`;
+      node.style.setProperty("box-sizing", "border-box", "important");
+      node.style.setProperty("width", value, "important");
+      node.style.setProperty("min-width", value, "important");
+      node.style.setProperty("max-width", value, "important");
+    }
+    function restoreShells() {
+      stopRevealWatch();
+      if (revealShells.length > 0) {
+        const reveals = revealShells;
+        revealShells = [];
+        for (const target of reveals) {
+          restoreSnapshot(target.node, "display", target.display);
+        }
+      }
+      if (shellTargets.length === 0) return;
+      const targets = shellTargets;
+      shellTargets = [];
+      for (const target of targets) {
+        restoreSnapshot(target.node, "width", target.width);
+        restoreSnapshot(target.node, "min-width", target.minWidth);
+        restoreSnapshot(target.node, "max-width", target.maxWidth);
+        restoreSnapshot(target.node, "box-sizing", target.boxSizing);
+      }
+    }
+    function liftContentShells(rail, width) {
+      const view = rail.ownerDocument.defaultView;
+      if (view === null) return;
+      const rows = Array.from(
+        rail.querySelectorAll('a[href], [role="link"], [role="treeitem"]')
+      );
+      if (rows.length < 2) return;
+      if (width <= collapsedMaxWidth) return;
+      const counts = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        for (let node = row.parentElement; node !== null && node !== rail; node = node.parentElement) {
+          if (!(node instanceof HTMLElement)) continue;
+          counts.set(node, (counts.get(node) ?? 0) + 1);
+        }
+      }
+      const seen = /* @__PURE__ */ new Set();
+      for (const target of shellTargets) seen.add(target.node);
+      for (const target of revealShells) seen.add(target.node);
+      let lifted = 0;
+      for (const [node, count] of counts) {
+        if (count < 2 || seen.has(node) || lifted >= 32) continue;
+        let style = view.getComputedStyle(node);
+        if (style.display === "none") {
+          const inline = readSnapshot(node, "display");
+          if (inline.value === "") continue;
+          node.style.removeProperty("display");
+          style = view.getComputedStyle(node);
+          if (style.display === "none") {
+            restoreSnapshot(node, "display", inline);
+            continue;
+          }
+          revealShells.push({ node, display: inline });
+        }
+        if (style.display === "contents" || style.display === "inline") {
+          continue;
+        }
+        const rect = node.getBoundingClientRect();
+        if (rect.width <= 0 && rect.height <= 0) continue;
+        const available = shellWidthFor(rail, node, width);
+        if (rect.width >= available - 2) continue;
+        seen.add(node);
+        lifted += 1;
+        stretchShell(node, available);
+      }
+      if (revealShells.length > 0) watchRevealShells();
+    }
+    function watchRevealShells() {
+      if (revealObserver !== null) revealObserver.disconnect();
+      revealObserver = new MutationObserver(handleRevealMutation);
+      for (const target of revealShells) {
+        revealObserver.observe(target.node, {
+          attributes: true,
+          attributeFilter: ["style"]
+        });
+      }
+    }
+    function stopRevealWatch() {
+      if (revealObserver !== null) {
+        revealObserver.disconnect();
+        revealObserver = null;
+      }
+      if (reliftTimer !== null) {
+        clearTimeout(reliftTimer);
+        reliftTimer = null;
+      }
+    }
+    function handleRevealMutation() {
+      if (active === null || reliftTimer !== null) return;
+      if (reliftAttempts >= SIDEBAR_PEEK_RELIFT_LIMIT) return;
+      if (!revealShells.some((target) => inlineHidden(target.node))) return;
+      reliftTimer = setTimeout(() => {
+        reliftTimer = null;
+        reliftRevealShells();
+      }, 0);
+    }
+    function inlineHidden(node) {
+      return node.style.getPropertyValue("display").trim() === "none";
+    }
+    function reliftRevealShells() {
+      const rail = active;
+      if (rail === null || revealShells.length === 0) return;
+      const view = rail.ownerDocument.defaultView;
+      if (view === null) return;
+      reliftAttempts += 1;
+      const kept = [];
+      for (const target of revealShells) {
+        if (!target.node.isConnected) continue;
+        if (inlineHidden(target.node)) target.node.style.removeProperty("display");
+        if (view.getComputedStyle(target.node).display === "none") {
+          restoreSnapshot(target.node, "display", target.display);
+          continue;
+        }
+        kept.push(target);
+      }
+      revealShells = kept;
+      if (kept.length === 0) {
+        stopRevealWatch();
+        return;
+      }
+      liftContentShells(rail, activePeekWidth);
+      liftLabels(rail);
+    }
+    function liftLabels(rail) {
+      const view = rail.ownerDocument.defaultView;
+      if (view === null) return;
+      for (const row of Array.from(
+        rail.querySelectorAll('a[href], [role="link"], [role="treeitem"]')
+      )) {
+        const leaves = row.querySelectorAll("span, div, p");
+        if (leaves.length > 12) continue;
+        for (const leaf of Array.from(leaves)) {
+          if (!(leaf instanceof HTMLElement)) continue;
+          if (leaf.children.length > 0) continue;
+          const text = (leaf.textContent ?? "").trim();
+          if (text.length < 2) continue;
+          if (labelTargets.some((target) => target.node === leaf)) continue;
+          const style = view.getComputedStyle(leaf);
+          const hidden = style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || parseFloat(style.maxWidth) === 0;
+          if (!hidden) continue;
+          labelTargets.push({
+            node: leaf,
+            display: readSnapshot(leaf, "display"),
+            visibility: readSnapshot(leaf, "visibility"),
+            opacity: readSnapshot(leaf, "opacity"),
+            maxWidth: readSnapshot(leaf, "max-width")
+          });
+          if (style.display === "none") {
+            leaf.style.setProperty("display", "block", "important");
+          }
+          leaf.style.setProperty("visibility", "visible", "important");
+          leaf.style.setProperty("opacity", "1", "important");
+          if (parseFloat(style.maxWidth) === 0) {
+            leaf.style.setProperty("max-width", "none", "important");
+          }
+        }
+      }
+    }
+    function restoreLabels() {
+      if (labelTargets.length === 0) return;
+      const targets = labelTargets;
+      labelTargets = [];
+      for (const target of targets) {
+        restoreSnapshot(target.node, "display", target.display);
+        restoreSnapshot(target.node, "visibility", target.visibility);
+        restoreSnapshot(target.node, "opacity", target.opacity);
+        restoreSnapshot(target.node, "max-width", target.maxWidth);
+      }
+    }
+    function applyPeek(node, adopting = false) {
       cancelShow();
       cancelHide();
-      if (active === node) return;
-      releaseActive();
+      cancelReacquire();
+      if (active === node) {
+        refreshPeek(node);
+        return;
+      }
+      const carriedExpansion = adopting && expandedByPeek;
+      const carriedCollapse = adopting ? collapseTarget : null;
+      releaseActive(adopting ? "adopt" : "hover");
+      expandedByPeek = carriedExpansion;
+      collapseTarget = carriedCollapse;
       const collapsedWidth = node.getBoundingClientRect().width;
       const width = peekWidthFor(node);
       activePeekWidth = width;
@@ -2102,6 +2496,7 @@ ${CODE_FENCE}
       const configuredShift = definition?.shift ?? 0;
       const fallbackShift = width === peekWidth ? configuredShift : configuredShift + (peekWidth - width);
       const shift = measured < 0 ? measured : fallbackShift;
+      activeShift = shift;
       widthSnapshot = readSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR);
       shiftSnapshot = readSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR);
       if (definition?.revealRail === true) {
@@ -2109,8 +2504,8 @@ ${CODE_FENCE}
         railOpacitySnapshot = readSnapshot(node, "opacity");
         railTransformSnapshot = readSnapshot(node, "transform");
         railVisibilitySnapshot = readSnapshot(node, "visibility");
-        const view = node.ownerDocument.defaultView;
-        const display = view === null ? "none" : view.getComputedStyle(node).display;
+        const view2 = node.ownerDocument.defaultView;
+        const display = view2 === null ? "none" : view2.getComputedStyle(node).display;
         if (display === "none") {
           node.style.setProperty("display", "flex", "important");
         }
@@ -2120,22 +2515,89 @@ ${CODE_FENCE}
       }
       active = node;
       rescanNeeded = true;
+      reliftAttempts = 0;
+      finishTransitionHold();
+      snapshotPopovers();
       node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${width}px`);
       node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
       node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
       liftReveal(node);
       liftInert(node);
       liftClip(node);
+      liftShells(node, width);
+      liftContentShells(node, width);
+      liftLabels(node);
       suppressOverlap();
       if (definition?.nativeExpand !== void 0) {
-        const expand = node.ownerDocument.querySelector(
-          definition.nativeExpand.expand
-        );
-        if (expand instanceof HTMLElement) {
-          expandedByPeek = true;
-          expand.click();
+        if (carriedExpansion) {
+          const collapse = node.ownerDocument.querySelector(
+            definition.nativeExpand.collapse
+          );
+          collapseTarget = collapse instanceof HTMLElement ? collapse : null;
+        } else {
+          const expand = node.ownerDocument.querySelector(
+            definition.nativeExpand.expand
+          );
+          if (expand instanceof HTMLElement) {
+            expandedByPeek = true;
+            expand.click();
+            const collapse = node.ownerDocument.querySelector(
+              definition.nativeExpand.collapse
+            );
+            collapseTarget = collapse instanceof HTMLElement ? collapse : null;
+            scheduleReacquire();
+          }
         }
       }
+      const view = node.ownerDocument.defaultView;
+      appliedHref = view?.location.href ?? "";
+    }
+    function refreshPeek(node) {
+      const view = node.ownerDocument.defaultView;
+      if (view === null) return;
+      if (node.getAttribute(SIDEBAR_PEEK_ATTRIBUTE) === null) {
+        node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
+      }
+      node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${activePeekWidth}px`);
+      node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${activeShift}px`);
+      liftInert(node);
+      liftShells(node, activePeekWidth);
+      liftContentShells(node, activePeekWidth);
+      liftLabels(node);
+      if (appliedHref === "") appliedHref = view.location.href;
+    }
+    function cancelReacquire() {
+      if (reacquireTimer !== null) {
+        clearTimeout(reacquireTimer);
+        reacquireTimer = null;
+      }
+      reacquireAttempts = 0;
+    }
+    function scheduleReacquire() {
+      if (reacquireTimer !== null) return;
+      reacquireTimer = setTimeout(() => {
+        reacquireTimer = null;
+        reacquireRail();
+      }, 32);
+    }
+    function reacquireRail() {
+      if (active === null) return;
+      const rail = resolveRail();
+      if (rail === null) {
+        if (reacquireAttempts < 5) {
+          reacquireAttempts += 1;
+          scheduleReacquire();
+          return;
+        }
+        releaseActive("navigation");
+        return;
+      }
+      reacquireAttempts = 0;
+      if (rail === active) {
+        refreshPeek(rail);
+        return;
+      }
+      applyPeek(rail, true);
     }
     function scheduleShow(rail) {
       cancelHide();
@@ -2160,26 +2622,20 @@ ${CODE_FENCE}
         hideTimer = null;
         if (active !== rail) return;
         if (pointerStillOverRail(rail)) return;
-        if (sitePopover() !== null) {
+        if (popoverUnderPointer() !== null) {
           holdForPopover(rail);
           return;
         }
         releaseActive();
       }, hideDelayMs);
     }
-    function sitePopover() {
+    function popoverUnderPointer() {
       const doc = boundDocument;
-      const view = doc?.defaultView ?? null;
-      if (doc === null || view === null) return null;
-      const rail = resolvedRail;
-      for (const found of Array.from(doc.querySelectorAll(POPOVER_SELECTOR))) {
-        if (!(found instanceof HTMLElement)) continue;
-        if (rail !== null && rail.contains(found)) continue;
-        if (rail !== null && found.contains(rail)) continue;
-        if (!isVisiblePopover(found, view)) continue;
-        return found;
-      }
-      return null;
+      if (doc === null) return null;
+      if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return null;
+      if (typeof doc.elementFromPoint !== "function") return null;
+      const hit = doc.elementFromPoint(pointerX, pointerY);
+      return hit instanceof Element ? popoverFor(hit) : null;
     }
     function isVisiblePopover(node, view) {
       if (node.hidden) return false;
@@ -2197,11 +2653,32 @@ ${CODE_FENCE}
       if (view === null) return null;
       const found = target.closest(POPOVER_SELECTOR);
       if (!(found instanceof HTMLElement)) return null;
+      if (!found.isConnected) return null;
+      if (isPreexistingPopover(found)) return null;
       const rail = resolvedRail;
       if (rail !== null && (rail.contains(found) || found.contains(rail))) {
         return null;
       }
       return isVisiblePopover(found, view) ? found : null;
+    }
+    function snapshotPopovers() {
+      preexistingPopovers.clear();
+      const doc = boundDocument;
+      const view = doc?.defaultView ?? null;
+      if (doc === null || view === null) return;
+      for (const found of Array.from(doc.querySelectorAll(POPOVER_SELECTOR))) {
+        if (!(found instanceof HTMLElement)) continue;
+        if (!isVisiblePopover(found, view)) continue;
+        preexistingPopovers.add(found);
+      }
+    }
+    function isPreexistingPopover(node) {
+      if (preexistingPopovers.size === 0) return false;
+      for (const known of preexistingPopovers) {
+        if (!known.isConnected) continue;
+        if (known === node || known.contains(node)) return true;
+      }
+      return false;
     }
     function holdForPopover(rail) {
       if (holdTimer !== null) {
@@ -2214,7 +2691,7 @@ ${CODE_FENCE}
       holdTimer = setTimeout(() => {
         holdTimer = null;
         if (active !== rail) return;
-        const popover = sitePopover();
+        const popover = popoverUnderPointer();
         if (popover !== null && holdRemainingMs > 0) {
           holdForPopover(rail);
           return;
@@ -2229,9 +2706,13 @@ ${CODE_FENCE}
       const doc = rail.ownerDocument;
       if (typeof doc.elementFromPoint !== "function") return false;
       const hit = doc.elementFromPoint(pointerX, pointerY);
-      if (!(hit instanceof Element)) return false;
-      if (rail.contains(hit)) return true;
-      return triggerSelector !== "" && hit.closest(triggerSelector) !== null;
+      if (hit instanceof Element) {
+        if (rail.contains(hit)) return true;
+        if (triggerSelector !== "" && hit.closest(triggerSelector) !== null) {
+          return true;
+        }
+      }
+      return withinPeekBand(rail, pointerX, pointerY);
     }
     function isMousePointer(event) {
       const pointerType = event.pointerType;
@@ -2259,20 +2740,64 @@ ${CODE_FENCE}
       const mouse = event;
       pointerX = mouse.clientX;
       pointerY = mouse.clientY;
-      if (active !== null) return;
-      const doc = boundDocument;
-      if (doc === null) return;
-      const viewport = doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
-      const band = Math.max(120, collapsedMaxWidth + SIDEBAR_PEEK_PROXIMITY_PX);
-      if (viewport > 0 && pointerX > band && pointerX < viewport - band) {
-        if (pendingRail !== null) cancelShow();
+      const target = event.target;
+      if (target instanceof Element) {
+        const overRail = railFor(target);
+        if (overRail !== null) {
+          if (active === overRail) cancelHide();
+          else scheduleShow(overRail);
+          return;
+        }
+      }
+      if (!pointerNearEdge()) {
+        cancelProbe();
+        if (active !== null) requestHide(active);
+        else if (pendingRail !== null) cancelShow();
         return;
       }
-      const target = event.target;
-      if (target instanceof Element && railFor(target) !== null) return;
+      scheduleProbe();
+    }
+    function cancelProbe() {
+      if (probeTimer !== null) {
+        clearTimeout(probeTimer);
+        probeTimer = null;
+      }
+    }
+    function scheduleProbe() {
       const now = performance.now();
-      if (now - lastProbeMs < POINTER_PROBE_INTERVAL_MS) return;
-      lastProbeMs = now;
+      const wait = lastProbeMs + POINTER_PROBE_INTERVAL_MS - now;
+      if (wait > 0) {
+        if (probeTimer === null) {
+          probeTimer = setTimeout(() => {
+            probeTimer = null;
+            runProbe();
+          }, wait);
+        }
+        return;
+      }
+      runProbe();
+    }
+    function runProbe() {
+      lastProbeMs = performance.now();
+      if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return;
+      if (!pointerNearEdge()) {
+        if (active !== null) requestHide(active);
+        else if (pendingRail !== null) cancelShow();
+        return;
+      }
+      const open = active;
+      if (open !== null) {
+        if (pointerStillOverRail(open)) {
+          cancelHide();
+          return;
+        }
+        if (popoverUnderPointer() !== null) {
+          holdForPopover(open);
+          return;
+        }
+        requestHide(open);
+        return;
+      }
       const rail = nearRail(pointerX, pointerY);
       if (rail === null) {
         if (pendingRail !== null) cancelShow();
@@ -2291,6 +2816,53 @@ ${CODE_FENCE}
       const related = event.relatedTarget;
       if (related instanceof Element && railFor(related) === rail) return;
       scheduleHide(rail);
+    }
+    function handlePointerLeave(event) {
+      if (!isMousePointer(event)) return;
+      pointerX = Number.NaN;
+      pointerY = Number.NaN;
+      cancelProbe();
+      cancelShow();
+      if (active !== null) scheduleHide(active);
+    }
+    function requestHide(rail) {
+      if (hideTimer !== null) return;
+      scheduleHide(rail);
+    }
+    function handleClick(event) {
+      const rail = active;
+      if (rail === null) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!rail.contains(target)) return;
+      if (keepsPeek(target)) return;
+      const anchor = target.closest("a[href]");
+      const view = rail.ownerDocument.defaultView;
+      if (view !== null && anchor instanceof HTMLAnchorElement) {
+        if (anchor.href === view.location.href) return;
+      }
+      releaseActive("navigation");
+    }
+    function keepsPeek(target) {
+      if (target.closest(
+        'input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="menu"], [role="dialog"], [aria-haspopup], [aria-expanded]'
+      ) !== null) {
+        return true;
+      }
+      const nativeExpand = definition?.nativeExpand;
+      if (nativeExpand !== void 0) {
+        for (const selector of [nativeExpand.expand, nativeExpand.collapse]) {
+          if (target.closest(selector) !== null) return true;
+        }
+      }
+      if (collapseTarget !== null && collapseTarget.contains(target)) {
+        return true;
+      }
+      return false;
+    }
+    function handleNavigation() {
+      cancelShow();
+      if (active !== null) releaseActive("navigation");
     }
     function handlePointerDown(event) {
       const target = event.target;
@@ -2342,12 +2914,38 @@ ${CODE_FENCE}
     function handleMutations() {
       const node = active;
       if (node === null) return;
-      rescanNeeded = true;
-      if (expandedByPeek) {
-        if (!node.isConnected) releaseActive();
+      if (!node.isConnected) {
+        if (expandedByPeek && pointerNearEdge()) {
+          scheduleReacquire();
+          return;
+        }
+        releaseActive("navigation");
         return;
       }
-      if (!node.isConnected || hasExpandedToken(node)) releaseActive();
+      const view = node.ownerDocument.defaultView;
+      if (appliedHref !== "" && view !== null && view.location.href !== appliedHref) {
+        releaseActive("navigation");
+        return;
+      }
+      rescanNeeded = true;
+      if (node.getAttribute(SIDEBAR_PEEK_ATTRIBUTE) === null) {
+        refreshPeek(node);
+      }
+      if (expandedByPeek) return;
+      if (hasExpandedToken(node)) releaseActive();
+    }
+    function pointerNearEdge() {
+      if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return false;
+      const doc = boundDocument;
+      if (doc === null) return false;
+      const viewport = doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+      if (viewport <= 0) return false;
+      const band = Math.max(
+        120,
+        collapsedMaxWidth + SIDEBAR_PEEK_PROXIMITY_PX,
+        SIDEBAR_PEEK_LANE_PX + SIDEBAR_PEEK_PROXIMITY_PX
+      );
+      return pointerX <= band || pointerX >= viewport - band;
     }
     function bind(doc) {
       if (boundDocument === doc) return;
@@ -2357,9 +2955,16 @@ ${CODE_FENCE}
       doc.addEventListener("pointerover", handlePointerOver);
       doc.addEventListener("pointermove", handlePointerMove);
       doc.addEventListener("pointerout", handlePointerOut);
+      doc.addEventListener("pointerleave", handlePointerLeave);
       doc.addEventListener("pointerdown", handlePointerDown);
       doc.addEventListener("focusin", handleFocusIn);
       doc.addEventListener("keydown", handleKeyDown);
+      doc.addEventListener("click", handleClick, true);
+      const win = doc.defaultView;
+      if (win !== null) {
+        win.addEventListener("popstate", handleNavigation);
+        win.addEventListener("hashchange", handleNavigation);
+      }
       const root = doc.documentElement ?? doc.body;
       if (root !== null) {
         observer = new MutationObserver(handleMutations);
@@ -2374,7 +2979,11 @@ ${CODE_FENCE}
     function teardown() {
       cancelShow();
       cancelHide();
-      releaseActive();
+      cancelNativeCollapse();
+      releaseActive("lifecycle");
+      releaseTransitions();
+      finishTransitionHold();
+      stopRevealWatch();
       if (observer !== null) {
         observer.disconnect();
         observer = null;
@@ -2383,9 +2992,16 @@ ${CODE_FENCE}
         boundDocument.removeEventListener("pointerover", handlePointerOver);
         boundDocument.removeEventListener("pointermove", handlePointerMove);
         boundDocument.removeEventListener("pointerout", handlePointerOut);
+        boundDocument.removeEventListener("pointerleave", handlePointerLeave);
         boundDocument.removeEventListener("pointerdown", handlePointerDown);
         boundDocument.removeEventListener("focusin", handleFocusIn);
         boundDocument.removeEventListener("keydown", handleKeyDown);
+        boundDocument.removeEventListener("click", handleClick, true);
+        const win = boundDocument.defaultView;
+        if (win !== null) {
+          win.removeEventListener("popstate", handleNavigation);
+          win.removeEventListener("hashchange", handleNavigation);
+        }
         boundDocument = null;
       }
       resolveDocument = null;
@@ -9594,6 +10210,11 @@ ${CODE_FENCE}`;
   var SIDEBAR_PEEK_CSS = `
     [data-ai-turbo-sidebar-peek] {
       width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      /* Sites that pin the rail with a min/max pair or a content box would
+         keep the old geometry, so the peek speaks the same three properties. */
+      min-width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      max-width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      box-sizing: border-box !important;
       /* Doubao and Qianwen paint a site header above the rail; a raised
          stacking level lets the peeked rail take the pointer there. */
       z-index: 120 !important;
@@ -9609,6 +10230,16 @@ ${CODE_FENCE}`;
       [data-ai-turbo-sidebar-peek] {
         transition: none !important;
       }
+    }
+
+    /* The rail's own width is pinned by the rules above, but sites animate
+       nested wrappers (Z.ai's w-[238px] block, Poe's category list) while the
+       panel collapses after a click. The peek silences the whole subtree for
+       the restored layout, then hands the declarations back to the site, so
+       the panel closes in one frame instead of crawling over the transcript. */
+    [data-ai-turbo-sidebar-peek-hold],
+    [data-ai-turbo-sidebar-peek-hold] * {
+      transition: none !important;
     }
 
     [data-ai-turbo-sidebar-peek="left"] {
@@ -9709,15 +10340,13 @@ ${CODE_FENCE}`;
       overflow: hidden !important;
     }
 
-    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed {
-      width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
-      transition: none !important;
-    }
-
     /* Gemini renders its history only after the native open control runs; the
-       peek presses it and caps the expansion, so the transition has to be off
-       for both the collapsed and the opened container. */
+       peek presses it and caps the expansion, so the container is sized for
+       both the collapsed and the opened state and the transition is off. */
     bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container {
+      width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      min-width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      max-width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
       transition: none !important;
     }
 
