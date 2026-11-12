@@ -97,6 +97,11 @@ export const GEMINI_NATIVE_RENDER_CSS = `
 export const SIDEBAR_PEEK_CSS = `
     [data-ai-turbo-sidebar-peek] {
       width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      /* Sites that pin the rail with a min/max pair or a content box would
+         keep the old geometry, so the peek speaks the same three properties. */
+      min-width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      max-width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      box-sizing: border-box !important;
       /* Doubao and Qianwen paint a site header above the rail; a raised
          stacking level lets the peeked rail take the pointer there. */
       z-index: 120 !important;
@@ -112,6 +117,16 @@ export const SIDEBAR_PEEK_CSS = `
       [data-ai-turbo-sidebar-peek] {
         transition: none !important;
       }
+    }
+
+    /* The rail's own width is pinned by the rules above, but sites animate
+       nested wrappers (Z.ai's w-[238px] block, Poe's category list) while the
+       panel collapses after a click. The peek silences the whole subtree for
+       the restored layout, then hands the declarations back to the site, so
+       the panel closes in one frame instead of crawling over the transcript. */
+    [data-ai-turbo-sidebar-peek-hold],
+    [data-ai-turbo-sidebar-peek-hold] * {
+      transition: none !important;
     }
 
     [data-ai-turbo-sidebar-peek="left"] {
@@ -212,15 +227,13 @@ export const SIDEBAR_PEEK_CSS = `
       overflow: hidden !important;
     }
 
-    bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container.collapsed {
-      width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
-      transition: none !important;
-    }
-
     /* Gemini renders its history only after the native open control runs; the
-       peek presses it and caps the expansion, so the transition has to be off
-       for both the collapsed and the opened container. */
+       peek presses it and caps the expansion, so the container is sized for
+       both the collapsed and the opened state and the transition is off. */
     bard-sidenav[data-ai-turbo-sidebar-peek] .sidenav-with-history-container {
+      width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      min-width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
+      max-width: var(--ai-turbo-sidebar-peek-width, 248px) !important;
       transition: none !important;
     }
 

@@ -313,6 +313,13 @@ export interface SidebarPeekDefinition {
    */
   readonly suppress?: readonly string[];
   /**
+   * Inner shells that keep the rail's content at the collapsed width. Each
+   * match inside the rail is stretched to the peek width while the peek is
+   * open and restored from its exact inline snapshot on leave, so a wide rail
+   * without a wide scroller does not leave the panel half empty.
+   */
+  readonly shells?: readonly string[];
+  /**
    * Sites that only render their history rows in the expanded state. The peek
    * presses the site's own expand control after showing the rail and presses
    * the collapse control when the pointer leaves, so the rows keep the site's
@@ -340,6 +347,20 @@ export const PLATFORMS = {
       // The expanded panel is mounted but its scroller keeps an inline
       // display: none !important until the site opens it itself.
       reveal: ["#app-shell-sidebar > div:nth-child(2) > div:first-child"],
+      // The collapsed rail mounts the expanded list behind an inline
+      // display:none and its renderer writes that rule back on the next
+      // commit, so a reveal alone loses the list again. The peek presses the
+      // site's own expand control: the site then owns the opened state and
+      // the rows keep their data and listeners.
+      nativeExpand: {
+        expand:
+          'button[aria-label="显示侧边栏"], button[aria-label*="Show sidebar" i], button[aria-label*="Expand sidebar" i]',
+        collapse:
+          'button[aria-label="隐藏侧边栏"], button[aria-label*="Hide sidebar" i], button[aria-label*="Close sidebar" i]',
+      },
+      // The rail host grows but the panel column keeps a collapsed width and
+      // its own scroller clips the labels, so both are stretched with it.
+      shells: ["#app-shell-sidebar", "#app-shell-sidebar > div:nth-child(2)"],
       peekWidth: 340,
       collapsedMaxWidth: 96,
     },
@@ -462,6 +483,13 @@ export const PLATFORMS = {
         collapse:
           'button[aria-label*="关闭边栏"], button[aria-label*="Close sidebar" i]',
       },
+      // The history container and its scrollport are pinned to the collapsed
+      // width; the native open control alone leaves both at the old size.
+      shells: [
+        "bard-sidenav",
+        ".sidenav-with-history-container",
+        ".overflow-container",
+      ],
       peekWidth: 248,
       collapsedMaxWidth: 96,
     },
