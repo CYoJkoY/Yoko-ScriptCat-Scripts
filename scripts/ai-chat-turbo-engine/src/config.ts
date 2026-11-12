@@ -329,6 +329,14 @@ export interface SidebarPeekDefinition {
     readonly expand: string;
     readonly collapse: string;
   };
+  /**
+   * Drive the whole peek through the site's own control instead of writing
+   * geometry. On by default whenever nativeExpand is declared: the panel the
+   * user sees is then the site's own expanded rail, with its real rows, row
+   * actions and animations. Set false only for a site whose control ignores
+   * scripted presses and still needs the CSS widening as a fallback.
+   */
+  readonly nativeOnly?: boolean;
 }
 
 export const PLATFORMS = {
@@ -490,7 +498,10 @@ export const PLATFORMS = {
         ".sidenav-with-history-container",
         ".overflow-container",
       ],
-      peekWidth: 248,
+      // Matches the width the site paints after its own open control runs.
+      // A narrower cap leaves the pointer band short while the panel animates
+      // in, so a cursor already over the visible column reads as outside it.
+      peekWidth: 288,
       collapsedMaxWidth: 96,
     },
     turnSelectorGroups: [
@@ -666,7 +677,9 @@ export const PLATFORMS = {
     // The rail is a Fluent NavDrawer that the site widens itself. Its width
     // rule sits in the `application` cascade layer with !important, so the
     // stylesheet override joins the site's first layer instead. The rail
-    // stays mounted and keeps its own listeners while peeking.
+    // stays mounted and keeps its own listeners while peeking. Its history
+    // list is only rendered once the drawer's own control opens it, so the
+    // peek presses that control instead of leaving an empty wide column.
     sidebar: {
       selectors: [
         'div.fai-CopilotNavDrawer[role="navigation"]',
@@ -679,6 +692,12 @@ export const PLATFORMS = {
         'button[aria-label*="Expand sidebar" i]',
         'button[aria-label*="Collapse sidebar" i]',
       ],
+      nativeExpand: {
+        expand:
+          'button[aria-label="展开边栏"], button[aria-label*="Expand sidebar" i]',
+        collapse:
+          'button[aria-label="折叠边栏"], button[aria-label*="Collapse sidebar" i]',
+      },
       peekWidth: 256,
       collapsedMaxWidth: 96,
     },
@@ -728,6 +747,23 @@ export const PLATFORMS = {
         'button[aria-label*="Expand sidebar" i]',
         'button[aria-label*="Open sidebar" i]',
       ],
+      // Perplexity mounts the session list only after its own control opens
+      // the column; a widened shell keeps the compact markup and shows just
+      // the navigation rows. Its control ignores scripted presses in the
+      // builds that were measured, so the press is best effort: when the site
+      // honours it the thread titles appear, and when it does not the rail
+      // still widens without fighting the page.
+      nativeExpand: {
+        expand:
+          'button[aria-label="展开侧边栏"], button[aria-label*="Expand sidebar" i]',
+        collapse:
+          'button[aria-label="收起侧边栏"], button[aria-label*="Collapse sidebar" i]',
+      },
+      // Measured again on the live site: the control stays closed after a
+      // scripted click, so a peek that only pressed it left the rail at 56px
+      // and did nothing. The CSS widening stays the visible path here, and the
+      // press stays best effort for the builds that do honour it.
+      nativeOnly: false,
       peekWidth: 240,
       collapsedMaxWidth: 88,
     },
@@ -773,11 +809,22 @@ export const PLATFORMS = {
     hosts: ["poe.com"],
     sidebar: {
       selectors: ['aside[class*="SidebarLayout_sidebar"]'],
-      triggers: ['button[aria-label="切换侧边栏折叠"]'],
+      triggers: [
+        'button[aria-label="切换侧边栏折叠"]',
+        'button[aria-label*="Toggle sidebar" i]',
+      ],
       // Poe's row wrapper keeps the rail in a flex row that clips overflow,
       // so the growth is cancelled by a fixed margin instead of a
       // measurement.
       shift: -180,
+      // The rail only renders its conversation list after the site's own
+      // toggle runs; widening the shell alone leaves the navigation icons.
+      nativeExpand: {
+        expand:
+          'button[aria-label="切换侧边栏折叠"], button[aria-label*="Toggle sidebar" i]',
+        collapse:
+          'button[aria-label="切换侧边栏折叠"], button[aria-label*="Toggle sidebar" i]',
+      },
       peekWidth: 248,
       collapsedMaxWidth: 88,
     },
@@ -895,7 +942,14 @@ export const PLATFORMS = {
       ],
       // Yuanbao hides the whole wrapper with a transform and visibility on a
       // layer whose width is already laid out, so nothing has to be shifted.
+      // The hidden wrapper only carries a skeleton: the history list is
+      // mounted once the site's own trigger runs, so revealRail keeps showing
+      // the layer while nativeExpand asks the site for the real rows.
       revealRail: true,
+      nativeExpand: {
+        expand: '[aria-label="打开侧栏"]',
+        collapse: '[aria-label="收起侧栏"]',
+      },
       peekWidth: 260,
       collapsedMaxWidth: 96,
     },
@@ -952,6 +1006,16 @@ export const PLATFORMS = {
         'button[aria-label="展开侧边栏"]',
         'button[aria-label*="sidebar" i]',
       ],
+      // Qwen unmounts its history list when the rail collapses: the 60px
+      // rail keeps only two icon buttons, so widening that box shows an empty
+      // panel. The peek presses the site's own toggle, which renders the
+      // rows, and presses the same toggle on leave.
+      nativeExpand: {
+        expand:
+          'button[aria-label="切换侧边栏"], button[aria-label="展开侧边栏"], button[aria-label*="Toggle sidebar" i]',
+        collapse:
+          'button[aria-label="切换侧边栏"], button[aria-label="收起侧边栏"], button[aria-label*="Toggle sidebar" i]',
+      },
       peekWidth: 240,
       collapsedMaxWidth: 96,
     },
@@ -1093,6 +1157,19 @@ export const PLATFORMS = {
     sidebar: {
       selectors: ["aside.el-aside.aside-container"],
       triggers: [".aside-header .operation-btn"],
+      // The header holds two controls with the same class: the search button
+      // sits first and the collapse toggle second, so pressing the first
+      // painted match opened a search box and left the rail collapsed. The
+      // history rows stay at zero height until that toggle runs.
+      nativeExpand: {
+        expand: ".aside-header .btn-area .operation-btn:not(.search-btn)",
+        collapse: ".aside-header .btn-area .operation-btn:not(.search-btn)",
+      },
+      // The class carries two controls and the site swaps their handlers as
+      // the panel opens. Widening the rail is the path that was verified here
+      // (40 -> 260 with 40 history rows), so the peek keeps writing geometry
+      // and treats the press as best effort rather than depending on it.
+      nativeOnly: false,
       peekWidth: 260,
       collapsedMaxWidth: 88,
     },
@@ -1160,9 +1237,15 @@ export const PLATFORMS = {
     sidebar: {
       selectors: ["#sidebar"],
       triggers: ['button[aria-label="切换侧边栏"]'],
-      // The row that holds the rail clips overflow, so the growth is cancelled
-      // by a fixed margin instead of a measurement.
-      shift: -178,
+      // Z.ai renders the row actions (rename, delete, pin) from its expanded
+      // state only; a widened collapsed rail keeps the compact row markup and
+      // loses those buttons. The peek therefore presses the site's own toggle
+      // and lets the site lay the panel out, which is the same 238px column a
+      // real press produces.
+      nativeExpand: {
+        expand: 'button[aria-label="切换侧边栏"]',
+        collapse: 'button[aria-label="切换侧边栏"]',
+      },
       peekWidth: 238,
       collapsedMaxWidth: 88,
     },

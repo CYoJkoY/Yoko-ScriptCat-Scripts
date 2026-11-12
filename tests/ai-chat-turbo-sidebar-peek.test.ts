@@ -2,8 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SIDEBAR_PEEK_ATTRIBUTE,
+  SIDEBAR_PEEK_CLICK_RELEASE_MS,
   SIDEBAR_PEEK_HIDE_DELAY_MS,
   SIDEBAR_PEEK_HOLD_ATTRIBUTE,
+  SIDEBAR_PEEK_KEYBOARD_FOCUS_MS,
+  SIDEBAR_PEEK_NAVIGATION_COLLAPSE_MS,
+  SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS,
+  SIDEBAR_PEEK_NATIVE_OPEN_GRACE_MS,
+  SIDEBAR_PEEK_OPEN_ATTEMPTS,
+  SIDEBAR_PEEK_OPEN_RETRY_MS,
   SIDEBAR_PEEK_SHIFT_VAR,
   SIDEBAR_PEEK_SHOW_DELAY_MS,
   SIDEBAR_PEEK_TRANSITION_HOLD_MS,
@@ -148,8 +155,8 @@ function stubHit(node: Element | null): () => void {
   };
 }
 
-function start(): SidebarPeek {
-  peek = createSidebarPeek({ sidebar: SIDEBAR });
+function start(options: { isUserKey?: (event: Event) => boolean } = {}): SidebarPeek {
+  peek = createSidebarPeek({ sidebar: SIDEBAR, ...options });
   peek.bind(document);
   return peek;
 }
@@ -246,17 +253,61 @@ describe("sidebar hover peek", () => {
   });
 
   it("opens on keyboard focus and closes on Escape", () => {
-    const instance = start();
+    const instance = start({ isUserKey: () => true });
     const button = document.getElementById("new-chat");
     if (!button) throw new Error("missing button");
 
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
     button.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
     expect(instance.isPeeking()).toBe(true);
 
-    document.dispatchEvent(
+    document.body.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
     );
     expect(instance.isPeeking()).toBe(false);
+  });
+
+  it("ignores focus a pointer interaction moves into the rail", () => {
+    const instance = start({ isUserKey: () => true });
+    const history = document.getElementById("history");
+    if (!history) throw new Error("missing history");
+
+    // The site focuses the row it was clicked on. That focus is not a hover
+    // and must not expand the rail the press just released.
+    dispatchPointer("pointerdown", history);
+    history.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(instance.isPeeking()).toBe(false);
+  });
+
+  it("ignores keyboard focus once the key is long gone", () => {
+    const instance = start({ isUserKey: () => true });
+    const button = document.getElementById("new-chat");
+    if (!button) throw new Error("missing button");
+
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
+    vi.advanceTimersByTime(SIDEBAR_PEEK_KEYBOARD_FOCUS_MS + 1);
+    button.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(instance.isPeeking()).toBe(false);
+  });
+
+  it("ignores an Escape the page dispatches from a script", () => {
+    const instance = start();
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(instance.isPeeking()).toBe(true);
+
+    // Perplexity clears a popup by sending Escape to the document; that is the
+    // page talking to itself and must leave the peek alone.
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(instance.isPeeking()).toBe(true);
   });
 
   it("stays dormant while the preference is off and re-arms when it returns", () => {
@@ -908,6 +959,9 @@ describe("sidebar peek native controls", () => {
     document.body.append(open, close);
     const openSpy = vi.spyOn(open, "click");
     const closeSpy = vi.spyOn(close, "click");
+    // The peek only presses controls the page paints, so the toggles need a box.
+    stubNodeRect(open, 32, 32);
+    stubNodeRect(close, 32, 32);
     // The site's own expand press is what widens the rail; the deferred
     // collapse is only pressed on a rail that is still expanded.
     open.addEventListener("click", () => stubRect("#rail", 248, 768));
@@ -936,6 +990,7 @@ describe("sidebar peek native controls", () => {
     const open = document.createElement("button");
     open.id = "open-sidebar";
     document.body.append(open);
+    stubNodeRect(open, 32, 32);
     open.addEventListener("click", () => stubRect("#rail", 248, 768));
 
     // ChatGPT keeps the compact rail's header mounted next to the expanded
@@ -1159,6 +1214,41 @@ describe("sidebar peek inner shells", () => {
       restore();
     }
   });
+
+  it("restores the site's shell width when a refresh lifts it twice", async () => {
+    const node = rail();
+    const shell = document.createElement("div");
+    shell.id = "shell";
+    shell.style.setProperty("width", "52px");
+    shell.style.setProperty("max-width", "52px");
+    node.appendChild(shell);
+    stubNodeRect(shell, 52, 768);
+
+    peek = createSidebarPeek({
+      sidebar: { ...SIDEBAR, peekWidth: 248, shells: ["#shell"] },
+    });
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(shell.style.getPropertyValue("width")).toBe("248px");
+
+    // The site's renderer strips the peek attribute as it re-renders. The
+    // peek redeclares itself and stretches the same shell a second time, so
+    // the second pass must not mistake the peek width for the site's own.
+    node.removeAttribute(SIDEBAR_PEEK_ATTRIBUTE);
+    node.appendChild(document.createElement("span"));
+    await Promise.resolve();
+    vi.advanceTimersByTime(0);
+    expect(node.getAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBe("left");
+    expect(shell.style.getPropertyValue("width")).toBe("248px");
+
+    dispatchPointer("pointerout", node);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS);
+    expect(shell.style.getPropertyValue("width")).toBe("52px");
+    expect(shell.style.getPropertyValue("max-width")).toBe("52px");
+  });
+
 });
 
 describe("sidebar peek inline hidden content", () => {
@@ -1230,6 +1320,9 @@ describe("sidebar peek navigation release", () => {
       sidebar: {
         ...SIDEBAR,
         nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+        // jsdom paints nothing, so no control is found and the native path
+        // would retire immediately. This case covers the CSS fallback.
+        nativeOnly: false,
       },
     });
     peek = instance;
@@ -1248,6 +1341,7 @@ describe("sidebar peek navigation release", () => {
     history.addEventListener("click", (event) => event.preventDefault());
     history.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 
+    vi.advanceTimersByTime(SIDEBAR_PEEK_CLICK_RELEASE_MS);
     expect(peek.isPeeking()).toBe(false);
     expect(closeSpy).not.toHaveBeenCalled();
     expect(rail().style.getPropertyValue(SIDEBAR_PEEK_WIDTH_VAR)).toBe("");
@@ -1312,12 +1406,18 @@ describe("sidebar peek platform coverage", () => {
     expect(PLATFORMS.gemini.sidebar?.shells ?? []).toContain(
       ".sidenav-with-history-container",
     );
-    expect(PLATFORMS.zai.sidebar?.shift).toBe(-178);
+    // Z.ai renders its row actions from the expanded state only, so the peek
+    // presses the site's own toggle and lets it lay the panel out; a fixed
+    // margin would then cancel the site's own push.
+    expect(PLATFORMS.zai.sidebar?.nativeExpand?.expand).toContain("切换侧边栏");
+    expect(Object.hasOwn(PLATFORMS.zai.sidebar ?? {}, "shift")).toBe(false);
     expect(PLATFORMS.copilot.sidebar?.peekWidth).toBe(256);
     expect(PLATFORMS.deepseek.sidebar?.revealRail).toBe(true);
     expect(PLATFORMS.deepseek.sidebar?.shift).toBe(-261);
     expect(PLATFORMS.deepseek.sidebar?.suppress).toContain(".ca6d4be1");
     expect(PLATFORMS.gemini.sidebar?.nativeExpand?.expand).toContain("打开边栏");
+    // The peek band has to match the column the native control paints.
+    expect(PLATFORMS.gemini.sidebar?.peekWidth).toBe(288);
     expect(PLATFORMS.grok.sidebar?.nativeExpand?.expand).toContain("切换侧边栏");
     expect(PLATFORMS.grok.sidebar?.peekWidth).toBe(254);
     expect(PLATFORMS.poe.sidebar?.shift).toBe(-180);
@@ -1326,8 +1426,35 @@ describe("sidebar peek platform coverage", () => {
     expect(PLATFORMS.doubao.sidebar?.peekWidth).toBe(280);
     expect(PLATFORMS.yuanbao.sidebar?.revealRail).toBe(true);
     expect(PLATFORMS.yuanbao.sidebar?.peekWidth).toBe(260);
+    expect(PLATFORMS.yuanbao.sidebar?.nativeExpand?.expand).toContain("打开侧栏");
+    expect(PLATFORMS.qwen.sidebar?.nativeExpand?.expand).toContain("切换侧边栏");
     expect(PLATFORMS.qianwen.sidebar?.shift).toBe(-240);
     expect(PLATFORMS.qianwen.sidebar?.peekWidth).toBe(240);
+    // Copilot, Perplexity, Poe and GLM all mount their history rows only
+    // after their own control opens the rail: widening the shell alone leaves
+    // the compact markup with an empty column. Each one therefore carries a
+    // native expand and collapse pair, in both the Chinese and English
+    // accessible names the sites use.
+    expect(PLATFORMS.copilot.sidebar?.nativeExpand?.expand).toContain("展开边栏");
+    expect(PLATFORMS.copilot.sidebar?.nativeExpand?.collapse).toContain("折叠边栏");
+    expect(PLATFORMS.perplexity.sidebar?.nativeExpand?.expand).toContain(
+      "展开侧边栏",
+    );
+    expect(PLATFORMS.perplexity.sidebar?.nativeExpand?.collapse).toContain(
+      "收起侧边栏",
+    );
+    expect(PLATFORMS.poe.sidebar?.nativeExpand?.expand).toContain(
+      "切换侧边栏折叠",
+    );
+    // GLM paints two controls with the same class in its header; the search
+    // button comes first, so the toggle has to exclude it or the peek opens a
+    // search box and leaves the history rows at zero height.
+    expect(PLATFORMS.glm.sidebar?.nativeExpand?.expand).toContain(
+      ":not(.search-btn)",
+    );
+    expect(PLATFORMS.glm.sidebar?.nativeExpand?.collapse).toContain(
+      ":not(.search-btn)",
+    );
   });
 
   it("no longer declares Claude as a supported platform", () => {
@@ -1416,6 +1543,8 @@ describe("sidebar peek rail replacement", () => {
     close.id = "close-sidebar";
     document.body.append(open, close);
     const closeSpy = vi.spyOn(close, "click");
+    stubNodeRect(open, 32, 32);
+    stubNodeRect(close, 32, 32);
     open.addEventListener("click", () => {
       const old = rail();
       const fresh = document.createElement("nav");
@@ -1432,6 +1561,9 @@ describe("sidebar peek rail replacement", () => {
       sidebar: {
         ...SIDEBAR,
         nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+        // The assertions below describe the CSS fallback: the native path
+        // never marks the rail, because the site itself owns the expansion.
+        nativeOnly: false,
       },
     });
     peek.bind(document);
@@ -1468,6 +1600,133 @@ describe("sidebar peek rail replacement", () => {
 });
 
 describe("sidebar peek content shells", () => {
+  function nativeControls(): { open: HTMLElement; close: HTMLElement } {
+    const open = document.createElement("button");
+    open.id = "open-sidebar";
+    const close = document.createElement("button");
+    close.id = "close-sidebar";
+    document.body.append(open, close);
+    stubNodeRect(open, 32, 32);
+    stubNodeRect(close, 32, 32);
+    return { open, close };
+  }
+
+  function nativePeek(): SidebarPeek {
+    return createSidebarPeek({
+      sidebar: {
+        ...SIDEBAR,
+        nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+      },
+    });
+  }
+
+  it("retires when the pressed control never paints the panel", () => {
+    const { close } = nativeControls();
+    const closeSpy = vi.spyOn(close, "click");
+    // The control is painted but its press reaches no handler: Qwen's
+    // collapsed rail keeps a toggle that some routes leave inert.
+    peek = nativePeek();
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(peek.isPeeking()).toBe(true);
+
+    vi.advanceTimersByTime(SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS);
+    expect(peek.isPeeking()).toBe(true);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS);
+
+    expect(peek.isPeeking()).toBe(false);
+    expect(closeSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps a peek the site painted open", () => {
+    const { open, close } = nativeControls();
+    const closeSpy = vi.spyOn(close, "click");
+    open.addEventListener("click", () => stubRect("#rail", 248, 768));
+    peek = nativePeek();
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS * 2);
+    expect(peek.isPeeking()).toBe(true);
+    expect(closeSpy).not.toHaveBeenCalled();
+
+    dispatchPointer("pointerout", rail());
+    vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS);
+    expect(peek.isPeeking()).toBe(false);
+    // The press waits for the restored layout, so it lands on the next task.
+    vi.advanceTimersByTime(1);
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a peek when a replacement rail is already collapsed", async () => {
+    const { open, close } = nativeControls();
+    const closeSpy = vi.spyOn(close, "click");
+    open.addEventListener("click", () => stubRect("#rail", 248, 768));
+    peek = nativePeek();
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(peek.isPeeking()).toBe(true);
+
+    // A history jump replaces the rail with the site's collapsed copy. The
+    // press that opened the old node no longer describes this one, so the
+    // peek must not carry the expansion into it.
+    vi.advanceTimersByTime(SIDEBAR_PEEK_NATIVE_OPEN_GRACE_MS + 200);
+    const old = rail();
+    const fresh = document.createElement("nav");
+    fresh.id = "rail";
+    fresh.innerHTML = `
+      <button id="new-chat">New chat</button>
+      <a id="history" href="#history">History</a>
+    `;
+    stubNodeRect(fresh, 52, 768);
+    old.replaceWith(fresh);
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.advanceTimersByTime(32);
+
+    expect(peek.isPeeking()).toBe(false);
+    expect(closeSpy).not.toHaveBeenCalled();
+  });
+
+  it("follows a replacement rail the site rendered open", async () => {
+    const { open, close } = nativeControls();
+    const closeSpy = vi.spyOn(close, "click");
+    open.addEventListener("click", () => {
+      const old = rail();
+      const fresh = document.createElement("nav");
+      fresh.id = "rail";
+      fresh.innerHTML = `
+        <button id="new-chat">New chat</button>
+        <a id="history" href="#history">History</a>
+      `;
+      stubNodeRect(fresh, 248, 768);
+      old.replaceWith(fresh);
+    });
+    peek = nativePeek();
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.advanceTimersByTime(32);
+
+    expect(peek.isPeeking()).toBe(true);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS);
+    expect(peek.isPeeking()).toBe(true);
+
+    dispatchPointer("pointerout", rail());
+    vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS);
+    expect(peek.isPeeking()).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
   function shellWithRows(width: number): HTMLElement {
     const shell = document.createElement("div");
     shell.id = "shell";
@@ -1550,6 +1809,8 @@ describe("sidebar peek navigation collapse", () => {
     close.id = "close-sidebar";
     document.body.append(open, close);
     const closeSpy = vi.spyOn(close, "click");
+    stubNodeRect(open, 32, 32);
+    stubNodeRect(close, 32, 32);
     open.addEventListener("click", () => stubRect("#rail", 248, 768));
 
     peek = createSidebarPeek({
@@ -1566,10 +1827,268 @@ describe("sidebar peek navigation collapse", () => {
     if (!history) throw new Error("missing history");
     history.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
-    // The press lands on the next task, not after another hover or timeout.
+    // The press navigates to the row's own hash. The route change retires the
+    // peek on its own task, before the site's collapse transition has played
+    // out, and the deferred press waits that transition before landing.
+    vi.advanceTimersByTime(1);
     expect(peek.isPeeking()).toBe(false);
-    vi.advanceTimersByTime(0);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_NAVIGATION_COLLAPSE_MS - 2);
+    expect(closeSpy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(2);
     expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a panel the site is already closing alone", () => {
+    const open = document.createElement("button");
+    open.id = "open-sidebar";
+    const close = document.createElement("button");
+    close.id = "close-sidebar";
+    document.body.append(open, close);
+    stubNodeRect(open, 32, 32);
+    stubNodeRect(close, 32, 32);
+    const closeSpy = vi.spyOn(close, "click");
+    open.addEventListener("click", () => stubRect("#rail", 248, 768));
+
+    peek = createSidebarPeek({
+      sidebar: {
+        ...SIDEBAR,
+        nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+      },
+    });
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    const history = document.getElementById("history");
+    if (!history) throw new Error("missing history");
+    history.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    // The site reacts to the same press by animating its own collapse. The
+    // deferred press used to toggle again mid-transition, which restarted the
+    // animation from its current width: the stall a history jump left behind.
+    stubRect("#rail", 200, 768);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_NAVIGATION_COLLAPSE_MS);
+    expect(closeSpy).not.toHaveBeenCalled();
+  });
+
+  it("waits for the pointer to leave before peeking again after a jump", () => {
+    const instance = start();
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(instance.isPeeking()).toBe(true);
+
+    const history = document.getElementById("history");
+    if (!history) throw new Error("missing history");
+    history.setAttribute("href", "/c/another-chat");
+    history.addEventListener("click", (event) => event.preventDefault());
+    history.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    vi.advanceTimersByTime(SIDEBAR_PEEK_CLICK_RELEASE_MS);
+    expect(instance.isPeeking()).toBe(false);
+
+    // The pointer still rests on the row it pressed. Re-arming there reopened
+    // the rail the site was closing and the panel pumped open and shut.
+    const button = document.getElementById("new-chat");
+    if (!button) throw new Error("missing button");
+    dispatchPointer("pointerover", button);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS * 2);
+    expect(instance.isPeeking()).toBe(false);
+
+    const chat = document.getElementById("chat");
+    if (!chat) throw new Error("missing chat");
+    dispatchPointerMove(600, 300, chat);
+    dispatchPointer("pointerover", button);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(instance.isPeeking()).toBe(true);
+  });
+});
+
+describe("sidebar peek native expansion", () => {
+  function paintsControls(): { open: HTMLElement; close: HTMLElement } {
+    const open = document.createElement("button");
+    open.id = "open-sidebar";
+    const close = document.createElement("button");
+    close.id = "close-sidebar";
+    document.body.append(open, close);
+    stubNodeRect(open, 32, 32);
+    stubNodeRect(close, 32, 32);
+    return { open, close };
+  }
+
+  it("opens the site panel and writes no geometry of its own", () => {
+    const { open, close } = paintsControls();
+    const openSpy = vi.spyOn(open, "click");
+    const closeSpy = vi.spyOn(close, "click");
+    open.addEventListener("click", () => stubRect("#rail", 248, 768));
+
+    peek = createSidebarPeek({
+      sidebar: {
+        ...SIDEBAR,
+        nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+      },
+    });
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(peek.isPeeking()).toBe(true);
+    const node = rail();
+    expect(node.getAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBeNull();
+    expect(node.style.getPropertyValue(SIDEBAR_PEEK_WIDTH_VAR)).toBe("");
+    expect(node.style.getPropertyValue(SIDEBAR_PEEK_SHIFT_VAR)).toBe("");
+
+    dispatchPointer("pointerout", node);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS);
+    expect(peek.isPeeking()).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for an open control the site paints on a later frame", () => {
+    // Gemini mounts the control a render after the pointer lands, so a single
+    // lookup reads a rail that is still empty and drops a hover it could show.
+    const open = document.createElement("button");
+    open.id = "open-sidebar";
+    document.body.append(open);
+
+    peek = createSidebarPeek({
+      sidebar: {
+        ...SIDEBAR,
+        nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+      },
+    });
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(peek.isPeeking()).toBe(true);
+
+    const openSpy = vi.spyOn(open, "click");
+    stubNodeRect(open, 32, 32);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_OPEN_RETRY_MS);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up when the control never becomes paintable", () => {
+    const open = document.createElement("button");
+    open.id = "open-sidebar";
+    document.body.append(open);
+
+    peek = createSidebarPeek({
+      sidebar: {
+        ...SIDEBAR,
+        nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+      },
+    });
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(
+      SIDEBAR_PEEK_SHOW_DELAY_MS +
+        SIDEBAR_PEEK_OPEN_ATTEMPTS * SIDEBAR_PEEK_OPEN_RETRY_MS,
+    );
+
+    expect(peek.isPeeking()).toBe(false);
+    expect(rail().getAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBeNull();
+  });
+
+  it("skips the expand press on a rail the site already opened", () => {
+    const open = document.createElement("button");
+    open.id = "open-sidebar";
+    document.body.append(open);
+    stubNodeRect(open, 32, 32);
+    const openSpy = vi.spyOn(open, "click");
+    // ChatGPT and Qwen keep the collapsed state class until their own width
+    // animation ends, so a visibly open rail still reads `collapsed`. Pressing
+    // expand there replayed the site's expanded render over the peek.
+    rail().className = "collapsed";
+    stubRect("#rail", 288, 768);
+
+    peek = createSidebarPeek({
+      sidebar: {
+        ...SIDEBAR,
+        nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+      },
+    });
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(peek.isPeeking()).toBe(false);
+  });
+
+  it("opens a rail whose expanded class outlived the site's collapse", () => {
+    const open = document.createElement("button");
+    open.id = "open-sidebar";
+    document.body.append(open);
+    stubNodeRect(open, 32, 32);
+    open.addEventListener("click", () => stubRect("#rail", 248, 768));
+    const openSpy = vi.spyOn(open, "click");
+    rail().className = "sidenav-open";
+    stubRect("#rail", 52, 768);
+
+    peek = createSidebarPeek({
+      sidebar: {
+        ...SIDEBAR,
+        nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+      },
+    });
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(peek.isPeeking()).toBe(true);
+  });
+
+  it("keeps the peek while the site's panel paints no box", () => {
+    const open = document.createElement("button");
+    open.id = "open-sidebar";
+    const close = document.createElement("button");
+    close.id = "close-sidebar";
+    document.body.append(open, close);
+    stubNodeRect(open, 32, 32);
+    stubNodeRect(close, 32, 32);
+    const closeSpy = vi.spyOn(close, "click");
+    open.addEventListener("click", () => stubRect("#rail", 248, 768));
+
+    peek = createSidebarPeek({
+      sidebar: {
+        ...SIDEBAR,
+        nativeExpand: { expand: "#open-sidebar", collapse: "#close-sidebar" },
+      },
+    });
+    peek.bind(document);
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(peek.isPeeking()).toBe(true);
+
+    const chat = document.getElementById("chat");
+    if (!chat) throw new Error("missing chat");
+    // Yuanbao slides the rail fully past the edge and Grok keeps a zero-width
+    // slot for it. The pointer still rests on the panel the user can see, so
+    // the box it was last painted at has to keep answering for it.
+    stubRect("#rail", 0, 768);
+    const restore = stubHit(document.body);
+    try {
+      dispatchPointerMove(120, 300, chat);
+      vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS + 50);
+      expect(peek.isPeeking()).toBe(true);
+      expect(closeSpy).not.toHaveBeenCalled();
+
+      dispatchPointerMove(600, 300, chat);
+      vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS + 50);
+      expect(peek.isPeeking()).toBe(false);
+    } finally {
+      restore();
+    }
   });
 });
 
@@ -1587,9 +2106,40 @@ describe("sidebar peek instant release", () => {
     row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 
     // Sites such as Z.ai navigate from their own handler, so there is no
-    // href to wait on; the peek must retire on the press itself.
+    // href to wait on. The release is read one beat after the press, which is
+    // still well before the route paints, and it must not stay pending.
+    expect(instance.isPeeking()).toBe(true);
+    vi.advanceTimersByTime(SIDEBAR_PEEK_CLICK_RELEASE_MS);
     expect(instance.isPeeking()).toBe(false);
     expect(rail().style.getPropertyValue(SIDEBAR_PEEK_WIDTH_VAR)).toBe("");
+  });
+
+  it("keeps the peek when an unannotated press opens a menu", () => {
+    const instance = start();
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+
+    // Qwen mounts its history row menu on a plain button that carries only an
+    // aria-label, so nothing in the markup says a menu is coming.
+    const trigger = document.createElement("button");
+    trigger.setAttribute("aria-label", "Chat Menu");
+    rail().append(trigger);
+    trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+
+    const dropdown = document.createElement("div");
+    dropdown.className = "ant-dropdown";
+    const item = document.createElement("div");
+    item.textContent = "Delete";
+    dropdown.append(item);
+    document.body.append(dropdown);
+    stubNodeRect(dropdown, 120, 90, 200);
+
+    vi.advanceTimersByTime(SIDEBAR_PEEK_CLICK_RELEASE_MS);
+
+    // The dropdown the press produced is the user still working in the panel.
+    expect(instance.isPeeking()).toBe(true);
+    expect(rail().style.getPropertyValue(SIDEBAR_PEEK_WIDTH_VAR)).not.toBe("");
   });
 
   it("keeps the peek when the press opens a menu", () => {
@@ -1625,6 +2175,7 @@ describe("sidebar peek instant release", () => {
     // click just opened, which is the lag this module has to avoid. The rail's
     // own declaration is back before the press returns; the subtree stays
     // quiet only until the site has applied its collapsed width.
+    vi.advanceTimersByTime(SIDEBAR_PEEK_CLICK_RELEASE_MS);
     expect(instance.isPeeking()).toBe(false);
     expect(rail().style.getPropertyValue("transition")).toBe(
       "width 300ms ease",

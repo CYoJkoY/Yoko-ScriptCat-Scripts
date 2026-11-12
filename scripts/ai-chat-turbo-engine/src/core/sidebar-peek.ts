@@ -34,6 +34,54 @@ export const SIDEBAR_PEEK_WIDTH_RATIO = 0.42;
  * can trigger (300ms on Z.ai), so the panel lands in one frame.
  */
 export const SIDEBAR_PEEK_TRANSITION_HOLD_MS = 360;
+
+/**
+ * A history row press makes the site swap the transcript, and most sites also
+ * close the rail themselves while that route paints. Pressing the collapse
+ * control in that window toggles a rail the site is already closing, which is
+ * the flicker that used to follow a click: the press waits for the site's own
+ * transition and only closes a rail that is still open afterwards.
+ */
+export const SIDEBAR_PEEK_NAVIGATION_COLLAPSE_MS = 360;
+/**
+ * A focus move only counts as intent when the user just pressed a key. Sites
+ * focus their own controls after a pointer press as well, and a peek that
+ * acted on those reopened the rail the press had just closed: pressing the
+ * collapse control or a history row moved focus back into the rail, the next
+ * focusin read it as a new hover, and the panel toggled open and shut until
+ * the pointer moved away.
+ */
+export const SIDEBAR_PEEK_KEYBOARD_FOCUS_MS = 700;
+/**
+ * Sites mount the control that opens their rail a moment after the pointer
+ * lands: Gemini paints the collapsed rail first and swaps the header pill for
+ * the open button on the render that follows. A single lookup therefore reads
+ * a state the user cannot even see yet and drops a hover that would have
+ * worked, so the press is retried inside this short window.
+ */
+export const SIDEBAR_PEEK_OPEN_RETRY_MS = 90;
+/** How many retries one peek spends looking for that control. */
+export const SIDEBAR_PEEK_OPEN_ATTEMPTS = 8;
+
+/**
+ * How long a native rail gets to paint its expanded box after the peek
+ * pressed the site's own control. Some presses land on a decorative
+ * duplicate, and a renderer that ignores one leaves the rail at its
+ * collapsed width: keeping the peek then shows an empty bar next to a chat
+ * column the site never moved, which is the black frame Qwen produced.
+ */
+export const SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS = 320;
+
+/** Failed paints before the native peek hands the rail back untouched. */
+export const SIDEBAR_PEEK_NATIVE_OPEN_CHECKS = 2;
+
+/**
+ * How long a replacement rail may inherit the press that opened the previous
+ * one. Sites render the opened panel by swapping the node, so the first
+ * frames after a press are expected to paint the collapsed width; a rail the
+ * site rebuilds later, already closed, must not be adopted as expanded.
+ */
+export const SIDEBAR_PEEK_NATIVE_OPEN_GRACE_MS = 400;
 /**
  * How many times one peek may re-show a content column the site hides again.
  * ChatGPT re-applies its inline hidden rule once, on the render that follows
@@ -41,6 +89,13 @@ export const SIDEBAR_PEEK_TRANSITION_HOLD_MS = 360;
  * turning the lift into a loop.
  */
 export const SIDEBAR_PEEK_RELIFT_LIMIT = 4;
+
+/**
+ * A press inside the rail is read one beat later. Menus mount in the same task
+ * as the click that opens them, so this is long enough to see the dropdown and
+ * short enough that a history press still retires before the next route paints.
+ */
+export const SIDEBAR_PEEK_CLICK_RELEASE_MS = 140;
 
 /**
  * Menus and dialogs that sites portal to the body while the rail is open.
@@ -86,6 +141,14 @@ const EXPANDED_CLASS_TOKENS = new Set([
 const MOTION_ATTRIBUTES = ["class", "data-collapsed", "data-state", "aria-expanded"];
 
 export type SidebarPeekSide = "left" | "right";
+
+/** A painted rectangle in viewport coordinates. */
+interface ScreenBox {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
 
 interface StyleSnapshot {
   readonly value: string;
@@ -140,6 +203,11 @@ export interface SidebarPeekOptions {
   readonly sidebar: SidebarPeekDefinition | null;
   /** Live preference read; false keeps the peek dormant without unbinding. */
   readonly enabled?: () => boolean;
+  /**
+   * Whether a key event came from real input. Sites dispatch their own Escape
+   * to dismiss popovers, and those scripted events must not steer the peek.
+   */
+  readonly isUserKey?: (event: Event) => boolean;
   readonly showDelayMs?: number;
   readonly hideDelayMs?: number;
 }
@@ -168,12 +236,21 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   const definition = options.sidebar;
   const showDelayMs = options.showDelayMs ?? SIDEBAR_PEEK_SHOW_DELAY_MS;
   const hideDelayMs = options.hideDelayMs ?? SIDEBAR_PEEK_HIDE_DELAY_MS;
+  const isUserKey = options.isUserKey ?? ((event: Event) => event.isTrusted);
   const peekWidth = definition?.peekWidth ?? DEFAULT_PEEK_WIDTH;
   const collapsedMaxWidth =
     definition?.collapsedMaxWidth ?? DEFAULT_COLLAPSED_MAX_WIDTH;
   const sidebarSelectors = definition?.selectors ?? [];
   const triggerSelector = definition?.triggers?.join(", ") ?? "";
   const revealSelector = definition?.reveal?.join(", ") ?? "";
+  /**
+   * Sites that document their own expand control are driven entirely through
+   * it: the panel the user sees is the site's own expanded rail, with its real
+   * rows, row actions and animations. Writing a width on top of that produced
+   * two competing layouts, so the CSS path is skipped for these platforms.
+   */
+  const nativeOnly =
+    definition?.nativeExpand !== undefined && definition?.nativeOnly !== false;
 
   let boundDocument: Document | null = null;
   let observer: MutationObserver | null = null;
@@ -207,7 +284,25 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   let expandedByPeek = false;
   let pointerX = Number.NaN;
   let pointerY = Number.NaN;
+  /** When the user last pressed a key, which is what makes focus intentional. */
+  let lastUserKeyMs = Number.NEGATIVE_INFINITY;
   let activePeekWidth = peekWidth;
+  /** Side the open peek grew from, kept while the rail paints no box. */
+  let activeSide: SidebarPeekSide = "left";
+  /**
+   * Last box the peeked panel was painted at. Sites slide their panel out of
+   * the document, keep a zero-width slot for it, or unmount it for a frame
+   * while their own toggle runs; the pointer is still on the panel the user
+   * saw, so that box stays part of the peek until the next one is painted.
+   */
+  let peekBand: ScreenBox | null = null;
+  /**
+   * A history press closes the panel the peek opened. The pointer rests where
+   * the row was, which is still the panel's strip, so re-arming on the next
+   * move reopened the rail the site was already closing and the panel pumped
+   * open and shut. The peek waits for the pointer to leave that strip once.
+   */
+  let suppressShowUntilExit = false;
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let holdRemainingMs = 0;
   let rescanNeeded = false;
@@ -216,10 +311,21 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   let activeShift = 0;
   let reacquireTimer: ReturnType<typeof setTimeout> | null = null;
   let reacquireAttempts = 0;
+  /** Polls for the site's own expand control while a peek waits to open. */
+  let openTimer: ReturnType<typeof setTimeout> | null = null;
+  let openAttempts = 0;
+  /** Verifies that the site actually painted the panel the press asked for. */
+  let nativeOpenTimer: ReturnType<typeof setTimeout> | null = null;
+  let nativeOpenChecks = 0;
+  let nativeOpenSeq = 0;
+  /** When the native expand control was last pressed with a painted box. */
+  let nativeOpenPressedAt = Number.NEGATIVE_INFINITY;
   let transitionHoldTimer: ReturnType<typeof setTimeout> | null = null;
   let transitionHoldNode: HTMLElement | null = null;
   /** Pending press on the site's own collapse control after a release. */
   let nativeCollapseTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Pending release for a press that may still open a site menu. */
+  let clickReleaseTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Menus and dialogs that were already on screen when the peek opened. They
    * belong to the page, not to the hovered rail, so they can never hold it.
@@ -272,31 +378,73 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   }
 
   function isCollapsed(node: HTMLElement): boolean {
+    // What the site paints settles the question first, in both directions.
+    // Every platform animates its own rail and keeps the old state class
+    // until the animation ends: a panel that is visibly open still reads
+    // `sidebar-collapse` for a few hundred milliseconds, and one that just
+    // closed can still read `is-open`. Trusting the class there made the peek
+    // press the expand control on a rail that was already open (the site
+    // replayed its expanded render over the peek, the panel came out
+    // incomplete, and the release pressed collapse on a panel the peek never
+    // opened) and made it skip a rail the site had already closed.
+    const painted = node.getBoundingClientRect();
+    if (rectIsOnScreen(node, painted)) {
+      return painted.width <= collapsedMaxWidth;
+    }
     for (const token of node.classList) {
       if (COLLAPSED_CLASS_TOKENS.has(token)) return true;
       if (EXPANDED_CLASS_TOKENS.has(token)) return false;
     }
-    // A rail without state classes is collapsed when it is narrow, when the
-    // site slides it fully past an edge (Doubao, Yuanbao), or when it keeps a
-    // zero-width slot for it (Grok, Qianwen). Measuring the box catches all
-    // three, because the closed state never leaves a usable rail on screen.
-    const rect = node.getBoundingClientRect();
-    if (rect.width === 0) return true;
-    if (rect.right <= 1) return true;
-    const doc = node.ownerDocument;
-    const viewport =
-      doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
-    if (viewport > 0 && rect.left >= viewport - 1) return true;
-    return rect.width <= collapsedMaxWidth;
+    // A rail that paints nothing is collapsed: the site slides it fully past
+    // an edge (Doubao, Yuanbao) or keeps a zero-width slot for it (Grok,
+    // Qianwen). Measuring the box catches all three, because the closed state
+    // never leaves a usable rail on screen.
+    if (painted.width === 0) return true;
+    if (painted.right <= 1) return true;
+    const viewport = viewportWidthOf(node);
+    if (viewport > 0 && painted.left >= viewport - 1) return true;
+    return painted.width <= collapsedMaxWidth;
   }
 
   function sideOf(node: HTMLElement): SidebarPeekSide {
-    const doc = node.ownerDocument;
-    const viewport =
-      doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+    const viewport = viewportWidthOf(node);
     if (viewport <= 0) return "left";
     const rect = node.getBoundingClientRect();
     return rect.left + rect.width / 2 < viewport / 2 ? "left" : "right";
+  }
+
+  function viewportWidthOf(node: HTMLElement): number {
+    const doc = node.ownerDocument;
+    return doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+  }
+
+  function viewportHeightOf(node: HTMLElement): number {
+    const doc = node.ownerDocument;
+    return doc.documentElement.clientHeight || doc.defaultView?.innerHeight || 0;
+  }
+
+  /**
+   * Whether the site actually draws this box, as opposed to keeping the node
+   * mounted at zero width or parked past an edge. A rail that is not drawn
+   * tells the peek nothing about its state, so its class is the only signal.
+   */
+  function rectIsOnScreen(node: HTMLElement, rect: DOMRect): boolean {
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (rect.right <= 1) return false;
+    const width = viewportWidthOf(node);
+    if (width > 0 && rect.left >= width - 1) return false;
+    const height = viewportHeightOf(node);
+    return height <= 0 || (rect.bottom > 1 && rect.top < height - 1);
+  }
+
+  function rememberBand(rect: DOMRect): void {
+    if (rect.width <= 0 || rect.height <= 0) return;
+    peekBand = {
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+    };
   }
 
   /** The peek a viewport can afford, so a phone keeps a usable chat column. */
@@ -378,6 +526,47 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     x: number,
     y: number,
   ): boolean {
+    if (nativeOnly) {
+      // The site paints the whole panel, so its current box is the peek's
+      // box. Reading the live rail also survives the replacement node the
+      // site renders right after its own toggle.
+      const current = resolveRail() ?? rail;
+      const live = current.getBoundingClientRect();
+      if (rectHoldsPointer(live, x, y)) {
+        rememberBand(live);
+        return true;
+      }
+      // A native rail spends part of its life without a box: Yuanbao slides
+      // it fully past the edge, Grok and Qianwen keep a zero-width slot, and
+      // most of them unmount it for the frame their own toggle runs. The
+      // pointer is still on the panel the user is looking at, so the box it
+      // was last painted at counts until a new one replaces it. The strip the
+      // peek grew out of counts too, from the edge inwards.
+      if (peekBand !== null && boxHoldsPointer(peekBand, x, y)) return true;
+      const reach = Math.max(SIDEBAR_PEEK_LANE_PX, activePeekWidth, live.width);
+      const boxTop = live.height > 0 ? live.top : (peekBand?.top ?? 0);
+      const boxBottom =
+        live.height > 0
+          ? live.bottom
+          : (peekBand?.bottom ?? viewportHeightOf(current));
+      if (
+        y < boxTop - SIDEBAR_PEEK_PROXIMITY_PX ||
+        y > boxBottom + SIDEBAR_PEEK_PROXIMITY_PX
+      ) {
+        return false;
+      }
+      if (activeSide === "right") {
+        const viewport = viewportWidthOf(current);
+        return (
+          x >= viewport - reach - SIDEBAR_PEEK_PROXIMITY_PX &&
+          x <= viewport + SIDEBAR_PEEK_PROXIMITY_PX
+        );
+      }
+      return (
+        x >= -SIDEBAR_PEEK_PROXIMITY_PX &&
+        x <= reach + SIDEBAR_PEEK_PROXIMITY_PX
+      );
+    }
     const rect = rail.getBoundingClientRect();
     const side = sideOf(rail);
     const reach = Math.max(rect.width, activePeekWidth);
@@ -397,6 +586,16 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
       if (rectHoldsPointer(shell.node.getBoundingClientRect(), x, y)) return true;
     }
     return false;
+  }
+
+  /** Whether a remembered panel box holds the pointer, edge grace included. */
+  function boxHoldsPointer(box: ScreenBox, x: number, y: number): boolean {
+    return (
+      x >= box.left - SIDEBAR_PEEK_PROXIMITY_PX &&
+      x <= box.right + SIDEBAR_PEEK_PROXIMITY_PX &&
+      y >= box.top - SIDEBAR_PEEK_PROXIMITY_PX &&
+      y <= box.bottom + SIDEBAR_PEEK_PROXIMITY_PX
+    );
   }
 
   /**
@@ -481,11 +680,30 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     holdRemainingMs = 0;
   }
 
+  function cancelOpen(): void {
+    if (openTimer !== null) {
+      clearTimeout(openTimer);
+      openTimer = null;
+    }
+    openAttempts = 0;
+  }
+
+  function cancelNativeOpenCheck(): void {
+    if (nativeOpenTimer !== null) {
+      clearTimeout(nativeOpenTimer);
+      nativeOpenTimer = null;
+    }
+    nativeOpenChecks = 0;
+  }
+
   function releaseActive(reason: ReleaseReason = "hover"): void {
     cancelHide();
     cancelHold();
+    cancelOpen();
+    cancelNativeOpenCheck();
     cancelReacquire();
     cancelProbe();
+    cancelClickRelease();
     rescanNeeded = false;
     preexistingPopovers.clear();
     const node = active;
@@ -497,13 +715,18 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     // and every widened shell relayouts its history list on each frame. The
     // hold starts before the collapse control is pressed: a transition that
     // begins on that press would otherwise play out in full.
-    const held = reason === "hover" || reason === "navigation";
+    // A native rail animates its own width, and silencing that transition
+    // made the panel snap shut next to the site's real collapse. Only the CSS
+    // path needs a quiet frame.
+    const held =
+      !nativeOnly && (reason === "hover" || reason === "navigation");
     if (held) holdTransitions(node);
     // The site's own collapse control is pressed after the geometry is back,
     // never before it. A press while the peek width still forces the panel
     // open reaches a renderer that still owns an expanded layout: it commits
     // the expanded view again and the rail stays wide long after the pointer
     // left. Deferring the press also lets the release land in one frame.
+    const releasedWidth = node.getBoundingClientRect().width;
     let collapse: HTMLElement | null = null;
     if (expandedByPeek) {
       expandedByPeek = false;
@@ -559,7 +782,14 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
       void node.getBoundingClientRect();
       releaseTransitions();
     }
-    if (collapse !== null) requestNativeCollapse(node, collapse);
+    if (collapse !== null) {
+      requestNativeCollapse(
+        node,
+        collapse,
+        reason === "navigation" ? SIDEBAR_PEEK_NAVIGATION_COLLAPSE_MS : 0,
+        releasedWidth,
+      );
+    }
   }
 
   /**
@@ -635,6 +865,8 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   function requestNativeCollapse(
     rail: HTMLElement,
     control: HTMLElement,
+    delayMs: number,
+    releasedWidth: number,
   ): void {
     cancelNativeCollapse();
     nativeCollapseTimer = setTimeout(() => {
@@ -644,11 +876,22 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
       // A peek that opened again owns the rail; its expansion is the state
       // the user asked for and must not be undone here.
       if (active === rail) return;
+      const now = rail.getBoundingClientRect().width;
       // The site already closed the panel during its navigation. Only the
       // box is consulted here: a rail that just finished expanding can still
       // carry its old collapsed class for a frame, and pressing the toggle
       // then would reopen it.
-      if (rail.getBoundingClientRect().width <= collapsedMaxWidth) return;
+      if (now <= collapsedMaxWidth) return;
+      // The site reacts to the same press by closing the panel itself. Its
+      // transition is already running when this deferred press lands, and a
+      // second toggle there restarts the animation from its current width:
+      // that is the stall and the flicker a history jump used to leave behind.
+      if (
+        releasedWidth > collapsedMaxWidth + 8 &&
+        now <= releasedWidth - 8
+      ) {
+        return;
+      }
       // The header can be re-rendered between the release and this task, and
       // the rail may now hold a different copy of the toggle. Press whatever
       // the site is painting; a detached node closes nothing. A captured
@@ -659,13 +902,19 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
         : firstPaintedControl(rail, definition?.nativeExpand?.collapse ?? "") ??
           (control.isConnected ? control : null);
       target?.click();
-    }, 0);
+    }, delayMs);
   }
 
   function cancelNativeCollapse(): void {
     if (nativeCollapseTimer === null) return;
     clearTimeout(nativeCollapseTimer);
     nativeCollapseTimer = null;
+  }
+
+  function cancelClickRelease(): void {
+    if (clickReleaseTimer === null) return;
+    clearTimeout(clickReleaseTimer);
+    clickReleaseTimer = null;
   }
 
   /**
@@ -717,6 +966,126 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     return null;
   }
 
+  /**
+   * Presses the site's own expand control and remembers what closes the rail
+   * again. Returns false while the page has not painted that control yet,
+   * which is a normal state right after the pointer lands on a rail the site
+   * has not finished rendering.
+   */
+  function pressNativeExpand(rail: HTMLElement): boolean {
+    const selector = definition?.nativeExpand?.expand ?? "";
+    if (selector === "") return true;
+    // A document-wide querySelector would land on a 0x0 duplicate that sites
+    // keep for the compact rail, and pressing it would leave the panel closed
+    // while the peek looked like it did nothing.
+    // A control inside the rail wins over one elsewhere in the document: wide
+    // layouts mount a second rail for narrow viewports, and pressing that
+    // rail's toggle opened a panel the user was not looking at.
+    const expand =
+      firstPaintedControl(rail, selector) ??
+      firstPaintedControl(rail.ownerDocument, selector);
+    if (expand === null) return false;
+    expandedByPeek = true;
+    nativeOpenPressedAt = performance.now();
+    nativeOpenSeq += 1;
+    const seq = nativeOpenSeq;
+    expand.click();
+    // The control is usually the same toggle relabelled after it opens the
+    // panel, so the press that opened it stays a valid target when no
+    // separate collapse control is painted yet.
+    collapseTarget =
+      firstPaintedControl(
+        rail.ownerDocument,
+        definition?.nativeExpand?.collapse ?? "",
+      ) ?? (isPaintedControl(expand) ? expand : null);
+    // The site renders the opened rail on its next paint, often by replacing
+    // the node the peek is following.
+    scheduleReacquire();
+    if (nativeOnly) scheduleNativeOpenCheck(rail, seq);
+    return true;
+  }
+
+  /**
+   * Whether the site has painted the panel its control was asked to open.
+   * Width decides first: a rail the site opened leaves its collapsed cap, and
+   * that is true even while a wrapper inside it is still animating. The state
+   * flags cover a rail the renderer swapped in already expanded.
+   */
+  function nativePanelOpen(node: HTMLElement): boolean {
+    if (!node.isConnected) return false;
+    if (node.getBoundingClientRect().width > collapsedMaxWidth + 4) return true;
+    if (hasExpandedToken(node)) return true;
+    const state = node.getAttribute("data-state");
+    if (state === "expanded" || state === "open") return true;
+    return node.getAttribute("aria-expanded") === "true";
+  }
+
+  /** A replacement rail may still be inheriting the press that opened it. */
+  function nativeOpenIsRecent(): boolean {
+    return (
+      performance.now() - nativeOpenPressedAt <=
+      SIDEBAR_PEEK_NATIVE_OPEN_GRACE_MS
+    );
+  }
+
+  /**
+   * Confirms that the press produced a panel. A control that exists but has
+   * no handler, or that belongs to a collapsed duplicate, leaves the rail
+   * exactly as it was; the peek then hands it back instead of hovering an
+   * empty bar. Two checks tolerate a site that renders the opened panel a
+   * task or two after the press.
+   */
+  function scheduleNativeOpenCheck(rail: HTMLElement, seq: number): void {
+    cancelNativeOpenCheck();
+    const check = (): void => {
+      nativeOpenTimer = null;
+      if (seq !== nativeOpenSeq) return;
+      if (active === null) return;
+      const current = resolveRail();
+      if (current !== null && current !== rail) {
+        // The renderer replaced the rail; reacquire follows the new node and
+        // only adopts a panel that is open or still inheriting this press.
+        return;
+      }
+      if (nativePanelOpen(rail)) return;
+      nativeOpenChecks += 1;
+      if (nativeOpenChecks < SIDEBAR_PEEK_NATIVE_OPEN_CHECKS) {
+        nativeOpenTimer = setTimeout(check, SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS);
+        return;
+      }
+      // Nothing the site paints was opened, so nothing may stay hovered: no
+      // collapse press either, because that control would toggle a panel the
+      // user is not looking at.
+      expandedByPeek = false;
+      collapseTarget = null;
+      releaseActive("lifecycle");
+    };
+    nativeOpenTimer = setTimeout(check, SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS);
+  }
+
+  /**
+   * Retries the expand press for a few frames. The peek is already open, so a
+   * control that mounts with the site's next render still gets its press
+   * instead of a hover that silently does nothing.
+   */
+  function retryNativeExpand(rail: HTMLElement): void {
+    if (openTimer !== null) return;
+    if (openAttempts >= SIDEBAR_PEEK_OPEN_ATTEMPTS) {
+      releaseActive("lifecycle");
+      return;
+    }
+    openAttempts += 1;
+    openTimer = setTimeout(() => {
+      openTimer = null;
+      if (active !== rail) return;
+      if (!rail.isConnected) {
+        releaseActive("lifecycle");
+        return;
+      }
+      if (!pressNativeExpand(rail)) retryNativeExpand(rail);
+    }, SIDEBAR_PEEK_OPEN_RETRY_MS);
+  }
+
   /** A captured control may only be pressed while it still belongs to the peek. */
   function stillOwned(rail: HTMLElement, node: HTMLElement): boolean {
     if (!node.isConnected) return false;
@@ -735,6 +1104,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * open restores the native controls; leaving re-applies it exactly.
    */
   function liftInert(rail: HTMLElement): void {
+    if (nativeOnly) return;
     for (const found of Array.from(rail.querySelectorAll("[inert]"))) {
       if (!(found instanceof HTMLElement)) continue;
       if (inertTargets.includes(found)) continue;
@@ -757,6 +1127,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * puts the exact snapshot back on leave.
    */
   function liftReveal(rail: HTMLElement): void {
+    if (nativeOnly) return;
     if (revealSelector === "") return;
     const targets: RevealTarget[] = [];
     for (const found of Array.from(rail.querySelectorAll(revealSelector))) {
@@ -783,6 +1154,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * Both declarations are restored from their exact inline snapshots.
    */
   function suppressOverlap(): void {
+    if (nativeOnly) return;
     const selectors = definition?.suppress;
     const doc = boundDocument;
     if (selectors === undefined || selectors.length === 0 || doc === null) {
@@ -820,6 +1192,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * separately because an inline `overflow` shorthand expands into them.
    */
   function liftClip(rail: HTMLElement): void {
+    if (nativeOnly) return;
     if (definition?.revealRail !== true) return;
     const doc = boundDocument;
     const view = rail.ownerDocument.defaultView;
@@ -859,6 +1232,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * for the hovered moment and put back from its exact inline snapshot.
    */
   function liftShells(rail: HTMLElement, width: number): void {
+    if (nativeOnly) return;
     const selectors = definition?.shells;
     if (selectors === undefined || selectors.length === 0) return;
     const seen = new Set<HTMLElement>();
@@ -896,13 +1270,20 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   }
 
   function stretchShell(node: HTMLElement, width: number): void {
-    shellTargets.push({
-      node,
-      width: readSnapshot(node, "width"),
-      minWidth: readSnapshot(node, "min-width"),
-      maxWidth: readSnapshot(node, "max-width"),
-      boxSizing: readSnapshot(node, "box-sizing"),
-    });
+    // Only the first sight of a box describes the site. A refresh or a
+    // re-adopt lifts the same shell again, and a second snapshot would record
+    // the peek's own width as the site's original, so the release would put
+    // the widened box back and the panel would stay wide after the pointer
+    // left.
+    if (!shellTargets.some((target) => target.node === node)) {
+      shellTargets.push({
+        node,
+        width: readSnapshot(node, "width"),
+        minWidth: readSnapshot(node, "min-width"),
+        maxWidth: readSnapshot(node, "max-width"),
+        boxSizing: readSnapshot(node, "box-sizing"),
+      });
+    }
     const value = `${width}px`;
     node.style.setProperty("box-sizing", "border-box", "important");
     node.style.setProperty("width", value, "important");
@@ -942,6 +1323,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * single button from being widened by accident.
    */
   function liftContentShells(rail: HTMLElement, width: number): void {
+    if (nativeOnly) return;
     const view = rail.ownerDocument.defaultView;
     if (view === null) return;
     const rows = Array.from(
@@ -1086,6 +1468,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * stretched shell; one removed from layout has to be put back.
    */
   function liftLabels(rail: HTMLElement): void {
+    if (nativeOnly) return;
     const view = rail.ownerDocument.defaultView;
     if (view === null) return;
     for (const row of Array.from(
@@ -1140,7 +1523,12 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   function applyPeek(node: HTMLElement, adopting = false): void {
     cancelShow();
     cancelHide();
+    cancelOpen();
     cancelReacquire();
+    // A release left a deferred collapse press behind; this peek owns the rail
+    // again, so that press would toggle the panel the user just asked for.
+    cancelNativeCollapse();
+    suppressShowUntilExit = false;
     if (active === node) {
       refreshPeek(node);
       return;
@@ -1148,6 +1536,23 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     // A site that replaces its rail while expanding has already run its own
     // toggle. The adopted peek keeps that expansion and only takes over the
     // new node, so the panel is never toggled twice.
+    if (
+      adopting &&
+      nativeOnly &&
+      expandedByPeek &&
+      !nativePanelOpen(node) &&
+      !nativeOpenIsRecent()
+    ) {
+      // The page rebuilt the rail already closed, which is what a history
+      // jump and a finished collapse look like. Carrying the expansion into
+      // that node kept a peek alive over an empty frame and the release then
+      // pressed collapse on a closed rail, so the panel flapped between the
+      // site's width and the peek's. Retire against the node instead.
+      expandedByPeek = false;
+      collapseTarget = null;
+      releaseActive("navigation");
+      return;
+    }
     const carriedExpansion = adopting && expandedByPeek;
     const carriedCollapse = adopting ? collapseTarget : null;
     releaseActive(adopting ? "adopt" : "hover");
@@ -1156,6 +1561,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     const collapsedWidth = node.getBoundingClientRect().width;
     const width = peekWidthFor(node);
     activePeekWidth = width;
+    activeSide = sideOf(node);
     const measured = measureShift(node, collapsedWidth, width);
     const configuredShift = definition?.shift ?? 0;
     // A configured shift stands in for a measurement the site's clipping
@@ -1166,7 +1572,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     activeShift = shift;
     widthSnapshot = readSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR);
     shiftSnapshot = readSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR);
-    if (definition?.revealRail === true) {
+    if (!nativeOnly && definition?.revealRail === true) {
       railDisplaySnapshot = readSnapshot(node, "display");
       railOpacitySnapshot = readSnapshot(node, "opacity");
       railTransformSnapshot = readSnapshot(node, "transform");
@@ -1193,9 +1599,11 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     // that already covered part of the layout must never read as a menu the
     // rail just opened, or the pointer resting on it would pin the peek.
     snapshotPopovers();
-    node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${width}px`);
-    node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
-    node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
+    if (!nativeOnly) {
+      node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${width}px`);
+      node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
+      node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
+    }
     liftReveal(node);
     liftInert(node);
     liftClip(node);
@@ -1205,26 +1613,26 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     suppressOverlap();
     if (definition?.nativeExpand !== undefined) {
       if (carriedExpansion) {
-        const collapse = node.ownerDocument.querySelector(
-          definition.nativeExpand.collapse,
-        );
-        collapseTarget = collapse instanceof HTMLElement ? collapse : null;
-      } else {
-        const expand = node.ownerDocument.querySelector(
-          definition.nativeExpand.expand,
-        );
-        if (expand instanceof HTMLElement) {
-          expandedByPeek = true;
-          expand.click();
-          const collapse = node.ownerDocument.querySelector(
-            definition.nativeExpand.collapse,
-          );
-          collapseTarget = collapse instanceof HTMLElement ? collapse : null;
-          // The site renders the opened rail on its next paint, often by
-          // replacing the node the attribute was set on.
-          scheduleReacquire();
+        collapseTarget =
+          firstPaintedControl(node, definition.nativeExpand.collapse) ??
+          firstPaintedControl(node.ownerDocument, definition.nativeExpand.collapse);
+        if (nativeOnly) {
+          nativeOpenSeq += 1;
+          scheduleNativeOpenCheck(node, nativeOpenSeq);
         }
+      } else if (!pressNativeExpand(node) && nativeOnly) {
+        // Nothing the page painted can open the rail yet. The control often
+        // arrives with the render that follows the pointer, so the peek stays
+        // and retries instead of dropping a hover the site would have served.
+        retryNativeExpand(node);
       }
+      // The rail is the site's own expanded box now, so the pointer band has
+      // to follow that width rather than the configured cap.
+      activePeekWidth = Math.max(
+        activePeekWidth,
+        Math.round(node.getBoundingClientRect().width),
+      );
+      rememberBand(node.getBoundingClientRect());
     }
     const view = node.ownerDocument.defaultView;
     appliedHref = view?.location.href ?? "";
@@ -1237,6 +1645,17 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
    * shells, and the same leave behaviour as the node that opened it.
    */
   function refreshPeek(node: HTMLElement): void {
+    if (nativeOnly) {
+      const view = node.ownerDocument.defaultView;
+      if (view !== null && appliedHref === "") appliedHref = view.location.href;
+      const live = node.getBoundingClientRect();
+      activePeekWidth = Math.max(
+        activePeekWidth,
+        Math.round(live.width),
+      );
+      rememberBand(live);
+      return;
+    }
     const view = node.ownerDocument.defaultView;
     if (view === null) return;
     if (node.getAttribute(SIDEBAR_PEEK_ATTRIBUTE) === null) {
@@ -1290,6 +1709,11 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   function scheduleShow(rail: HTMLElement): void {
     cancelHide();
     if (active === rail) return;
+    // A press that navigates closes the panel the peek opened, and the pointer
+    // is still resting on the row it pressed. Re-arming there reopened the
+    // rail the site was closing, which is the pump the user sees as a stuck
+    // panel. The hold is dropped as soon as the pointer leaves the edge strip.
+    if (suppressShowUntilExit) return;
     if (pendingRail === rail && showTimer !== null) return;
     cancelShow();
     pendingRail = rail;
@@ -1389,6 +1813,24 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     }
   }
 
+  /**
+   * Every popup on screen right now. A press that opens an unannotated menu is
+   * recognised by the difference this set shows one beat later, which keeps
+   * sites that never mark their triggers working without guessing at markup.
+   */
+  function visiblePopovers(): Set<HTMLElement> {
+    const found = new Set<HTMLElement>();
+    const doc = boundDocument;
+    const view = doc?.defaultView ?? null;
+    if (doc === null || view === null) return found;
+    for (const node of Array.from(doc.querySelectorAll(POPOVER_SELECTOR))) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (!isVisiblePopover(node, view)) continue;
+      found.add(node);
+    }
+    return found;
+  }
+
   function isPreexistingPopover(node: HTMLElement): boolean {
     if (preexistingPopovers.size === 0) return false;
     for (const known of preexistingPopovers) {
@@ -1429,9 +1871,12 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return false;
     const doc = rail.ownerDocument;
     if (typeof doc.elementFromPoint !== "function") return false;
+    // A native site often replaces the rail it expanded, so the hit test is
+    // answered against whatever rail the page paints now.
+    const current = nativeOnly ? (resolveRail() ?? rail) : rail;
     const hit = doc.elementFromPoint(pointerX, pointerY);
     if (hit instanceof Element) {
-      if (rail.contains(hit)) return true;
+      if (current.contains(hit) || rail.contains(hit)) return true;
       // Gemini and Grok open through their own toggle, which sits outside the
       // rail. The pointer still rests on the control that opened the panel, so
       // the peek must not close underneath it.
@@ -1443,7 +1888,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     // sibling layer, a transparent overlay, or the blank space between two
     // rows. A miss there is the pointer crossing the panel, not leaving it,
     // so the peek's own geometry has the final say.
-    return withinPeekBand(rail, pointerX, pointerY);
+    return withinPeekBand(current, pointerX, pointerY);
   }
 
   function isMousePointer(event: Event): boolean {
@@ -1497,6 +1942,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
       }
     }
     if (!pointerNearEdge()) {
+      suppressShowUntilExit = false;
       cancelProbe();
       if (active !== null) requestHide(active);
       else if (pendingRail !== null) cancelShow();
@@ -1541,6 +1987,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     // A pointer that wandered into the middle of the page is no longer a
     // hovered rail, whether the peek is open or still pending.
     if (!pointerNearEdge()) {
+      suppressShowUntilExit = false;
       if (active !== null) requestHide(active);
       else if (pendingRail !== null) cancelShow();
       return;
@@ -1593,6 +2040,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     if (!isMousePointer(event)) return;
     pointerX = Number.NaN;
     pointerY = Number.NaN;
+    suppressShowUntilExit = false;
     cancelProbe();
     cancelShow();
     if (active !== null) scheduleHide(active);
@@ -1625,7 +2073,24 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     if (view !== null && anchor instanceof HTMLAnchorElement) {
       if (anchor.href === view.location.href) return;
     }
-    releaseActive("navigation");
+    // Menus and editors are not always annotated. Qwen mounts its history row
+    // menu on a plain button carrying only an aria-label, and retiring on that
+    // same task removed the trigger before the dropdown mounted, so the menu
+    // the press asked for never appeared. The release waits one beat and
+    // stands down when the press put a popup on screen.
+    const before = visiblePopovers();
+    cancelClickRelease();
+    clickReleaseTimer = setTimeout(() => {
+      clickReleaseTimer = null;
+      if (active !== rail) return;
+      for (const popup of visiblePopovers()) {
+        if (before.has(popup)) continue;
+        holdForPopover(rail);
+        return;
+      }
+      releaseActive("navigation");
+      suppressShowUntilExit = true;
+    }, SIDEBAR_PEEK_CLICK_RELEASE_MS);
   }
 
   /**
@@ -1657,7 +2122,10 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   /** A route change invalidates every timer and the collapsed state it assumed. */
   function handleNavigation(): void {
     cancelShow();
-    if (active !== null) releaseActive("navigation");
+    if (active !== null) {
+      releaseActive("navigation");
+      suppressShowUntilExit = true;
+    }
   }
 
   function handlePointerDown(event: Event): void {
@@ -1693,6 +2161,12 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   function handleFocusIn(event: Event): void {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    // Focus the page moves on its own says nothing about the pointer or the
+    // keyboard. A press on the collapse control or on a history row focuses
+    // that control, and expanding again on that focus fought the release.
+    if (performance.now() - lastUserKeyMs > SIDEBAR_PEEK_KEYBOARD_FOCUS_MS) {
+      return;
+    }
     const rail = railFor(target);
     if (rail === null) return;
     if (active === rail) return;
@@ -1701,6 +2175,13 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   }
 
   function handleKeyDown(event: Event): void {
+    // Several sites dismiss their own popovers by dispatching an Escape from
+    // a script (Perplexity's closeOpenPopup sends one to the body on a timer).
+    // Those events say nothing about the user, and acting on them closed the
+    // panel under a resting pointer, after which the next probe reopened it:
+    // a visible flap every time the site cleared a menu.
+    if (!isUserKey(event)) return;
+    lastUserKeyMs = performance.now();
     const key = (event as KeyboardEvent).key;
     if (key === "Escape") {
       cancelShow();
@@ -1804,6 +2285,8 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     cancelHide();
     cancelNativeCollapse();
     releaseActive("lifecycle");
+    peekBand = null;
+    suppressShowUntilExit = false;
     releaseTransitions();
     finishTransitionHold();
     stopRevealWatch();
