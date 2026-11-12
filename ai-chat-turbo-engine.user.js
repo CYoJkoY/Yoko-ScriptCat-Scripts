@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.20.2
+// @version      0.20.7
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -411,7 +411,10 @@
           ".sidenav-with-history-container",
           ".overflow-container"
         ],
-        peekWidth: 248,
+        // Matches the width the site paints after its own open control runs.
+        // A narrower cap leaves the pointer band short while the panel animates
+        // in, so a cursor already over the visible column reads as outside it.
+        peekWidth: 288,
         collapsedMaxWidth: 96
       },
       turnSelectorGroups: [
@@ -587,7 +590,9 @@
       // The rail is a Fluent NavDrawer that the site widens itself. Its width
       // rule sits in the `application` cascade layer with !important, so the
       // stylesheet override joins the site's first layer instead. The rail
-      // stays mounted and keeps its own listeners while peeking.
+      // stays mounted and keeps its own listeners while peeking. Its history
+      // list is only rendered once the drawer's own control opens it, so the
+      // peek presses that control instead of leaving an empty wide column.
       sidebar: {
         selectors: [
           'div.fai-CopilotNavDrawer[role="navigation"]',
@@ -600,6 +605,10 @@
           'button[aria-label*="Expand sidebar" i]',
           'button[aria-label*="Collapse sidebar" i]'
         ],
+        nativeExpand: {
+          expand: 'button[aria-label="展开边栏"], button[aria-label*="Expand sidebar" i]',
+          collapse: 'button[aria-label="折叠边栏"], button[aria-label*="Collapse sidebar" i]'
+        },
         peekWidth: 256,
         collapsedMaxWidth: 96
       },
@@ -649,6 +658,21 @@
           'button[aria-label*="Expand sidebar" i]',
           'button[aria-label*="Open sidebar" i]'
         ],
+        // Perplexity mounts the session list only after its own control opens
+        // the column; a widened shell keeps the compact markup and shows just
+        // the navigation rows. Its control ignores scripted presses in the
+        // builds that were measured, so the press is best effort: when the site
+        // honours it the thread titles appear, and when it does not the rail
+        // still widens without fighting the page.
+        nativeExpand: {
+          expand: 'button[aria-label="展开侧边栏"], button[aria-label*="Expand sidebar" i]',
+          collapse: 'button[aria-label="收起侧边栏"], button[aria-label*="Collapse sidebar" i]'
+        },
+        // Measured again on the live site: the control stays closed after a
+        // scripted click, so a peek that only pressed it left the rail at 56px
+        // and did nothing. The CSS widening stays the visible path here, and the
+        // press stays best effort for the builds that do honour it.
+        nativeOnly: false,
         peekWidth: 240,
         collapsedMaxWidth: 88
       },
@@ -694,11 +718,20 @@
       hosts: ["poe.com"],
       sidebar: {
         selectors: ['aside[class*="SidebarLayout_sidebar"]'],
-        triggers: ['button[aria-label="切换侧边栏折叠"]'],
+        triggers: [
+          'button[aria-label="切换侧边栏折叠"]',
+          'button[aria-label*="Toggle sidebar" i]'
+        ],
         // Poe's row wrapper keeps the rail in a flex row that clips overflow,
         // so the growth is cancelled by a fixed margin instead of a
         // measurement.
         shift: -180,
+        // The rail only renders its conversation list after the site's own
+        // toggle runs; widening the shell alone leaves the navigation icons.
+        nativeExpand: {
+          expand: 'button[aria-label="切换侧边栏折叠"], button[aria-label*="Toggle sidebar" i]',
+          collapse: 'button[aria-label="切换侧边栏折叠"], button[aria-label*="Toggle sidebar" i]'
+        },
         peekWidth: 248,
         collapsedMaxWidth: 88
       },
@@ -816,7 +849,14 @@
         ],
         // Yuanbao hides the whole wrapper with a transform and visibility on a
         // layer whose width is already laid out, so nothing has to be shifted.
+        // The hidden wrapper only carries a skeleton: the history list is
+        // mounted once the site's own trigger runs, so revealRail keeps showing
+        // the layer while nativeExpand asks the site for the real rows.
         revealRail: true,
+        nativeExpand: {
+          expand: '[aria-label="打开侧栏"]',
+          collapse: '[aria-label="收起侧栏"]'
+        },
         peekWidth: 260,
         collapsedMaxWidth: 96
       },
@@ -873,6 +913,14 @@
           'button[aria-label="展开侧边栏"]',
           'button[aria-label*="sidebar" i]'
         ],
+        // Qwen unmounts its history list when the rail collapses: the 60px
+        // rail keeps only two icon buttons, so widening that box shows an empty
+        // panel. The peek presses the site's own toggle, which renders the
+        // rows, and presses the same toggle on leave.
+        nativeExpand: {
+          expand: 'button[aria-label="切换侧边栏"], button[aria-label="展开侧边栏"], button[aria-label*="Toggle sidebar" i]',
+          collapse: 'button[aria-label="切换侧边栏"], button[aria-label="收起侧边栏"], button[aria-label*="Toggle sidebar" i]'
+        },
         peekWidth: 240,
         collapsedMaxWidth: 96
       },
@@ -1014,6 +1062,19 @@
       sidebar: {
         selectors: ["aside.el-aside.aside-container"],
         triggers: [".aside-header .operation-btn"],
+        // The header holds two controls with the same class: the search button
+        // sits first and the collapse toggle second, so pressing the first
+        // painted match opened a search box and left the rail collapsed. The
+        // history rows stay at zero height until that toggle runs.
+        nativeExpand: {
+          expand: ".aside-header .btn-area .operation-btn:not(.search-btn)",
+          collapse: ".aside-header .btn-area .operation-btn:not(.search-btn)"
+        },
+        // The class carries two controls and the site swaps their handlers as
+        // the panel opens. Widening the rail is the path that was verified here
+        // (40 -> 260 with 40 history rows), so the peek keeps writing geometry
+        // and treats the press as best effort rather than depending on it.
+        nativeOnly: false,
         peekWidth: 260,
         collapsedMaxWidth: 88
       },
@@ -1081,9 +1142,15 @@
       sidebar: {
         selectors: ["#sidebar"],
         triggers: ['button[aria-label="切换侧边栏"]'],
-        // The row that holds the rail clips overflow, so the growth is cancelled
-        // by a fixed margin instead of a measurement.
-        shift: -178,
+        // Z.ai renders the row actions (rename, delete, pin) from its expanded
+        // state only; a widened collapsed rail keeps the compact row markup and
+        // loses those buttons. The peek therefore presses the site's own toggle
+        // and lets the site lay the panel out, which is the same 238px column a
+        // real press produces.
+        nativeExpand: {
+          expand: 'button[aria-label="切换侧边栏"]',
+          collapse: 'button[aria-label="切换侧边栏"]'
+        },
         peekWidth: 238,
         collapsedMaxWidth: 88
       },
@@ -1796,7 +1863,15 @@ ${CODE_FENCE}
   var SIDEBAR_PEEK_POPOVER_HOLD_MS = 3e4;
   var SIDEBAR_PEEK_WIDTH_RATIO = 0.42;
   var SIDEBAR_PEEK_TRANSITION_HOLD_MS = 360;
+  var SIDEBAR_PEEK_NAVIGATION_COLLAPSE_MS = 360;
+  var SIDEBAR_PEEK_KEYBOARD_FOCUS_MS = 700;
+  var SIDEBAR_PEEK_OPEN_RETRY_MS = 90;
+  var SIDEBAR_PEEK_OPEN_ATTEMPTS = 8;
+  var SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS = 320;
+  var SIDEBAR_PEEK_NATIVE_OPEN_CHECKS = 2;
+  var SIDEBAR_PEEK_NATIVE_OPEN_GRACE_MS = 400;
   var SIDEBAR_PEEK_RELIFT_LIMIT = 4;
+  var SIDEBAR_PEEK_CLICK_RELEASE_MS = 140;
   var POPOVER_SELECTOR = [
     '[role="menu"]',
     '[role="listbox"]',
@@ -1827,11 +1902,13 @@ ${CODE_FENCE}
     const definition = options.sidebar;
     const showDelayMs = options.showDelayMs ?? SIDEBAR_PEEK_SHOW_DELAY_MS;
     const hideDelayMs = options.hideDelayMs ?? SIDEBAR_PEEK_HIDE_DELAY_MS;
+    const isUserKey = options.isUserKey ?? ((event) => event.isTrusted);
     const peekWidth = definition?.peekWidth ?? DEFAULT_PEEK_WIDTH;
     const collapsedMaxWidth = definition?.collapsedMaxWidth ?? DEFAULT_COLLAPSED_MAX_WIDTH;
     const sidebarSelectors = definition?.selectors ?? [];
     const triggerSelector = definition?.triggers?.join(", ") ?? "";
     const revealSelector = definition?.reveal?.join(", ") ?? "";
+    const nativeOnly = definition?.nativeExpand !== void 0 && definition?.nativeOnly !== false;
     let boundDocument = null;
     let observer = null;
     let resolveDocument = null;
@@ -1862,7 +1939,11 @@ ${CODE_FENCE}
     let expandedByPeek = false;
     let pointerX = Number.NaN;
     let pointerY = Number.NaN;
+    let lastUserKeyMs = Number.NEGATIVE_INFINITY;
     let activePeekWidth = peekWidth;
+    let activeSide = "left";
+    let peekBand = null;
+    let suppressShowUntilExit = false;
     let holdTimer = null;
     let holdRemainingMs = 0;
     let rescanNeeded = false;
@@ -1871,9 +1952,16 @@ ${CODE_FENCE}
     let activeShift = 0;
     let reacquireTimer = null;
     let reacquireAttempts = 0;
+    let openTimer = null;
+    let openAttempts = 0;
+    let nativeOpenTimer = null;
+    let nativeOpenChecks = 0;
+    let nativeOpenSeq = 0;
+    let nativeOpenPressedAt = Number.NEGATIVE_INFINITY;
     let transitionHoldTimer = null;
     let transitionHoldNode = null;
     let nativeCollapseTimer = null;
+    let clickReleaseTimer = null;
     const preexistingPopovers = /* @__PURE__ */ new Set();
     const hasRail = sidebarSelectors.length > 0;
     function isEnabled() {
@@ -1913,24 +2001,50 @@ ${CODE_FENCE}
       return false;
     }
     function isCollapsed(node) {
+      const painted = node.getBoundingClientRect();
+      if (rectIsOnScreen(node, painted)) {
+        return painted.width <= collapsedMaxWidth;
+      }
       for (const token of node.classList) {
         if (COLLAPSED_CLASS_TOKENS.has(token)) return true;
         if (EXPANDED_CLASS_TOKENS.has(token)) return false;
       }
-      const rect = node.getBoundingClientRect();
-      if (rect.width === 0) return true;
-      if (rect.right <= 1) return true;
-      const doc = node.ownerDocument;
-      const viewport = doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
-      if (viewport > 0 && rect.left >= viewport - 1) return true;
-      return rect.width <= collapsedMaxWidth;
+      if (painted.width === 0) return true;
+      if (painted.right <= 1) return true;
+      const viewport = viewportWidthOf(node);
+      if (viewport > 0 && painted.left >= viewport - 1) return true;
+      return painted.width <= collapsedMaxWidth;
     }
     function sideOf(node) {
-      const doc = node.ownerDocument;
-      const viewport = doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+      const viewport = viewportWidthOf(node);
       if (viewport <= 0) return "left";
       const rect = node.getBoundingClientRect();
       return rect.left + rect.width / 2 < viewport / 2 ? "left" : "right";
+    }
+    function viewportWidthOf(node) {
+      const doc = node.ownerDocument;
+      return doc.documentElement.clientWidth || doc.defaultView?.innerWidth || 0;
+    }
+    function viewportHeightOf(node) {
+      const doc = node.ownerDocument;
+      return doc.documentElement.clientHeight || doc.defaultView?.innerHeight || 0;
+    }
+    function rectIsOnScreen(node, rect) {
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      if (rect.right <= 1) return false;
+      const width = viewportWidthOf(node);
+      if (width > 0 && rect.left >= width - 1) return false;
+      const height = viewportHeightOf(node);
+      return height <= 0 || rect.bottom > 1 && rect.top < height - 1;
+    }
+    function rememberBand(rect) {
+      if (rect.width <= 0 || rect.height <= 0) return;
+      peekBand = {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom
+      };
     }
     function peekWidthFor(node) {
       const doc = node.ownerDocument;
@@ -1968,6 +2082,26 @@ ${CODE_FENCE}
       return x >= rect.left - SIDEBAR_PEEK_PROXIMITY_PX && x <= rect.right + SIDEBAR_PEEK_PROXIMITY_PX && y >= rect.top - SIDEBAR_PEEK_PROXIMITY_PX && y <= rect.bottom + SIDEBAR_PEEK_PROXIMITY_PX;
     }
     function withinPeekBand(rail, x, y) {
+      if (nativeOnly) {
+        const current = resolveRail() ?? rail;
+        const live = current.getBoundingClientRect();
+        if (rectHoldsPointer(live, x, y)) {
+          rememberBand(live);
+          return true;
+        }
+        if (peekBand !== null && boxHoldsPointer(peekBand, x, y)) return true;
+        const reach2 = Math.max(SIDEBAR_PEEK_LANE_PX, activePeekWidth, live.width);
+        const boxTop = live.height > 0 ? live.top : peekBand?.top ?? 0;
+        const boxBottom = live.height > 0 ? live.bottom : peekBand?.bottom ?? viewportHeightOf(current);
+        if (y < boxTop - SIDEBAR_PEEK_PROXIMITY_PX || y > boxBottom + SIDEBAR_PEEK_PROXIMITY_PX) {
+          return false;
+        }
+        if (activeSide === "right") {
+          const viewport = viewportWidthOf(current);
+          return x >= viewport - reach2 - SIDEBAR_PEEK_PROXIMITY_PX && x <= viewport + SIDEBAR_PEEK_PROXIMITY_PX;
+        }
+        return x >= -SIDEBAR_PEEK_PROXIMITY_PX && x <= reach2 + SIDEBAR_PEEK_PROXIMITY_PX;
+      }
       const rect = rail.getBoundingClientRect();
       const side = sideOf(rail);
       const reach = Math.max(rect.width, activePeekWidth);
@@ -1981,6 +2115,9 @@ ${CODE_FENCE}
         if (rectHoldsPointer(shell.node.getBoundingClientRect(), x, y)) return true;
       }
       return false;
+    }
+    function boxHoldsPointer(box, x, y) {
+      return x >= box.left - SIDEBAR_PEEK_PROXIMITY_PX && x <= box.right + SIDEBAR_PEEK_PROXIMITY_PX && y >= box.top - SIDEBAR_PEEK_PROXIMITY_PX && y <= box.bottom + SIDEBAR_PEEK_PROXIMITY_PX;
     }
     function measureShift(node, collapsedWidth, width) {
       const view = node.ownerDocument.defaultView;
@@ -2033,18 +2170,36 @@ ${CODE_FENCE}
       }
       holdRemainingMs = 0;
     }
+    function cancelOpen() {
+      if (openTimer !== null) {
+        clearTimeout(openTimer);
+        openTimer = null;
+      }
+      openAttempts = 0;
+    }
+    function cancelNativeOpenCheck() {
+      if (nativeOpenTimer !== null) {
+        clearTimeout(nativeOpenTimer);
+        nativeOpenTimer = null;
+      }
+      nativeOpenChecks = 0;
+    }
     function releaseActive(reason = "hover") {
       cancelHide();
       cancelHold();
+      cancelOpen();
+      cancelNativeOpenCheck();
       cancelReacquire();
       cancelProbe();
+      cancelClickRelease();
       rescanNeeded = false;
       preexistingPopovers.clear();
       const node = active;
       if (node === null) return;
       active = null;
-      const held = reason === "hover" || reason === "navigation";
+      const held = !nativeOnly && (reason === "hover" || reason === "navigation");
       if (held) holdTransitions(node);
+      const releasedWidth = node.getBoundingClientRect().width;
       let collapse = null;
       if (expandedByPeek) {
         expandedByPeek = false;
@@ -2086,7 +2241,14 @@ ${CODE_FENCE}
         void node.getBoundingClientRect();
         releaseTransitions();
       }
-      if (collapse !== null) requestNativeCollapse(node, collapse);
+      if (collapse !== null) {
+        requestNativeCollapse(
+          node,
+          collapse,
+          reason === "navigation" ? SIDEBAR_PEEK_NAVIGATION_COLLAPSE_MS : 0,
+          releasedWidth
+        );
+      }
     }
     function holdTransitions(rail) {
       finishTransitionHold();
@@ -2132,22 +2294,31 @@ ${CODE_FENCE}
       transitionHoldNode = null;
       if (node !== null) node.removeAttribute(SIDEBAR_PEEK_HOLD_ATTRIBUTE);
     }
-    function requestNativeCollapse(rail, control) {
+    function requestNativeCollapse(rail, control, delayMs, releasedWidth) {
       cancelNativeCollapse();
       nativeCollapseTimer = setTimeout(() => {
         nativeCollapseTimer = null;
         if (!rail.isConnected) return;
         if (control.ownerDocument !== rail.ownerDocument) return;
         if (active === rail) return;
-        if (rail.getBoundingClientRect().width <= collapsedMaxWidth) return;
+        const now = rail.getBoundingClientRect().width;
+        if (now <= collapsedMaxWidth) return;
+        if (releasedWidth > collapsedMaxWidth + 8 && now <= releasedWidth - 8) {
+          return;
+        }
         const target = isPaintedControl(control) ? control : firstPaintedControl(rail, definition?.nativeExpand?.collapse ?? "") ?? (control.isConnected ? control : null);
         target?.click();
-      }, 0);
+      }, delayMs);
     }
     function cancelNativeCollapse() {
       if (nativeCollapseTimer === null) return;
       clearTimeout(nativeCollapseTimer);
       nativeCollapseTimer = null;
+    }
+    function cancelClickRelease() {
+      if (clickReleaseTimer === null) return;
+      clearTimeout(clickReleaseTimer);
+      clickReleaseTimer = null;
     }
     function collapseFor(rail) {
       const selector = definition?.nativeExpand?.collapse ?? "";
@@ -2175,6 +2346,74 @@ ${CODE_FENCE}
       }
       return null;
     }
+    function pressNativeExpand(rail) {
+      const selector = definition?.nativeExpand?.expand ?? "";
+      if (selector === "") return true;
+      const expand = firstPaintedControl(rail, selector) ?? firstPaintedControl(rail.ownerDocument, selector);
+      if (expand === null) return false;
+      expandedByPeek = true;
+      nativeOpenPressedAt = performance.now();
+      nativeOpenSeq += 1;
+      const seq = nativeOpenSeq;
+      expand.click();
+      collapseTarget = firstPaintedControl(
+        rail.ownerDocument,
+        definition?.nativeExpand?.collapse ?? ""
+      ) ?? (isPaintedControl(expand) ? expand : null);
+      scheduleReacquire();
+      if (nativeOnly) scheduleNativeOpenCheck(rail, seq);
+      return true;
+    }
+    function nativePanelOpen(node) {
+      if (!node.isConnected) return false;
+      if (node.getBoundingClientRect().width > collapsedMaxWidth + 4) return true;
+      if (hasExpandedToken(node)) return true;
+      const state = node.getAttribute("data-state");
+      if (state === "expanded" || state === "open") return true;
+      return node.getAttribute("aria-expanded") === "true";
+    }
+    function nativeOpenIsRecent() {
+      return performance.now() - nativeOpenPressedAt <= SIDEBAR_PEEK_NATIVE_OPEN_GRACE_MS;
+    }
+    function scheduleNativeOpenCheck(rail, seq) {
+      cancelNativeOpenCheck();
+      const check = () => {
+        nativeOpenTimer = null;
+        if (seq !== nativeOpenSeq) return;
+        if (active === null) return;
+        const current = resolveRail();
+        if (current !== null && current !== rail) {
+          return;
+        }
+        if (nativePanelOpen(rail)) return;
+        nativeOpenChecks += 1;
+        if (nativeOpenChecks < SIDEBAR_PEEK_NATIVE_OPEN_CHECKS) {
+          nativeOpenTimer = setTimeout(check, SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS);
+          return;
+        }
+        expandedByPeek = false;
+        collapseTarget = null;
+        releaseActive("lifecycle");
+      };
+      nativeOpenTimer = setTimeout(check, SIDEBAR_PEEK_NATIVE_OPEN_CHECK_MS);
+    }
+    function retryNativeExpand(rail) {
+      if (openTimer !== null) return;
+      if (openAttempts >= SIDEBAR_PEEK_OPEN_ATTEMPTS) {
+        releaseActive("lifecycle");
+        return;
+      }
+      openAttempts += 1;
+      openTimer = setTimeout(() => {
+        openTimer = null;
+        if (active !== rail) return;
+        if (!rail.isConnected) {
+          releaseActive("lifecycle");
+          return;
+        }
+        if (!pressNativeExpand(rail)) retryNativeExpand(rail);
+      }, SIDEBAR_PEEK_OPEN_RETRY_MS);
+    }
     function stillOwned(rail, node) {
       if (!node.isConnected) return false;
       if (node.ownerDocument !== rail.ownerDocument) return false;
@@ -2185,6 +2424,7 @@ ${CODE_FENCE}
       return true;
     }
     function liftInert(rail) {
+      if (nativeOnly) return;
       for (const found of Array.from(rail.querySelectorAll("[inert]"))) {
         if (!(found instanceof HTMLElement)) continue;
         if (inertTargets.includes(found)) continue;
@@ -2199,6 +2439,7 @@ ${CODE_FENCE}
       for (const node of targets) node.setAttribute("inert", "");
     }
     function liftReveal(rail) {
+      if (nativeOnly) return;
       if (revealSelector === "") return;
       const targets = [];
       for (const found of Array.from(rail.querySelectorAll(revealSelector))) {
@@ -2217,6 +2458,7 @@ ${CODE_FENCE}
       }
     }
     function suppressOverlap() {
+      if (nativeOnly) return;
       const selectors = definition?.suppress;
       const doc = boundDocument;
       if (selectors === void 0 || selectors.length === 0 || doc === null) {
@@ -2245,6 +2487,7 @@ ${CODE_FENCE}
       }
     }
     function liftClip(rail) {
+      if (nativeOnly) return;
       if (definition?.revealRail !== true) return;
       const doc = boundDocument;
       const view = rail.ownerDocument.defaultView;
@@ -2272,6 +2515,7 @@ ${CODE_FENCE}
       }
     }
     function liftShells(rail, width) {
+      if (nativeOnly) return;
       const selectors = definition?.shells;
       if (selectors === void 0 || selectors.length === 0) return;
       const seen = /* @__PURE__ */ new Set();
@@ -2296,13 +2540,15 @@ ${CODE_FENCE}
       return available;
     }
     function stretchShell(node, width) {
-      shellTargets.push({
-        node,
-        width: readSnapshot(node, "width"),
-        minWidth: readSnapshot(node, "min-width"),
-        maxWidth: readSnapshot(node, "max-width"),
-        boxSizing: readSnapshot(node, "box-sizing")
-      });
+      if (!shellTargets.some((target) => target.node === node)) {
+        shellTargets.push({
+          node,
+          width: readSnapshot(node, "width"),
+          minWidth: readSnapshot(node, "min-width"),
+          maxWidth: readSnapshot(node, "max-width"),
+          boxSizing: readSnapshot(node, "box-sizing")
+        });
+      }
       const value = `${width}px`;
       node.style.setProperty("box-sizing", "border-box", "important");
       node.style.setProperty("width", value, "important");
@@ -2329,6 +2575,7 @@ ${CODE_FENCE}
       }
     }
     function liftContentShells(rail, width) {
+      if (nativeOnly) return;
       const view = rail.ownerDocument.defaultView;
       if (view === null) return;
       const rows = Array.from(
@@ -2431,6 +2678,7 @@ ${CODE_FENCE}
       liftLabels(rail);
     }
     function liftLabels(rail) {
+      if (nativeOnly) return;
       const view = rail.ownerDocument.defaultView;
       if (view === null) return;
       for (const row of Array.from(
@@ -2479,9 +2727,18 @@ ${CODE_FENCE}
     function applyPeek(node, adopting = false) {
       cancelShow();
       cancelHide();
+      cancelOpen();
       cancelReacquire();
+      cancelNativeCollapse();
+      suppressShowUntilExit = false;
       if (active === node) {
         refreshPeek(node);
+        return;
+      }
+      if (adopting && nativeOnly && expandedByPeek && !nativePanelOpen(node) && !nativeOpenIsRecent()) {
+        expandedByPeek = false;
+        collapseTarget = null;
+        releaseActive("navigation");
         return;
       }
       const carriedExpansion = adopting && expandedByPeek;
@@ -2492,6 +2749,7 @@ ${CODE_FENCE}
       const collapsedWidth = node.getBoundingClientRect().width;
       const width = peekWidthFor(node);
       activePeekWidth = width;
+      activeSide = sideOf(node);
       const measured = measureShift(node, collapsedWidth, width);
       const configuredShift = definition?.shift ?? 0;
       const fallbackShift = width === peekWidth ? configuredShift : configuredShift + (peekWidth - width);
@@ -2499,7 +2757,7 @@ ${CODE_FENCE}
       activeShift = shift;
       widthSnapshot = readSnapshot(node, SIDEBAR_PEEK_WIDTH_VAR);
       shiftSnapshot = readSnapshot(node, SIDEBAR_PEEK_SHIFT_VAR);
-      if (definition?.revealRail === true) {
+      if (!nativeOnly && definition?.revealRail === true) {
         railDisplaySnapshot = readSnapshot(node, "display");
         railOpacitySnapshot = readSnapshot(node, "opacity");
         railTransformSnapshot = readSnapshot(node, "transform");
@@ -2518,9 +2776,11 @@ ${CODE_FENCE}
       reliftAttempts = 0;
       finishTransitionHold();
       snapshotPopovers();
-      node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${width}px`);
-      node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
-      node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
+      if (!nativeOnly) {
+        node.style.setProperty(SIDEBAR_PEEK_WIDTH_VAR, `${width}px`);
+        node.style.setProperty(SIDEBAR_PEEK_SHIFT_VAR, `${shift}px`);
+        node.setAttribute(SIDEBAR_PEEK_ATTRIBUTE, sideOf(node));
+      }
       liftReveal(node);
       liftInert(node);
       liftClip(node);
@@ -2530,29 +2790,35 @@ ${CODE_FENCE}
       suppressOverlap();
       if (definition?.nativeExpand !== void 0) {
         if (carriedExpansion) {
-          const collapse = node.ownerDocument.querySelector(
-            definition.nativeExpand.collapse
-          );
-          collapseTarget = collapse instanceof HTMLElement ? collapse : null;
-        } else {
-          const expand = node.ownerDocument.querySelector(
-            definition.nativeExpand.expand
-          );
-          if (expand instanceof HTMLElement) {
-            expandedByPeek = true;
-            expand.click();
-            const collapse = node.ownerDocument.querySelector(
-              definition.nativeExpand.collapse
-            );
-            collapseTarget = collapse instanceof HTMLElement ? collapse : null;
-            scheduleReacquire();
+          collapseTarget = firstPaintedControl(node, definition.nativeExpand.collapse) ?? firstPaintedControl(node.ownerDocument, definition.nativeExpand.collapse);
+          if (nativeOnly) {
+            nativeOpenSeq += 1;
+            scheduleNativeOpenCheck(node, nativeOpenSeq);
           }
+        } else if (!pressNativeExpand(node) && nativeOnly) {
+          retryNativeExpand(node);
         }
+        activePeekWidth = Math.max(
+          activePeekWidth,
+          Math.round(node.getBoundingClientRect().width)
+        );
+        rememberBand(node.getBoundingClientRect());
       }
       const view = node.ownerDocument.defaultView;
       appliedHref = view?.location.href ?? "";
     }
     function refreshPeek(node) {
+      if (nativeOnly) {
+        const view2 = node.ownerDocument.defaultView;
+        if (view2 !== null && appliedHref === "") appliedHref = view2.location.href;
+        const live = node.getBoundingClientRect();
+        activePeekWidth = Math.max(
+          activePeekWidth,
+          Math.round(live.width)
+        );
+        rememberBand(live);
+        return;
+      }
       const view = node.ownerDocument.defaultView;
       if (view === null) return;
       if (node.getAttribute(SIDEBAR_PEEK_ATTRIBUTE) === null) {
@@ -2602,6 +2868,7 @@ ${CODE_FENCE}
     function scheduleShow(rail) {
       cancelHide();
       if (active === rail) return;
+      if (suppressShowUntilExit) return;
       if (pendingRail === rail && showTimer !== null) return;
       cancelShow();
       pendingRail = rail;
@@ -2672,6 +2939,18 @@ ${CODE_FENCE}
         preexistingPopovers.add(found);
       }
     }
+    function visiblePopovers() {
+      const found = /* @__PURE__ */ new Set();
+      const doc = boundDocument;
+      const view = doc?.defaultView ?? null;
+      if (doc === null || view === null) return found;
+      for (const node of Array.from(doc.querySelectorAll(POPOVER_SELECTOR))) {
+        if (!(node instanceof HTMLElement)) continue;
+        if (!isVisiblePopover(node, view)) continue;
+        found.add(node);
+      }
+      return found;
+    }
     function isPreexistingPopover(node) {
       if (preexistingPopovers.size === 0) return false;
       for (const known of preexistingPopovers) {
@@ -2705,14 +2984,15 @@ ${CODE_FENCE}
       if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return false;
       const doc = rail.ownerDocument;
       if (typeof doc.elementFromPoint !== "function") return false;
+      const current = nativeOnly ? resolveRail() ?? rail : rail;
       const hit = doc.elementFromPoint(pointerX, pointerY);
       if (hit instanceof Element) {
-        if (rail.contains(hit)) return true;
+        if (current.contains(hit) || rail.contains(hit)) return true;
         if (triggerSelector !== "" && hit.closest(triggerSelector) !== null) {
           return true;
         }
       }
-      return withinPeekBand(rail, pointerX, pointerY);
+      return withinPeekBand(current, pointerX, pointerY);
     }
     function isMousePointer(event) {
       const pointerType = event.pointerType;
@@ -2750,6 +3030,7 @@ ${CODE_FENCE}
         }
       }
       if (!pointerNearEdge()) {
+        suppressShowUntilExit = false;
         cancelProbe();
         if (active !== null) requestHide(active);
         else if (pendingRail !== null) cancelShow();
@@ -2781,6 +3062,7 @@ ${CODE_FENCE}
       lastProbeMs = performance.now();
       if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return;
       if (!pointerNearEdge()) {
+        suppressShowUntilExit = false;
         if (active !== null) requestHide(active);
         else if (pendingRail !== null) cancelShow();
         return;
@@ -2821,6 +3103,7 @@ ${CODE_FENCE}
       if (!isMousePointer(event)) return;
       pointerX = Number.NaN;
       pointerY = Number.NaN;
+      suppressShowUntilExit = false;
       cancelProbe();
       cancelShow();
       if (active !== null) scheduleHide(active);
@@ -2841,7 +3124,19 @@ ${CODE_FENCE}
       if (view !== null && anchor instanceof HTMLAnchorElement) {
         if (anchor.href === view.location.href) return;
       }
-      releaseActive("navigation");
+      const before = visiblePopovers();
+      cancelClickRelease();
+      clickReleaseTimer = setTimeout(() => {
+        clickReleaseTimer = null;
+        if (active !== rail) return;
+        for (const popup of visiblePopovers()) {
+          if (before.has(popup)) continue;
+          holdForPopover(rail);
+          return;
+        }
+        releaseActive("navigation");
+        suppressShowUntilExit = true;
+      }, SIDEBAR_PEEK_CLICK_RELEASE_MS);
     }
     function keepsPeek(target) {
       if (target.closest(
@@ -2862,7 +3157,10 @@ ${CODE_FENCE}
     }
     function handleNavigation() {
       cancelShow();
-      if (active !== null) releaseActive("navigation");
+      if (active !== null) {
+        releaseActive("navigation");
+        suppressShowUntilExit = true;
+      }
     }
     function handlePointerDown(event) {
       const target = event.target;
@@ -2888,6 +3186,9 @@ ${CODE_FENCE}
     function handleFocusIn(event) {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      if (performance.now() - lastUserKeyMs > SIDEBAR_PEEK_KEYBOARD_FOCUS_MS) {
+        return;
+      }
       const rail = railFor(target);
       if (rail === null) return;
       if (active === rail) return;
@@ -2895,6 +3196,8 @@ ${CODE_FENCE}
       applyPeek(rail);
     }
     function handleKeyDown(event) {
+      if (!isUserKey(event)) return;
+      lastUserKeyMs = performance.now();
       const key = event.key;
       if (key === "Escape") {
         cancelShow();
@@ -2981,6 +3284,8 @@ ${CODE_FENCE}
       cancelHide();
       cancelNativeCollapse();
       releaseActive("lifecycle");
+      peekBand = null;
+      suppressShowUntilExit = false;
       releaseTransitions();
       finishTransitionHold();
       stopRevealWatch();
