@@ -371,15 +371,16 @@ export interface RailEmojiPackConfig {
  * Every cell in these sheets is square, so a sheet scales to
  * columns × cell by rows × cell and the cell offset is a multiple of one cell.
  */
-export const RAIL_EMOJI_PACKS: Readonly<Record<RailEmojiPack, RailEmojiPackConfig>> = {
+const railEmojiPacks: Record<RailEmojiPack, RailEmojiPackConfig> = {
   // v34 keeps the first 18 rows of v33 and adds row 19 for 抱拳 (191).
   cube: { sprite: "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v34.png", columns: 6, rows: 19 },
   heygirl: { sprite: "https://cdn.max-c.com/heybox_web/emoji/cube2/cube2_emoji.png", columns: 6, rows: 4 },
 };
 
-export const RAIL_EMOJI_CELL = 17;
+/** Stable public view of the active sprite registry; live parsing replaces its packs. */
+export const RAIL_EMOJI_PACKS = railEmojiPacks as Readonly<Record<RailEmojiPack, RailEmojiPackConfig>>;
 
-export const RAIL_EMOJI_SPRITE = RAIL_EMOJI_PACKS.cube.sprite;
+export const RAIL_EMOJI_CELL = 17;
 
 /** The comment API returns both `[cube_name]` and `[heygirl_name]` tokens. */
 export const RAIL_EMOJI_TOKEN = /\[([a-z0-9]{1,16})_([^\]]{1,64})\]/i;
@@ -419,7 +420,7 @@ export const RAIL_HEYGIRL_NAMES = [
  * `getEmojiByUnicode`, so a codepoint shared by several newer cube emoji (the
  * icon font stops at e02f) resolves exactly like it does on the site.
  */
-export const RAIL_CUBE_FONT_NAMES: Readonly<Record<string, string>> = {
+const railCubeFontNames: Record<string, string> = {
   e012: "哭泣", e037: "酷", e003: "doge", e013: "喜欢",
   e03b: "黑人问号", e020: "惊讶", e01d: "开心", e025: "捂脸哭",
   e029: "晕", e021: "感动", e017: "委屈", e01a: "并不简单",
@@ -437,7 +438,7 @@ export const RAIL_CUBE_FONT_NAMES: Readonly<Record<string, string>> = {
   e02f: "电牛",
 };
 
-export const RAIL_HEYGIRL_FONT_NAMES: Readonly<Record<string, string>> = {
+const railHeygirlFontNames: Record<string, string> = {
   e019: "诶嘿", e006: "哭", e014: "白嫖怪", e012: "疑问",
   e013: "痴", e007: "喜欢", e00e: "捏脸", e00a: "害羞",
   e016: "苦酒入喉", e015: "秃", e001: "rua!", e004: "吃瓜",
@@ -445,6 +446,9 @@ export const RAIL_HEYGIRL_FONT_NAMES: Readonly<Record<string, string>> = {
   e00b: "开可乐", e005: "哈哈", e011: "滑稽", e003: "偷看",
   e008: "喝奶茶", e00c: "惊", e018: "记下来", e00d: "挨刀",
 };
+
+export const RAIL_CUBE_FONT_NAMES = railCubeFontNames as Readonly<Record<string, string>>;
+export const RAIL_HEYGIRL_FONT_NAMES = railHeygirlFontNames as Readonly<Record<string, string>>;
 
 export const RAIL_EMOJI_NAME_IDS = new Map(
   RAIL_EMOJI_NAMES.map((name, index) => [name, String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1)])
@@ -458,6 +462,88 @@ const RAIL_EMOJI_IDS_BY_PACK: Readonly<Record<RailEmojiPack, ReadonlyMap<string,
   cube: RAIL_EMOJI_NAME_IDS,
   heygirl: RAIL_HEYGIRL_NAME_IDS,
 };
+
+export interface RailEmojiCatalogEntry {
+  name: string;
+  id: string;
+  unicode?: string;
+}
+
+export interface RailEmojiCatalogPack {
+  sprite: string;
+  columns: number;
+  rows: number;
+  entries: readonly RailEmojiCatalogEntry[];
+}
+
+export type RailEmojiCatalog = Readonly<Record<RailEmojiPack, RailEmojiCatalogPack>>;
+
+const deriveRailEmojiCatalogId = (index: number): string =>
+  String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1);
+
+const railEmojiCatalogEntries: Record<RailEmojiPack, RailEmojiCatalogEntry[]> = {
+  cube: RAIL_EMOJI_NAMES.map((name, index) => ({ name, id: deriveRailEmojiCatalogId(index) })),
+  heygirl: RAIL_HEYGIRL_NAMES.map((name, index) => ({ name, id: deriveRailEmojiCatalogId(index) })),
+};
+
+const isValidRailEmojiCatalogPack = (value: unknown): value is RailEmojiCatalogPack => {
+  if (typeof value !== "object" || value === null) return false;
+  const pack = value as Partial<RailEmojiCatalogPack>;
+  return typeof pack.sprite === "string"
+    && /^https?:\/\/[^\s]+$/i.test(pack.sprite)
+    && typeof pack.columns === "number" && Number.isInteger(pack.columns)
+    && pack.columns > 0 && pack.columns < 100
+    && typeof pack.rows === "number" && Number.isInteger(pack.rows)
+    && pack.rows > 0 && pack.rows < 100
+    && Array.isArray(pack.entries) && pack.entries.length > 0;
+};
+
+/**
+ * Replaces the built-in emoji registry with the site's current catalog. A
+ * partial catalog is allowed so a broken pack cannot erase the other one.
+ */
+export function applyRailEmojiCatalog(catalog: Partial<RailEmojiCatalog>): boolean {
+  let changed = false;
+  for (const pack of ["cube", "heygirl"] as const) {
+    const next = catalog[pack];
+    if (!isValidRailEmojiCatalogPack(next)) continue;
+    const seenIds = new Set<string>();
+    const entries: RailEmojiCatalogEntry[] = [];
+    for (const entry of next.entries) {
+      if (typeof entry !== "object" || entry === null) return false;
+      const { name, id, unicode } = entry as Partial<RailEmojiCatalogEntry>;
+      if (typeof name !== "string" || name.trim() === "" || name.length > 64) return false;
+      const numeric = typeof id === "string" ? Number(id) : Number.NaN;
+      const unit = numeric % 10;
+      const row = Math.floor(numeric / 10);
+      if (!Number.isInteger(numeric) || numeric < 11 || unit < 1 || unit > next.columns || row < 1 || row > next.rows || seenIds.has(id as string)) {
+        return false;
+      }
+      const normalizedId = String(numeric);
+      seenIds.add(normalizedId);
+      entries.push(unicode === undefined ? { name, id: normalizedId } : { name, id: normalizedId, unicode });
+    }
+    railEmojiPacks[pack] = { sprite: next.sprite, columns: next.columns, rows: next.rows };
+    railEmojiCatalogEntries[pack] = entries;
+    const idMap = pack === "cube" ? RAIL_EMOJI_NAME_IDS : RAIL_HEYGIRL_NAME_IDS;
+    const fontMap = pack === "cube" ? railCubeFontNames : railHeygirlFontNames;
+    idMap.clear();
+    for (const key of Object.keys(fontMap)) delete fontMap[key];
+    for (const entry of entries) {
+      idMap.set(entry.name, entry.id);
+      if (typeof entry.unicode === "string" && entry.unicode !== "" && fontMap[entry.unicode] === undefined) {
+        fontMap[entry.unicode] = entry.name;
+      }
+    }
+    changed = true;
+  }
+  return changed;
+}
+
+/** Entries currently offered by the active registry, in site order. */
+export function readRailEmojiCatalogEntries(pack: RailEmojiPack): readonly RailEmojiCatalogEntry[] {
+  return railEmojiCatalogEntries[pack];
+}
 
 export interface RailEmojiRef {
   type: "emoji";

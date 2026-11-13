@@ -36,7 +36,19 @@ vi.hoisted(() => {
 });
 
 import { READER_ID, watchReader } from "../scripts/heybox-up/src/ui/reader";
-import { clearRailPageCache, writeRailPageCache } from "../scripts/heybox-up/src/ui/rail";
+import {
+  resetRailEmojiCatalogCache,
+} from "../scripts/heybox-up/src/ui/emoji-catalog";
+import {
+  applyRailEmojiCatalog,
+  clearRailPageCache,
+  RAIL_EMOJI_NAMES,
+  RAIL_EMOJI_PACKS,
+  RAIL_HEYGIRL_NAMES,
+  readRailEmojiCatalogEntries,
+  writeRailPageCache,
+  type RailEmojiCatalog,
+} from "../scripts/heybox-up/src/ui/rail";
 
 const navigation = {
   sync: (): void => undefined,
@@ -46,9 +58,34 @@ const navigation = {
   subscribe: () => (): void => undefined,
 };
 
-function mountReader(): HTMLElement {
+const baselineRailEmojiCatalog = (): RailEmojiCatalog => ({
+  cube: {
+    sprite: RAIL_EMOJI_PACKS.cube.sprite,
+    columns: RAIL_EMOJI_PACKS.cube.columns,
+    rows: RAIL_EMOJI_PACKS.cube.rows,
+    entries: RAIL_EMOJI_NAMES.map((name, index) => ({
+      name,
+      id: String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1),
+    })),
+  },
+  heygirl: {
+    sprite: RAIL_EMOJI_PACKS.heygirl.sprite,
+    columns: RAIL_EMOJI_PACKS.heygirl.columns,
+    rows: RAIL_EMOJI_PACKS.heygirl.rows,
+    entries: RAIL_HEYGIRL_NAMES.map((name, index) => ({
+      name,
+      id: String((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1),
+    })),
+  },
+});
+
+function mountReader(withLiveAssets: boolean = false): HTMLElement {
   history.replaceState(null, "", "/app/bbs/link/123456");
   document.body.innerHTML = [
+    ...(withLiveAssets ? [
+      '<script src="https://static.example/static/heybox/webapp/@heybox-spa/website/app/index-test.js"></script>',
+      '<link rel="stylesheet" href="https://static.example/static/heybox/webapp/@heybox-spa/website/app/index-test.css">',
+    ] : []),
     '<div id="page-bbs-link">',
     '<div class="hb-bbs-image-text">',
     '<div class="image-text__title">Title</div>',
@@ -105,9 +142,9 @@ describe("reader comment panel first open", () => {
 
   it("re-reads page one from the network instead of the cached copy", async () => {
     writeRailPageCache("123456", 1, "42", stalePage());
-    const calls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn((input: unknown) => {
-      calls.push(String(input));
+    const calls: { url: string; body: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: unknown, init?: RequestInit) => {
+      calls.push({ url: String(input), body: String(init?.body ?? "") });
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -118,7 +155,12 @@ describe("reader comment panel first open", () => {
     host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
     await new Promise((resolve) => setTimeout(resolve, 1500));
     const list = host.ownerDocument.querySelector(".hbu-reader-comments-list");
-    expect(calls.some((url) => url.includes("link_id=123456") && url.includes("page=1"))).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.url.includes("link_id=123456") && call.url.includes("page=1"),
+      ),
+    ).toBe(true);
     expect(list?.textContent ?? "").toContain("fresh floor");
   });
 
@@ -206,8 +248,8 @@ describe("reader comment panel first open", () => {
     expect(panel?.hidden).toBe(false);
     const cube = Array.from(panel?.querySelectorAll<HTMLButtonElement>('[data-pack="cube"] button') ?? []);
     const heygirl = Array.from(panel?.querySelectorAll<HTMLButtonElement>('[data-pack="heygirl"] button') ?? []);
-    expect(cube).toHaveLength(109);
-    expect(heygirl).toHaveLength(24);
+    expect(cube).toHaveLength(readRailEmojiCatalogEntries("cube").length);
+    expect(heygirl).toHaveLength(readRailEmojiCatalogEntries("heygirl").length);
     // Every button paints a sprite cell, so nothing renders as a blank square.
     for (const button of [...cube, ...heygirl]) {
       const glyph = button.querySelector<HTMLElement>("span");
@@ -217,10 +259,130 @@ describe("reader comment panel first open", () => {
     expect(cube[0]?.getAttribute("aria-label")).toBe("盒表情 哭泣");
     expect(heygirl[23]?.getAttribute("aria-label")).toBe("黑盒娘 挨刀");
 
-    const input = host.ownerDocument.querySelector<HTMLTextAreaElement>(".hbu-reader-composer-input");
+    const input = host.ownerDocument.querySelector<HTMLElement>(".hbu-reader-composer-input");
     cube[0]?.click();
     heygirl[23]?.click();
-    expect(input?.value).toBe("[cube_哭泣][heygirl_挨刀]");
+    const glyphs = Array.from(input?.querySelectorAll<HTMLElement>("[data-emoji]") ?? []);
+    expect(glyphs.map((glyph) => glyph.dataset["emoji"])).toEqual(["cube_哭泣", "heygirl_挨刀"]);
+    expect(input?.textContent).not.toContain("[cube_哭泣]");
+    expect(input?.textContent).not.toContain("[heygirl_挨刀]");
+  });
+
+  it("renders typed and pasted tokens while submitting raw tokens", async () => {
+    const calls: { url: string; body: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: unknown, init?: RequestInit) => {
+      calls.push({ url: String(input), body: String(init?.body ?? "") });
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(treePayload),
+      });
+    }));
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const input = host.ownerDocument.querySelector<HTMLElement>(".hbu-reader-composer-input");
+    expect(input).not.toBeNull();
+    input!.textContent = "手动[cube_哭泣]";
+    input!.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(input!.querySelector<HTMLElement>("[data-emoji='cube_哭泣']")).not.toBeNull();
+    expect(input!.textContent).not.toContain("[cube_哭泣]");
+
+    const paste = new Event("paste", { bubbles: true, cancelable: true }) as Event & {
+      clipboardData: Pick<DataTransfer, "getData">;
+    };
+    paste.clipboardData = {
+      getData: (format: string) => format === "text/plain" ? "粘贴[heygirl_挨刀]" : "",
+    };
+    input!.dispatchEvent(paste);
+    expect(input!.querySelector<HTMLElement>("[data-emoji='heygirl_挨刀']")).not.toBeNull();
+    expect(input!.textContent).not.toContain("[heygirl_挨刀]");
+
+    host.ownerDocument.querySelector<HTMLButtonElement>(".hbu-reader-composer-submit")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const created = calls.find((call) => call.url.includes("/comment/create"));
+    expect(created).toBeTruthy();
+    expect(new URLSearchParams(created?.body ?? "").get("text")).toBe(
+      "手动[cube_哭泣]粘贴[heygirl_挨刀]",
+    );
+  });
+
+  it("loads the live emoji catalog and renders composer tokens", async () => {
+    const cubeNames = Array.from({ length: 111 }, (_, index) =>
+      index === 109 ? "预言" : index === 110 ? "鬼斩客" : "旧" + (index + 1),
+    );
+    const cubeList = cubeNames
+      .map((name, index) => '{name:"' + name + '",id:' + ((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1) + ',unicode:"e02f"}')
+      .join(",");
+    const heygirlList = ["诶嘿", "挨刀"]
+      .map((name, index) => '{name:"' + name + '",id:' + ((Math.floor(index / 6) + 1) * 10 + (index % 6) + 1) + '}')
+      .join(",");
+    const script = [
+      'const cubeList=[' + cubeList + '];',
+      'const heygirlList=[' + heygirlList + '];',
+      'const packs=[{type:"cube",list:cubeList},{type:"heygirl",list:heygirlList}];',
+    ].join("");
+    const css = [
+      '.hb-emoji-cube{background-image:url(https://imgheybox.max-c.com/heybox_web/emoji/cube/cube_emoji_v36.png);background-size:120px 380px;}',
+      ':root{--cube-length:20px;}',
+      '.hb-emoji-heygirl{background-image:url(https://cdn.max-c.com/heybox_web/emoji/cube2/cube2_emoji.png);background-size:120px 80px;}',
+      ':root{--heygirl-length:20px;}',
+    ].join("");
+    const calls: { url: string; body: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: unknown, init?: RequestInit) => {
+      calls.push({ url: String(input), body: String(init?.body ?? "") });
+      const url = String(input);
+      if (url.endsWith("index-test.js")) return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(script) });
+      if (url.endsWith("index-test.css")) return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(css) });
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          status: "ok",
+          result: {
+            comments: [{
+              comment: [{
+                comment_id: "9200",
+                text: "<p>[cube_预言]</p>",
+                user: { username: "me", userid: 42 },
+              }],
+            }],
+            link: { comment_num: 1, title: "t" },
+          },
+        }),
+      });
+    }));
+    try {
+      resetRailEmojiCatalogCache();
+      const host = mountReader(true);
+      host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await vi.waitFor(() => {
+        const cube = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-pack="cube"] button'));
+        expect(cube).toHaveLength(111);
+        expect(cube.at(-1)?.title).toBe("鬼斩客");
+        expect(cube.at(-1)?.querySelector<HTMLElement>("span")?.style.backgroundImage).toContain("cube_emoji_v36.png");
+      });
+      const prophecy = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-pack="cube"] button'))
+        .find((button) => button.dataset["name"] === "预言");
+      prophecy?.click();
+      const input = document.querySelector<HTMLElement>(".hbu-reader-composer-input");
+      const glyph = input?.querySelector<HTMLElement>("[data-emoji='cube_预言']");
+      expect(glyph).not.toBeNull();
+      expect(input?.textContent).not.toContain("[cube_预言]");
+      const rendered = document.querySelector<HTMLElement>(".hbu-reader-comments-emoji");
+      expect(rendered?.style.backgroundImage).toContain("cube_emoji_v36.png");
+      expect(rendered?.style.backgroundSize).toBe("102px 323px");
+      expect(rendered?.style.backgroundPosition).toBe("-17px -306px");
+      document.querySelector<HTMLButtonElement>(".hbu-reader-composer-submit")?.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const created = calls.find((call) => call.url.includes("/comment/create"));
+      expect(created).toBeTruthy();
+      expect(new URLSearchParams(created?.body ?? "").get("text")).toBe("[cube_预言]");
+    } finally {
+      resetRailEmojiCatalogCache();
+      applyRailEmojiCatalog(baselineRailEmojiCatalog());
+    }
   });
 
   it("moves through the emoji grid with the arrow keys", async () => {
