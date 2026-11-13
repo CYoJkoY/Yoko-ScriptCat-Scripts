@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.20.7
+// @version      0.20.9
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -513,9 +513,15 @@
       sidebar: {
         selectors: [
           "div.b8812f16.a2f3d50e",
-          // Fallback for a hash rotation: the rail is the first column of the
-          // app row, next to the compact top bar that holds the native toggle.
-          "#root > div > div > div > div > div:nth-child(2)"
+          // Fallbacks for a hash rotation. The rail is the second column of the
+          // app row and the only column that owns a direct ds-scroll-area child.
+          // A bare nth-child path used to match the floating toolbar instead,
+          // which is 114x40 and would have been widened as if it were the rail.
+          // The loose variant also caught a transcript body and the small
+          // scroller next to a message, so it also requires the rail's own
+          // buttons: the toolbar and the chat column have none of both.
+          "#root > div > div > div > div:nth-child(2):has(> .ds-scroll-area)",
+          "#root div:has(> .ds-scroll-area):has(.ds-button):not(.ds-scroll-area):not(.ds-markdown):not(:has(textarea))"
         ],
         triggers: [
           ".ca6d4be1 .ds-button",
