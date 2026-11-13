@@ -309,8 +309,8 @@ describe("immersive reader theme contract", () => {
     ]) {
       expect(body, literal + " should resolve through a reader token").not.toContain(literal);
     }
-    expect(ruleFor(rules, "body.heybox-up-reader #page-bbs-link").style.getPropertyValue("background")).toContain(
-      "var(--hbu-reader-glow)",
+    expect(ruleFor(rules, "body.heybox-up-reader #page-bbs-link").style.getPropertyValue("background")).toBe(
+      "var(--hbu-reader-bg)",
     );
   });
 
