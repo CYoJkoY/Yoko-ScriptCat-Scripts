@@ -38,10 +38,17 @@ export interface ApiParams {
 export interface CommentCreateParams {
   os_type: string;
   app: string;
+  client_type: string;
+  version: string;
+  web_version: string;
   x_client_type: string;
   x_os_type: string;
   x_app: string;
   x_client_version: string;
+  hkey: string;
+  _time: string;
+  nonce: string;
+  [key: string]: string;
 }
 
 export interface RailTextSegment {
@@ -294,7 +301,7 @@ export const RAIL_CSS = `
   .action.primary { border-color: transparent; background: var(--rail-accent); color: var(--heybox-up-on-accent, #fff); }
 `;
 
-/** Comment creation query: platform params plus the RND-16 payload. */
+/** Comment creation query matches the site's RND-16 request snapshot. */
 export async function createCommentCreateQuery(path: string): Promise<CommentCreateParams & { _rnd: string }> {
   const time = Math.floor(Date.now() / 1000);
   const nonce = md5Hex(String(time) + String(Math.random())).toUpperCase();
@@ -302,9 +309,15 @@ export async function createCommentCreateQuery(path: string): Promise<CommentCre
     os_type: "web",
     app: "heybox",
     x_client_type: "web",
-    x_os_type: "Mac",
-    x_app: "heybox",
-    x_client_version: "999.999.999",
+    x_os_type: "Windows",
+    x_app: "heybox_website",
+    x_client_version: "",
+    client_type: "web",
+    web_version: "3.0",
+    version: "999.0.4",
+    hkey: createSignature(path, time, nonce),
+    _time: String(time),
+    nonce: nonce,
     _rnd: await createRnd16(path, String(time), nonce),
   };
 }
