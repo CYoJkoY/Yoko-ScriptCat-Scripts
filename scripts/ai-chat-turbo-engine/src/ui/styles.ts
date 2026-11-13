@@ -34,8 +34,10 @@ export const GEMINI_NATIVE_RENDER_CSS = `
        Gemini wraps them in an overflow scroll container, render isolation on
        the table itself collapses that measurement, and native compact-table
        rules size some tables to their content width so they float narrower
-       than the surrounding text. Content wider than the column still keeps
-       the native horizontal scroll. */
+       than the surrounding text. The scroll wrapper also carries the native
+       wide-screen centering paddings, which push the table out of the column
+       and let the clipped half overflow the hidden block wrapper. Content
+       wider than the column still keeps the native horizontal scroll. */
     model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) table {
       content-visibility: visible !important;
       contain: none !important;
@@ -46,6 +48,8 @@ export const GEMINI_NATIVE_RENDER_CSS = `
     model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) .table-content {
       width: 100% !important;
       min-width: 0 !important;
+      padding-left: 0 !important;
+      padding-right: 0 !important;
     }
 
     model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(img, video, canvas, iframe) {

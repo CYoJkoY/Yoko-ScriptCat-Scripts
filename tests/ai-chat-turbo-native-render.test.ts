@@ -63,7 +63,7 @@ describe("Gemini native message render isolation", () => {
       `${CONTENT_SELECTOR} table { content-visibility: visible !important; contain: none !important; width: 100% !important; max-width: none !important; }`,
     );
     expect(css).toContain(
-      `${CONTENT_SELECTOR} .table-content { width: 100% !important; min-width: 0 !important; }`,
+      `${CONTENT_SELECTOR} .table-content { width: 100% !important; min-width: 0 !important; padding-left: 0 !important; padding-right: 0 !important; }`,
     );
     expect(css).toContain(
       `${CONTENT_SELECTOR} > :is(img, video, canvas, iframe) { contain-intrinsic-size: auto 12rem !important; }`,
