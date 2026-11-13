@@ -6213,16 +6213,6 @@
     if (remaining.length === 0) localStore.remove(READER_COMMENT_MARKS_KEY);
     else localStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
   }
-  function removeReaderCommentMarkToken(linkId, token) {
-    const id = linkId.trim();
-    const value = token.trim();
-    if (id === "" || value === "") return;
-    const marks = readAllMarks();
-    const remaining = marks.filter((mark) => !(mark.linkId === id && mark.token === value));
-    if (remaining.length === marks.length) return;
-    if (remaining.length === 0) localStore.remove(READER_COMMENT_MARKS_KEY);
-    else localStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
-  }
 
   // scripts/heybox-up/src/ui/theme.ts
   var THEME_CLASS = "heybox-up-theme";
@@ -8763,11 +8753,11 @@
     --hbu-reader-ink-2: #3c444c;
     --hbu-reader-muted: #5f6b77;
     --hbu-reader-border: rgba(20, 25, 30, .12);
-    --hbu-reader-glow: rgba(111, 141, 179, .16);
+    --hbu-reader-glow: transparent;
     --hbu-reader-accent: #6f8db3;
     --hbu-reader-on-accent: #10161c;
     --hbu-reader-link: #4a678d;
-    --hbu-reader-glass: rgba(255, 255, 255, .88);
+    --hbu-reader-glass: #fff;
     --hbu-reader-glass-ink: #14191e;
     --hbu-reader-glass-border: rgba(20, 25, 30, .12);
     --hbu-reader-head: var(--hbu-reader-page);
@@ -8781,7 +8771,7 @@
     --hbu-reader-active-cy: #2f7a52;
     --hbu-reader-danger: #c0364e;
     --hbu-reader-scrim: rgba(20, 25, 30, .42);
-    --hbu-reader-shadow: 0 20px 60px rgba(16, 24, 40, .18);
+    --hbu-reader-shadow: 0 8px 24px rgba(16, 24, 40, .12);
   }
   :root.heybox-up-theme[data-heybox-up-dark="true"] {
     --hbu-reader-bg: #080b0f;
@@ -8791,11 +8781,11 @@
     --hbu-reader-ink-2: #b7c2ce;
     --hbu-reader-muted: #8b99a8;
     --hbu-reader-border: #2b3642;
-    --hbu-reader-glow: rgba(143, 176, 207, .2);
+    --hbu-reader-glow: transparent;
     --hbu-reader-accent: #8fb0cf;
     --hbu-reader-on-accent: #10161c;
     --hbu-reader-link: #8fb0cf;
-    --hbu-reader-glass: rgba(21, 28, 36, .84);
+    --hbu-reader-glass: #151c24;
     --hbu-reader-glass-ink: #e6edf5;
     --hbu-reader-glass-border: rgba(230, 237, 245, .14);
     --hbu-reader-head: var(--hbu-reader-page);
@@ -8809,18 +8799,18 @@
     --hbu-reader-active-cy: #8fd0a8;
     --hbu-reader-danger: #ff8e9a;
     --hbu-reader-scrim: rgba(2, 4, 7, .62);
-    --hbu-reader-shadow: 0 24px 70px rgba(0, 0, 0, .5);
+    --hbu-reader-shadow: 0 8px 24px rgba(0, 0, 0, .28);
   }
   :root.heybox-up-theme[data-heybox-up-theme="oled"] {
     --hbu-reader-bg: #000;
     --hbu-reader-page: #090909;
     --hbu-reader-subtle: #141414;
     --hbu-reader-border: #242424;
-    --hbu-reader-glow: rgba(168, 192, 216, .12);
+    --hbu-reader-glow: transparent;
     --hbu-reader-accent: #a8c0d8;
     --hbu-reader-on-accent: #05070a;
     --hbu-reader-link: #a8c0d8;
-    --hbu-reader-glass: rgba(16, 16, 16, .86);
+    --hbu-reader-glass: #101010;
     --hbu-reader-glass-border: rgba(230, 237, 245, .14);
     --hbu-reader-head: var(--hbu-reader-page);
     --hbu-reader-float: rgba(12, 12, 12, .97);
@@ -8833,7 +8823,7 @@
     --hbu-reader-active-cy: #8fd0a8;
     --hbu-reader-danger: #ff8e9a;
     --hbu-reader-scrim: rgba(0, 0, 0, .74);
-    --hbu-reader-shadow: 0 24px 70px rgba(0, 0, 0, .72);
+    --hbu-reader-shadow: 0 8px 24px rgba(0, 0, 0, .55);
   }
   :root.heybox-up-theme[data-heybox-up-theme="paper"] {
     --hbu-reader-bg: #e7dfd0;
@@ -8843,11 +8833,11 @@
     --hbu-reader-ink-2: #5b5042;
     --hbu-reader-muted: #726451;
     --hbu-reader-border: #ddd0bc;
-    --hbu-reader-glow: rgba(138, 111, 78, .14);
+    --hbu-reader-glow: transparent;
     --hbu-reader-accent: #7b6244;
     --hbu-reader-on-accent: #fffdf7;
     --hbu-reader-link: #7b6244;
-    --hbu-reader-glass: rgba(250, 245, 234, .9);
+    --hbu-reader-glass: #faf5ea;
     --hbu-reader-glass-ink: #332b21;
     --hbu-reader-glass-border: rgba(51, 43, 33, .16);
     --hbu-reader-head: var(--hbu-reader-page);
@@ -8861,7 +8851,7 @@
     --hbu-reader-active-cy: #2e6d4c;
     --hbu-reader-danger: #b23a4c;
     --hbu-reader-scrim: rgba(51, 43, 33, .46);
-    --hbu-reader-shadow: 0 18px 44px rgba(51, 43, 33, .18);
+    --hbu-reader-shadow: 0 6px 18px rgba(51, 43, 33, .12);
   }
   :root.heybox-up-theme[data-heybox-up-theme="mist"] {
     --hbu-reader-bg: #dde8ea;
@@ -8871,11 +8861,11 @@
     --hbu-reader-ink-2: #405a60;
     --hbu-reader-muted: #567076;
     --hbu-reader-border: #cbdcdf;
-    --hbu-reader-glow: rgba(79, 127, 138, .16);
+    --hbu-reader-glow: transparent;
     --hbu-reader-accent: #40646d;
     --hbu-reader-on-accent: #fff;
     --hbu-reader-link: #40646d;
-    --hbu-reader-glass: rgba(251, 253, 253, .9);
+    --hbu-reader-glass: #fbfdfd;
     --hbu-reader-glass-ink: #1d3338;
     --hbu-reader-glass-border: rgba(29, 51, 56, .16);
     --hbu-reader-head: var(--hbu-reader-page);
@@ -8889,7 +8879,7 @@
     --hbu-reader-active-cy: #2b6f55;
     --hbu-reader-danger: #b83c50;
     --hbu-reader-scrim: rgba(29, 51, 56, .44);
-    --hbu-reader-shadow: 0 18px 44px rgba(47, 74, 84, .2);
+    --hbu-reader-shadow: 0 6px 18px rgba(47, 74, 84, .12);
   }
   body.heybox-up-reader {
     overflow: hidden !important;
@@ -8911,7 +8901,7 @@
     justify-content: center;
     width: 100% !important;
     height: 100% !important;
-    background: radial-gradient(70% 60% at 50% 0%, var(--hbu-reader-glow), transparent 70%), var(--hbu-reader-bg) !important;
+    background: var(--hbu-reader-bg) !important;
   }
   body.heybox-up-reader #page-bbs-link .content,
   body.heybox-up-reader #page-bbs-link .list,
@@ -9264,18 +9254,18 @@
   }
   .hbu-reader-head { position: relative; grid-row: 1; width: calc(100% - 80px); margin-inline: auto; z-index: 12; display: flex; gap: 9px; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); background: var(--hbu-reader-head); color: var(--hbu-reader-glass-ink); pointer-events: none; }
   .hbu-reader-head > * { pointer-events: auto; }
-  .hbu-reader-round { display: grid; place-items: center; width: 40px; height: 40px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-glass-border); border-radius: 50%; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); cursor: pointer; backdrop-filter: blur(8px); }
+  .hbu-reader-round { display: grid; place-items: center; width: 40px; height: 40px; flex: none; padding: 0; border: 1px solid var(--hbu-reader-glass-border); border-radius: 50%; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); cursor: pointer; }
   .hbu-reader-round svg { width: 19px; height: 19px; }
-  .hbu-reader-home { display: inline-flex; align-items: center; gap: 6px; height: 40px; flex: none; padding: 0 13px 0 10px; border: 1px solid var(--hbu-reader-glass-border); border-radius: 99px; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px); }
+  .hbu-reader-home { display: inline-flex; align-items: center; gap: 6px; height: 40px; flex: none; padding: 0 13px 0 10px; border: 1px solid var(--hbu-reader-glass-border); border-radius: 99px; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
   .hbu-reader-home svg { width: 17px; height: 17px; flex: none; }
-  .hbu-reader-head-author { display: flex; gap: 7px; align-items: center; min-width: 0; max-width: 42%; padding: 4px 10px 4px 4px; border: 1px solid var(--hbu-reader-glass-border); border-radius: 99px; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); text-decoration: none; backdrop-filter: blur(8px); }
+  .hbu-reader-head-author { display: flex; gap: 7px; align-items: center; min-width: 0; max-width: 42%; padding: 4px 10px 4px 4px; border: 1px solid var(--hbu-reader-glass-border); border-radius: 99px; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); text-decoration: none; }
   .hbu-reader-head-author img { width: 30px; height: 30px; flex: none; border-radius: 50%; object-fit: cover; background: var(--hbu-reader-subtle); }
   .hbu-reader-head-author span { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
   .hbu-reader-follow { min-width: 56px; height: 36px; padding: 0 13px; border: 0; border-radius: 99px; background: var(--hbu-reader-accent); color: var(--hbu-reader-on-accent); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
   .hbu-reader-follow[aria-pressed="true"] { background: var(--hbu-reader-float-hover); color: var(--hbu-reader-glass-ink); }
   .hbu-reader-head-spacer { flex: 1 1 auto; }
   .hbu-reader-rail { position: absolute; right: -32px; bottom: 118px; z-index: 11; display: flex; flex-direction: column; gap: 13px; align-items: center; }
-  .hbu-reader-action { display: grid; place-items: center; width: 48px; min-height: 48px; padding: 4px 0; border: 1px solid var(--hbu-reader-glass-border); border-radius: 50%; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); cursor: pointer; backdrop-filter: blur(10px); }
+  .hbu-reader-action { display: grid; place-items: center; width: 48px; min-height: 48px; padding: 4px 0; border: 1px solid var(--hbu-reader-glass-border); border-radius: 50%; background: var(--hbu-reader-glass); color: var(--hbu-reader-glass-ink); cursor: pointer; }
   .hbu-reader-action:hover { background: var(--hbu-reader-float-hover); }
   .hbu-reader-action svg { width: 21px; height: 21px; }
   .hbu-reader-action[aria-pressed="true"] { color: var(--hbu-reader-active-like); }
@@ -9302,7 +9292,6 @@
     background: var(--hbu-reader-float);
     color: var(--hbu-reader-float-ink);
     box-shadow: var(--hbu-reader-shadow);
-    backdrop-filter: blur(12px);
   }
   .hbu-reader-favour-menu[hidden] { display: none; }
   .hbu-reader-favour-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -12402,7 +12391,6 @@
         }
         if (expectations.length > 0) {
           for (const mark of expectations) {
-            removeReaderCommentMarkToken(targetId, mark.token);
             const floorId = localFloorIdForMark(mark);
             if (commentState.localFloors.some((row) => row.id === floorId)) {
               commentState.settledReplies.add(floorId);
