@@ -208,7 +208,8 @@ describe("reader composer pictures", () => {
     expect(item?.dataset["status"]).toBe("ready");
     expect(item?.querySelector("img")?.getAttribute("src")).toBe("blob:preview");
     const submit = document.querySelector<HTMLButtonElement>(".hbu-reader-composer-submit");
-    // Pictures alone are a valid comment, so the empty textarea still submits.
+    // Pictures alone are a valid comment, so the empty contenteditable still
+    // submits.
     expect(submit?.disabled).toBe(false);
 
     submit?.click();
