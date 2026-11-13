@@ -2286,10 +2286,11 @@ export function watchReader(navigation: PostNavigationController): void {
     signal?: AbortSignal,
   ): Promise<unknown> => {
     if (typeof accountId !== "string" || accountId === "") throw new Error("请先登录小黑盒");
-    // Comment creation follows the site's current RND-16 flow: platform params plus
-    // the encrypted payload, without legacy hkey/time/nonce query parameters.
-    const params = path === COMMENT_CREATE_API_PATH
-      ? { ...await createCommentCreateQuery(path), target: "heybox_app" }
+    // Comment creation follows the site's RND-16 flow. The site builds only the
+    // signed query and passes all creation fields in the POST body, so target is
+    // not repeated in the query.
+    const params: Record<string, string> = path === COMMENT_CREATE_API_PATH
+      ? await createCommentCreateQuery(path)
       : { ...createApiParams(path), heybox_id: accountId, target: "heybox_app" };
     const query = new URLSearchParams(params);
     const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {

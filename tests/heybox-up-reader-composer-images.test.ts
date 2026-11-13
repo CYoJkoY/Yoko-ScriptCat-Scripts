@@ -227,6 +227,13 @@ describe("reader composer pictures", () => {
     expect(body.get("imgs")).toBe("https://imgheybox1.max-c.com/bbs/2026/11/03/a.webp");
     expect(body.get("text")).toBe("");
     expect(body.get("link_id")).toBe("123456");
+    const query = new URL(created[0]?.url ?? "", "https://api.xiaoheihe.cn").searchParams;
+    expect(query.get("_rnd")).toMatch(/^16:/);
+    expect(query.get("version")).toBe("999.0.4");
+    expect(query.get("hkey")).not.toBe("");
+    expect(query.get("_time")).not.toBe("");
+    expect(query.get("nonce")).toMatch(/^[0-9A-F]{32}$/);
+    expect(query.get("target")).toBeNull();
   });
 
   it("keeps the composer usable when the upload fails", async () => {
