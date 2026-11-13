@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.2
+// @version      0.8.3
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，顶部操作栏独占一行，图片不再被渐变遮挡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，表情目录从站点静态资源在线同步（12 小时本机缓存，失败回退内置目录），评论输入框里的已知 cube 与 heygirl 令牌即时渲染为精灵图，提交仍发送原令牌文本，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -1237,13 +1237,59 @@
     return "";
   }
 
+  // scripts/heybox-up/src/core/rnd16.ts
+  var RND16_VERSION = "16";
+  var RND16_KEY_BASE64 = "HFFSTsqmvG3uGxPNXDQW+1VARfqgG4nT6LS1PX7F8NQ=";
+  var RND16_AAD = "heybox-rnd:v16";
+  var RND16_PATHNAME_PATTERN = /^[\x21-\x7e]+$/;
+  var RND16_NONCE_PATTERN = /^[0-9A-F]{32}$/;
+  var RND16_TIME_PATTERN = /^(0|[1-9]\d*)$/;
+  function normalizeRnd16Path(path) {
+    const normalized = path.endsWith("/") ? path : path + "/";
+    if (!normalized.startsWith("/") || /[\s?#\\]/.test(normalized) || !RND16_PATHNAME_PATTERN.test(normalized)) {
+      throw new Error("评论签名路径不合法: " + path);
+    }
+    return normalized;
+  }
+  async function createRnd16(path, time, nonce) {
+    if (globalThis.crypto === void 0 || globalThis.crypto.subtle === void 0) {
+      throw new Error("当前浏览器不支持评论签名");
+    }
+    if (!RND16_TIME_PATTERN.test(time) || !Number.isSafeInteger(Number(time))) {
+      throw new Error("评论签名时间戳不合法: " + time);
+    }
+    if (!RND16_NONCE_PATTERN.test(nonce)) {
+      throw new Error("评论签名随机数不合法");
+    }
+    const normalizedPath = normalizeRnd16Path(path);
+    const keyBytes = Uint8Array.from(atob(RND16_KEY_BASE64), (char) => char.charCodeAt(0));
+    const key = await globalThis.crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["encrypt"]);
+    const plaintext = new TextEncoder().encode(JSON.stringify([time, nonce, normalizedPath]));
+    const iv = new Uint8Array(12);
+    if (typeof globalThis.crypto.getRandomValues === "function") {
+      globalThis.crypto.getRandomValues(iv);
+    }
+    const cipher = new Uint8Array(
+      await globalThis.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(RND16_AAD), tagLength: 128 },
+        key,
+        plaintext
+      )
+    );
+    const packed = new Uint8Array(iv.length + cipher.length);
+    packed.set(iv, 0);
+    packed.set(cipher, iv.length);
+    let binary = "";
+    for (const byte of packed) binary += String.fromCharCode(byte);
+    const encoded = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return RND16_VERSION + ":" + encoded;
+  }
+
   // scripts/heybox-up/src/ui/rail.ts
   var RAIL_ID = "heybox-up-comment-rail";
   var COMMENT_TREE_API_PATH = "/bbs/app/link/tree";
   var COMMENT_CREATE_API_PATH = "/bbs/app/comment/create";
   var DELETE_COMMENT_API_PATH = "/bbs/app/comment/delete";
-  var COMMENT_CREATE_RND_VERSION = "15";
-  var COMMENT_CREATE_RND_SECRET = "Z7mFG4tQp9Ws2LxB8H";
   var RAIL_PAGE_SIZE = 20;
   var RAIL_TRIGGER_SELECTOR = ".bbs-new-style-bottom__comment, .content-list__comment";
   var RAIL_ICONS = {
@@ -1400,6 +1446,19 @@
   .action:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: 1px; }
   .action.primary { border-color: transparent; background: var(--rail-accent); color: var(--heybox-up-on-accent, #fff); }
 `;
+  async function createCommentCreateQuery(path) {
+    const time = Math.floor(Date.now() / 1e3);
+    const nonce = md5Hex(String(time) + String(Math.random())).toUpperCase();
+    return {
+      os_type: "web",
+      app: "heybox",
+      x_client_type: "web",
+      x_os_type: "Mac",
+      x_app: "heybox",
+      x_client_version: "999.999.999",
+      _rnd: await createRnd16(path, String(time), nonce)
+    };
+  }
   function createApiParams(path) {
     const time = Math.floor(Date.now() / 1e3);
     const nonce = md5Hex(String(time) + String(Math.random())).toUpperCase();
@@ -1417,23 +1476,6 @@
       _time: String(time),
       nonce
     };
-  }
-  async function createCommentRnd(nonce, timestamp) {
-    if (globalThis.crypto === void 0 || globalThis.crypto.subtle === void 0) {
-      throw new Error("当前浏览器不支持 CY 发布签名");
-    }
-    const encoder = new TextEncoder();
-    const key = await globalThis.crypto.subtle.importKey(
-      "raw",
-      encoder.encode(COMMENT_CREATE_RND_SECRET),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-    const message = COMMENT_CREATE_RND_SECRET + nonce + timestamp + ":" + nonce;
-    const signature = await globalThis.crypto.subtle.sign("HMAC", key, encoder.encode(message));
-    const digest = Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    return COMMENT_CREATE_RND_VERSION + ":" + digest;
   }
   function buildLinkCommentUrl(linkId, page, signed, accountId = getHeyboxId()) {
     const base = signed === false ? { heybox_id: accountId, os_type: "web", app: "heybox", client_type: "web", version: "999.0.4", web_version: "2.5", x_client_type: "web", x_app: "heybox_website", x_os_type: "Windows", device_info: "Chrome" } : createApiParams(COMMENT_TREE_API_PATH);
@@ -10362,11 +10404,8 @@
     };
     const postReaderApi = async (path, body, accountId, signal) => {
       if (typeof accountId !== "string" || accountId === "") throw new Error("请先登录小黑盒");
-      const params = createApiParams(path);
-      if (path === COMMENT_CREATE_API_PATH) {
-        params["_rnd"] = await createCommentRnd(params.nonce, params._time);
-      }
-      const query = new URLSearchParams({ ...params, heybox_id: accountId, target: "heybox_app" });
+      const params = path === COMMENT_CREATE_API_PATH ? { ...await createCommentCreateQuery(path), target: "heybox_app" } : { ...createApiParams(path), heybox_id: accountId, target: "heybox_app" };
+      const query = new URLSearchParams(params);
       const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
         method: "POST",
         credentials: "include",
