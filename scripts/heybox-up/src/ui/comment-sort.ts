@@ -75,6 +75,32 @@ export function parseCommentAge(text: string): number {
   return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : (Date.now() - parsed) / 1000;
 }
 
+/** Reads a numeric user id from a profile link, including query-style links. */
+function readCommentUserId(scope: Element, selectors: string): string {
+  const links = Array.from(scope.querySelectorAll("a[href*='/app/user/profile/'], a[href*='userid=']"));
+  if (selectors !== "") {
+    const named = scope.querySelector(selectors);
+    if (named !== null) {
+      if (named instanceof HTMLAnchorElement) links.unshift(named);
+      else links.unshift(...Array.from(named.querySelectorAll<HTMLAnchorElement>("a[href]")));
+    }
+  }
+  for (const link of links) {
+    const href = link.getAttribute("href") || "";
+    const match = /\/app\/user\/profile\/(\d+)/.exec(href) || /[?&]userid=(\d+)/.exec(href);
+    if (match) return match[1];
+  }
+  return "";
+}
+
+/** A username is only a fallback when the site omits profile links. */
+function isCommentAuthor(item: HTMLElement, authorId: string, authorName: string): boolean {
+  const id = readCommentUserId(item, ".info-box, .info-box__username, .comment-item__username");
+  if (authorId !== "") return id !== "" && id === authorId;
+  const name = (item.querySelector(".info-box__username")?.textContent || "").trim();
+  return authorName !== "" && name === authorName;
+}
+
 export function applyCommentSort(tree: Element, mode: string): void {
   const list = tree.querySelector(".link-comment__list");
   if (!list) return;
@@ -86,12 +112,13 @@ export function applyCommentSort(tree: Element, mode: string): void {
     for (const item of items) item.style.order = "";
     return;
   }
-  const authorName = (document.querySelector("#page-bbs-link .link-user__username")?.textContent || "").trim();
+  const articleHeader = document.querySelector("#page-bbs-link .link-user, #page-bbs-link .page-header, #page-bbs-link #page-bbs-link");
+  const authorId = articleHeader === null ? "" : readCommentUserId(articleHeader, ".link-user__user-wrapper, .page-header__user-wrapper");
+  const authorName = (document.querySelector("#page-bbs-link .link-user__username, #page-bbs-link .page-header__username")?.textContent || "").trim();
   const keyed = items.map((item: HTMLElement, index: number) => {
     const likes = Number((item.querySelector(".like-box__cnt")?.textContent || "0").trim()) || 0;
     const age = parseCommentAge(item.querySelector(".info-box__create-time")?.textContent || "");
-    const name = (item.querySelector(".info-box__username")?.textContent || "").trim();
-    return { item, index, likes, age, isAuthor: authorName !== "" && name === authorName };
+    return { item, index, likes, age, isAuthor: isCommentAuthor(item, authorId, authorName) };
   });
   keyed.sort((a, b) => {
     if (mode === "likes") return b.likes - a.likes || a.index - b.index;

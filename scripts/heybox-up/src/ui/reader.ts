@@ -1,4 +1,4 @@
-import { PAGE_ROUTE, READER_LINE_HEIGHT_DEFAULT, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
+import { PAGE_ROUTE, READER_LINE_HEIGHT_DEFAULT, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP, STORAGE_KEYS } from "../config";
 import { getHeyboxId, resolveHeyboxId } from "../core/account";
 import { LINK_HREF_PREFIX } from "../core/cy";
 import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_HISTORY_CURSOR_KEY, POST_HISTORY_TITLES_KEY, POST_TRAIL_KEY, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
@@ -16,7 +16,7 @@ import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailComm
 import { readReaderCommentMarks, removeReaderCommentMark, saveReaderCommentMark } from "./comment-marks";
 import type { ReaderCommentMark } from "./comment-marks";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
-import { HIDE_CY_EVENT, READER_EVENT, READER_HISTORY_LIMIT_EVENT, READER_TIMELINE_EVENT, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readHideCyPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderTimelinePreference } from "../state";
+import { HIDE_CY_EVENT, READER_EVENT, READER_HISTORY_LIMIT_EVENT, READER_TIMELINE_EVENT, localStore, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readHideCyPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderTimelinePreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
 import { bindReaderInteraction, READER_VOTE_SELECTOR } from "./reader-interactions";
 
@@ -102,6 +102,12 @@ export const READER_MEDIA_EXCLUDE_SELECTOR = ".comment, .link-comment, .com-awar
 export const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
 
 export const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
+
+/** Reading positions expire after 30 days and keep at most 200 posts. */
+const READER_POSITIONS_VERSION = 1;
+const READER_POSITIONS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const READER_POSITIONS_MAX = 200;
+const POST_ID_PATTERN = /^\d+$/;
 
 export const READER_PENDING_NOTICE_MS = 9000;
 
@@ -1335,6 +1341,7 @@ export function prunePostHistoryExtras(dropped: readonly string[]): void {
     }
     sessionStore.remove(READER_SCROLL_KEY + id);
     sessionStore.remove(READER_RATIO_KEY + id);
+    removeStoredReaderPosition(id);
   }
   if (changed) writeSessionValue(POST_HISTORY_TITLES_KEY, stored);
 }
@@ -1859,12 +1866,84 @@ export function writeReaderScroll(id: string, index: number): void {
   sessionStore.write(READER_SCROLL_KEY + id, String(index));
 }
 
+interface StoredReaderPosition {
+  ratio: number;
+  updatedAt: number;
+}
+
+/**
+ * A versioned, expiring map of reading positions. Session state remains the
+ * live source; this record carries a post's percentage into a later tab.
+ */
+function readStoredReaderPositions(): { changed: boolean; positions: Record<string, StoredReaderPosition> } {
+  const raw = localStore.readJson(STORAGE_KEYS.readerPositions, null);
+  const container = asRecord(raw);
+  if (container === null || container["version"] !== READER_POSITIONS_VERSION) {
+    return { changed: raw !== null, positions: {} };
+  }
+  const stored = asRecord(container["positions"]);
+  if (stored === null) return { changed: true, positions: {} };
+  const cutoff = Date.now() - READER_POSITIONS_TTL_MS;
+  const positions: Record<string, StoredReaderPosition> = {};
+  let changed = false;
+  for (const [id, value] of Object.entries(stored)) {
+    const entry = asRecord(value);
+    const ratio = entry === null ? Number.NaN : Number(entry["ratio"]);
+    const updatedAt = entry === null ? Number.NaN : Number(entry["updatedAt"]);
+    if (!POST_ID_PATTERN.test(id) || !Number.isFinite(ratio) || ratio < 0 || ratio > 1
+      || !Number.isFinite(updatedAt) || updatedAt <= cutoff) {
+      changed = true;
+      continue;
+    }
+    positions[id] = { ratio, updatedAt };
+  }
+  const ids = Object.keys(positions);
+  if (ids.length > READER_POSITIONS_MAX) {
+    changed = true;
+    for (const id of ids
+      .sort((a, b) => positions[a]!.updatedAt - positions[b]!.updatedAt)
+      .slice(0, ids.length - READER_POSITIONS_MAX)) {
+      delete positions[id];
+    }
+  }
+  return { changed, positions };
+}
+
+function writeStoredReaderPositions(positions: Record<string, StoredReaderPosition>): void {
+  localStore.writeJson(STORAGE_KEYS.readerPositions, {
+    version: READER_POSITIONS_VERSION,
+    positions,
+  });
+}
+
+/** Removes a saved position when the timeline drops its visit. */
+export function removeStoredReaderPosition(id: string): void {
+  if (id === "" || !POST_ID_PATTERN.test(id)) return;
+  const { positions } = readStoredReaderPositions();
+  if (!Object.prototype.hasOwnProperty.call(positions, id)) return;
+  delete positions[id];
+  writeStoredReaderPositions(positions);
+}
+
+/** Writes one post's percentage into the durable map; callers throttle this. */
+export function persistReaderRatio(id: string, ratio: number): void {
+  if (id === "" || !POST_ID_PATTERN.test(id) || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) return;
+  const { positions } = readStoredReaderPositions();
+  positions[id] = { ratio, updatedAt: Date.now() };
+  writeStoredReaderPositions(positions);
+}
+
 export function readReaderRatio(id: string): number {
   if (id === "") return -1;
   const stored = sessionStore.read(READER_RATIO_KEY + id);
-  if (stored === null) return -1;
-  const value = Number(stored);
-  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : -1;
+  if (stored !== null) {
+    const value = Number(stored);
+    if (Number.isFinite(value) && value >= 0 && value <= 1) return value;
+  }
+  const { changed, positions } = readStoredReaderPositions();
+  if (changed) writeStoredReaderPositions(positions);
+  const saved = positions[id];
+  return saved === undefined ? -1 : saved.ratio;
 }
 
 export function writeReaderRatio(id: string, ratio: number): void {
@@ -2060,6 +2139,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let progressFill: HTMLElement | null = null;
   let lastProgressPercent = -1;
   let ratioSaveTimer = 0;
+  let durableRatioTimer = 0;
   let pendingRatio: { id: string; ratio: number } | null = null;
   let sourceCache: ReaderSourceCache | null = null;
   const suspendedEmbeds: Map<Element, SuspendedEmbedState> = new Map();
@@ -6374,16 +6454,33 @@ export function watchReader(navigation: PostNavigationController): void {
       window.clearTimeout(ratioSaveTimer);
       ratioSaveTimer = 0;
     }
+    if (durableRatioTimer !== 0) {
+      window.clearTimeout(durableRatioTimer);
+      durableRatioTimer = 0;
+    }
     if (pendingRatio === null) return;
     writeReaderRatio(pendingRatio.id, pendingRatio.ratio);
+    persistReaderRatio(pendingRatio.id, pendingRatio.ratio);
     pendingRatio = null;
   };
 
   const scheduleReaderRatio = (id: string, ratio: number): void => {
     if (id === "") return;
     pendingRatio = { id: id, ratio: ratio };
-    if (ratioSaveTimer !== 0) return;
-    ratioSaveTimer = window.setTimeout(flushReaderRatio, 400);
+    if (ratioSaveTimer === 0) {
+      ratioSaveTimer = window.setTimeout(() => {
+        ratioSaveTimer = 0;
+        if (pendingRatio !== null) writeReaderRatio(pendingRatio.id, pendingRatio.ratio);
+      }, 400);
+    }
+    // The durable copy is written on a slower cadence so scrolling never
+    // serialises the whole position map on every progress tick.
+    if (durableRatioTimer === 0) {
+      durableRatioTimer = window.setTimeout(() => {
+        durableRatioTimer = 0;
+        if (pendingRatio !== null) persistReaderRatio(pendingRatio.id, pendingRatio.ratio);
+      }, 2000);
+    }
   };
 
   const updateProgress = () => {

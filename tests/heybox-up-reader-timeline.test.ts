@@ -99,6 +99,7 @@ describe("reader history timeline", () => {
   beforeEach(() => {
     setNarrowViewport(false);
     localStore.remove(STORAGE_KEYS.readerTimeline);
+    localStore.remove(STORAGE_KEYS.readerPositions);
     sessionStore.remove(READER_RATIO_KEY + "100");
     sessionStore.remove(READER_RATIO_KEY + "123456");
     setReaderTimelinePreference(true);
@@ -108,6 +109,7 @@ describe("reader history timeline", () => {
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
     localStore.remove(STORAGE_KEYS.readerTimeline);
+    localStore.remove(STORAGE_KEYS.readerPositions);
     sessionStore.remove(READER_RATIO_KEY + "100");
     sessionStore.remove(READER_RATIO_KEY + "123456");
   });
