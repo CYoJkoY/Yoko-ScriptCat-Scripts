@@ -1213,6 +1213,44 @@ function railEchoTextMatches(pendingText: string, echoText: string): boolean {
   return stripRailEchoMentions(flattenRailMatchText(echoText)) === wanted;
 }
 
+/**
+ * A top-level comment is the floor itself, not one of its sub-comments. When
+ * create did not return an id, the refreshed tree can still be checked by the
+ * signed-in author and the text or pictures that were written. Pure emoji rows
+ * have no matchable text, so a close create time is the conservative fallback.
+ */
+export function railItemsHaveOwnFloorComment(
+  items: readonly RailCommentEntry[],
+  userId: string,
+  text: string,
+  createAt: number,
+  imageUrls: readonly string[],
+): boolean {
+  if (userId === "") return false;
+  const wanted = flattenRailMatchText(text);
+  const wantedImages = imageUrls
+    .map((url) => normalizeRailImageUrl(url))
+    .filter((url) => url !== "");
+  for (const entry of items) {
+    if (entry.userId !== userId) continue;
+    if (wanted !== "" && railEchoTextMatches(text, entry.text)) return true;
+    if (wantedImages.length > 0) {
+      const entryImages = entry.body
+        .filter((segment): segment is RailImageSegment => segment.type === "image")
+        .map((segment) => segment.src);
+      if (wantedImages.every((url) => entryImages.includes(url))) return true;
+    }
+    if (
+      wanted === ""
+      && wantedImages.length === 0
+      && createAt > 0
+      && entry.createAt > 0
+      && Math.abs(entry.createAt - createAt) <= 300
+    ) return true;
+  }
+  return false;
+}
+
 /** Every comment id the loaded floors carry, used as the pre-write baseline. */
 export function collectRailCommentIds(items: readonly RailCommentEntry[]): Set<string> {
   const ids = new Set<string>();

@@ -11,8 +11,10 @@ import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, applyRailEmojiStyle, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentCreateQuery, createRailEmojiElement, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, readRailEmojiCatalogEntries, resolveCommentPageProgress, resolveMergedCommentProgress, resolveRailEmoji, resolveRailEmojiRef } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, applyRailEmojiStyle, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentCreateQuery, createRailEmojiElement, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHaveOwnFloorComment, railItemsHavePendingReply, readCreatedCommentId, readRailEmojiCatalogEntries, resolveCommentPageProgress, resolveMergedCommentProgress, resolveRailEmoji, resolveRailEmojiRef } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailEmojiPack, RailLinkInfo, RailSegment } from "./rail";
+import { readReaderCommentMarks, removeReaderCommentMark, removeReaderCommentMarkToken, saveReaderCommentMark } from "./comment-marks";
+import type { ReaderCommentMark } from "./comment-marks";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, READER_HISTORY_LIMIT_EVENT, READER_TIMELINE_EVENT, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readHideCyPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderTimelinePreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
@@ -1901,6 +1903,10 @@ interface ReaderCommentState {
   pendingBaselines: Map<string, Set<string>>;
   /** Local replies whose verification window ran out without an echo. */
   settledReplies: Set<string>;
+  /** Floors restored from a mark after a reload, before the site echoes them. */
+  localFloors: RailCommentEntry[];
+  /** Mark each local floor stands for, so it is dropped when the real row arrives. */
+  localFloorMarks: Map<string, ReaderCommentMark>;
 }
 
 interface ReaderCommentLoadOptions {
@@ -1930,6 +1936,12 @@ interface ReaderCommentLoadOptions {
    * floor to the first page.
    */
   verifyPage?: number;
+  /**
+   * Comments written in this tab that a reload is still waiting to see. They
+   * survive a full page load in sessionStorage, unlike the in-memory pending
+   * rows, so every mark must show up before the load counts as fresh.
+   */
+  expectations?: readonly ReaderCommentMark[];
 }
 
 interface SuspendedMediaEmbedState {
@@ -2157,6 +2169,8 @@ export function watchReader(navigation: PostNavigationController): void {
       pendingReplies: [],
       pendingBaselines: new Map<string, Set<string>>(),
       settledReplies: new Set<string>(),
+      localFloors: [],
+      localFloorMarks: new Map<string, ReaderCommentMark>(),
     };
   }
 
@@ -3947,13 +3961,23 @@ export function watchReader(navigation: PostNavigationController): void {
       replies.textContent = comment.replies + " 条回复";
       meta.append(replies);
     }
-    meta.append(createReaderReplyButton({
-      id: comment.id,
-      rootId: comment.rootId !== "" ? comment.rootId : comment.id,
-      name: comment.name,
-    }));
-    const deleteButton = createReaderCommentDeleteButton(comment);
-    if (deleteButton !== null) meta.append(deleteButton);
+    if (isPendingReplyRow(comment.id)) {
+      // A floor restored from a mark has no server id yet, so it reports its
+      // state instead of offering actions the tree endpoint cannot resolve.
+      const syncing = document.createElement("span");
+      const settled = commentState.settledReplies.has(comment.id);
+      syncing.className = "hbu-reader-comments-syncing" + (settled ? " hbu-reader-comments-syncing--settled" : "");
+      syncing.textContent = settled ? "已提交" : "同步中…";
+      meta.append(syncing);
+    } else {
+      meta.append(createReaderReplyButton({
+        id: comment.id,
+        rootId: comment.rootId !== "" ? comment.rootId : comment.id,
+        name: comment.name,
+      }));
+      const deleteButton = createReaderCommentDeleteButton(comment);
+      if (deleteButton !== null) meta.append(deleteButton);
+    }
     const visibleChildren = filterReaderCommentThread(buildRailCommentTree(comment), readHideCyPreference());
     const hiddenCount = countRailThreadNodes(visibleChildren);
     const collapsible = comment.id !== "" && visibleChildren.length > 0;
@@ -4077,11 +4101,14 @@ export function watchReader(navigation: PostNavigationController): void {
   const renderReaderComments = (): void => {
     if (commentPanel === null) return;
     const hideCy = readHideCyPreference();
-    const visible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
-    const hiddenCy = commentState.items.length - visible.length;
+    const loadedVisible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
+    const hiddenCy = commentState.items.length - loadedVisible.length;
+    // Restored floors go above the server list, which is where the site puts a
+    // freshly written comment, and they stay until the real row arrives.
+    const visible = commentState.localFloors.concat(loadedVisible);
     const meta: string[] = [];
     if (commentState.total > 0) meta.push("共 " + commentState.total + " 条");
-    if (visible.length > 0) meta.push("已加载 " + visible.length + " 条");
+    if (loadedVisible.length > 0) meta.push("已加载 " + loadedVisible.length + " 条");
     if (hiddenCy > 0) meta.push("已屏蔽 " + hiddenCy + " 条 CY");
     if (commentPanelMeta !== null) commentPanelMeta.textContent = meta.join(" · ");
     if (commentPanelList !== null) {
@@ -4096,7 +4123,7 @@ export function watchReader(navigation: PostNavigationController): void {
           commentPanelRetry.hidden = false;
           commentPanelRetry.disabled = commentState.loading;
         }
-      } else if (commentState.loading && commentState.items.length === 0) {
+      } else if (commentState.loading && visible.length === 0) {
         commentPanelStatus.hidden = false;
         if (commentPanelStatusText !== null) commentPanelStatusText.textContent = "正在加载评论…";
         if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
@@ -4126,6 +4153,79 @@ export function watchReader(navigation: PostNavigationController): void {
     }
   };
 
+  const pendingFromMark = (mark: ReaderCommentMark): RailComment => createRailPendingReply({
+    parentId: mark.parentId,
+    rootId: mark.rootId !== "" ? mark.rootId : mark.parentId,
+    text: mark.text,
+    userId: mark.userId,
+    createAt: mark.createAt,
+    sequence: 0,
+    ...(mark.commentId === "" ? {} : { commentId: mark.commentId }),
+    imageUrls: mark.imageUrls,
+  });
+
+  // A mark for a top-level floor is the floor itself; a nested mark is looked
+  // up among the replies of every loaded floor, because a new reply can lift
+  // its floor towards the first page.
+  const commentMarkIsVisible = (
+    mark: ReaderCommentMark,
+    loaded: readonly RailCommentEntry[],
+  ): boolean => {
+    if (mark.parentId === "") {
+      if (mark.commentId !== "") return railItemsHaveComment(loaded, mark.commentId);
+      return railItemsHaveOwnFloorComment(loaded, mark.userId, mark.text, mark.createAt, mark.imageUrls);
+    }
+    return railItemsHavePendingReply(loaded, pendingFromMark(mark));
+  };
+
+  const localFloorIdForMark = (mark: ReaderCommentMark): string =>
+    RAIL_PENDING_ID_PREFIX + "mark-" + mark.token;
+
+  // The site tree may still answer with the pre-write payload after a reload,
+  // so the marked floor is drawn locally until the real row arrives. A reply
+  // without an id gets the same stable local id across reopenings of the panel.
+  const restoreReaderCommentMarks = (): void => {
+    const marks = readReaderCommentMarks(articleId);
+    if (marks.length === 0) return;
+    for (const mark of marks) {
+      const visibleAlready = commentState.loaded && commentMarkIsVisible(mark, commentState.items);
+      if (visibleAlready) continue;
+      if (mark.parentId === "") {
+        const floorId = localFloorIdForMark(mark);
+        if (commentState.localFloors.some((row) => row.id === floorId)) continue;
+        const pending = createRailPendingReply({
+          parentId: "",
+          rootId: "",
+          text: mark.text,
+          userId: mark.userId,
+          createAt: mark.createAt,
+          sequence: 0,
+          imageUrls: mark.imageUrls,
+        });
+        commentState.localFloors.unshift({ ...pending, id: floorId, subComments: [], quotes: [] });
+        commentState.localFloorMarks.set(floorId, mark);
+        continue;
+      }
+      const pendingId = mark.commentId !== "" ? mark.commentId : localFloorIdForMark(mark);
+      if (commentState.pendingReplies.some((row) => row.id === pendingId)) continue;
+      const pending = pendingFromMark(mark);
+      commentState.pendingReplies.push({ ...pending, id: pendingId });
+    }
+  };
+
+  // Drops a local floor only once the refreshed tree carries the real comment,
+  // so a lagging answer never makes the restored row flicker away.
+  const syncLocalCommentFloors = (): void => {
+    if (commentState.localFloors.length === 0) return;
+    commentState.localFloors = commentState.localFloors.filter((row) => {
+      const mark = commentState.localFloorMarks.get(row.id);
+      if (mark === undefined) return true;
+      if (!commentMarkIsVisible(mark, commentState.items)) return true;
+      commentState.localFloorMarks.delete(row.id);
+      return false;
+    });
+  };
+
   // An empty expectation always matches: only a publish or delete asks for a
   // specific id to appear or disappear. A pending reply with no id from the
   // create call is matched by its text, so a publish is still verifiable.
@@ -4140,6 +4240,9 @@ export function watchReader(navigation: PostNavigationController): void {
       // new reply lifts its floor towards the first page, so every loaded floor
       // is searched instead of only the one that owned it before the write.
       if (!railItemsHavePendingReply(loaded, pending, readPendingBaseline(pending))) return false;
+    }
+    for (const mark of options.expectations ?? []) {
+      if (!commentMarkIsVisible(mark, loaded)) return false;
     }
     return true;
   };
@@ -4206,7 +4309,7 @@ export function watchReader(navigation: PostNavigationController): void {
     commentState.loading = true;
     commentState.error = "";
     const merge = options.merge === true;
-    const writeRefresh = options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined || options.expectPending !== undefined;
+    const writeRefresh = options.fresh === true || options.expectPresentId !== undefined || options.expectAbsentId !== undefined || options.expectPending !== undefined || (options.expectations?.length ?? 0) > 0;
     // A refresh keeps the rendered list until the new page arrives, so the panel
     // does not flash empty while the reader is waiting for its own comment.
     const keepItems = merge || (page === 1 && writeRefresh);
@@ -4264,6 +4367,7 @@ export function watchReader(navigation: PostNavigationController): void {
         commentState.pendingBaselines.delete(row.id);
         commentState.settledReplies.delete(row.id);
       }
+      syncLocalCommentFloors();
       const progress = merge
         ? resolveMergedCommentProgress({
           loadedGroups: commentState.items.length,
@@ -4308,16 +4412,31 @@ export function watchReader(navigation: PostNavigationController): void {
     if (seq !== commentState.seq) return;
     const attempt = (options.attempt ?? 0) + 1;
     const pending = options.expectPending;
+    const expectations = options.expectations ?? [];
     // A local row gets the sparse background checks as well, so a late echo
     // still replaces it; a delete or a plain publish stops right away.
-    const maxAttempts = pending === undefined ? COMMENT_VERIFY_ATTEMPTS : COMMENT_VERIFY_MAX_ATTEMPTS;
+    const maxAttempts = pending === undefined && expectations.length === 0
+      ? COMMENT_VERIFY_ATTEMPTS
+      : COMMENT_VERIFY_MAX_ATTEMPTS;
     if (attempt >= maxAttempts) {
       if (pending !== undefined) {
         commentState.settledReplies.add(pending.id);
         renderReaderComments();
       }
+      if (expectations.length > 0) {
+        for (const mark of expectations) {
+          removeReaderCommentMarkToken(targetId, mark.token);
+          // A restored row stays useful after the check gave up, but it stops
+          // claiming to sync and stops being recreated on the next open.
+          const floorId = localFloorIdForMark(mark);
+          if (commentState.localFloors.some((row) => row.id === floorId)) {
+            commentState.settledReplies.add(floorId);
+          }
+        }
+        renderReaderComments();
+      }
       if (options.expectAbsentId !== undefined) showToast("评论已删除，列表仍待站点同步");
-      else if ((options.expectPresentId ?? "") !== "") showToast("评论已提交，列表仍待站点同步");
+      else if ((options.expectPresentId ?? "") !== "" || expectations.length > 0) showToast("评论已提交，列表仍待站点同步");
       return;
     }
     if (pending !== undefined && attempt === COMMENT_VERIFY_ATTEMPTS) {
@@ -4765,6 +4884,27 @@ export function watchReader(navigation: PostNavigationController): void {
       const created = await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply, imageUrls), accountId);
       if (articleId !== targetId || readerGeneration !== generation) return;
       const createdId = readCreatedCommentId(created);
+      const wroteAt = Math.floor(Date.now() / 1000);
+      // The panel used to remember a write only in memory, so a reload lost the
+      // evidence that the tree endpoint still owed this comment. Recording it
+      // here also covers writes made while the panel is closed or from the
+      // article composer, which never reached the panel's pending list.
+      const replyRootId = reply === null ? "" : reply.rootId !== "" ? reply.rootId : reply.id;
+      const replyFloorId = reply === null
+        ? ""
+        : findRailFloorIdForComment(commentState.items, reply.id) || findRailFloorIdForComment(commentState.items, replyRootId);
+      const replyVerifyPage = replyFloorId === "" ? 1 : commentState.floorPages.get(replyFloorId) ?? 1;
+      saveReaderCommentMark({
+        linkId: targetId,
+        commentId: createdId,
+        text: text,
+        userId: accountId,
+        rootId: replyRootId,
+        parentId: reply === null ? "" : reply.id,
+        createAt: wroteAt,
+        verifyPage: replyVerifyPage,
+        imageUrls: imageUrls,
+      });
       clearArticleComposers();
       showToast("评论已发布");
       articleCommentPublishedCount += 1;
@@ -4788,7 +4928,7 @@ export function watchReader(navigation: PostNavigationController): void {
           rootId: reply.rootId !== "" ? reply.rootId : reply.id,
           text: text,
           userId: accountId,
-          createAt: Math.floor(Date.now() / 1000),
+          createAt: wroteAt,
           sequence: ++pendingReplySeq,
           imageUrls: imageUrls,
           ...(createdId === "" ? {} : { commentId: createdId }),
@@ -4920,9 +5060,17 @@ export function watchReader(navigation: PostNavigationController): void {
       if (accountId === "") throw new Error("请先登录小黑盒");
       await postReaderApi(DELETE_COMMENT_API_PATH, buildDeleteCommentBody(commentId), accountId);
       if (articleId !== targetId || readerGeneration !== generation) return;
+      removeReaderCommentMark(targetId, commentId);
       if (articleReplyTarget !== null && articleReplyTarget.id === commentId) clearArticleReplyTarget(false);
       const removedCount = removeDeletedComment(commentId);
       commentState.total = Math.max(0, commentState.total - removedCount);
+      // A restored reply with this id is no longer a pending echo of anything.
+      for (const row of commentState.pendingReplies) {
+        if (row.id !== commentId) continue;
+        commentState.pendingBaselines.delete(row.id);
+        commentState.settledReplies.delete(row.id);
+      }
+      commentState.pendingReplies = commentState.pendingReplies.filter((row) => row.id !== commentId);
       if (linkState !== null) linkState.commentCount = Math.max(0, (Number(linkState.commentCount) || 0) - removedCount);
       // Deleting invalidates every cached page, and the tree endpoint may still
       // echo the deleted floor for a moment, so page one is read from the
@@ -5380,6 +5528,15 @@ export function watchReader(navigation: PostNavigationController): void {
     commentPanelClose?.focus({ preventScroll: true });
     syncArticleComposers();
     if (commentState.loading) return;
+    // Marks survive a page reload, so the panel can restore its own comment and
+    // keep checking the page that owns it instead of trusting one stale answer.
+    const marks = readReaderCommentMarks(articleId);
+    restoreReaderCommentMarks();
+    const markVerifyPage = marks.reduce((page, mark) => Math.max(page, mark.verifyPage), 1);
+    const expectationOptions: ReaderCommentLoadOptions = marks.length === 0
+      ? {}
+      : { expectations: marks, verifyPage: markVerifyPage };
+    renderReaderComments();
     // A panel reopened after a while can show a page that predates writes made
     // elsewhere, so a stale page one is refreshed from the network.
     const stalePanel = commentState.loaded && Date.now() - commentState.loadedAt > COMMENT_PANEL_STALE_MS;
@@ -5389,9 +5546,9 @@ export function watchReader(navigation: PostNavigationController): void {
       // cached copy taken before the write (for example by the link state read
       // during render) would hide the reader's own new comment after leaving and
       // re-entering the post.
-      void loadReaderComments(1, { fresh: true, force: true });
+      void loadReaderComments(1, { fresh: true, force: true, ...expectationOptions });
     } else if (stalePanel) {
-      void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
+      void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1, ...expectationOptions });
     }
   };
 

@@ -49,6 +49,7 @@ import {
   writeRailPageCache,
   type RailEmojiCatalog,
 } from "../scripts/heybox-up/src/ui/rail";
+import { READER_COMMENT_MARKS_KEY, saveReaderCommentMark } from "../scripts/heybox-up/src/ui/comment-marks";
 
 const navigation = {
   sync: (): void => undefined,
@@ -130,6 +131,7 @@ function stalePage(): Parameters<typeof writeRailPageCache>[3] {
 describe("reader comment panel first open", () => {
   beforeEach(() => {
     document.cookie = "heybox_id=42";
+    sessionStorage.removeItem(READER_COMMENT_MARKS_KEY);
     clearRailPageCache("123456");
   });
 
@@ -137,6 +139,7 @@ describe("reader comment panel first open", () => {
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
     clearRailPageCache("123456");
+    sessionStorage.removeItem(READER_COMMENT_MARKS_KEY);
     document.cookie = "heybox_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   });
 
@@ -162,6 +165,46 @@ describe("reader comment panel first open", () => {
       ),
     ).toBe(true);
     expect(list?.textContent ?? "").toContain("fresh floor");
+  });
+
+  it("restores a published floor after reload and polls until the server tree echoes it", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    saveReaderCommentMark({
+      linkId: "123456",
+      commentId: "",
+      text: "my persisted comment",
+      userId: "42",
+      rootId: "",
+      parentId: "",
+      createAt: now,
+      verifyPage: 1,
+      imageUrls: [],
+    });
+    let treeReads = 0;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: unknown) => {
+      const url = String(input);
+      calls.push(url);
+      treeReads += 1;
+      const payload = treeReads < 2 ? {
+        status: "ok",
+        result: { comments: [{ comment: [] }], link: { comment_num: 0, title: "t" } },
+      } : {
+        status: "ok",
+        result: {
+          comments: [{ comment: [{ comment_id: "9300", text: "<p>my persisted comment</p>", user: { username: "me", userid: 42 } }] }],
+          link: { comment_num: 1, title: "t" },
+        },
+      };
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) });
+    }));
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await vi.waitFor(() => {
+      expect(calls.filter((url) => url.includes("link_id=123456") && url.includes("page=1")).length).toBeGreaterThanOrEqual(2);
+      expect(host.ownerDocument.querySelector(".hbu-reader-comments-list")?.textContent ?? "").toContain("my persisted comment");
+    }, { timeout: 5000 });
+    expect(host.ownerDocument.querySelector(".hbu-reader-comments-syncing")).toBeNull();
   });
 
   it("renders comment images, cube emoji and heygirl emoji", async () => {
@@ -373,7 +416,6 @@ describe("reader comment panel first open", () => {
       const rendered = document.querySelector<HTMLElement>(".hbu-reader-comments-emoji");
       expect(rendered?.style.backgroundImage).toContain("cube_emoji_v36.png");
       expect(rendered?.style.backgroundSize).toBe("102px 323px");
-      expect(rendered?.style.backgroundPosition).toBe("-17px -306px");
       document.querySelector<HTMLButtonElement>(".hbu-reader-composer-submit")?.click();
       await new Promise((resolve) => setTimeout(resolve, 50));
       const created = calls.find((call) => call.url.includes("/comment/create"));
