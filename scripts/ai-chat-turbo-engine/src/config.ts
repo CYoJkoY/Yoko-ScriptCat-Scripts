@@ -600,9 +600,15 @@ export const PLATFORMS = {
     sidebar: {
       selectors: [
         "div.b8812f16.a2f3d50e",
-        // Fallback for a hash rotation: the rail is the first column of the
-        // app row, next to the compact top bar that holds the native toggle.
-        "#root > div > div > div > div > div:nth-child(2)",
+        // Fallbacks for a hash rotation. The rail is the second column of the
+        // app row and the only column that owns a direct ds-scroll-area child.
+        // A bare nth-child path used to match the floating toolbar instead,
+        // which is 114x40 and would have been widened as if it were the rail.
+        // The loose variant also caught a transcript body and the small
+        // scroller next to a message, so it also requires the rail's own
+        // buttons: the toolbar and the chat column have none of both.
+        "#root > div > div > div > div:nth-child(2):has(> .ds-scroll-area)",
+        '#root div:has(> .ds-scroll-area):has(.ds-button):not(.ds-scroll-area):not(.ds-markdown):not(:has(textarea))',
       ],
       triggers: [
         ".ca6d4be1 .ds-button",

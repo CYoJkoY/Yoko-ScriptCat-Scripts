@@ -1464,6 +1464,76 @@ describe("sidebar peek platform coverage", () => {
     );
   });
 
+  it("resolves the DeepSeek fallbacks to the rail, not the toolbar", () => {
+    // DeepSeek rotates its hashed class names, so the fallbacks have to hold
+    // on structure alone. The compact toolbar is also a second column of the
+    // app row and is full of ds buttons: a positional fallback picked it up
+    // and the peek widened a 114x40 control strip.
+    document.body.innerHTML = `
+      <div id="root">
+        <div class="shell">
+          <div class="middle">
+            <div class="row">
+              <div class="topbar"><div class="toolbar">
+                <div class="ds-button" role="button">A</div>
+                <div class="ds-button" role="button">B</div>
+              </div></div>
+              <div class="rail" style="display: none">
+                <div class="header"><div class="actions">
+                  <div class="ds-button" role="button">C</div>
+                </div></div>
+                <div class="ds-scroll-area">
+                  <div>History</div>
+                </div>
+              </div>
+              <div class="chat">
+                <div class="message">
+                  <div class="ds-markdown ds-assistant-message-main-content">
+                    <div class="ds-scroll-area"><p>Answer</p></div>
+                  </div>
+                </div>
+                <div class="code-block">
+                  <div class="ds-scroll-area"><pre>code</pre></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    const railNode = document.querySelector(".rail");
+    const sidebar = PLATFORMS.deepseek.sidebar;
+    if (sidebar === undefined) throw new Error("missing DeepSeek sidebar");
+    // The first selector targets the hashed classes; every fallback after it
+    // must land on the same node.
+    const fallbacks = sidebar.selectors.slice(1);
+    expect(fallbacks.length).toBeGreaterThan(0);
+    for (const selector of fallbacks) {
+      const found = document.querySelectorAll(selector);
+      expect(found.length, selector).toBe(1);
+      expect(found[0], selector).toBe(railNode);
+    }
+    // The toolbar owns no scroller of its own, so no fallback can name it.
+    for (const selector of fallbacks) {
+      expect(
+        document.querySelector(".topbar")?.matches(selector) ?? false,
+        selector,
+      ).toBe(false);
+    }
+    // A transcript body and a code scroller each own a ds-scroll-area too;
+    // the fallback must not widen either when the hash classes rotate.
+    for (const selector of fallbacks) {
+      expect(
+        document.querySelector(".chat")?.matches(selector) ?? false,
+        selector,
+      ).toBe(false);
+      expect(
+        document.querySelector(".code-block")?.matches(selector) ?? false,
+        selector,
+      ).toBe(false);
+    }
+  });
+
   it("injects on both Copilot hosts", () => {
     expect(engineMeta.match).toContain("https://copilot.com/*");
     expect(engineMeta.match).toContain("https://copilot.microsoft.com/*");
