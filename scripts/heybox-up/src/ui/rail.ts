@@ -4,6 +4,7 @@ import { LINK_HREF_PREFIX, formatTime } from "../core/cy";
 import { readPageRoute, registerPageSync } from "../core/page-sync";
 import { asRecord } from "../core/json";
 import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
+import { createRnd16 } from "../core/rnd16";
 import { createSignature, md5Hex } from "../core/signature";
 import { COMMENT_PREVIEW_EVENT, HIDE_CY_EVENT, isCyComment, readCommentPreviewPreference, readHideCyPreference, setHideCyPreference } from "../state";
 
@@ -14,10 +15,6 @@ export const COMMENT_TREE_API_PATH = "/bbs/app/link/tree";
 export const COMMENT_CREATE_API_PATH = "/bbs/app/comment/create";
 
 export const DELETE_COMMENT_API_PATH = "/bbs/app/comment/delete";
-
-export const COMMENT_CREATE_RND_VERSION = "15";
-
-export const COMMENT_CREATE_RND_SECRET = "Z7mFG4tQp9Ws2LxB8H";
 
 export const RAIL_PAGE_SIZE = 20;
 
@@ -35,6 +32,16 @@ export interface ApiParams {
   _time: string;
   nonce: string;
   [key: string]: string;
+}
+
+/** Query parameters the site sends alongside the RND-16 payload. */
+export interface CommentCreateParams {
+  os_type: string;
+  app: string;
+  x_client_type: string;
+  x_os_type: string;
+  x_app: string;
+  x_client_version: string;
 }
 
 export interface RailTextSegment {
@@ -287,6 +294,21 @@ export const RAIL_CSS = `
   .action.primary { border-color: transparent; background: var(--rail-accent); color: var(--heybox-up-on-accent, #fff); }
 `;
 
+/** Comment creation query: platform params plus the RND-16 payload. */
+export async function createCommentCreateQuery(path: string): Promise<CommentCreateParams & { _rnd: string }> {
+  const time = Math.floor(Date.now() / 1000);
+  const nonce = md5Hex(String(time) + String(Math.random())).toUpperCase();
+  return {
+    os_type: "web",
+    app: "heybox",
+    x_client_type: "web",
+    x_os_type: "Mac",
+    x_app: "heybox",
+    x_client_version: "999.999.999",
+    _rnd: await createRnd16(path, String(time), nonce),
+  };
+}
+
 export function createApiParams(path: string): ApiParams {
   const time = Math.floor(Date.now() / 1000);
   const nonce = md5Hex(String(time) + String(Math.random())).toUpperCase();
@@ -304,24 +326,6 @@ export function createApiParams(path: string): ApiParams {
     _time: String(time),
     nonce: nonce,
   };
-}
-
-export async function createCommentRnd(nonce: string, timestamp: string): Promise<string> {
-  if (globalThis.crypto === undefined || globalThis.crypto.subtle === undefined) {
-    throw new Error("当前浏览器不支持 CY 发布签名");
-  }
-  const encoder = new TextEncoder();
-  const key = await globalThis.crypto.subtle.importKey(
-    "raw",
-    encoder.encode(COMMENT_CREATE_RND_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const message = COMMENT_CREATE_RND_SECRET + nonce + timestamp + ":" + nonce;
-  const signature = await globalThis.crypto.subtle.sign("HMAC", key, encoder.encode(message));
-  const digest = Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return COMMENT_CREATE_RND_VERSION + ":" + digest;
 }
 
 export function buildLinkCommentUrl(

@@ -39,6 +39,13 @@ vi.hoisted(() => {
       subtle: {
         importKey: (): Promise<unknown> => Promise.resolve({}),
         sign: (): Promise<ArrayBuffer> => Promise.resolve(new Uint8Array(32).buffer),
+        encrypt: ({ iv }: { iv: Uint8Array }): Promise<ArrayBuffer> => {
+          const plain = new Uint8Array(48);
+          const out = new Uint8Array(iv.length + plain.length);
+          out.set(iv, 0);
+          out.set(plain, iv.length);
+          return Promise.resolve(out.buffer);
+        },
       },
     },
   });
