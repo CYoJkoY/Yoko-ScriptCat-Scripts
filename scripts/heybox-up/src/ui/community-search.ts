@@ -40,6 +40,7 @@ export interface CommunitySearchSavedState {
   topicId: string;
   keyword: string;
   timeRange: string;
+  filterTag: string;
   open: boolean;
   /** Showing the restored result set instead of the feed. */
   results: boolean;
@@ -50,12 +51,14 @@ export interface CommunitySearchSession {
   topicId: string;
   keyword: string;
   timeRange: string;
+  filterTag: string;
   open: boolean;
   results: boolean;
   items: CommunitySearchItemView[];
   offset: number;
   noMore: boolean;
   timeRanges: CommunitySearchTimeRange[];
+  filterTags: CommunitySearchFilterTag[];
 }
 
 export interface TopicContext {
@@ -65,6 +68,11 @@ export interface TopicContext {
 
 export interface CommunitySearchTimeRange {
   value: string;
+  name: string;
+}
+
+export interface CommunitySearchFilterTag {
+  tag: string;
   name: string;
 }
 
@@ -88,6 +96,7 @@ export type CommunitySearchPage =
     items: unknown[];
     linkCount: number;
     timeRanges: CommunitySearchTimeRange[];
+    filterTags: CommunitySearchFilterTag[];
     tip: string;
   };
 
@@ -114,10 +123,12 @@ export interface CommunitySearchState {
   topicName: string;
   keyword: string;
   timeRange: string;
+  filterTag: string;
   items: CommunitySearchItemView[];
   offset: number;
   noMore: boolean;
   timeRanges: CommunitySearchTimeRange[];
+  filterTags: CommunitySearchFilterTag[];
   tip: string;
   error: string;
   status: string;
@@ -319,6 +330,14 @@ export const COMMUNITY_SEARCH_CSS = `
     border-bottom: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .1));
   }
   #heybox-up-community-search .filters[hidden] { display: none !important; }
+  #heybox-up-community-search .filter-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 3px;
+    color: var(--heybox-up-text-2, #3c4249);
+    font-size: 12px;
+    font-weight: 600;
+  }
   #heybox-up-community-search .chip {
     height: 26px;
     margin: 0;
@@ -461,7 +480,7 @@ export function readTopicContext(): TopicContext | null {
   return { topicId: topicId, name: name === "" ? "本社区" : name };
 }
 
-export function buildCommunitySearchUrl(topicId: string, keyword: string, offset: number, timeRange: string, signed: boolean): string {
+export function buildCommunitySearchUrl(topicId: string, keyword: string, offset: number, timeRange: string, filterTag: string, signed: boolean): string {
   const query = new URLSearchParams({
     os_type: "web",
     app: "heybox",
@@ -481,6 +500,7 @@ export function buildCommunitySearchUrl(topicId: string, keyword: string, offset
     topic_id: String(topicId),
   });
   if (timeRange !== "") query.set("time_range", timeRange);
+  if (filterTag !== "") query.set("filter_tag", filterTag);
   if (signed === true) {
     const time = Math.floor(Date.now() / 1000);
     const nonce = md5Hex(String(time) + String(Math.random())).toUpperCase();
@@ -528,11 +548,23 @@ export async function fetchCommunitySearchPage(url: string, signal: AbortSignal)
     .filter((entry): entry is Record<string, unknown> => entry !== null)
     .filter((entry) => typeof entry["value"] === "string" && typeof entry["name"] === "string")
     .map((entry) => ({ value: String(entry["value"]), name: String(entry["name"]) }));
+  const rawFilterItem = (Array.isArray(result["items"]) ? result["items"] : [])
+    .map((entry) => asRecord(entry))
+    .find((entry) => entry !== null && entry["type"] === "filter_tag");
+  const rawFilterTags = rawFilterItem !== undefined && rawFilterItem !== null && Array.isArray(rawFilterItem["filter_tags"])
+    ? rawFilterItem["filter_tags"]
+    : [];
+  const filterTags = rawFilterTags
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null)
+    .filter((entry) => isSearchFilterTagValue(entry["tag"]) && typeof entry["name"] === "string")
+    .map((entry) => ({ tag: String(entry["tag"]), name: String(entry["name"]).slice(0, 24) }))
+    .slice(0, 12);
   const rawScopedTip = data["search_not_result_tips"];
   const scopedTip = typeof rawScopedTip === "string" ? rawScopedTip.trim() : "";
   const rawResultTip = result["search_not_result_tips"];
   const resultTip = typeof rawResultTip === "string" ? rawResultTip.trim() : "";
-  return { ok: true, items, linkCount, timeRanges, tip: scopedTip !== "" ? scopedTip : resultTip };
+  return { ok: true, items, linkCount, timeRanges, filterTags, tip: scopedTip !== "" ? scopedTip : resultTip };
 }
 
 export async function requestCommunitySearch(
@@ -540,13 +572,14 @@ export async function requestCommunitySearch(
   keyword: string,
   offset: number,
   timeRange: string,
+  filterTag: string,
   signal: AbortSignal,
 ): Promise<CommunitySearchPage> {
   // The signed request is tried first; if risk control rejects it, the unsigned request is the fallback.
-  const signed = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, true), signal);
+  const signed = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, filterTag, true), signal);
   if (signed.aborted === true) return signed;
   if (signed.ok === true) return signed;
-  const plain = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, false), signal);
+  const plain = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, filterTag, false), signal);
   return plain.ok === true ? plain : signed;
 }
 
@@ -575,6 +608,10 @@ export function isSearchTimeRange(value: unknown): value is string {
   return typeof value === "string" && value.length <= COMMUNITY_SEARCH_RANGE_MAX && /^[A-Za-z0-9_-]*$/.test(value);
 }
 
+export function isSearchFilterTagValue(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
 export function normalizeSearchKeyword(value: unknown): string {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim().slice(0, COMMUNITY_SEARCH_KEYWORD_MAX);
@@ -595,6 +632,9 @@ export function parseCommunitySearchSavedState(raw: unknown): CommunitySearchSav
   if (keyword === "" || rawKeyword.length > COMMUNITY_SEARCH_KEYWORD_MAX * 2) return null;
   const timeRange = body["timeRange"];
   if (!isSearchTimeRange(timeRange)) return null;
+  const rawFilterTag = body["filterTag"];
+  const filterTag = rawFilterTag === undefined ? "" : rawFilterTag;
+  if (typeof filterTag !== "string" || (filterTag !== "" && !isSearchFilterTagValue(filterTag))) return null;
   const open = body["open"];
   if (typeof open !== "boolean") return null;
   // Version 1 records written before results existed lack the field; those
@@ -605,6 +645,7 @@ export function parseCommunitySearchSavedState(raw: unknown): CommunitySearchSav
     topicId: topicId,
     keyword: keyword,
     timeRange: timeRange,
+    filterTag: filterTag,
     open: open,
     results: open === true && results === true,
   };
@@ -631,6 +672,14 @@ function isSearchRange(value: unknown): value is CommunitySearchTimeRange {
   const record = asRecord(value);
   return record !== null
     && isSearchTimeRange(record["value"])
+    && typeof record["name"] === "string"
+    && record["name"].length <= 24;
+}
+
+function isSearchFilterTag(value: unknown): value is CommunitySearchFilterTag {
+  const record = asRecord(value);
+  return record !== null
+    && isSearchFilterTagValue(record["tag"])
     && typeof record["name"] === "string"
     && record["name"].length <= 24;
 }
@@ -678,17 +727,28 @@ export function parseCommunitySearchSession(raw: unknown, topicId: string): Comm
     if (!isSearchRange(entry)) return null;
     timeRanges.push({ value: entry.value, name: entry.name.slice(0, 24) });
   }
+  const rawFilterTags = record["filterTags"];
+  const filterTags: CommunitySearchFilterTag[] = [];
+  if (rawFilterTags !== undefined) {
+    if (!Array.isArray(rawFilterTags) || rawFilterTags.length > 12) return null;
+    for (const entry of rawFilterTags) {
+      if (!isSearchFilterTag(entry)) return null;
+      filterTags.push({ tag: entry.tag, name: entry.name.slice(0, 24) });
+    }
+  }
   return {
     version: 1,
     topicId: saved.topicId,
     keyword: saved.keyword,
     timeRange: resolveCommunitySearchRange(timeRanges, saved.timeRange),
+    filterTag: filterTags.some((entry) => entry.tag === saved.filterTag) ? saved.filterTag : "",
     open: saved.open,
     results: saved.results,
     items: items,
     offset: Number(offset),
     noMore: noMore,
     timeRanges: timeRanges,
+    filterTags: filterTags,
   };
 }
 
@@ -708,6 +768,7 @@ export function writeCommunitySearchSession(state: CommunitySearchSession): void
       topicId: state.topicId,
       keyword: normalizeSearchKeyword(state.keyword),
       timeRange: state.timeRange,
+      filterTag: state.filterTag,
       open: state.open === true,
       results: state.results === true,
     },
@@ -724,6 +785,7 @@ export function writeCommunitySearchSession(state: CommunitySearchSession): void
     offset: state.offset,
     noMore: state.noMore === true,
     timeRanges: state.timeRanges.slice(0, 12).map((range) => ({ value: range.value, name: range.name.slice(0, 24) })),
+    filterTags: state.filterTags.slice(0, 12).map((tag) => ({ tag: tag.tag, name: tag.name.slice(0, 24) })),
   };
   if (parseCommunitySearchSession(record, state.topicId) === null) return;
   sessionStore.writeJson(communitySearchStorageKey(state.topicId), record);
@@ -980,7 +1042,8 @@ export function watchCommunitySearch(): () => void {
   const renderChips = () => {
     ui.filters.textContent = "";
     const ranges = state === null ? [] : state.timeRanges;
-    if (ranges.length === 0) {
+    const filterTags = state === null ? [] : state.filterTags;
+    if (ranges.length === 0 && filterTags.length === 0) {
       ui.filters.hidden = true;
       return;
     }
@@ -1006,6 +1069,33 @@ export function watchCommunitySearch(): () => void {
     };
     build("不限时间", "");
     for (const range of ranges) build(range.name, range.value);
+    if (filterTags.length > 0) {
+      const divider = document.createElement("span");
+      divider.className = "filter-label";
+      divider.textContent = "分类";
+      ui.filters.append(divider);
+      const buildTag = (label: string, value: string): void => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = label;
+        chip.setAttribute("aria-pressed", String(state !== null && state.filterTag === value));
+        chip.addEventListener("click", () => {
+          const current = state;
+          if (current === null || current.loading === true || current.filterTag === value) return;
+          current.filterTag = value;
+          current.offset = 0;
+          current.items = [];
+          current.noMore = false;
+          current.duplicatePages = 0;
+          persist();
+          void run(true);
+        });
+        ui.filters.append(chip);
+      };
+      buildTag("全部分类", "");
+      for (const tag of filterTags) buildTag(tag.name, tag.tag);
+    }
   };
 
   const renderItems = (): void => {
@@ -1070,7 +1160,7 @@ export function watchCommunitySearch(): () => void {
     searchController?.abort();
     const controller = new AbortController();
     searchController = controller;
-    const response = await requestCommunitySearch(current.topicId, current.keyword, offset, current.timeRange, controller.signal);
+    const response = await requestCommunitySearch(current.topicId, current.keyword, offset, current.timeRange, current.filterTag, controller.signal);
     if (state !== current || searchController !== controller) return false;
     searchController = null;
     current.loading = false;
@@ -1094,6 +1184,7 @@ export function watchCommunitySearch(): () => void {
     current.noMore = collection.exhausted;
     current.tip = response.tip;
     if (current.timeRanges.length === 0 && response.timeRanges.length > 0) current.timeRanges = response.timeRanges;
+    if (current.filterTags.length === 0 && response.filterTags.length > 0) current.filterTags = response.filterTags;
     // A page made only of already shown posts advances the offset without
     // growing the list. Probe the next page a bounded number of times so the
     // reader does not have to click "load more" repeatedly for no visible
@@ -1148,10 +1239,12 @@ export function watchCommunitySearch(): () => void {
       topicName: context.name,
       keyword: keyword,
       timeRange: "",
+      filterTag: "",
       items: [],
       offset: 0,
       noMore: false,
       timeRanges: [],
+      filterTags: [],
       tip: "",
       error: "",
       status: "",
@@ -1270,12 +1363,14 @@ export function watchCommunitySearch(): () => void {
       topicId: context.topicId,
       keyword: keyword,
       timeRange: current !== null ? resolveCommunitySearchRange(ranges, current.timeRange) : "",
+      filterTag: current !== null ? current.filterTag : "",
       open: current !== null || ui.input.value.trim() !== "",
       results: current !== null,
       items: current !== null ? current.items : [],
       offset: current !== null ? current.offset : 0,
       noMore: current !== null ? current.noMore : false,
       timeRanges: ranges,
+      filterTags: current !== null ? current.filterTags : [],
     });
   }
 
@@ -1297,10 +1392,12 @@ export function watchCommunitySearch(): () => void {
       topicName: context.name,
       keyword: saved.keyword,
       timeRange: saved.timeRange,
+      filterTag: saved.filterTag,
       items: saved.results === true ? saved.items : [],
       offset: saved.offset,
       noMore: saved.noMore,
       timeRanges: saved.timeRanges,
+      filterTags: saved.filterTags,
       tip: "",
       error: "",
       status: "",
