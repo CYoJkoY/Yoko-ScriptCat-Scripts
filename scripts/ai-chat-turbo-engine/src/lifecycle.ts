@@ -99,6 +99,11 @@ export function initializeEngine(): void {
   let scheduleTimer: ReturnType<typeof setTimeout> | null = null;
   let textIndexTimer: ReturnType<typeof setTimeout> | null = null;
   let textIndexFrame: number | null = null;
+  // Capsule mounting is deferred with a frame budget: opening a long history
+  // marks every turn as new at once, and a synchronous scan would serialize
+  // the whole conversation before first paint.
+  let capsuleFrame: number | null = null;
+  const pendingCapsuleTurns = new Set<Element>();
   let codeScanTimer: ReturnType<typeof setTimeout> | null = null;
   let turnDiscoveryTimer: ReturnType<typeof setInterval> | null = null;
   let lastUpdateTime = 0;
@@ -301,8 +306,11 @@ export function initializeEngine(): void {
     const addedTurns = turns.filter((turn) => !turnTextIndex.hasTurn(turn));
     turnTextIndex.reconcile(turns);
 
-    for (const turnElement of addedTurns) {
-      chatCapsules.collapseInChatFileBlocks(turnElement);
+    if (addedTurns.length > 0) {
+      for (const turnElement of addedTurns) {
+        pendingCapsuleTurns.add(turnElement);
+      }
+      requestCapsuleFrame();
     }
     chatCapsules.sweep(turns);
 
@@ -420,6 +428,29 @@ export function initializeEngine(): void {
   }
 
   /**
+   * Mount virtual-file capsules for queued turns inside a per-frame budget.
+   * The rest of the queue continues on the next frame, so a history load
+   * never blocks paint on a single whole-conversation scan.
+   */
+  function runCapsuleFrame(): void {
+    capsuleFrame = null;
+    if (isEngineDormant() || pendingCapsuleTurns.size === 0) return;
+    const frameStarted = performance.now();
+    for (const turn of pendingCapsuleTurns) {
+      pendingCapsuleTurns.delete(turn);
+      if (turn.isConnected) chatCapsules.collapseInChatFileBlocks(turn);
+      if (performance.now() - frameStarted >= TEXT_INDEX_FRAME_BUDGET) break;
+    }
+    if (pendingCapsuleTurns.size > 0) requestCapsuleFrame();
+  }
+
+  /** Book the next frame that drains queued capsule mounts. */
+  function requestCapsuleFrame(): void {
+    if (capsuleFrame !== null) return;
+    capsuleFrame = window.requestAnimationFrame(runCapsuleFrame);
+  }
+
+  /**
    * Drain the text queue for search and handoff. A non-forced call performs
    * one bounded slice and reports what is left for the caller to retry.
    */
@@ -526,6 +557,11 @@ export function initializeEngine(): void {
   /** Reset per-conversation caches when the route points at another chat. */
   function resetTurnIndexForNavigation(): void {
     invalidateActiveTurnSelectorGroup();
+    pendingCapsuleTurns.clear();
+    if (capsuleFrame !== null) {
+      window.cancelAnimationFrame(capsuleFrame);
+      capsuleFrame = null;
+    }
     turnTextIndex.clear();
     restoredTurns.clear();
     dehydratedTurns.clear();
@@ -677,6 +713,11 @@ export function initializeEngine(): void {
     if (textIndexFrame !== null) {
       window.cancelAnimationFrame(textIndexFrame);
       textIndexFrame = null;
+    }
+    pendingCapsuleTurns.clear();
+    if (capsuleFrame !== null) {
+      window.cancelAnimationFrame(capsuleFrame);
+      capsuleFrame = null;
     }
     if (codeScanTimer !== null) {
       window.clearTimeout(codeScanTimer);

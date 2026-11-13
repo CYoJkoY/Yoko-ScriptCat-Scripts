@@ -11,19 +11,41 @@ import { CODE_PREVIEW_HEIGHT, STYLE_ID } from "../config";
  * `message-content` custom element. `contain: layout style` keeps a streaming
  * append from invalidating the layout of every sibling block.
  *
- * Only block children and native `code-block` elements are isolated.
- * Isolating a whole turn would clip native popovers, menus, and focus rings
- * that legitimately overflow the turn box.
+ * Only block children and native `code-block` elements are isolated. Tables
+ * stay unisolated because their scroll wrapper measures the intrinsic table
+ * width. Tables and their scroll wrappers stretch to the conversation column
+ * because native rules size compact tables to their content width, which
+ * leaves them floating narrower than the surrounding text. Isolating a whole
+ * turn would clip native popovers, menus, and focus rings that legitimately
+ * overflow the turn box.
  */
 export const GEMINI_NATIVE_RENDER_CSS = `
-    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > * {
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :not(table) {
       content-visibility: auto !important;
       contain: layout style !important;
       contain-intrinsic-size: auto 3rem !important;
     }
 
-    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(pre, table, blockquote) {
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(pre, blockquote) {
       contain-intrinsic-size: auto 8rem !important;
+    }
+
+    /* Tables keep their intrinsic width and fill the conversation column.
+       Gemini wraps them in an overflow scroll container, render isolation on
+       the table itself collapses that measurement, and native compact-table
+       rules size some tables to their content width so they float narrower
+       than the surrounding text. Content wider than the column still keeps
+       the native horizontal scroll. */
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) table {
+      content-visibility: visible !important;
+      contain: none !important;
+      width: 100% !important;
+      max-width: none !important;
+    }
+
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) .table-content {
+      width: 100% !important;
+      min-width: 0 !important;
     }
 
     model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(img, video, canvas, iframe) {

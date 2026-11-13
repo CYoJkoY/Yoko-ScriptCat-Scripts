@@ -181,6 +181,22 @@ function collectTokenContainers(turn: Element): HTMLElement[] {
   return containers;
 }
 
+/**
+ * Serialize-free probe before the full message parse. The parser can only
+ * match a token while it sits inside one text node, so walking text nodes
+ * with an early exit finds every matchable turn without paying for a whole
+ * subtree textContent serialization on turns that carry no token.
+ */
+function turnContainsVirtualFileToken(turn: Element): boolean {
+  const walker = document.createTreeWalker(turn, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    if (node.nodeValue?.includes(VF_TOKEN_START)) return true;
+    node = walker.nextNode();
+  }
+  return false;
+}
+
 /** True when the turn still shows the prompt outside the hidden block. */
 function turnShowsPrompt(
   turn: Element,
@@ -395,6 +411,7 @@ export function createChatCapsuleUtils(
       detachMount(turnElement);
     }
 
+    if (!turnContainsVirtualFileToken(turnElement)) return;
     const parsed = parseChatVirtualFileMessage(turnElement.textContent ?? "");
     if (!parsed) return;
     if (!parsed.files.some((file) => file.content.length > 0)) return;

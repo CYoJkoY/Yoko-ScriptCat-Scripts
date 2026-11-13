@@ -30,8 +30,10 @@ const SIDEBAR_EFFECT_SELECTORS =
 const SIDEBAR_CONTAIN_SELECTORS =
   "side-navigation-content, sidenav-with-history-container, conversations-list, conversations-list > *";
 const EXPECTED_SELECTORS = [
-  `${CONTENT_SELECTOR} > *`,
-  `${CONTENT_SELECTOR} > :is(pre, table, blockquote)`,
+  `${CONTENT_SELECTOR} > :not(table)`,
+  `${CONTENT_SELECTOR} > :is(pre, blockquote)`,
+  `${CONTENT_SELECTOR} table`,
+  `${CONTENT_SELECTOR} .table-content`,
   `${CONTENT_SELECTOR} > :is(img, video, canvas, iframe)`,
   "model-response code-block",
   ":is(top-bar, top-bar-actions, input-area, input-area-v2, side-navigation, chat-window, mat-toolbar, code-block, .top-bar, .input-area, .toolbar)",
@@ -52,10 +54,16 @@ describe("Gemini native message render isolation", () => {
 
     const css = normalize(readStyleText());
     expect(css).toContain(
-      `${CONTENT_SELECTOR} > * { content-visibility: auto !important; contain: layout style !important; contain-intrinsic-size: auto 3rem !important; }`,
+      `${CONTENT_SELECTOR} > :not(table) { content-visibility: auto !important; contain: layout style !important; contain-intrinsic-size: auto 3rem !important; }`,
     );
     expect(css).toContain(
-      `${CONTENT_SELECTOR} > :is(pre, table, blockquote) { contain-intrinsic-size: auto 8rem !important; }`,
+      `${CONTENT_SELECTOR} > :is(pre, blockquote) { contain-intrinsic-size: auto 8rem !important; }`,
+    );
+    expect(css).toContain(
+      `${CONTENT_SELECTOR} table { content-visibility: visible !important; contain: none !important; width: 100% !important; max-width: none !important; }`,
+    );
+    expect(css).toContain(
+      `${CONTENT_SELECTOR} .table-content { width: 100% !important; min-width: 0 !important; }`,
     );
     expect(css).toContain(
       `${CONTENT_SELECTOR} > :is(img, video, canvas, iframe) { contain-intrinsic-size: auto 12rem !important; }`,
@@ -64,10 +72,10 @@ describe("Gemini native message render isolation", () => {
       "model-response code-block { content-visibility: auto !important; contain: layout style !important; contain-intrinsic-size: auto 10rem !important; }",
     );
     expect(css).toContain(
-      `${EXPECTED_SELECTORS[4]} { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }`,
+      `${EXPECTED_SELECTORS[6]} { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }`,
     );
     expect(css).toContain(
-      `${EXPECTED_SELECTORS[5]} { animation: none !important; transition: none !important; will-change: auto !important; }`,
+      `${EXPECTED_SELECTORS[7]} { animation: none !important; transition: none !important; will-change: auto !important; }`,
     );
     expect(css).toContain(
       `${SIDEBAR_EFFECT_SELECTORS} { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }`,
@@ -105,7 +113,7 @@ describe("Gemini native message render isolation", () => {
 
     injectEngineStyles({ geminiNativeRender: true });
     expect(document.getElementById(STYLE_ID)).toBe(first);
-    expect(first?.textContent).toContain(`${CONTENT_SELECTOR} > *`);
+    expect(first?.textContent).toContain(`${CONTENT_SELECTOR} > :not(table)`);
   });
 
   it("restores the stylesheet after the host drops the style node", () => {
@@ -131,7 +139,7 @@ describe("Gemini native message render isolation", () => {
   it("scopes isolation to block content and never to a whole turn", () => {
     const selectors = selectorsOf(GEMINI_NATIVE_RENDER_CSS);
     expect(selectors).toEqual(EXPECTED_SELECTORS);
-    expect(GEMINI_NATIVE_RENDER_CSS.match(/content-visibility/g)).toHaveLength(2);
+    expect(GEMINI_NATIVE_RENDER_CSS.match(/content-visibility/g)).toHaveLength(3);
     expect(GEMINI_NATIVE_RENDER_CSS).not.toMatch(
       /(?:^|\n)\s*(?:model-response|user-query)\s*\{/
     );
