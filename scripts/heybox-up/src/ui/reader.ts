@@ -11,7 +11,7 @@ import { parseCompactCount } from "./desktop";
 import { normalizeFavourFolders, planFavourChanges, planHasFavourChange, readFavourFolderId, readFavourFolderPage, resolveFavourOutcome } from "./favour";
 import type { FavourChangePlan, FavourFolder } from "./favour";
 import { navigateToPath } from "./navigation";
-import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, applyRailEmojiStyle, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentRnd, createRailEmojiElement, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, readRailEmojiCatalogEntries, resolveCommentPageProgress, resolveMergedCommentProgress, resolveRailEmoji, resolveRailEmojiRef } from "./rail";
+import { COMMENT_CREATE_API_PATH, DELETE_COMMENT_API_PATH, RAIL_PAGE_CACHE_FRESH_MS, RAIL_PENDING_ID_PREFIX, applyRailEmojiStyle, attachRailPendingReplies, buildArticleCommentBody, buildDeleteCommentBody, buildRailCommentTree, clearRailPageCache, collectRailCommentIds, countRailThreadNodes, createApiParams, createCommentCreateQuery, createRailEmojiElement, createRailPendingReply, fetchRailPage, findRailFloorIdForComment, formatRailAge, holdRailPageCache, isOwnRailComment, mergeRailPageItems, pruneRailPendingReplies, railItemsHaveComment, railItemsHavePendingReply, readCreatedCommentId, readRailEmojiCatalogEntries, resolveCommentPageProgress, resolveMergedCommentProgress, resolveRailEmoji, resolveRailEmojiRef } from "./rail";
 import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailCommentThreadNode, RailEmojiPack, RailLinkInfo, RailSegment } from "./rail";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
 import { HIDE_CY_EVENT, READER_EVENT, READER_HISTORY_LIMIT_EVENT, READER_TIMELINE_EVENT, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readHideCyPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderTimelinePreference } from "../state";
@@ -2286,11 +2286,12 @@ export function watchReader(navigation: PostNavigationController): void {
     signal?: AbortSignal,
   ): Promise<unknown> => {
     if (typeof accountId !== "string" || accountId === "") throw new Error("请先登录小黑盒");
-    const params = createApiParams(path);
-    if (path === COMMENT_CREATE_API_PATH) {
-      params["_rnd"] = await createCommentRnd(params.nonce, params._time);
-    }
-    const query = new URLSearchParams({ ...params, heybox_id: accountId, target: "heybox_app" });
+    // Comment creation follows the site's current RND-16 flow: platform params plus
+    // the encrypted payload, without legacy hkey/time/nonce query parameters.
+    const params = path === COMMENT_CREATE_API_PATH
+      ? { ...await createCommentCreateQuery(path), target: "heybox_app" }
+      : { ...createApiParams(path), heybox_id: accountId, target: "heybox_app" };
+    const query = new URLSearchParams(params);
     const response = await fetchWithTimeout("https://api.xiaoheihe.cn" + path + "?" + query.toString(), {
       method: "POST",
       credentials: "include",
