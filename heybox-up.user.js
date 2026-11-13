@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.1
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，顶部操作栏独占一行，图片不再被渐变遮挡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，支持 cube（109 个，含 191 号抱拳）与 heygirl（24 个）两套表情选择，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.8.2
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，顶部操作栏独占一行，图片不再被渐变遮挡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，表情目录从站点静态资源在线同步（12 小时本机缓存，失败回退内置目录），评论输入框里的已知 cube 与 heygirl 令牌即时渲染为精灵图，提交仍发送原令牌文本，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -1454,13 +1454,13 @@
   }
   var RAIL_BODY_MAX = 4e3;
   var RAIL_SEGMENT_MAX = 80;
-  var RAIL_EMOJI_PACKS = {
+  var railEmojiPacks = {
     // v34 keeps the first 18 rows of v33 and adds row 19 for 抱拳 (191).
     cube: { sprite: "https://static.max-c.com/heybox_web/emoji/cube/cube_emoji_v34.png", columns: 6, rows: 19 },
     heygirl: { sprite: "https://cdn.max-c.com/heybox_web/emoji/cube2/cube2_emoji.png", columns: 6, rows: 4 }
   };
+  var RAIL_EMOJI_PACKS = railEmojiPacks;
   var RAIL_EMOJI_CELL = 17;
-  var RAIL_EMOJI_SPRITE = RAIL_EMOJI_PACKS.cube.sprite;
   var RAIL_EMOJI_TOKEN = /\[([a-z0-9]{1,16})_([^\]]{1,64})\]/i;
   var RAIL_EMOJI_NAMES = [
     "哭泣",
@@ -1599,7 +1599,7 @@
     "记下来",
     "挨刀"
   ];
-  var RAIL_CUBE_FONT_NAMES = {
+  var railCubeFontNames = {
     e012: "哭泣",
     e037: "酷",
     e003: "doge",
@@ -1658,7 +1658,7 @@
     e028: "摸摸头",
     e02f: "电牛"
   };
-  var RAIL_HEYGIRL_FONT_NAMES = {
+  var railHeygirlFontNames = {
     e019: "诶嘿",
     e006: "哭",
     e014: "白嫖怪",
@@ -1684,6 +1684,8 @@
     e018: "记下来",
     e00d: "挨刀"
   };
+  var RAIL_CUBE_FONT_NAMES = railCubeFontNames;
+  var RAIL_HEYGIRL_FONT_NAMES = railHeygirlFontNames;
   var RAIL_EMOJI_NAME_IDS = new Map(
     RAIL_EMOJI_NAMES.map((name, index) => [name, String((Math.floor(index / 6) + 1) * 10 + index % 6 + 1)])
   );
@@ -1694,6 +1696,56 @@
     cube: RAIL_EMOJI_NAME_IDS,
     heygirl: RAIL_HEYGIRL_NAME_IDS
   };
+  var deriveRailEmojiCatalogId = (index) => String((Math.floor(index / 6) + 1) * 10 + index % 6 + 1);
+  var railEmojiCatalogEntries = {
+    cube: RAIL_EMOJI_NAMES.map((name, index) => ({ name, id: deriveRailEmojiCatalogId(index) })),
+    heygirl: RAIL_HEYGIRL_NAMES.map((name, index) => ({ name, id: deriveRailEmojiCatalogId(index) }))
+  };
+  var isValidRailEmojiCatalogPack = (value) => {
+    if (typeof value !== "object" || value === null) return false;
+    const pack = value;
+    return typeof pack.sprite === "string" && /^https?:\/\/[^\s]+$/i.test(pack.sprite) && typeof pack.columns === "number" && Number.isInteger(pack.columns) && pack.columns > 0 && pack.columns < 100 && typeof pack.rows === "number" && Number.isInteger(pack.rows) && pack.rows > 0 && pack.rows < 100 && Array.isArray(pack.entries) && pack.entries.length > 0;
+  };
+  function applyRailEmojiCatalog(catalog) {
+    let changed = false;
+    for (const pack of ["cube", "heygirl"]) {
+      const next = catalog[pack];
+      if (!isValidRailEmojiCatalogPack(next)) continue;
+      const seenIds = /* @__PURE__ */ new Set();
+      const entries = [];
+      for (const entry of next.entries) {
+        if (typeof entry !== "object" || entry === null) return false;
+        const { name, id, unicode } = entry;
+        if (typeof name !== "string" || name.trim() === "" || name.length > 64) return false;
+        const numeric = typeof id === "string" ? Number(id) : Number.NaN;
+        const unit = numeric % 10;
+        const row = Math.floor(numeric / 10);
+        if (!Number.isInteger(numeric) || numeric < 11 || unit < 1 || unit > next.columns || row < 1 || row > next.rows || seenIds.has(id)) {
+          return false;
+        }
+        const normalizedId = String(numeric);
+        seenIds.add(normalizedId);
+        entries.push(unicode === void 0 ? { name, id: normalizedId } : { name, id: normalizedId, unicode });
+      }
+      railEmojiPacks[pack] = { sprite: next.sprite, columns: next.columns, rows: next.rows };
+      railEmojiCatalogEntries[pack] = entries;
+      const idMap = pack === "cube" ? RAIL_EMOJI_NAME_IDS : RAIL_HEYGIRL_NAME_IDS;
+      const fontMap = pack === "cube" ? railCubeFontNames : railHeygirlFontNames;
+      idMap.clear();
+      for (const key of Object.keys(fontMap)) delete fontMap[key];
+      for (const entry of entries) {
+        idMap.set(entry.name, entry.id);
+        if (typeof entry.unicode === "string" && entry.unicode !== "" && fontMap[entry.unicode] === void 0) {
+          fontMap[entry.unicode] = entry.name;
+        }
+      }
+      changed = true;
+    }
+    return changed;
+  }
+  function readRailEmojiCatalogEntries(pack) {
+    return railEmojiCatalogEntries[pack];
+  }
   function isRailEmojiPack(value) {
     return value === "cube" || value === "heygirl";
   }
@@ -5827,6 +5879,170 @@
     ));
   }
 
+  // scripts/heybox-up/src/ui/emoji-catalog.ts
+  var CATALOG_CACHE_KEY = "heybox-up.rail-emoji-catalog.v1";
+  var CATALOG_CACHE_TTL_MS = 12 * 60 * 60 * 1e3;
+  var CATALOG_FAILURE_RETRY_MS = 30 * 1e3;
+  var CATALOG_ASSET_TIMEOUT_MS = 15 * 1e3;
+  var SCRIPT_SOURCE_PATTERN = /\/static\/heybox\/webapp\/@heybox-spa\/website\/app\/index-[^/?#]+\.js(?:[?#]|$)/i;
+  var CSS_SOURCE_PATTERN = /\/static\/heybox\/webapp\/@heybox-spa\/website\/app\/index-[^/?#]+\.css(?:[?#]|$)/i;
+  var catalogPromise = null;
+  var lastCatalogFailureAt = 0;
+  function absoluteAssetUrl(value) {
+    const raw = value.trim();
+    if (raw === "") return "";
+    try {
+      const url = new URL(raw, document.baseURI);
+      return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : "";
+    } catch {
+      return "";
+    }
+  }
+  function discoverRailEmojiAssetSources(root = document) {
+    let scriptUrl = "";
+    let cssUrl = "";
+    for (const element of Array.from(root.querySelectorAll("script[src], link[href]"))) {
+      if (element instanceof HTMLScriptElement) {
+        const candidate = absoluteAssetUrl(element.src);
+        if (scriptUrl === "" && SCRIPT_SOURCE_PATTERN.test(candidate)) scriptUrl = candidate;
+      } else if (element instanceof HTMLLinkElement) {
+        const candidate = absoluteAssetUrl(element.href);
+        if (cssUrl === "" && CSS_SOURCE_PATTERN.test(candidate)) cssUrl = candidate;
+      }
+    }
+    return scriptUrl === "" || cssUrl === "" ? null : { scriptUrl, cssUrl };
+  }
+  function decodeJsText(value) {
+    try {
+      return JSON.parse('"' + value + '"');
+    } catch {
+      return value;
+    }
+  }
+  function readBundleList(source, pack) {
+    const marker = 'type:"' + pack + '",list:';
+    let cursor = source.indexOf(marker);
+    while (cursor !== -1) {
+      const reference = /^([A-Za-z_$][\w$]*)/.exec(source.slice(cursor + marker.length));
+      if (reference !== null) {
+        const declaration = new RegExp(
+          "(?:const|let|var)\\s+" + reference[1].replace(/[$]/g, "\\$") + "\\s*=\\s*\\["
+        );
+        const match = declaration.exec(source);
+        if (match !== null) {
+          const arrayStart = source.indexOf("[", match.index);
+          const arrayEnd = source.indexOf("];", arrayStart);
+          if (arrayStart !== -1 && arrayEnd !== -1) {
+            return source.slice(arrayStart + 1, arrayEnd);
+          }
+        }
+      }
+      cursor = source.indexOf(marker, cursor + marker.length);
+    }
+    return null;
+  }
+  function readBundleEntries(list) {
+    if (list === null) return [];
+    const entries = [];
+    const seen = /* @__PURE__ */ new Set();
+    const pattern = /\{\s*name\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*id\s*:\s*"?([0-9]+)"?\s*(?:,\s*unicode\s*:\s*"((?:\\.|[^"\\])*)"\s*)?\s*\}/g;
+    for (let match = pattern.exec(list); match !== null; match = pattern.exec(list)) {
+      const id = String(Number(match[2]));
+      if (id === "0" || seen.has(id)) continue;
+      const unicode = match[3] === void 0 ? void 0 : decodeJsText(match[3]).toLowerCase();
+      if (unicode !== void 0 && !/^[a-f0-9]+$/.test(unicode)) continue;
+      seen.add(id);
+      entries.push({
+        name: decodeJsText(match[1]),
+        id,
+        ...unicode === void 0 ? {} : { unicode }
+      });
+    }
+    return entries;
+  }
+  function readCssPack(css, pack) {
+    const rule = css.match(new RegExp("\\.hb-emoji-" + pack + "\\s*\\{([^}]*)\\}", "i"));
+    if (rule === null) return null;
+    const body = rule[1];
+    const image = body.match(/background-image\s*:\s*url\(\s*(['"]?)([^)'"]+)\1\s*\)/i);
+    if (image === null) return null;
+    const sprite = absoluteAssetUrl(image[2]).replace(/^http:\/\//i, "https://");
+    if (sprite === "") return null;
+    const size = body.match(/background-size\s*:\s*([0-9.]+)px\s+([0-9.]+)px/i);
+    if (size === null) return null;
+    const cell = css.match(new RegExp("--" + pack + "-length\\s*:\\s*([0-9.]+)px", "i"));
+    const unit = cell === null ? 20 : Number(cell[1]);
+    const columns = Number(size[1]) / unit;
+    const rows = Number(size[2]) / unit;
+    return Number.isInteger(columns) && columns > 0 && Number.isInteger(rows) && rows > 0 ? { sprite, columns, rows } : null;
+  }
+  function parseRailEmojiCatalogFromSources(script, css) {
+    const writableCatalog = {};
+    for (const pack of ["cube", "heygirl"]) {
+      const entries = readBundleEntries(readBundleList(script, pack));
+      const sprite = readCssPack(css, pack);
+      if (entries.length > 0 && sprite !== null) {
+        writableCatalog[pack] = { ...sprite, entries };
+      }
+    }
+    return writableCatalog["cube"] !== void 0 || writableCatalog["heygirl"] !== void 0 ? writableCatalog : null;
+  }
+  function readCache2() {
+    try {
+      const raw = localStorage.getItem(CATALOG_CACHE_KEY);
+      if (raw === null) return null;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt) || typeof parsed.catalog !== "object" || parsed.catalog === null) return null;
+      return { savedAt: parsed.savedAt, catalog: parsed.catalog };
+    } catch {
+      return null;
+    }
+  }
+  function writeCache2(catalog) {
+    try {
+      localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify({ version: 1, savedAt: Date.now(), catalog }));
+    } catch {
+    }
+  }
+  async function fetchAsset(url) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), CATALOG_ASSET_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { credentials: "omit", signal: controller.signal });
+      if (!response.ok) throw new Error(String(response.status));
+      return await response.text();
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+  async function loadCatalog(sources) {
+    const [script, css] = await Promise.all([fetchAsset(sources.scriptUrl), fetchAsset(sources.cssUrl)]);
+    const catalog = parseRailEmojiCatalogFromSources(script, css);
+    if (catalog === null || !applyRailEmojiCatalog(catalog)) return null;
+    writeCache2(catalog);
+    return catalog;
+  }
+  async function loadRailEmojiCatalog(sources) {
+    const cache = readCache2();
+    if (cache !== null && Date.now() - cache.savedAt < CATALOG_CACHE_TTL_MS && applyRailEmojiCatalog(cache.catalog)) {
+      return cache.catalog;
+    }
+    if (catalogPromise !== null) return catalogPromise;
+    if (Date.now() - lastCatalogFailureAt < CATALOG_FAILURE_RETRY_MS) return null;
+    const discovered = sources ?? discoverRailEmojiAssetSources();
+    if (discovered === null) {
+      lastCatalogFailureAt = Date.now();
+      return null;
+    }
+    catalogPromise = loadCatalog(discovered).catch(() => {
+      lastCatalogFailureAt = Date.now();
+      return null;
+    }).finally(() => {
+      catalogPromise = null;
+    });
+    return catalogPromise;
+  }
+
   // scripts/heybox-up/src/ui/theme.ts
   var THEME_CLASS = "heybox-up-theme";
   var THEME_ATTR = "data-heybox-up-theme";
@@ -9080,7 +9296,7 @@
      never push the sheet wider than its own column. */
   .hbu-reader-comments-children--deep { margin-top: 6px; padding-left: 0; border-left: 0; }
   .hbu-reader-comments-children--deep > .hbu-reader-comments-child::before { display: none; }
-  .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; background-size: 102px 323px; }
+  .hbu-reader-comments-text .hbu-reader-comments-emoji { display: inline-block; width: 17px; height: 17px; margin: 0 1px; vertical-align: -3px; background-repeat: no-repeat; }
   .hbu-reader-comments-text img, .hbu-reader-comments-text .hbu-reader-comments-image { display: block; max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 8px; object-fit: contain; vertical-align: top; }
   /* Comment pictures open the shared viewer on click, matching article photos. */
   .hbu-reader-comments-text .hbu-reader-comments-image { cursor: zoom-in; }
@@ -9107,7 +9323,9 @@
     min-height: 58px;
     max-height: 132px;
     padding: 8px 11px;
-    resize: none;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     border: 1px solid var(--hbu-reader-border);
     border-radius: 10px;
     outline: none;
@@ -9115,7 +9333,7 @@
     color: var(--hbu-reader-ink);
     font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   }
-  .hbu-reader-composer-input::placeholder { color: var(--hbu-reader-muted); }
+  .hbu-reader-composer-input[data-empty="true"]::before { content: attr(data-placeholder); color: var(--hbu-reader-muted); pointer-events: none; }
   .hbu-reader-composer-input:focus { border-color: var(--hbu-reader-accent); }
   .hbu-reader-composer-reply { display: flex; gap: 8px; align-items: center; min-width: 0; padding: 5px 9px; border-radius: 8px; background: var(--hbu-reader-subtle); color: var(--hbu-reader-ink-2); font-size: 11px; }
   .hbu-reader-composer-reply[hidden] { display: none; }
@@ -9147,6 +9365,7 @@
   /* The inline sprite style owns the sheet size, so only the repeat policy is
      set here; a contain fit would shift every cell offset. */
   .hbu-reader-composer-emoji-grid span { display: block; width: 22px; height: 22px; background-repeat: no-repeat; }
+  .hbu-reader-composer-emoji-glyph { display: inline-block; width: 17px; height: 17px; vertical-align: -3px; background-repeat: no-repeat; }
   .hbu-reader-composer-status { min-width: 0; flex: 1 1 auto; color: var(--hbu-reader-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
   .hbu-reader-composer-count { flex: none; color: var(--hbu-reader-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .hbu-reader-composer-submit { flex: none; min-height: 30px; padding: 0 13px; border: 1px solid transparent; border-radius: 8px; background: var(--hbu-reader-accent); color: var(--hbu-reader-on-accent); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
@@ -9990,6 +10209,14 @@
     let articleCommentBusy = false;
     let pendingReplySeq = 0;
     const ARTICLE_COMMENT_MAX_LENGTH = 1e3;
+    const liveCatalogBootstrap = () => {
+      void loadRailEmojiCatalog().then((catalog) => {
+        if (catalog !== null) {
+          rebuildComposerEmojiPickers();
+          if (commentPanel !== null && !commentPanel.hidden) renderReaderComments();
+        }
+      }).catch(() => void 0);
+    };
     const articleComposerEmojiClosers = /* @__PURE__ */ new WeakMap();
     const articleComposerImages = /* @__PURE__ */ new WeakMap();
     let articleComposerImageSeq = 0;
@@ -12051,6 +12278,154 @@
       articleComposerImages.delete(root);
       renderComposerImages(root);
     }
+    const COMPOSER_EMOJI_TOKEN = /\[((?:cube|heygirl)_[^\[\]\n]{1,64})\]/gi;
+    const composerSelections = /* @__PURE__ */ new WeakMap();
+    const serializeComposerNode = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? "";
+      if (!(node instanceof Element)) {
+        return Array.from(node.childNodes).map(serializeComposerNode).join("");
+      }
+      if (node instanceof HTMLBRElement) return "\n";
+      const emojiName = node instanceof HTMLElement ? node.dataset["emoji"] ?? "" : "";
+      if (emojiName !== "") return "[" + emojiName + "]";
+      return Array.from(node.childNodes).map(serializeComposerNode).join("");
+    };
+    const serializeComposerText = (input) => serializeComposerNode(input);
+    const saveComposerSelection = (input) => {
+      const selection = document.getSelection();
+      if (selection === null || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      if (input.contains(range.commonAncestorContainer)) composerSelections.set(input, range.cloneRange());
+    };
+    const focusComposerAt = (input, savedRange) => {
+      input.focus({ preventScroll: true });
+      const selection = document.getSelection();
+      if (selection === null) return;
+      let range = savedRange ?? composerSelections.get(input) ?? null;
+      if (range === null || !input.isConnected || !input.contains(range.commonAncestorContainer)) {
+        range = document.createRange();
+        range.selectNodeContents(input);
+        range.collapse(false);
+      } else {
+        range = range.cloneRange();
+      }
+      selection.removeAllRanges();
+      selection.addRange(range);
+      saveComposerSelection(input);
+    };
+    const updateComposerTextState = (input) => {
+      const root = input.closest("[data-hbu-article-composer]");
+      const count = root?.querySelector(".hbu-reader-composer-count");
+      const text = serializeComposerText(input);
+      input.dataset["empty"] = text.trim() === "" ? "true" : "false";
+      if (count instanceof HTMLElement) count.textContent = text.length + "/" + ARTICLE_COMMENT_MAX_LENGTH;
+    };
+    const renderComposerEmojiTokens = (input) => {
+      const walker = document.createTreeWalker(input, NodeFilter.SHOW_TEXT);
+      const textNodes = [];
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        if (node instanceof Text) textNodes.push(node);
+      }
+      let rendered = false;
+      for (const node of textNodes) {
+        const value = node.nodeValue ?? "";
+        COMPOSER_EMOJI_TOKEN.lastIndex = 0;
+        if (!COMPOSER_EMOJI_TOKEN.test(value)) continue;
+        COMPOSER_EMOJI_TOKEN.lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        let cursor = 0;
+        let lastGlyph = null;
+        let nodeRendered = false;
+        for (let match = COMPOSER_EMOJI_TOKEN.exec(value); match !== null; match = COMPOSER_EMOJI_TOKEN.exec(value)) {
+          const emoji = resolveRailEmojiRef(match[1]);
+          if (emoji === null) continue;
+          if (match.index > cursor) fragment.append(document.createTextNode(value.slice(cursor, match.index)));
+          const glyph = createRailEmojiElement(emoji, "hbu-reader-composer-emoji-glyph");
+          glyph.dataset["emoji"] = match[1];
+          glyph.contentEditable = "false";
+          fragment.append(glyph);
+          lastGlyph = glyph;
+          cursor = match.index + match[0].length;
+          nodeRendered = true;
+        }
+        rendered = true;
+        if (!nodeRendered) continue;
+        if (cursor < value.length) fragment.append(document.createTextNode(value.slice(cursor)));
+        node.replaceWith(fragment);
+        if (lastGlyph !== null) {
+          const range = document.createRange();
+          range.setStartAfter(lastGlyph);
+          range.collapse(true);
+          composerSelections.set(input, range);
+          const selection = document.getSelection();
+          if (selection !== null && input.isConnected) {
+            selection.removeAllRanges();
+            selection.addRange(range.cloneRange());
+          }
+        }
+      }
+      return rendered;
+    };
+    const rejectComposerOverflow = (input, event) => {
+      if (event.inputType !== "insertText" || typeof event.data !== "string") return;
+      const selection = document.getSelection();
+      const range = selection !== null && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      const selected = range !== null && input.contains(range.commonAncestorContainer) ? serializeComposerNode(range.cloneContents()) : "";
+      if (serializeComposerText(input).length - selected.length + event.data.length > ARTICLE_COMMENT_MAX_LENGTH) {
+        event.preventDefault();
+        const root = input.closest("[data-hbu-article-composer]");
+        const status = root?.querySelector(".hbu-reader-composer-status");
+        if (status instanceof HTMLElement) status.textContent = "评论最多 " + ARTICLE_COMMENT_MAX_LENGTH + " 字";
+      }
+    };
+    const insertComposerText = (input, text) => {
+      if (text === "") return false;
+      const current = serializeComposerText(input);
+      const selection = document.getSelection();
+      const selectedRange = selection !== null && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      const selectedText = selectedRange !== null && input.contains(selectedRange.commonAncestorContainer) ? serializeComposerNode(selectedRange.cloneContents()) : "";
+      if (current.length - selectedText.length + text.length > ARTICLE_COMMENT_MAX_LENGTH) return false;
+      focusComposerAt(input);
+      const activeSelection = document.getSelection();
+      if (activeSelection === null || activeSelection.rangeCount === 0) return false;
+      const range = activeSelection.getRangeAt(0);
+      range.deleteContents();
+      const node = document.createTextNode(text);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.collapse(true);
+      activeSelection.removeAllRanges();
+      activeSelection.addRange(range);
+      composerSelections.set(input, range.cloneRange());
+      input.normalize();
+      renderComposerEmojiTokens(input);
+      updateComposerTextState(input);
+      return true;
+    };
+    const insertComposerLineBreak = (input) => {
+      focusComposerAt(input);
+      const selection = document.getSelection();
+      if (selection === null || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      const lineBreak = document.createElement("br");
+      range.insertNode(lineBreak);
+      range.setStartAfter(lineBreak);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      composerSelections.set(input, range.cloneRange());
+      updateComposerTextState(input);
+    };
+    const setComposerText = (input, text) => {
+      input.replaceChildren(text === "" ? document.createDocumentFragment() : document.createTextNode(text));
+      renderComposerEmojiTokens(input);
+      const range = document.createRange();
+      range.selectNodeContents(input);
+      range.collapse(false);
+      composerSelections.set(input, range);
+      updateComposerTextState(input);
+    };
     const addComposerImages = (root, files) => {
       const status = readComposerStatus(root);
       const images = readComposerImages(root);
@@ -12111,11 +12486,12 @@
       for (const root of readArticleComposers()) {
         const input = root.querySelector(".hbu-reader-composer-input");
         const submit = root.querySelector(".hbu-reader-composer-submit");
-        if (!(input instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) continue;
+        if (!(input instanceof HTMLElement) || input.getAttribute("contenteditable") !== "true" || !(submit instanceof HTMLButtonElement)) continue;
         const images = readComposerImages(root);
         const uploading = images.some((image) => image.status === "pending");
         const ready = images.filter((image) => image.status === "ready").length;
-        submit.disabled = articleCommentBusy || uploading || input.value.trim() === "" && ready === 0;
+        const text = serializeComposerText(input);
+        submit.disabled = articleCommentBusy || uploading || text.trim() === "" && ready === 0;
         submit.textContent = articleCommentBusy ? "发布中…" : "发布";
         const imageToggle = root.querySelector(".hbu-reader-composer-image-toggle");
         if (imageToggle instanceof HTMLButtonElement) {
@@ -12126,18 +12502,18 @@
         const replyName = root.querySelector(".hbu-reader-composer-reply-name");
         if (replyBar instanceof HTMLElement) replyBar.hidden = reply === null;
         if (replyName !== null) replyName.textContent = reply === null ? "" : "回复 @" + reply.name;
-        input.placeholder = reply === null ? "评论这篇文章…" : "回复 @" + reply.name + "…";
+        input.dataset["placeholder"] = reply === null ? "评论这篇文章…" : "回复 @" + reply.name + "…";
         input.setAttribute("aria-label", reply === null ? "评论内容" : "回复 " + reply.name);
       }
     };
     const clearArticleComposers = () => {
       for (const root of readArticleComposers()) {
-        articleComposerEmojiClosers.get(root)?.();
+        articleComposerEmojiClosers.get(root)?.close(false);
         const input = root.querySelector(".hbu-reader-composer-input");
         const status = root.querySelector(".hbu-reader-composer-status");
         const count = root.querySelector(".hbu-reader-composer-count");
         const file = root.querySelector(".hbu-reader-composer-file");
-        if (input instanceof HTMLTextAreaElement) input.value = "";
+        if (input instanceof HTMLElement && input.getAttribute("contenteditable") === "true") setComposerText(input, "");
         if (file instanceof HTMLInputElement) file.value = "";
         if (status !== null) status.textContent = "";
         if (count !== null) count.textContent = "0/" + ARTICLE_COMMENT_MAX_LENGTH;
@@ -12155,7 +12531,7 @@
         return;
       }
       const imageUrls = images.filter((image) => image.status === "ready" && image.url !== "").map((image) => image.url);
-      const text = input.value.trim();
+      const text = serializeComposerText(input).trim();
       if (text === "" && imageUrls.length === 0) {
         status.textContent = "请输入评论内容";
         input.focus({ preventScroll: true });
@@ -12343,16 +12719,11 @@
       };
       const insert = (pack, name) => {
         const token = "[" + pack + "_" + name + "]";
-        const original = input.value;
-        const start = input.selectionStart ?? original.length;
-        const end = input.selectionEnd ?? start;
-        if (original.length - (end - start) + token.length > ARTICLE_COMMENT_MAX_LENGTH) {
-          input.setSelectionRange(start, end);
+        if (!insertComposerText(input, token)) {
           status.textContent = "评论最多 " + ARTICLE_COMMENT_MAX_LENGTH + " 字，无法插入表情";
           return;
         }
         status.textContent = "";
-        input.setRangeText(token, start, end, "end");
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.focus({ preventScroll: true });
       };
@@ -12365,35 +12736,40 @@
         outsideBound = true;
         focusAt(0);
       };
-      const buttons = [];
-      for (const pack of ["cube", "heygirl"]) {
-        const names = pack === "cube" ? RAIL_EMOJI_NAMES : RAIL_HEYGIRL_NAMES;
-        const group = document.createElement("div");
-        group.className = "hbu-reader-composer-emoji-group";
-        group.dataset["pack"] = pack;
-        const label = document.createElement("div");
-        label.className = "hbu-reader-composer-emoji-label";
-        label.textContent = pack === "cube" ? "盒表情" : "黑盒娘";
-        const sectionGrid = document.createElement("div");
-        sectionGrid.className = "hbu-reader-composer-emoji-grid";
-        for (const name of names) {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.dataset["pack"] = pack;
-          button.dataset["name"] = name;
-          button.setAttribute("aria-label", (pack === "cube" ? "盒表情 " : "黑盒娘 ") + name);
-          button.title = name;
-          const glyph = document.createElement("span");
-          const emoji = resolveRailEmoji(pack, name);
-          if (emoji !== null) applyRailEmojiStyle(glyph, emoji, 22);
-          button.append(glyph);
-          button.addEventListener("click", () => insert(pack, name));
-          sectionGrid.append(button);
-          buttons.push(button);
+      let buttons = [];
+      const build = () => {
+        grid.replaceChildren();
+        buttons = [];
+        for (const pack of ["cube", "heygirl"]) {
+          const group = document.createElement("div");
+          group.className = "hbu-reader-composer-emoji-group";
+          group.dataset["pack"] = pack;
+          const label = document.createElement("div");
+          label.className = "hbu-reader-composer-emoji-label";
+          label.textContent = pack === "cube" ? "盒表情" : "黑盒娘";
+          const sectionGrid = document.createElement("div");
+          sectionGrid.className = "hbu-reader-composer-emoji-grid";
+          for (const entry of readRailEmojiCatalogEntries(pack)) {
+            const name = entry.name;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.dataset["pack"] = pack;
+            button.dataset["name"] = name;
+            button.setAttribute("aria-label", (pack === "cube" ? "盒表情 " : "黑盒娘 ") + name);
+            button.title = name;
+            const glyph = document.createElement("span");
+            const emoji = resolveRailEmoji(pack, name);
+            if (emoji !== null) applyRailEmojiStyle(glyph, emoji, 22);
+            button.append(glyph);
+            button.addEventListener("click", () => insert(pack, name));
+            sectionGrid.append(button);
+            buttons.push(button);
+          }
+          group.append(label, sectionGrid);
+          grid.append(group);
         }
-        group.append(label, sectionGrid);
-        grid.append(group);
-      }
+      };
+      build();
       panel.append(grid);
       panel.addEventListener("keydown", (event) => {
         const active = document.activeElement;
@@ -12423,7 +12799,10 @@
         if (isOpen) close(true);
         else open();
       });
-      return { close };
+      return { close, refresh: build };
+    };
+    const rebuildComposerEmojiPickers = () => {
+      for (const root of readArticleComposers()) articleComposerEmojiClosers.get(root)?.refresh();
     };
     const createArticleComposer = () => {
       const root = document.createElement("div");
@@ -12440,11 +12819,14 @@
       replyCancel.textContent = "取消回复";
       replyCancel.addEventListener("click", () => clearArticleReplyTarget(true));
       replyBar.append(replyText, replyCancel);
-      const input = document.createElement("textarea");
+      const input = document.createElement("div");
       input.className = "hbu-reader-composer-input";
-      input.maxLength = ARTICLE_COMMENT_MAX_LENGTH;
-      input.rows = 2;
-      input.placeholder = "评论这篇文章…";
+      input.setAttribute("contenteditable", "true");
+      input.setAttribute("role", "textbox");
+      input.setAttribute("aria-multiline", "true");
+      input.dataset["placeholder"] = "评论这篇文章…";
+      input.dataset["empty"] = "true";
+      input.setAttribute("spellcheck", "false");
       input.setAttribute("aria-label", "评论内容");
       const bar = document.createElement("div");
       bar.className = "hbu-reader-composer-bar";
@@ -12501,24 +12883,52 @@
         event.stopPropagation();
         emojiPicker.close(true);
       }, true);
-      input.addEventListener("input", () => {
-        count.textContent = input.value.length + "/" + ARTICLE_COMMENT_MAX_LENGTH;
+      let composing = false;
+      const syncComposerText = () => {
+        if (!composing) renderComposerEmojiTokens(input);
+        updateComposerTextState(input);
         syncArticleComposers();
+      };
+      input.addEventListener("compositionstart", () => {
+        composing = true;
+      });
+      input.addEventListener("compositionend", () => {
+        composing = false;
+        syncComposerText();
+      });
+      input.addEventListener("beforeinput", (event) => {
+        if (event instanceof InputEvent) rejectComposerOverflow(input, event);
+      });
+      input.addEventListener("input", syncComposerText);
+      input.addEventListener("keyup", () => saveComposerSelection(input));
+      input.addEventListener("pointerup", () => saveComposerSelection(input));
+      document.addEventListener("selectionchange", () => saveComposerSelection(input));
+      input.addEventListener("paste", (event) => {
+        event.preventDefault();
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (insertComposerText(input, text)) syncArticleComposers();
       });
       input.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || !event.ctrlKey && !event.metaKey) return;
+        if (event.key !== "Enter" || event.isComposing) return;
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          if (!submit.disabled) void submitArticleComment(input, status);
+          return;
+        }
         event.preventDefault();
-        if (!submit.disabled) void submitArticleComment(input, status);
+        insertComposerLineBreak(input);
+        syncArticleComposers();
       });
       submit.addEventListener("click", () => void submitArticleComment(input, status));
       bar.append(emojiToggle, imageToggle, status, count, submit);
       root.append(replyBar, input, emojiPanel, strip, fileInput, bar);
-      articleComposerEmojiClosers.set(root, () => emojiPicker.close(false));
+      articleComposerEmojiClosers.set(root, emojiPicker);
       return root;
     };
+    liveCatalogBootstrap();
     const trapCommentPanelTab = (event) => {
       if (event.key !== "Tab" || commentPanel === null) return;
-      const items = Array.from(commentPanel.querySelectorAll("button, a[href], textarea, input, [tabindex]:not([tabindex='-1'])")).filter((node) => node.getBoundingClientRect().width > 0 && !node.hasAttribute("disabled"));
+      const items = Array.from(commentPanel.querySelectorAll("button, a[href], [contenteditable='true'], input, [tabindex]:not([tabindex='-1'])")).filter((node) => node.getBoundingClientRect().width > 0 && !node.hasAttribute("disabled"));
       if (items.length === 0) return;
       const first = items[0];
       const last = items[items.length - 1];
