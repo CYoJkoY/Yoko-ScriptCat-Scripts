@@ -1,11 +1,11 @@
-import { sessionStore } from "../state";
+import { localStore } from "../state";
 
 /**
  * A comment written by this tab that the site tree may not echo yet. The mark
- * lives in sessionStorage so a full page reload can still wait for the server
- * copy, while closing the tab drops the verification state. Marks expire after
- * a short window instead of being removed on the first echo, because the tree
- * endpoint can lag again on the next reload.
+ * lives in localStorage so a page reload, tab replacement, or browser restart
+ * can still wait for the server copy. Marks expire after a short window instead
+ * of being removed on the first echo, because the tree endpoint can lag again
+ * on a later reload.
  */
 export const READER_COMMENT_MARKS_KEY = "heybox-up.readerCommentMarks.v1";
 
@@ -84,7 +84,7 @@ function normalizeMark(value: unknown, now: number): ReaderCommentMark | null {
 }
 
 function readAllMarks(now: number = Date.now()): ReaderCommentMark[] {
-  const stored = sessionStore.readJson(READER_COMMENT_MARKS_KEY, []);
+  const stored = localStore.readJson(READER_COMMENT_MARKS_KEY, []);
   const values = Array.isArray(stored) ? stored : [];
   const marks: ReaderCommentMark[] = [];
   for (const value of values) {
@@ -93,7 +93,7 @@ function readAllMarks(now: number = Date.now()): ReaderCommentMark[] {
   }
   marks.sort((left, right) => left.savedAt - right.savedAt);
   const keep = marks.slice(-READER_COMMENT_MARK_LIMIT);
-  if (keep.length !== values.length) sessionStore.writeJson(READER_COMMENT_MARKS_KEY, keep);
+  if (keep.length !== values.length) localStore.writeJson(READER_COMMENT_MARKS_KEY, keep);
   return keep;
 }
 
@@ -132,7 +132,7 @@ export function saveReaderCommentMark(input: ReaderCommentMarkInput): ReaderComm
       || (mark.commentId === "" && item.commentId === "" && item.text === mark.text))
   ));
   const next = withoutDuplicate.concat(mark).slice(-READER_COMMENT_MARK_LIMIT);
-  sessionStore.writeJson(READER_COMMENT_MARKS_KEY, next);
+  localStore.writeJson(READER_COMMENT_MARKS_KEY, next);
   return mark;
 }
 
@@ -149,8 +149,8 @@ export function clearReaderCommentMarks(linkId: string): void {
   const marks = readAllMarks();
   const remaining = marks.filter((mark) => mark.linkId !== id);
   if (remaining.length === marks.length) return;
-  if (remaining.length === 0) sessionStore.remove(READER_COMMENT_MARKS_KEY);
-  else sessionStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
+  if (remaining.length === 0) localStore.remove(READER_COMMENT_MARKS_KEY);
+  else localStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
 }
 
 /** Drops a mark after its comment was deleted here. */
@@ -161,8 +161,8 @@ export function removeReaderCommentMark(linkId: string, commentId: string): void
   const marks = readAllMarks();
   const remaining = marks.filter((mark) => !(mark.linkId === id && mark.commentId === comment));
   if (remaining.length === marks.length) return;
-  if (remaining.length === 0) sessionStore.remove(READER_COMMENT_MARKS_KEY);
-  else sessionStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
+  if (remaining.length === 0) localStore.remove(READER_COMMENT_MARKS_KEY);
+  else localStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
 }
 
 /** Drops one mark by its session token, for a check that ran out of attempts. */
@@ -173,6 +173,6 @@ export function removeReaderCommentMarkToken(linkId: string, token: string): voi
   const marks = readAllMarks();
   const remaining = marks.filter((mark) => !(mark.linkId === id && mark.token === value));
   if (remaining.length === marks.length) return;
-  if (remaining.length === 0) sessionStore.remove(READER_COMMENT_MARKS_KEY);
-  else sessionStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
+  if (remaining.length === 0) localStore.remove(READER_COMMENT_MARKS_KEY);
+  else localStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
 }
