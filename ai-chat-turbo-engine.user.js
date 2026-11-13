@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.20.9
+// @version      0.20.10
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -9629,6 +9629,15 @@ ${contentText}`);
     }
     return containers;
   }
+  function turnContainsVirtualFileToken(turn) {
+    const walker = document.createTreeWalker(turn, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      if (node.nodeValue?.includes(VF_TOKEN_START)) return true;
+      node = walker.nextNode();
+    }
+    return false;
+  }
   function turnShowsPrompt(turn, prompt, hidden) {
     if (!prompt) return false;
     const probe = prompt.slice(0, 60);
@@ -9772,6 +9781,7 @@ ${contentText}`);
         }
         detachMount(turnElement);
       }
+      if (!turnContainsVirtualFileToken(turnElement)) return;
       const parsed = parseChatVirtualFileMessage(turnElement.textContent ?? "");
       if (!parsed) return;
       if (!parsed.files.some((file) => file.content.length > 0)) return;
@@ -10451,14 +10461,32 @@ ${CODE_FENCE}`;
 
   // scripts/ai-chat-turbo-engine/src/ui/styles.ts
   var GEMINI_NATIVE_RENDER_CSS = `
-    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > * {
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :not(table) {
       content-visibility: auto !important;
       contain: layout style !important;
       contain-intrinsic-size: auto 3rem !important;
     }
 
-    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(pre, table, blockquote) {
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(pre, blockquote) {
       contain-intrinsic-size: auto 8rem !important;
+    }
+
+    /* Tables keep their intrinsic width and fill the conversation column.
+       Gemini wraps them in an overflow scroll container, render isolation on
+       the table itself collapses that measurement, and native compact-table
+       rules size some tables to their content width so they float narrower
+       than the surrounding text. Content wider than the column still keeps
+       the native horizontal scroll. */
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) table {
+      content-visibility: visible !important;
+      contain: none !important;
+      width: 100% !important;
+      max-width: none !important;
+    }
+
+    model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) .table-content {
+      width: 100% !important;
+      min-width: 0 !important;
     }
 
     model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(img, video, canvas, iframe) {
@@ -11469,6 +11497,8 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     let scheduleTimer = null;
     let textIndexTimer = null;
     let textIndexFrame = null;
+    let capsuleFrame = null;
+    const pendingCapsuleTurns = /* @__PURE__ */ new Set();
     let codeScanTimer = null;
     let turnDiscoveryTimer = null;
     let lastUpdateTime = 0;
@@ -11634,8 +11664,11 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       }
       const addedTurns = turns.filter((turn) => !turnTextIndex.hasTurn(turn));
       turnTextIndex.reconcile(turns);
-      for (const turnElement of addedTurns) {
-        chatCapsules.collapseInChatFileBlocks(turnElement);
+      if (addedTurns.length > 0) {
+        for (const turnElement of addedTurns) {
+          pendingCapsuleTurns.add(turnElement);
+        }
+        requestCapsuleFrame();
       }
       chatCapsules.sweep(turns);
       state.totalTurns = turns.length;
@@ -11720,6 +11753,21 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
         runTextIndexFrame();
       }, TEXT_INDEX_INTERVAL);
     }
+    function runCapsuleFrame() {
+      capsuleFrame = null;
+      if (isEngineDormant() || pendingCapsuleTurns.size === 0) return;
+      const frameStarted = performance.now();
+      for (const turn of pendingCapsuleTurns) {
+        pendingCapsuleTurns.delete(turn);
+        if (turn.isConnected) chatCapsules.collapseInChatFileBlocks(turn);
+        if (performance.now() - frameStarted >= TEXT_INDEX_FRAME_BUDGET) break;
+      }
+      if (pendingCapsuleTurns.size > 0) requestCapsuleFrame();
+    }
+    function requestCapsuleFrame() {
+      if (capsuleFrame !== null) return;
+      capsuleFrame = window.requestAnimationFrame(runCapsuleFrame);
+    }
     function flushTextIndex(options = {}) {
       if (isEngineDormant()) return 0;
       reconcileTurnIndex();
@@ -11801,6 +11849,11 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     }
     function resetTurnIndexForNavigation() {
       invalidateActiveTurnSelectorGroup();
+      pendingCapsuleTurns.clear();
+      if (capsuleFrame !== null) {
+        window.cancelAnimationFrame(capsuleFrame);
+        capsuleFrame = null;
+      }
       turnTextIndex.clear();
       restoredTurns.clear();
       dehydratedTurns.clear();
@@ -11925,6 +11978,11 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       if (textIndexFrame !== null) {
         window.cancelAnimationFrame(textIndexFrame);
         textIndexFrame = null;
+      }
+      pendingCapsuleTurns.clear();
+      if (capsuleFrame !== null) {
+        window.cancelAnimationFrame(capsuleFrame);
+        capsuleFrame = null;
       }
       if (codeScanTimer !== null) {
         window.clearTimeout(codeScanTimer);
