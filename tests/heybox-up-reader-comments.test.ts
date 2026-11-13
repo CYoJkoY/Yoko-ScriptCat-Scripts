@@ -50,6 +50,7 @@ import {
   type RailEmojiCatalog,
 } from "../scripts/heybox-up/src/ui/rail";
 import { READER_COMMENT_MARKS_KEY, saveReaderCommentMark } from "../scripts/heybox-up/src/ui/comment-marks";
+import { localStore } from "../scripts/heybox-up/src/state";
 
 const navigation = {
   sync: (): void => undefined,
@@ -130,8 +131,9 @@ function stalePage(): Parameters<typeof writeRailPageCache>[3] {
 
 describe("reader comment panel first open", () => {
   beforeEach(() => {
+    Object.defineProperty(window, "localStorage", { configurable: true, value: sessionStorage });
     document.cookie = "heybox_id=42";
-    sessionStorage.removeItem(READER_COMMENT_MARKS_KEY);
+    localStore.remove(READER_COMMENT_MARKS_KEY);
     clearRailPageCache("123456");
   });
 
@@ -139,7 +141,7 @@ describe("reader comment panel first open", () => {
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
     clearRailPageCache("123456");
-    sessionStorage.removeItem(READER_COMMENT_MARKS_KEY);
+    localStore.remove(READER_COMMENT_MARKS_KEY);
     document.cookie = "heybox_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   });
 
@@ -205,6 +207,42 @@ describe("reader comment panel first open", () => {
       expect(host.ownerDocument.querySelector(".hbu-reader-comments-list")?.textContent ?? "").toContain("my persisted comment");
     }, { timeout: 5000 });
     expect(host.ownerDocument.querySelector(".hbu-reader-comments-syncing")).toBeNull();
+  });
+
+  it("keeps a comment published in this session visible after rebuilding the reader", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: unknown) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("/comment/create")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: "ok", result: { comment_id: "9400" } }) });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ status: "ok", result: { comments: [{ comment: [] }], link: { comment_num: 0, title: "t" } } }),
+      });
+    }));
+
+    const firstHost = mountReader();
+    firstHost.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const input = document.querySelector<HTMLElement>(".hbu-reader-composer-input");
+    if (input === null) throw new Error("Expected the comment composer");
+    input.textContent = "comment published before reload";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>(".hbu-reader-composer-submit")?.click();
+    await vi.waitFor(() => expect(calls.some((url) => url.includes("/comment/create"))).toBe(true));
+    await vi.waitFor(() => expect(JSON.parse(sessionStorage.getItem(READER_COMMENT_MARKS_KEY) ?? "[]").some((mark: { text?: string }) => mark.text === "comment published before reload")).toBe(true));
+
+    // A full navigation recreates the reader runtime while browser session storage survives.
+    document.body.innerHTML = "";
+    const reloadedHost = mountReader();
+    reloadedHost.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await vi.waitFor(() => {
+      expect(calls.some((url) => url.includes("link_id=123456") && url.includes("page=1"))).toBe(true);
+      expect(document.querySelector(".hbu-reader-comments-list")?.textContent ?? "").toContain("comment published before reload");
+    }, { timeout: 5000 });
   });
 
   it("renders comment images, cube emoji and heygirl emoji", async () => {
