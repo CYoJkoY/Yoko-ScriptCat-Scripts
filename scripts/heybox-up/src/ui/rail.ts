@@ -1,7 +1,7 @@
-import { PAGE_ROUTE } from "../config";
+import { ADAPTED_ROUTES, PAGE_ROUTE } from "../config";
 import { getHeyboxId } from "../core/account";
 import { LINK_HREF_PREFIX, formatTime } from "../core/cy";
-import { readPageRoute, registerPageSync } from "../core/page-sync";
+import { pageSyncTasks, readPageRoute, registerPageSync } from "../core/page-sync";
 import { asRecord } from "../core/json";
 import { fetchWithTimeout, isAbortError, waitForDelay } from "../core/request";
 import { createRnd16 } from "../core/rnd16";
@@ -160,6 +160,23 @@ export const RAIL_HOVER_CARD_SELECTOR = [
   ".content-list .content-list__item",
 ].join(", ");
 
+const RAIL_TEXT_INPUT_SELECTOR = [
+  "input",
+  "textarea",
+  "select",
+  "[contenteditable]:not([contenteditable='false'])",
+  "button",
+  "a[href]",
+  "audio[controls]",
+  "video[controls]",
+  "iframe",
+  "embed",
+  "object",
+].join(", ");
+
+/** Routes whose feed cards carry a comment counter the panel can show. */
+export const RAIL_PREVIEW_ROUTES: ReadonlySet<string> = new Set([PAGE_ROUTE.FEED, PAGE_ROUTE.TOPIC, PAGE_ROUTE.CREATOR]);
+
 /** Reads a post id from a feed link, including relative and absolute hrefs. */
 export function readRailLinkId(href: string | null): string {
   const match = /link\/(\d+)/.exec(href || "");
@@ -179,6 +196,35 @@ export function readRailCardLinkId(element: Element | null): string {
   if (card === null) return "";
   const inner = card.querySelector('a[href*="/app/bbs/link/"]');
   return inner === null ? "" : readRailLinkId(inner.getAttribute("href"));
+}
+
+/**
+ * Lists the post ids of the cards rendered on the current feed, in document
+ * order. Cards without a readable post link are skipped, so the keyboard step
+ * never lands on a post the panel cannot show.
+ */
+export function readRailCardLinkIds(root: ParentNode): string[] {
+  const ids: string[] = [];
+  for (const card of root.querySelectorAll(RAIL_HOVER_CARD_SELECTOR)) {
+    const linkId = readRailCardLinkId(card);
+    if (linkId !== "" && !ids.includes(linkId)) ids.push(linkId);
+  }
+  return ids;
+}
+
+/**
+ * Moves one step through the visible cards. A post that is not in the list
+ * restarts from the first card either way, so the keys stay useful right after
+ * opening the panel.
+ */
+export function stepRailCardLinkId(ids: readonly string[], current: string, step: number): string {
+  if (ids.length === 0) return "";
+  const index = ids.indexOf(current);
+  const forward = step >= 0;
+  if (index < 0) return forward ? ids[0] : ids[ids.length - 1];
+  const next = index + (forward ? 1 : -1);
+  if (next < 0 || next >= ids.length) return "";
+  return ids[next];
 }
 
 export const RAIL_ICONS = {
@@ -1615,6 +1661,11 @@ export function formatRailAge(value: number): string {
 }
 
 export function createCommentRail() {
+  return createCommentRailAt(document.body);
+}
+
+/** Builds the panel against a page the caller owns, defaults to the live DOM. */
+export function createCommentRailAt(page: Document | HTMLElement) {
   const host = document.createElement("div");
   host.id = RAIL_ID;
   host.dataset["state"] = "hidden";
@@ -1739,7 +1790,8 @@ export function createCommentRail() {
   const applyMode = (): void => {
     host.dataset["state"] = state.mode;
     tab.setAttribute("aria-expanded", String(state.mode === "open"));
-    if (document.body) document.body.classList.toggle("heybox-up-rail-open", state.mode === "open");
+    const owner = page instanceof Document ? page.body : page;
+    if (owner) owner.classList.toggle("heybox-up-rail-open", state.mode === "open");
   };
 
   const createEmoji = (segment: RailEmojiRef): HTMLSpanElement => createRailEmojiElement(segment, "emoji");
@@ -1840,7 +1892,7 @@ export function createCommentRail() {
     const loadedText = visible.length > 0 ? " · 已加载 " + visible.length + " 条" : "";
     const cyText = hiddenCy > 0 ? " · 已屏蔽 " + hiddenCy + " 条 CY" : "";
     if (state.error !== "") {
-      meta.textContent = "";
+      meta.textContent = "加载失败";
     } else if (state.total > 0) {
       meta.textContent = "共 " + state.total + " 条评论" + loadedText + cyText;
     } else {
@@ -1921,12 +1973,12 @@ export function createCommentRail() {
     }
   };
 
-  const open = (linkId: unknown): void => {
+  const open = (linkId: unknown): boolean => {
     const next = String(linkId === undefined || linkId === null ? "" : linkId);
-    if (next === "") return;
+    if (next === "") return false;
     state.mode = "open";
     applyMode();
-    if (next === state.linkId) return;
+    if (next === state.linkId) return true;
     loadController?.abort();
     loadController = null;
     state.seq += 1;
@@ -1941,6 +1993,7 @@ export function createCommentRail() {
     state.error = "";
     render();
     void load(1);
+    return true;
   };
 
   const collapse = (): void => {
@@ -1968,12 +2021,7 @@ export function createCommentRail() {
     state.mode = "open";
     applyMode();
     if (state.linkId === "") {
-      const anchor = document.querySelector("#page-bbs-community .bbs-home__content-list a[href*='/app/bbs/link/']");
-      const match = anchor ? /link\/(\d+)/.exec(anchor.getAttribute("href") || "") : null;
-      if (match) {
-        open(match[1]);
-        return;
-      }
+      open(readRailCardLinkIds(document)[0] ?? "");
     }
     render();
   });
@@ -2001,36 +2049,94 @@ export function createCommentRail() {
   };
 }
 
-export function watchCommentRail() {
-  if (!document.body) return;
-  const rail = createCommentRail();
-  document.body.append(rail.host);
+/** Everything the panel needs from the page, so tests can drive it directly. */
+export interface CommentRailBinding {
+  readonly rail: Pick<ReturnType<typeof createCommentRail>, "host" | "open" | "collapse" | "setActive" | "isOpen" | "getLinkId">;
+  readonly isFeedPage: () => boolean;
+  readonly readFirstFeedLinkId: () => string;
+  sync: () => void;
+}
 
-  const isFeedPage = () => readPageRoute() === PAGE_ROUTE.FEED
-    && document.querySelector("#page-bbs-community .bbs-home__content-list") !== null;
+/** Toggles the class the page layout widens itself with while the panel is open. */
+export function syncCommentRailOpenClass(owner: Element | null, open: boolean): void {
+  if (owner !== null) owner.classList.toggle("heybox-up-rail-open", open);
+}
 
+export function bindCommentRail(
+  rail: CommentRailBinding["rail"],
+  page: Document | HTMLElement,
+  isEnabled: () => boolean,
+  readRoute: () => string = readPageRoute,
+): CommentRailBinding {
+  let autoOpened = false;
+  // The community home opens the first post on arrival; topic and creator
+  // feeds stay collapsed until the reader picks a post.
+  const isFeedPage = (): boolean => RAIL_PREVIEW_ROUTES.has(readRoute());
   const readFirstFeedLinkId = (): string => {
-    const anchor = document.querySelector("#page-bbs-community .bbs-home__content-list a[href*='/app/bbs/link/']");
-    if (!anchor) return "";
-    return readRailLinkId(anchor.getAttribute("href"));
+    if (readRoute() !== PAGE_ROUTE.FEED) return "";
+    return readRailCardLinkIds(page)[0] ?? "";
   };
+  const sync = (): void => {
+    if (!isEnabled()) {
+      autoOpened = false;
+      rail.setActive(false);
+      rail.host.remove();
+      syncCommentRailOpenClass(page instanceof Document ? page.body : page, false);
+      return;
+    }
+    const active = isFeedPage();
+    rail.setActive(active);
+    if (!active) {
+      autoOpened = false;
+      rail.host.remove();
+      return;
+    }
+    const owner = page instanceof Document ? page.body : page;
+    if (owner && rail.host.parentNode !== owner) owner.append(rail.host);
+    if (!autoOpened && !rail.isOpen()) {
+      const linkId = readFirstFeedLinkId();
+      if (linkId !== "") {
+        autoOpened = true;
+        rail.open(linkId);
+        syncCommentRailOpenClass(page instanceof Document ? page.body : page, true);
+      }
+    }
+  };
+  return { rail, isFeedPage, readFirstFeedLinkId, sync };
+}
+
+export function watchCommentRail(): () => void {
+  if (!document.body) return () => undefined;
+  const page: Document = document;
+  const route = bindCommentRail(createCommentRail(), page, () => readCommentPreviewPreference());
+  document.body.append(route.rail.host);
+  const controller = new AbortController();
+  const listen = (
+    type: string,
+    listener: (event: Event) => void,
+    capture = false,
+  ): void => document.addEventListener(type, listener, { capture, signal: controller.signal });
+  /** Typed overload for the DOM events whose fields the handlers read. */
+  const on = <K extends keyof DocumentEventMap>(
+    type: K,
+    listener: (event: DocumentEventMap[K]) => void,
+    capture = false,
+  ): void => listen(type, listener as (event: Event) => void, capture);
 
   const readCardLinkId = readRailCardLinkId;
 
-  const isEnabled = (): boolean => readCommentPreviewPreference();
-
-  document.addEventListener("click", (event) => {
+  listen("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
     const trigger = target.closest(RAIL_TRIGGER_SELECTOR);
     if (!trigger) return;
     const linkId = readCardLinkId(trigger);
     if (linkId === "") return;
-    if (!isEnabled()) return;
-    if (!isFeedPage()) return;
+    if (!readCommentPreviewPreference()) return;
+    if (!page.querySelector(RAIL_HOVER_CARD_SELECTOR)) return;
     event.preventDefault();
     event.stopPropagation();
-    rail.open(linkId);
+    route.rail.open(linkId);
   }, true);
 
   // While the panel is open, hovering a feed card switches the preview, so the
@@ -2042,8 +2148,8 @@ export function watchCommentRail() {
     hoverTimer = 0;
     hoverId = "";
   };
-  document.addEventListener("pointerover", (event) => {
-    if (!isEnabled() || !rail.isOpen()) return;
+  on("pointerover", (event) => {
+    if (!readCommentPreviewPreference() || !route.rail.isOpen()) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
     const card = target.closest(RAIL_HOVER_CARD_SELECTOR);
@@ -2054,11 +2160,11 @@ export function watchCommentRail() {
     hoverId = linkId;
     hoverTimer = window.setTimeout(() => {
       hoverTimer = 0;
-      if (!rail.isOpen() || rail.getLinkId() === linkId) return;
-      rail.open(linkId);
+      if (!route.rail.isOpen() || route.rail.getLinkId() === linkId) return;
+      route.rail.open(linkId);
     }, 600);
   }, true);
-  document.addEventListener("pointerout", (event) => {
+  on("pointerout", (event) => {
     if (hoverTimer === 0) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -2068,41 +2174,39 @@ export function watchCommentRail() {
     if (related instanceof Node && card.contains(related)) return;
     cancelHover();
   }, true);
-  document.addEventListener("pointerdown", cancelHover, true);
-  document.addEventListener("scroll", cancelHover, true);
+  on("pointerdown", cancelHover, true);
+  on("scroll", cancelHover, true);
 
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !rail.isOpen()) return;
+  on("keydown", (event) => {
+    if (!route.rail.isOpen()) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      route.rail.collapse();
+      return;
+    }
+    // The panel already tracks which post it shows, so the arrow keys step
+    // through the visible cards the same way hover does. Keys sent to a text
+    // field or a focused control keep their own meaning.
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest(RAIL_TEXT_INPUT_SELECTOR) !== null) return;
+    const ids = readRailCardLinkIds(page);
+    const next = stepRailCardLinkId(ids, route.rail.getLinkId(), event.key === "ArrowDown" ? 1 : -1);
+    if (next === "" || !route.rail.open(next)) return;
     event.preventDefault();
-    rail.collapse();
+    cancelHover();
   });
 
-  let autoOpened = false;
-  const sync = (): void => {
-    if (!isEnabled()) {
-      autoOpened = false;
-      rail.setActive(false);
-      rail.host.remove();
-      return;
-    }
-    const active = isFeedPage();
-    rail.setActive(active);
-    if (!active) {
-      autoOpened = false;
-      rail.host.remove();
-      return;
-    }
-    if (rail.host.parentNode !== document.body) document.body.append(rail.host);
-    // 开启预览后，进入首页直接带出首条帖子的评论，不必先点评论数字。
-    if (!autoOpened && !rail.isOpen()) {
-      const linkId = readFirstFeedLinkId();
-      if (linkId !== "") {
-        autoOpened = true;
-        rail.open(linkId);
-      }
-    }
+  listen(COMMENT_PREVIEW_EVENT, () => route.sync());
+  const syncTask = (): void => route.sync();
+  registerPageSync(syncTask, 200, ADAPTED_ROUTES, "feed");
+  route.sync();
+  return () => {
+    controller.abort();
+    cancelHover();
+    pageSyncTasks.delete(syncTask);
+    route.rail.host.remove();
+    syncCommentRailOpenClass(document.body, false);
   };
-  document.addEventListener(COMMENT_PREVIEW_EVENT, sync);
-  registerPageSync(sync, 200, [PAGE_ROUTE.FEED], "feed");
-  sync();
 }
