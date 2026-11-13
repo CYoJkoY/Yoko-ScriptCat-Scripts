@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.4
+// @version      0.8.5
 // @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，顶部操作栏独占一行，图片不再被渐变遮挡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，表情目录从站点静态资源在线同步（12 小时本机缓存，失败回退内置目录），评论输入框里的已知 cube 与 heygirl 令牌即时渲染为精灵图，提交仍发送原令牌文本，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
@@ -13,7 +13,7 @@
 // @run-at       document-start
 // @grant        none
 // @noframes
-// @icon         data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%23232b36'/%3E%3Cpath%20d='M9%207.5h14a2.5%202.5%200%200%201%202.5%202.5v12a2.5%202.5%200%200%201-2.5%202.5H9A2.5%202.5%200%200%201%206.5%2022V10A2.5%202.5%200%200%201%209%207.5Z'%20fill='none'%20stroke='%238aa7c4'%20stroke-width='1.6'/%3E%3Cpath%20d='M10.5%2016c1.2-2.1%203.1-3.2%205.5-3.2s4.3%201.1%205.5%203.2c-1.2%202.1-3.1%203.2-5.5%203.2S11.7%2018.1%2010.5%2016Z'%20fill='%23a9c0d8'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='1.7'%20fill='%23232b36'/%3E%3C/svg%3E
+// @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22HeyBox%20Up%22%3E%0A%20%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23151a22%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M12%2022.5%2032%2011l20%2011.5L32%2034%2012%2022.5Z%22%20fill%3D%22%2355a8ff%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M12%2022.5V45l20%2011.5V34L12%2022.5Z%22%20fill%3D%22%233086e8%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M52%2022.5V45L32%2056.5V34l20-11.5Z%22%20fill%3D%22%231e65bc%22%2F%3E%0A%20%20%3Cpath%20d%3D%22m25%2030%207%204%207-4v11l-7%204-7-4V30Z%22%20fill%3D%22%23f5f9ff%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M31%2034v10%22%20fill%3D%22none%22%20stroke%3D%22%233086e8%22%20stroke-width%3D%222%22%2F%3E%0A%3C%2Fsvg%3E
 // @license      MIT
 // ==/UserScript==
 
@@ -2286,6 +2286,21 @@
     const wanted = flattenRailMatchText(pendingText);
     if (wanted === "") return false;
     return stripRailEchoMentions(flattenRailMatchText(echoText)) === wanted;
+  }
+  function railItemsHaveOwnFloorComment(items, userId, text, createAt, imageUrls) {
+    if (userId === "") return false;
+    const wanted = flattenRailMatchText(text);
+    const wantedImages = imageUrls.map((url) => normalizeRailImageUrl(url)).filter((url) => url !== "");
+    for (const entry of items) {
+      if (entry.userId !== userId) continue;
+      if (wanted !== "" && railEchoTextMatches(text, entry.text)) return true;
+      if (wantedImages.length > 0) {
+        const entryImages = entry.body.filter((segment) => segment.type === "image").map((segment) => segment.src);
+        if (wantedImages.every((url) => entryImages.includes(url))) return true;
+      }
+      if (wanted === "" && wantedImages.length === 0 && createAt > 0 && entry.createAt > 0 && Math.abs(entry.createAt - createAt) <= 300) return true;
+    }
+    return false;
   }
   function collectRailCommentIds(items) {
     const ids = /* @__PURE__ */ new Set();
@@ -6089,6 +6104,124 @@
       catalogPromise = null;
     });
     return catalogPromise;
+  }
+
+  // scripts/heybox-up/src/ui/comment-marks.ts
+  var READER_COMMENT_MARKS_KEY = "heybox-up.readerCommentMarks.v1";
+  var READER_COMMENT_MARK_LIMIT = 4;
+  var READER_COMMENT_MARK_TTL_MS = 30 * 60 * 1e3;
+  function readRecordText(record, key) {
+    const value = record[key];
+    return typeof value === "string" ? value.trim() : "";
+  }
+  function readRecordNumber(record, key) {
+    const value = Number(record[key]);
+    return Number.isFinite(value) ? value : 0;
+  }
+  function readImageUrls(value) {
+    if (!Array.isArray(value)) return [];
+    const urls = [];
+    for (const item of value) {
+      if (typeof item !== "string") continue;
+      const url = item.trim();
+      if (url !== "") urls.push(url);
+    }
+    return urls;
+  }
+  function normalizeMark(value, now) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const record = value;
+    const token = readRecordText(record, "token");
+    const linkId = readRecordText(record, "linkId");
+    const userId = readRecordText(record, "userId");
+    const savedAt = readRecordNumber(record, "savedAt");
+    if (token === "" || linkId === "" || userId === "" || savedAt <= 0) return null;
+    if (now - savedAt > READER_COMMENT_MARK_TTL_MS) return null;
+    const text = typeof record["text"] === "string" ? record["text"] : "";
+    const imageUrls = readImageUrls(record["imageUrls"]);
+    if (text.trim() === "" && imageUrls.length === 0) return null;
+    const verifyPage = Math.floor(readRecordNumber(record, "verifyPage"));
+    return {
+      token,
+      linkId,
+      commentId: readRecordText(record, "commentId"),
+      text,
+      userId,
+      rootId: readRecordText(record, "rootId"),
+      parentId: readRecordText(record, "parentId"),
+      createAt: Math.floor(readRecordNumber(record, "createAt")),
+      verifyPage: verifyPage > 0 ? verifyPage : 1,
+      imageUrls,
+      savedAt
+    };
+  }
+  function readAllMarks(now = Date.now()) {
+    const stored = sessionStore.readJson(READER_COMMENT_MARKS_KEY, []);
+    const values = Array.isArray(stored) ? stored : [];
+    const marks = [];
+    for (const value of values) {
+      const mark = normalizeMark(value, now);
+      if (mark !== null) marks.push(mark);
+    }
+    marks.sort((left, right) => left.savedAt - right.savedAt);
+    const keep = marks.slice(-READER_COMMENT_MARK_LIMIT);
+    if (keep.length !== values.length) sessionStore.writeJson(READER_COMMENT_MARKS_KEY, keep);
+    return keep;
+  }
+  function createMarkToken() {
+    const uuid = typeof crypto === "undefined" || typeof crypto.randomUUID !== "function" ? "" : crypto.randomUUID().replace(/-/g, "");
+    const random = Math.random().toString(36).slice(2);
+    return (uuid + Date.now().toString(36) + random).slice(0, 32);
+  }
+  function saveReaderCommentMark(input) {
+    const linkId = input.linkId.trim();
+    const userId = input.userId.trim();
+    const text = input.text;
+    const imageUrls = readImageUrls(input.imageUrls);
+    if (linkId === "" || userId === "" || text.trim() === "" && imageUrls.length === 0) return null;
+    const mark = {
+      token: createMarkToken(),
+      linkId,
+      commentId: input.commentId.trim(),
+      text,
+      userId,
+      rootId: input.rootId.trim(),
+      parentId: input.parentId.trim(),
+      createAt: Math.floor(input.createAt),
+      verifyPage: Math.max(1, Math.floor(input.verifyPage)),
+      imageUrls,
+      savedAt: Date.now()
+    };
+    const previous = readAllMarks(mark.savedAt);
+    const withoutDuplicate = previous.filter((item) => !(item.linkId === mark.linkId && (mark.commentId !== "" && item.commentId === mark.commentId || mark.commentId === "" && item.commentId === "" && item.text === mark.text)));
+    const next = withoutDuplicate.concat(mark).slice(-READER_COMMENT_MARK_LIMIT);
+    sessionStore.writeJson(READER_COMMENT_MARKS_KEY, next);
+    return mark;
+  }
+  function readReaderCommentMarks(linkId) {
+    const id = linkId.trim();
+    if (id === "") return [];
+    return readAllMarks().filter((mark) => mark.linkId === id);
+  }
+  function removeReaderCommentMark(linkId, commentId) {
+    const id = linkId.trim();
+    const comment = commentId.trim();
+    if (id === "" || comment === "") return;
+    const marks = readAllMarks();
+    const remaining = marks.filter((mark) => !(mark.linkId === id && mark.commentId === comment));
+    if (remaining.length === marks.length) return;
+    if (remaining.length === 0) sessionStore.remove(READER_COMMENT_MARKS_KEY);
+    else sessionStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
+  }
+  function removeReaderCommentMarkToken(linkId, token) {
+    const id = linkId.trim();
+    const value = token.trim();
+    if (id === "" || value === "") return;
+    const marks = readAllMarks();
+    const remaining = marks.filter((mark) => !(mark.linkId === id && mark.token === value));
+    if (remaining.length === marks.length) return;
+    if (remaining.length === 0) sessionStore.remove(READER_COMMENT_MARKS_KEY);
+    else sessionStore.writeJson(READER_COMMENT_MARKS_KEY, remaining);
   }
 
   // scripts/heybox-up/src/ui/theme.ts
@@ -10306,7 +10439,9 @@
         floorPages: /* @__PURE__ */ new Map(),
         pendingReplies: [],
         pendingBaselines: /* @__PURE__ */ new Map(),
-        settledReplies: /* @__PURE__ */ new Set()
+        settledReplies: /* @__PURE__ */ new Set(),
+        localFloors: [],
+        localFloorMarks: /* @__PURE__ */ new Map()
       };
     }
     const showToast = (message) => {
@@ -11877,13 +12012,21 @@
         replies.textContent = comment.replies + " 条回复";
         meta.append(replies);
       }
-      meta.append(createReaderReplyButton({
-        id: comment.id,
-        rootId: comment.rootId !== "" ? comment.rootId : comment.id,
-        name: comment.name
-      }));
-      const deleteButton = createReaderCommentDeleteButton(comment);
-      if (deleteButton !== null) meta.append(deleteButton);
+      if (isPendingReplyRow(comment.id)) {
+        const syncing = document.createElement("span");
+        const settled = commentState.settledReplies.has(comment.id);
+        syncing.className = "hbu-reader-comments-syncing" + (settled ? " hbu-reader-comments-syncing--settled" : "");
+        syncing.textContent = settled ? "已提交" : "同步中…";
+        meta.append(syncing);
+      } else {
+        meta.append(createReaderReplyButton({
+          id: comment.id,
+          rootId: comment.rootId !== "" ? comment.rootId : comment.id,
+          name: comment.name
+        }));
+        const deleteButton = createReaderCommentDeleteButton(comment);
+        if (deleteButton !== null) meta.append(deleteButton);
+      }
       const visibleChildren = filterReaderCommentThread(buildRailCommentTree(comment), readHideCyPreference());
       const hiddenCount = countRailThreadNodes(visibleChildren);
       const collapsible = comment.id !== "" && visibleChildren.length > 0;
@@ -11993,11 +12136,12 @@
     const renderReaderComments = () => {
       if (commentPanel === null) return;
       const hideCy = readHideCyPreference();
-      const visible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
-      const hiddenCy = commentState.items.length - visible.length;
+      const loadedVisible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
+      const hiddenCy = commentState.items.length - loadedVisible.length;
+      const visible = commentState.localFloors.concat(loadedVisible);
       const meta = [];
       if (commentState.total > 0) meta.push("共 " + commentState.total + " 条");
-      if (visible.length > 0) meta.push("已加载 " + visible.length + " 条");
+      if (loadedVisible.length > 0) meta.push("已加载 " + loadedVisible.length + " 条");
       if (hiddenCy > 0) meta.push("已屏蔽 " + hiddenCy + " 条 CY");
       if (commentPanelMeta !== null) commentPanelMeta.textContent = meta.join(" · ");
       if (commentPanelList !== null) {
@@ -12012,7 +12156,7 @@
             commentPanelRetry.hidden = false;
             commentPanelRetry.disabled = commentState.loading;
           }
-        } else if (commentState.loading && commentState.items.length === 0) {
+        } else if (commentState.loading && visible.length === 0) {
           commentPanelStatus.hidden = false;
           if (commentPanelStatusText !== null) commentPanelStatusText.textContent = "正在加载评论…";
           if (commentPanelRetry !== null) commentPanelRetry.hidden = true;
@@ -12041,6 +12185,62 @@
         commentPanelRefresh.dataset["busy"] = commentState.loading ? "true" : "false";
       }
     };
+    const pendingFromMark = (mark) => createRailPendingReply({
+      parentId: mark.parentId,
+      rootId: mark.rootId !== "" ? mark.rootId : mark.parentId,
+      text: mark.text,
+      userId: mark.userId,
+      createAt: mark.createAt,
+      sequence: 0,
+      ...mark.commentId === "" ? {} : { commentId: mark.commentId },
+      imageUrls: mark.imageUrls
+    });
+    const commentMarkIsVisible = (mark, loaded) => {
+      if (mark.parentId === "") {
+        if (mark.commentId !== "") return railItemsHaveComment(loaded, mark.commentId);
+        return railItemsHaveOwnFloorComment(loaded, mark.userId, mark.text, mark.createAt, mark.imageUrls);
+      }
+      return railItemsHavePendingReply(loaded, pendingFromMark(mark));
+    };
+    const localFloorIdForMark = (mark) => RAIL_PENDING_ID_PREFIX + "mark-" + mark.token;
+    const restoreReaderCommentMarks = () => {
+      const marks = readReaderCommentMarks(articleId);
+      if (marks.length === 0) return;
+      for (const mark of marks) {
+        const visibleAlready = commentState.loaded && commentMarkIsVisible(mark, commentState.items);
+        if (visibleAlready) continue;
+        if (mark.parentId === "") {
+          const floorId = localFloorIdForMark(mark);
+          if (commentState.localFloors.some((row) => row.id === floorId)) continue;
+          const pending2 = createRailPendingReply({
+            parentId: "",
+            rootId: "",
+            text: mark.text,
+            userId: mark.userId,
+            createAt: mark.createAt,
+            sequence: 0,
+            imageUrls: mark.imageUrls
+          });
+          commentState.localFloors.unshift({ ...pending2, id: floorId, subComments: [], quotes: [] });
+          commentState.localFloorMarks.set(floorId, mark);
+          continue;
+        }
+        const pendingId = mark.commentId !== "" ? mark.commentId : localFloorIdForMark(mark);
+        if (commentState.pendingReplies.some((row) => row.id === pendingId)) continue;
+        const pending = pendingFromMark(mark);
+        commentState.pendingReplies.push({ ...pending, id: pendingId });
+      }
+    };
+    const syncLocalCommentFloors = () => {
+      if (commentState.localFloors.length === 0) return;
+      commentState.localFloors = commentState.localFloors.filter((row) => {
+        const mark = commentState.localFloorMarks.get(row.id);
+        if (mark === void 0) return true;
+        if (!commentMarkIsVisible(mark, commentState.items)) return true;
+        commentState.localFloorMarks.delete(row.id);
+        return false;
+      });
+    };
     const matchesCommentExpectation = (options, loaded) => {
       const wantPresent = options.expectPresentId ?? "";
       const wantAbsent = options.expectAbsentId ?? "";
@@ -12049,6 +12249,9 @@
       const pending = options.expectPending;
       if (pending !== void 0) {
         if (!railItemsHavePendingReply(loaded, pending, readPendingBaseline(pending))) return false;
+      }
+      for (const mark of options.expectations ?? []) {
+        if (!commentMarkIsVisible(mark, loaded)) return false;
       }
       return true;
     };
@@ -12101,7 +12304,7 @@
       commentState.loading = true;
       commentState.error = "";
       const merge = options.merge === true;
-      const writeRefresh = options.fresh === true || options.expectPresentId !== void 0 || options.expectAbsentId !== void 0 || options.expectPending !== void 0;
+      const writeRefresh = options.fresh === true || options.expectPresentId !== void 0 || options.expectAbsentId !== void 0 || options.expectPending !== void 0 || (options.expectations?.length ?? 0) > 0;
       const keepItems = merge || page === 1 && writeRefresh;
       if (page === 1 && !keepItems) {
         commentState.items = [];
@@ -12151,6 +12354,7 @@
           commentState.pendingBaselines.delete(row.id);
           commentState.settledReplies.delete(row.id);
         }
+        syncLocalCommentFloors();
         const progress = merge ? resolveMergedCommentProgress({
           loadedGroups: commentState.items.length,
           floorTotal: data.floorTotal,
@@ -12189,14 +12393,25 @@
       if (seq !== commentState.seq) return;
       const attempt = (options.attempt ?? 0) + 1;
       const pending = options.expectPending;
-      const maxAttempts = pending === void 0 ? COMMENT_VERIFY_ATTEMPTS : COMMENT_VERIFY_MAX_ATTEMPTS;
+      const expectations = options.expectations ?? [];
+      const maxAttempts = pending === void 0 && expectations.length === 0 ? COMMENT_VERIFY_ATTEMPTS : COMMENT_VERIFY_MAX_ATTEMPTS;
       if (attempt >= maxAttempts) {
         if (pending !== void 0) {
           commentState.settledReplies.add(pending.id);
           renderReaderComments();
         }
+        if (expectations.length > 0) {
+          for (const mark of expectations) {
+            removeReaderCommentMarkToken(targetId, mark.token);
+            const floorId = localFloorIdForMark(mark);
+            if (commentState.localFloors.some((row) => row.id === floorId)) {
+              commentState.settledReplies.add(floorId);
+            }
+          }
+          renderReaderComments();
+        }
         if (options.expectAbsentId !== void 0) showToast("评论已删除，列表仍待站点同步");
-        else if ((options.expectPresentId ?? "") !== "") showToast("评论已提交，列表仍待站点同步");
+        else if ((options.expectPresentId ?? "") !== "" || expectations.length > 0) showToast("评论已提交，列表仍待站点同步");
         return;
       }
       if (pending !== void 0 && attempt === COMMENT_VERIFY_ATTEMPTS) {
@@ -12595,6 +12810,21 @@
         const created = await postReaderApi(COMMENT_CREATE_API_PATH, buildArticleCommentBody(targetId, text, reply, imageUrls), accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
         const createdId = readCreatedCommentId(created);
+        const wroteAt = Math.floor(Date.now() / 1e3);
+        const replyRootId = reply === null ? "" : reply.rootId !== "" ? reply.rootId : reply.id;
+        const replyFloorId = reply === null ? "" : findRailFloorIdForComment(commentState.items, reply.id) || findRailFloorIdForComment(commentState.items, replyRootId);
+        const replyVerifyPage = replyFloorId === "" ? 1 : commentState.floorPages.get(replyFloorId) ?? 1;
+        saveReaderCommentMark({
+          linkId: targetId,
+          commentId: createdId,
+          text,
+          userId: accountId,
+          rootId: replyRootId,
+          parentId: reply === null ? "" : reply.id,
+          createAt: wroteAt,
+          verifyPage: replyVerifyPage,
+          imageUrls
+        });
         clearArticleComposers();
         showToast("评论已发布");
         articleCommentPublishedCount += 1;
@@ -12611,7 +12841,7 @@
             rootId: reply.rootId !== "" ? reply.rootId : reply.id,
             text,
             userId: accountId,
-            createAt: Math.floor(Date.now() / 1e3),
+            createAt: wroteAt,
             sequence: ++pendingReplySeq,
             imageUrls,
             ...createdId === "" ? {} : { commentId: createdId }
@@ -12714,9 +12944,16 @@
         if (accountId === "") throw new Error("请先登录小黑盒");
         await postReaderApi(DELETE_COMMENT_API_PATH, buildDeleteCommentBody(commentId), accountId);
         if (articleId !== targetId || readerGeneration !== generation) return;
+        removeReaderCommentMark(targetId, commentId);
         if (articleReplyTarget !== null && articleReplyTarget.id === commentId) clearArticleReplyTarget(false);
         const removedCount = removeDeletedComment(commentId);
         commentState.total = Math.max(0, commentState.total - removedCount);
+        for (const row of commentState.pendingReplies) {
+          if (row.id !== commentId) continue;
+          commentState.pendingBaselines.delete(row.id);
+          commentState.settledReplies.delete(row.id);
+        }
+        commentState.pendingReplies = commentState.pendingReplies.filter((row) => row.id !== commentId);
         if (linkState !== null) linkState.commentCount = Math.max(0, (Number(linkState.commentCount) || 0) - removedCount);
         holdRailPageCache(targetId);
         syncActionStates();
@@ -13145,11 +13382,16 @@
       commentPanelClose?.focus({ preventScroll: true });
       syncArticleComposers();
       if (commentState.loading) return;
+      const marks = readReaderCommentMarks(articleId);
+      restoreReaderCommentMarks();
+      const markVerifyPage = marks.reduce((page, mark) => Math.max(page, mark.verifyPage), 1);
+      const expectationOptions = marks.length === 0 ? {} : { expectations: marks, verifyPage: markVerifyPage };
+      renderReaderComments();
       const stalePanel = commentState.loaded && Date.now() - commentState.loadedAt > COMMENT_PANEL_STALE_MS;
       if (!commentState.loaded) {
-        void loadReaderComments(1, { fresh: true, force: true });
+        void loadReaderComments(1, { fresh: true, force: true, ...expectationOptions });
       } else if (stalePanel) {
-        void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1 });
+        void loadReaderComments(1, { fresh: true, force: true, merge: commentState.page > 1, ...expectationOptions });
       }
     };
     const resetReaderComments = () => {
