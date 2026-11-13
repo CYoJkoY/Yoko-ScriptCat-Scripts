@@ -1,9 +1,10 @@
-import { PAGE_ROUTE } from "../config";
+import { PAGE_ROUTE, STORAGE_KEYS } from "../config";
 import { LINK_HREF_PREFIX } from "../core/cy";
 import { asRecord, readFiniteNumber } from "../core/json";
-import { ensureStyleElement, registerPageSync } from "../core/page-sync";
+import { ensureStyleElement, pageSyncTasks, registerPageSync } from "../core/page-sync";
 import { fetchWithTimeout, isAbortError } from "../core/request";
 import { createSignature, md5Hex } from "../core/signature";
+import { sessionStore } from "../state";
 import { navigateToPath } from "./navigation";
 import { formatRailAge, normalizeRailText } from "./rail";
 
@@ -16,6 +17,46 @@ export const COMMUNITY_SEARCH_STYLE_ID = "heybox-up-community-search-style";
 export const COMMUNITY_SEARCH_ACTIVE_CLASS = "heybox-up-cs-active";
 
 export const COMMUNITY_SEARCH_PAGE_SIZE = 30;
+
+/** Version of the session record; an unknown shape is ignored, never migrated. */
+export const COMMUNITY_SEARCH_STATE_VERSION = 1;
+
+export const COMMUNITY_SEARCH_KEYWORD_MAX = 120;
+
+export const COMMUNITY_SEARCH_RANGE_MAX = 32;
+
+/** Consecutive pages that only repeat shown posts may cost this many requests. */
+export const COMMUNITY_SEARCH_DUPLICATE_PAGE_LIMIT = 3;
+
+export const COMMUNITY_SEARCH_RESULT_CACHE_MAX = 60;
+
+export const COMMUNITY_SEARCH_SESSION_MAX_CHARS = 96_000;
+
+function communitySearchStorageKey(topicId: string): string {
+  return STORAGE_KEYS.communitySearch + ":" + topicId;
+}
+
+export interface CommunitySearchSavedState {
+  topicId: string;
+  keyword: string;
+  timeRange: string;
+  open: boolean;
+  /** Showing the restored result set instead of the feed. */
+  results: boolean;
+}
+
+export interface CommunitySearchSession {
+  version: 1;
+  topicId: string;
+  keyword: string;
+  timeRange: string;
+  open: boolean;
+  results: boolean;
+  items: CommunitySearchItemView[];
+  offset: number;
+  noMore: boolean;
+  timeRanges: CommunitySearchTimeRange[];
+}
 
 export interface TopicContext {
   topicId: string;
@@ -54,6 +95,7 @@ export interface CommunitySearchUi {
   root: HTMLElement;
   bar: HTMLFormElement;
   input: HTMLInputElement;
+  reset: HTMLButtonElement;
   scope: HTMLElement;
   panel: HTMLElement;
   headTitle: HTMLElement;
@@ -80,6 +122,8 @@ export interface CommunitySearchState {
   error: string;
   status: string;
   loading: boolean;
+  /** Consecutive pages that carried links but nothing new. */
+  duplicatePages: number;
 }
 
 export const COMMUNITY_SEARCH_ICONS = {
@@ -163,7 +207,48 @@ export const COMMUNITY_SEARCH_CSS = `
     transition: filter .16s ease;
   }
   #heybox-up-community-search button.go:hover { filter: brightness(1.06); }
+  #heybox-up-community-search button.reset {
+    position: relative;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--heybox-up-muted, #6b7280);
+    font: inherit;
+    cursor: pointer;
+    transition: background .16s ease, color .16s ease;
+  }
+  #heybox-up-community-search button.reset::after {
+    content: "";
+    display: inline-block;
+    font-size: 0;
+    line-height: 0;
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid currentColor;
+    border-radius: 2px;
+    transform: rotate(45deg);
+  }
+  #heybox-up-community-search button.reset::before {
+    content: "清空";
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  #heybox-up-community-search button.reset[hidden] { display: none !important; }
+  #heybox-up-community-search button.reset:hover {
+    background: var(--heybox-up-subtle, rgba(20, 25, 30, .06));
+    color: var(--heybox-up-text, #14191e);
+  }
   #heybox-up-community-search button.go:focus-visible,
+  #heybox-up-community-search button.reset:focus-visible,
   #heybox-up-community-search .chip:focus-visible,
   #heybox-up-community-search .more:focus-visible,
   #heybox-up-community-search .close:focus-visible {
@@ -429,14 +514,14 @@ export async function fetchCommunitySearchPage(url: string, signal: AbortSignal)
     return { ok: false, message: message === "" ? "接口返回失败状态" : message };
   }
   const result = asRecord(data["result"]) ?? {};
-  const items = Array.isArray(result["items"]) ? result["items"] : [];
-  // Each page mixes in as many blank placeholder entries as links; offset advances by real links only.
-  const linkCount = items.filter((entry) => {
-    const record = asRecord(entry);
-    if (record === null) return false;
-    const type = record["type"];
-    return typeof type !== "string" || type === "" || type === "link";
-  }).length;
+  // Each page mixes in as many blank placeholder entries as links. A blank
+  // entry has no result id and is dropped here, so the count only covers real
+  // posts and the offset never advances over placeholders.
+  const items: unknown[] = [];
+  for (const entry of Array.isArray(result["items"]) ? result["items"] : []) {
+    if (normalizeSearchResult(entry) !== null) items.push(entry);
+  }
+  const linkCount = items.length;
   const rawRanges = Array.isArray(result["time_range_list"]) ? result["time_range_list"] : [];
   const timeRanges = rawRanges
     .map((entry) => asRecord(entry))
@@ -481,6 +566,203 @@ export function pickSearchNumber(values: unknown[]): number {
   return 0;
 }
 
+/** The API only accepts numeric ids; anything else must not reach the query. */
+export function isSearchTopicId(value: unknown): value is string {
+  return typeof value === "string" && /^\d{1,20}$/.test(value);
+}
+
+export function isSearchTimeRange(value: unknown): value is string {
+  return typeof value === "string" && value.length <= COMMUNITY_SEARCH_RANGE_MAX && /^[A-Za-z0-9_-]*$/.test(value);
+}
+
+export function normalizeSearchKeyword(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, COMMUNITY_SEARCH_KEYWORD_MAX);
+}
+
+/** Reads one stored record and drops every field that does not fit its shape. */
+export function parseCommunitySearchSavedState(raw: unknown): CommunitySearchSavedState | null {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  if (record["version"] !== COMMUNITY_SEARCH_STATE_VERSION) return null;
+  const body = asRecord(record["state"]);
+  if (body === null) return null;
+  const topicId = body["topicId"];
+  if (!isSearchTopicId(topicId)) return null;
+  const rawKeyword = body["keyword"];
+  if (typeof rawKeyword !== "string") return null;
+  const keyword = normalizeSearchKeyword(rawKeyword);
+  if (keyword === "" || rawKeyword.length > COMMUNITY_SEARCH_KEYWORD_MAX * 2) return null;
+  const timeRange = body["timeRange"];
+  if (!isSearchTimeRange(timeRange)) return null;
+  const open = body["open"];
+  if (typeof open !== "boolean") return null;
+  // Version 1 records written before results existed lack the field; those
+  // restore the keyword and an open search without a result list.
+  const results = body["results"];
+  if (results !== undefined && typeof results !== "boolean") return null;
+  return {
+    topicId: topicId,
+    keyword: keyword,
+    timeRange: timeRange,
+    open: open,
+    results: open === true && results === true,
+  };
+}
+
+export function isCommunitySearchItem(value: unknown): value is CommunitySearchItemView {
+  const record = asRecord(value);
+  if (record === null) return false;
+  return isSearchTopicId(record["id"])
+    && typeof record["title"] === "string"
+    && typeof record["desc"] === "string"
+    && typeof record["author"] === "string"
+    && typeof record["thumb"] === "string"
+    && isFiniteCount(record["createAt"])
+    && isFiniteCount(record["like"])
+    && isFiniteCount(record["comment"]);
+}
+
+function isFiniteCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isSearchRange(value: unknown): value is CommunitySearchTimeRange {
+  const record = asRecord(value);
+  return record !== null
+    && isSearchTimeRange(record["value"])
+    && typeof record["name"] === "string"
+    && record["name"].length <= 24;
+}
+
+/**
+ * Rebuilds the result list so a reload shows what the reader left behind. Every
+ * row is validated because it becomes a link and an image source again.
+ */
+export function parseCommunitySearchSession(raw: unknown, topicId: string): CommunitySearchSession | null {
+  if (!isSearchTopicId(topicId)) return null;
+  try {
+    if (JSON.stringify(raw).length > COMMUNITY_SEARCH_SESSION_MAX_CHARS) return null;
+  } catch {
+    return null;
+  }
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const saved = parseCommunitySearchSavedState(raw);
+  if (saved === null || saved.topicId !== topicId) return null;
+  const rawItems = record["items"];
+  if (!Array.isArray(rawItems) || rawItems.length > COMMUNITY_SEARCH_RESULT_CACHE_MAX) return null;
+  const items: CommunitySearchItemView[] = [];
+  const ids = new Set<string>();
+  for (const entry of rawItems) {
+    if (!isCommunitySearchItem(entry) || ids.has(entry.id)) return null;
+    ids.add(entry.id);
+    items.push({
+      id: entry.id,
+      title: entry.title.slice(0, 200),
+      desc: entry.desc.slice(0, 240),
+      author: entry.author.slice(0, 40),
+      thumb: /^https?:\/\//i.test(entry.thumb) ? entry.thumb : "",
+      createAt: Number.isFinite(entry.createAt) && entry.createAt > 0 ? entry.createAt : 0,
+      like: Number.isFinite(entry.like) && entry.like > 0 ? entry.like : 0,
+      comment: Number.isFinite(entry.comment) && entry.comment > 0 ? entry.comment : 0,
+    });
+  }
+  const offset = record["offset"];
+  const noMore = record["noMore"];
+  if (!Number.isSafeInteger(offset) || Number(offset) < 0 || typeof noMore !== "boolean") return null;
+  const rawRanges = record["timeRanges"];
+  if (!Array.isArray(rawRanges) || rawRanges.length > 12) return null;
+  const timeRanges: CommunitySearchTimeRange[] = [];
+  for (const entry of rawRanges) {
+    if (!isSearchRange(entry)) return null;
+    timeRanges.push({ value: entry.value, name: entry.name.slice(0, 24) });
+  }
+  return {
+    version: 1,
+    topicId: saved.topicId,
+    keyword: saved.keyword,
+    timeRange: resolveCommunitySearchRange(timeRanges, saved.timeRange),
+    open: saved.open,
+    results: saved.results,
+    items: items,
+    offset: Number(offset),
+    noMore: noMore,
+    timeRanges: timeRanges,
+  };
+}
+
+export function readCommunitySearchSession(topicId: string): CommunitySearchSession | null {
+  if (!isSearchTopicId(topicId)) return null;
+  return parseCommunitySearchSession(sessionStore.readJson(communitySearchStorageKey(topicId), null), topicId);
+}
+
+
+export function writeCommunitySearchSession(state: CommunitySearchSession): void {
+  if (!isSearchTopicId(state.topicId)) return;
+  if (parseCommunitySearchSavedState({ version: 1, state: state }) === null) return;
+  if (!state.items.every(isCommunitySearchItem)) return;
+  const record = {
+    version: COMMUNITY_SEARCH_STATE_VERSION,
+    state: {
+      topicId: state.topicId,
+      keyword: normalizeSearchKeyword(state.keyword),
+      timeRange: state.timeRange,
+      open: state.open === true,
+      results: state.results === true,
+    },
+    items: state.items.slice(0, COMMUNITY_SEARCH_RESULT_CACHE_MAX).map((item) => ({
+      id: item.id,
+      title: item.title.slice(0, 200),
+      desc: item.desc.slice(0, 240),
+      author: item.author.slice(0, 40),
+      thumb: item.thumb,
+      createAt: item.createAt,
+      like: item.like,
+      comment: item.comment,
+    })),
+    offset: state.offset,
+    noMore: state.noMore === true,
+    timeRanges: state.timeRanges.slice(0, 12).map((range) => ({ value: range.value, name: range.name.slice(0, 24) })),
+  };
+  if (parseCommunitySearchSession(record, state.topicId) === null) return;
+  sessionStore.writeJson(communitySearchStorageKey(state.topicId), record);
+}
+
+export function clearCommunitySearchSavedState(topicId: string): void {
+  if (!isSearchTopicId(topicId)) return;
+  sessionStore.remove(communitySearchStorageKey(topicId));
+}
+
+/** A range saved by another session may not exist any more; match its label too. */
+export function resolveCommunitySearchRange(
+  ranges: readonly CommunitySearchTimeRange[],
+  savedValue: string,
+): string {
+  if (savedValue === "") return "";
+  return ranges.some((entry) => entry.value === savedValue) ? savedValue : "";
+}
+
+export interface CommunitySearchPageState {
+  offset: number;
+  noMore: boolean;
+}
+
+export type CommunitySearchPagingAction = "request" | "wait" | "done";
+
+/**
+ * Decides what the paging button should do. While an automatic probe is in
+ * flight the button waits instead of issuing a second request.
+ */
+export function planCommunitySearchPaging(
+  state: CommunitySearchPageState,
+  loading: boolean,
+): CommunitySearchPagingAction {
+  if (loading === true) return "wait";
+  if (state.noMore === true) return "done";
+  return "request";
+}
+
 export function normalizeSearchResult(entry: unknown): CommunitySearchItemView | null {
   const record = asRecord(entry);
   if (record === null) return null;
@@ -501,6 +783,47 @@ export function normalizeSearchResult(entry: unknown): CommunitySearchItemView |
     like: pickSearchNumber([info["like_num"], info["like_count"], info["up"], info["likes"]]),
     comment: pickSearchNumber([info["comment_num"], info["link_comment_num"], info["comment_count"], info["comments"]]),
   };
+}
+
+export interface CommunitySearchPageCollector {
+  items: CommunitySearchItemView[];
+  offset: number;
+}
+
+export interface CommunitySearchPageCollection {
+  added: number;
+  duplicateOnly: boolean;
+  exhausted: boolean;
+}
+
+/**
+ * Merges one page into the collector. A page whose links are all already shown
+ * keeps its offset advance but reports duplicateOnly, so the caller can probe
+ * one more page instead of leaving the reader to press "load more" again.
+ */
+export function collectCommunitySearchPage(
+  collector: CommunitySearchPageCollector,
+  response: { items: unknown[]; linkCount: number },
+  reset: boolean,
+): CommunitySearchPageCollection {
+  const known = new Set(collector.items.map((item) => item.id));
+  const incoming: CommunitySearchItemView[] = [];
+  let linkCount = 0;
+  for (const entry of response.items) {
+    const item = normalizeSearchResult(entry);
+    if (item !== null) linkCount += 1;
+    if (item === null || known.has(item.id)) continue;
+    known.add(item.id);
+    incoming.push(item);
+  }
+  collector.items = reset === true ? incoming : collector.items.concat(incoming);
+  // A page carrying real links always advances at least one position, even if
+  // an older response omitted linkCount, so a probe cannot request it twice.
+  const reported = Number(response.linkCount) || 0;
+  const step = reported > 0 || linkCount > 0 ? Math.max(reported, linkCount) : 0;
+  collector.offset += step;
+  const exhausted = linkCount === 0;
+  return { added: incoming.length, duplicateOnly: exhausted !== true && incoming.length === 0, exhausted: exhausted };
 }
 
 export function createCommunitySearchItem(item: CommunitySearchItemView): HTMLAnchorElement {
@@ -561,7 +884,9 @@ export function createCommunitySearchPanel(): CommunitySearchUi {
   scope.className = "scope";
   const input = document.createElement("input");
   input.className = "q";
-  input.type = "search";
+  // type=search adds a second native clear control, so the field uses text with
+  // an explicit reset button that also becomes the only non-keyboard clear path.
+  input.type = "text";
   input.name = "q";
   input.autocomplete = "off";
   input.placeholder = "搜索本社区的帖子";
@@ -570,7 +895,12 @@ export function createCommunitySearchPanel(): CommunitySearchUi {
   go.type = "submit";
   go.className = "go";
   go.textContent = "搜索";
-  bar.append(icon, scope, input, go);
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "reset";
+  reset.textContent = "清空";
+  reset.hidden = true;
+  bar.append(icon, scope, input, reset, go);
 
   const panel = document.createElement("div");
   panel.className = "panel";
@@ -628,14 +958,15 @@ export function createCommunitySearchPanel(): CommunitySearchUi {
   panel.append(head, filters, list, foot);
   root.append(bar, panel);
 
-  return { root, bar, input, scope, panel, headTitle, headMeta, globalLink, filters, list, foot, more, status, close };
+  return { root, bar, input, reset, scope, panel, headTitle, headMeta, globalLink, filters, list, foot, more, status, close };
 }
 
-export function watchCommunitySearch(): void {
-  if (!document.body) return;
+export function watchCommunitySearch(): () => void {
+  if (!document.body) return () => undefined;
   const ui = createCommunitySearchPanel();
   let state: CommunitySearchState | null = null;
   let searchController: AbortController | null = null;
+  let restoredTopicId = "";
 
   const pageNode = (): Element | null => document.querySelector("#page-topic-link");
   const mainNode = (): Element | null => document.querySelector("#page-topic-link .topic-link__main");
@@ -667,6 +998,8 @@ export function watchCommunitySearch(): void {
         current.offset = 0;
         current.items = [];
         current.noMore = false;
+        current.duplicatePages = 0;
+        persist();
         void run(true);
       });
       ui.filters.append(chip);
@@ -692,6 +1025,12 @@ export function watchCommunitySearch(): void {
     ui.list.append(empty);
   };
 
+  const syncResetVisibility = (): void => {
+    const hidden = ui.input.value === "";
+    if (ui.reset.hidden !== hidden) ui.reset.hidden = hidden;
+  };
+
+
   const render = (): void => {
     if (state === null) return;
     ui.headTitle.textContent = "在「" + state.topicName + "」中搜索 “" + state.keyword + "”";
@@ -706,6 +1045,8 @@ export function watchCommunitySearch(): void {
     ui.globalLink.setAttribute("href", "/app/search/list?q=" + encodeURIComponent(state.keyword));
     renderChips();
     renderItems();
+    if (ui.input.value !== state.keyword) ui.input.value = state.keyword;
+    syncResetVisibility();
     const moreHadFocus = document.activeElement === ui.more;
     ui.foot.hidden = loaded > 0 || state.loading === true ? false : true;
     ui.more.hidden = state.noMore === true;
@@ -716,26 +1057,28 @@ export function watchCommunitySearch(): void {
     else ui.status.textContent = "";
   };
 
-  const run = async (reset: boolean): Promise<void> => {
+  /** Returns true once the page result was merged into the current state. */
+  const run = async (reset: boolean): Promise<boolean> => {
     const current = state;
-    if (current === null || current.loading === true) return;
+    if (current === null || current.loading === true) return false;
     current.loading = true;
     current.error = "";
     current.status = reset === true ? "" : "加载中…";
     render();
     const offset = reset === true ? 0 : current.offset;
+    if (reset === true) current.offset = 0;
     searchController?.abort();
     const controller = new AbortController();
     searchController = controller;
     const response = await requestCommunitySearch(current.topicId, current.keyword, offset, current.timeRange, controller.signal);
-    if (state !== current || searchController !== controller) return;
+    if (state !== current || searchController !== controller) return false;
     searchController = null;
     current.loading = false;
     current.status = "";
     if (response.aborted === true) {
       current.status = "搜索已取消";
       render();
-      return;
+      return false;
     }
     if (response.ok !== true) {
       if (reset === true) {
@@ -745,22 +1088,28 @@ export function watchCommunitySearch(): void {
         current.status = "加载失败：" + response.message;
       }
       render();
-      return;
+      return false;
     }
-    const known = new Set(current.items.map((item) => item.id));
-    const incoming: CommunitySearchItemView[] = [];
-    for (const entry of response.items) {
-      const item = normalizeSearchResult(entry);
-      if (item === null || known.has(item.id)) continue;
-      known.add(item.id);
-      incoming.push(item);
-    }
-    current.items = reset === true ? incoming : current.items.concat(incoming);
-    current.offset = offset + response.linkCount;
-    current.noMore = response.linkCount === 0;
+    const collection = collectCommunitySearchPage(current, response, reset);
+    current.noMore = collection.exhausted;
     current.tip = response.tip;
     if (current.timeRanges.length === 0 && response.timeRanges.length > 0) current.timeRanges = response.timeRanges;
+    // A page made only of already shown posts advances the offset without
+    // growing the list. Probe the next page a bounded number of times so the
+    // reader does not have to click "load more" repeatedly for no visible
+    // change, then say where the list really stopped.
+    if (reset !== true && collection.duplicateOnly === true) {
+      const duplicates = Math.min(current.duplicatePages + 1, COMMUNITY_SEARCH_DUPLICATE_PAGE_LIMIT);
+      current.duplicatePages = duplicates;
+      if (duplicates < COMMUNITY_SEARCH_DUPLICATE_PAGE_LIMIT) {
+        return await run(false);
+      }
+      current.status = "已连续 " + duplicates + " 页没有新帖子，已暂停自动翻页";
+    } else if (collection.added > 0 || reset === true) {
+      current.duplicatePages = 0;
+    }
     render();
+    return true;
   };
 
   const clearPanel = (): void => {
@@ -777,6 +1126,10 @@ export function watchCommunitySearch(): void {
     state = null;
     clearPanel();
     setActive(false);
+    if (restoreFocus === true) {
+      ui.input.setSelectionRange(ui.input.value.length, ui.input.value.length);
+    }
+    persist();
     if (restoreFocus === true) ui.input.focus();
   };
 
@@ -803,17 +1156,40 @@ export function watchCommunitySearch(): void {
       error: "",
       status: "",
       loading: false,
+      duplicatePages: 0,
     };
     setActive(true);
     render();
-    void run(true);
+    persist();
+    void run(true).then(persist, () => undefined);
   };
 
   ui.bar.addEventListener("submit", (event) => {
     event.preventDefault();
     submit();
   });
-  document.addEventListener("keydown", (event) => {
+  ui.input.addEventListener("input", syncResetVisibility);
+  ui.reset.addEventListener("click", () => {
+    searchController?.abort();
+    searchController = null;
+    state = null;
+    clearPanel();
+    setActive(false);
+    ui.input.value = "";
+    const context = readTopicContext();
+    if (context !== null) clearCommunitySearchSavedState(context.topicId);
+    syncResetVisibility();
+    ui.input.focus();
+  });
+  ui.input.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || ui.input.value === "") return;
+    event.preventDefault();
+    ui.input.value = "";
+    syncResetVisibility();
+  });
+  // Leaving the field after typing keeps the draft for the next visit.
+  ui.input.addEventListener("change", persist);
+  const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== "Escape" || state === null || event.defaultPrevented === true) return;
     const target = event.target;
     if (target instanceof Element) {
@@ -828,10 +1204,11 @@ export function watchCommunitySearch(): void {
     }
     event.preventDefault();
     close(true);
-  });
+  };
+  document.addEventListener("keydown", onKeyDown);
   ui.close.addEventListener("click", () => close(true));
   ui.more.addEventListener("click", () => {
-    void run(false);
+    void run(false).then(persist, () => undefined);
   });
 
   const sync = (): void => {
@@ -842,6 +1219,9 @@ export function watchCommunitySearch(): void {
       searchController?.abort();
       searchController = null;
       if (ui.root.parentNode !== null) ui.root.remove();
+      restoredTopicId = "";
+      ui.input.value = "";
+      syncResetVisibility();
       if (state !== null) {
         state = null;
         clearPanel();
@@ -870,12 +1250,83 @@ export function watchCommunitySearch(): void {
       state = null;
       clearPanel();
     }
+    restore(context);
     setActive(state !== null);
   };
 
+  /** Stores the keyword and the open panel, with the list only when it is showing. */
+  function persist(): void {
+    const context = readTopicContext();
+    if (context === null) return;
+    const current = state !== null && state.topicId === context.topicId ? state : null;
+    const keyword = current !== null ? current.keyword : normalizeSearchKeyword(ui.input.value);
+    if (keyword === "") {
+      clearCommunitySearchSavedState(context.topicId);
+      return;
+    }
+    const ranges = current !== null ? current.timeRanges : [];
+    writeCommunitySearchSession({
+      version: 1,
+      topicId: context.topicId,
+      keyword: keyword,
+      timeRange: current !== null ? resolveCommunitySearchRange(ranges, current.timeRange) : "",
+      open: current !== null || ui.input.value.trim() !== "",
+      results: current !== null,
+      items: current !== null ? current.items : [],
+      offset: current !== null ? current.offset : 0,
+      noMore: current !== null ? current.noMore : false,
+      timeRanges: ranges,
+    });
+  }
+
+  /** Runs once per topic visit; returning to the feed leaves the keyword only. */
+  const restore = (context: TopicContext): void => {
+    if (restoredTopicId === context.topicId) return;
+    if (restoredTopicId !== "") {
+      ui.input.value = "";
+      syncResetVisibility();
+    }
+    restoredTopicId = context.topicId;
+    const saved = readCommunitySearchSession(context.topicId);
+    if (saved === null) return;
+    ui.input.value = saved.keyword;
+    syncResetVisibility();
+    if (saved.open !== true) return;
+    state = {
+      topicId: context.topicId,
+      topicName: context.name,
+      keyword: saved.keyword,
+      timeRange: saved.timeRange,
+      items: saved.results === true ? saved.items : [],
+      offset: saved.offset,
+      noMore: saved.noMore,
+      timeRanges: saved.timeRanges,
+      tip: "",
+      error: "",
+      status: "",
+      loading: false,
+      duplicatePages: 0,
+    };
+    setActive(true);
+    render();
+    // An open panel without a restored list fetches once; a restored list keeps
+    // its saved rows until the reader asks for more.
+    if (saved.results !== true) void run(true).then(persist, () => undefined);
+  };
+
   registerPageSync(sync, 250, [PAGE_ROUTE.TOPIC], "topic");
+  const controller = new AbortController();
   window.addEventListener("popstate", () => {
     if (state !== null) close(false);
-  });
+  }, { signal: controller.signal });
   sync();
+  return () => {
+    controller.abort();
+    searchController?.abort();
+    searchController = null;
+    pageSyncTasks.delete(sync);
+    ui.root.remove();
+    document.removeEventListener("keydown", onKeyDown);
+    setActive(false);
+  };
 }
