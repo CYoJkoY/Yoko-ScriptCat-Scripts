@@ -227,6 +227,24 @@ export function stepRailCardLinkId(ids: readonly string[], current: string, step
   return ids[next];
 }
 
+/**
+ * Scrolls the card that owns a post link minimally into the viewport. Hover
+ * switching already anchors the reader at the pointer, but a keyboard step can
+ * land on a card that is out of sight, so the step reveals it. Environments
+ * without scrollIntoView keep the step working without the reveal.
+ */
+export function revealRailCardByLinkId(root: ParentNode, linkId: string): boolean {
+  for (const card of root.querySelectorAll(RAIL_HOVER_CARD_SELECTOR)) {
+    if (readRailCardLinkId(card) !== linkId) continue;
+    if (typeof card.scrollIntoView !== "function") return false;
+    const reduced = typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    card.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
+    return true;
+  }
+  return false;
+}
+
 export const RAIL_ICONS = {
   comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-3-.4L4 21l1.4-4.4A8.3 8.3 0 0 1 3.6 11.5 8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z"/></svg>',
   external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
@@ -2196,6 +2214,7 @@ export function watchCommentRail(): () => void {
     if (next === "" || !route.rail.open(next)) return;
     event.preventDefault();
     cancelHover();
+    revealRailCardByLinkId(page, next);
   });
 
   listen(COMMENT_PREVIEW_EVENT, () => route.sync());

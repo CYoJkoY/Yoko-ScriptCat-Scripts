@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const environment = vi.hoisted(() => ({ pathname: "/app/bbs/home" }));
+const environment = vi.hoisted(() => ({ pathname: "/app/bbs/home", reducedMotion: false }));
 
 vi.hoisted(() => {
   Object.defineProperty(window, "location", {
@@ -16,8 +16,8 @@ vi.hoisted(() => {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
-    value: (): MediaQueryList => ({
-      matches: false,
+    value: (query: string): MediaQueryList => ({
+      matches: query === "(prefers-reduced-motion: reduce)" && environment.reducedMotion,
       media: "",
       onchange: null,
       addListener: (): void => undefined,
@@ -96,6 +96,7 @@ let stopWatching: () => void = () => undefined;
 
 beforeEach(() => {
   environment.pathname = "/app/bbs/home";
+  environment.reducedMotion = false;
   fetchMock.mockClear();
   vi.stubGlobal("fetch", fetchMock);
   vi.useFakeTimers();
@@ -143,15 +144,27 @@ describe("comment preview routes", () => {
     await vi.advanceTimersByTimeAsync(0);
     const emptyState = railHost().shadowRoot!.querySelector(".status")!;
     expect(emptyState.textContent).toBe("这条帖子还没有评论");
+    const scrolls = new Map<Element, ReturnType<typeof vi.fn>>();
+    for (const card of document.querySelectorAll<Element>(".bbs-home__content-item")) {
+      const spy = vi.fn();
+      (card as HTMLElement).scrollIntoView = spy;
+      scrolls.set(card, spy);
+    }
+    const [first, second] = document.querySelectorAll(".bbs-home__content-item");
     const down = press("ArrowDown");
     expect(down.defaultPrevented).toBe(true);
+    expect(scrolls.get(second!)!).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    expect(scrolls.get(first!)!).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(0);
     expect(railPart(".list")).not.toBeNull();
     expect((railPart("a.icon") as HTMLAnchorElement).getAttribute("href")).toContain("801");
     const end = press("ArrowDown");
     expect(end.defaultPrevented).toBe(false);
+    expect(scrolls.get(second!)!).toHaveBeenCalledTimes(1);
+    environment.reducedMotion = true;
     const up = press("ArrowUp");
     expect(up.defaultPrevented).toBe(true);
+    expect(scrolls.get(first!)!).toHaveBeenCalledWith({ block: "nearest", behavior: "auto" });
     const input = document.createElement("input");
     document.body.append(input);
     const typed = press("ArrowDown", input);
