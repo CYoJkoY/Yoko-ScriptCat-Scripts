@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.20.10
+// @version      0.20.11
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
@@ -10475,8 +10475,10 @@ ${CODE_FENCE}`;
        Gemini wraps them in an overflow scroll container, render isolation on
        the table itself collapses that measurement, and native compact-table
        rules size some tables to their content width so they float narrower
-       than the surrounding text. Content wider than the column still keeps
-       the native horizontal scroll. */
+       than the surrounding text. The scroll wrapper also carries the native
+       wide-screen centering paddings, which push the table out of the column
+       and let the clipped half overflow the hidden block wrapper. Content
+       wider than the column still keeps the native horizontal scroll. */
     model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) table {
       content-visibility: visible !important;
       contain: none !important;
@@ -10487,6 +10489,8 @@ ${CODE_FENCE}`;
     model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) .table-content {
       width: 100% !important;
       min-width: 0 !important;
+      padding-left: 0 !important;
+      padding-right: 0 !important;
     }
 
     model-response :is(.markdown, message-content, .message-content, .response-content, .md-content, .model-response-text) > :is(img, video, canvas, iframe) {
