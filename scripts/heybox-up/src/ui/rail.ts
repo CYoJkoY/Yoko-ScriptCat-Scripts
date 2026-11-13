@@ -145,6 +145,42 @@ export interface RailPageOptions {
 
 export const RAIL_TRIGGER_SELECTOR = ".bbs-new-style-bottom__comment, .content-list__comment";
 
+/**
+ * Feed cards that may switch the preview on hover. The first selector covers
+ * the community home; the rest cover topic, creator and generic list feeds,
+ * where the same comment counter is rendered inside a different container.
+ */
+export const RAIL_HOVER_CARD_SELECTOR = [
+  "#page-bbs-community .bbs-home__content-item",
+  "#page-topic-link .content-list__item",
+  "#page-topic-link .bbs-home__content-item",
+  "#page-creator-content-management .content-list__item",
+  "#page-creator-content-management .bbs-home__content-item",
+  ".bbs-home__content-list .bbs-home__content-item",
+  ".content-list .content-list__item",
+].join(", ");
+
+/** Reads a post id from a feed link, including relative and absolute hrefs. */
+export function readRailLinkId(href: string | null): string {
+  const match = /link\/(\d+)/.exec(href || "");
+  return match ? match[1] : "";
+}
+
+/**
+ * Resolves the feed card owning a hovered node. Video and gallery templates do
+ * not always nest the comment counter inside the post anchor, so the nearest
+ * card is searched for a post link as a second step.
+ */
+export function readRailCardLinkId(element: Element | null): string {
+  if (element === null) return "";
+  const anchor = element.closest('a[href*="/app/bbs/link/"]');
+  if (anchor !== null) return readRailLinkId(anchor.getAttribute("href"));
+  const card = element.closest(RAIL_HOVER_CARD_SELECTOR + ", li");
+  if (card === null) return "";
+  const inner = card.querySelector('a[href*="/app/bbs/link/"]');
+  return inner === null ? "" : readRailLinkId(inner.getAttribute("href"));
+}
+
 export const RAIL_ICONS = {
   comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-3-.4L4 21l1.4-4.4A8.3 8.3 0 0 1 3.6 11.5 8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z"/></svg>',
   external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
@@ -1973,27 +2009,13 @@ export function watchCommentRail() {
   const isFeedPage = () => readPageRoute() === PAGE_ROUTE.FEED
     && document.querySelector("#page-bbs-community .bbs-home__content-list") !== null;
 
-  const readLinkId = (href: string | null): string => {
-    const match = /link\/(\d+)/.exec(href || "");
-    return match ? match[1] : "";
-  };
-
   const readFirstFeedLinkId = (): string => {
     const anchor = document.querySelector("#page-bbs-community .bbs-home__content-list a[href*='/app/bbs/link/']");
     if (!anchor) return "";
-    return readLinkId(anchor.getAttribute("href"));
+    return readRailLinkId(anchor.getAttribute("href"));
   };
 
-  // Card templates for video and galleries do not always nest the comment
-  // button inside the post anchor, so fall back to the containing card.
-  const readCardLinkId = (element: Element): string => {
-    const anchor = element.closest('a[href*="/app/bbs/link/"]');
-    if (anchor) return readLinkId(anchor.getAttribute("href"));
-    const card = element.closest(".bbs-home__content-item, .content-list__item, li");
-    if (!card) return "";
-    const inner = card.querySelector('a[href*="/app/bbs/link/"]');
-    return inner ? readLinkId(inner.getAttribute("href")) : "";
-  };
+  const readCardLinkId = readRailCardLinkId;
 
   const isEnabled = (): boolean => readCommentPreviewPreference();
 
@@ -2024,7 +2046,7 @@ export function watchCommentRail() {
     if (!isEnabled() || !rail.isOpen()) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
-    const card = target.closest("#page-bbs-community .bbs-home__content-item");
+    const card = target.closest(RAIL_HOVER_CARD_SELECTOR);
     if (!card) return;
     const linkId = readCardLinkId(card);
     if (linkId === "" || linkId === hoverId) return;
@@ -2040,7 +2062,7 @@ export function watchCommentRail() {
     if (hoverTimer === 0) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
-    const card = target.closest("#page-bbs-community .bbs-home__content-item");
+    const card = target.closest(RAIL_HOVER_CARD_SELECTOR);
     if (!card) return;
     const related = event.relatedTarget;
     if (related instanceof Node && card.contains(related)) return;
