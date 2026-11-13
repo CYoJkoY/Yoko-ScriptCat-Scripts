@@ -14,7 +14,7 @@ const meta = {
   runAt: "document-start",
   grant: ["none"],
   noframes: true,
-  icon: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%23232b36'/%3E%3Cpath%20d='M9%207.5h14a2.5%202.5%200%200%201%202.5%202.5v12a2.5%202.5%200%200%201-2.5%202.5H9A2.5%202.5%200%200%201%206.5%2022V10A2.5%202.5%200%200%201%209%207.5Z'%20fill='none'%20stroke='%238aa7c4'%20stroke-width='1.6'/%3E%3Cpath%20d='M10.5%2016c1.2-2.1%203.1-3.2%205.5-3.2s4.3%201.1%205.5%203.2c-1.2%202.1-3.1%203.2-5.5%203.2S11.7%2018.1%2010.5%2016Z'%20fill='%23a9c0d8'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='1.7'%20fill='%23232b36'/%3E%3C/svg%3E",
+  icon: "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22HeyBox%20Up%22%3E%0A%20%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23151a22%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M12%2022.5%2032%2011l20%2011.5L32%2034%2012%2022.5Z%22%20fill%3D%22%2355a8ff%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M12%2022.5V45l20%2011.5V34L12%2022.5Z%22%20fill%3D%22%233086e8%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M52%2022.5V45L32%2056.5V34l20-11.5Z%22%20fill%3D%22%231e65bc%22%2F%3E%0A%20%20%3Cpath%20d%3D%22m25%2030%207%204%207-4v11l-7%204-7-4V30Z%22%20fill%3D%22%23f5f9ff%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M31%2034v10%22%20fill%3D%22none%22%20stroke%3D%22%233086e8%22%20stroke-width%3D%222%22%2F%3E%0A%3C%2Fsvg%3E",
   license: "MIT",
 } satisfies UserscriptMeta;
 
