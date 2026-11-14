@@ -31,9 +31,9 @@ describe("HeyBox Up theme menu keyboard contract", () => {
     document.body.append(host);
   });
 
-  function press(key: string): void {
+  function press(key: string, shiftKey = false): void {
     const target = theme.themeEntry?.host.shadowRoot?.activeElement ?? document;
-    target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, composed: true, key }));
+    target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, composed: true, key, shiftKey }));
   }
 
   it("moves focus to the selected theme item and cycles with arrow keys", () => {
@@ -62,6 +62,19 @@ describe("HeyBox Up theme menu keyboard contract", () => {
     press("End");
     expect(shadow.activeElement?.getAttribute("data-theme")).toBe("mist");
     press("Home");
+    expect(shadow.activeElement?.getAttribute("data-theme")).toBe("system");
+  });
+
+  it("keeps Tab traversal inside the open menu", () => {
+    const entry = theme.themeEntry;
+    if (entry === null) throw new Error("Expected theme entry");
+    entry.button.click();
+    const shadow = entry.host.shadowRoot;
+    if (shadow === null) throw new Error("Expected theme shadow root");
+
+    press("Tab");
+    expect(shadow.activeElement?.getAttribute("data-theme")).toBe("dark");
+    press("Tab", true);
     expect(shadow.activeElement?.getAttribute("data-theme")).toBe("system");
   });
 

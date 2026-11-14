@@ -1914,7 +1914,7 @@ export function createThemeEntry(): void {
       : items.find((item) => item.dataset["theme"] === selectedId || item.getAttribute("aria-checked") === "true");
     (selected ?? items[0])?.focus();
   };
-  const navigateMenu = (owner: HTMLDivElement, key: string): boolean => {
+  const navigateMenu = (owner: HTMLDivElement, key: string, shiftKey: boolean): boolean => {
     const items = getMenuItems(owner);
     if (items.length === 0) return false;
     const root = owner.getRootNode();
@@ -1934,6 +1934,10 @@ export function createThemeEntry(): void {
     }
     if (key === "End") {
       focusMenuItem(owner, items.length - 1);
+      return true;
+    }
+    if (key === "Tab" && currentIndex >= 0) {
+      focusMenuItem(owner, currentIndex + (shiftKey ? -1 : 1));
       return true;
     }
     return false;
@@ -1977,7 +1981,7 @@ export function createThemeEntry(): void {
       : !settingsMenu.hidden && path.includes(settingsMenu)
         ? settingsMenu
         : null;
-    if (activeMenu && navigateMenu(activeMenu, event.key)) {
+    if (activeMenu && navigateMenu(activeMenu, event.key, event.shiftKey)) {
       event.preventDefault();
       return;
     }
