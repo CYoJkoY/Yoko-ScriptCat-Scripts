@@ -1929,18 +1929,22 @@ export function createThemeEntry(): void {
     const active = root instanceof ShadowRoot ? root.activeElement : document.activeElement;
     const currentIndex = active instanceof HTMLElement ? items.indexOf(active) : -1;
     if (key === "ArrowDown") {
-      focusMenuItem(owner, currentIndex < 0 ? 0 : currentIndex + 1);
+      if (currentIndex < 0) return false;
+      focusMenuItem(owner, currentIndex + 1);
       return true;
     }
     if (key === "ArrowUp") {
-      focusMenuItem(owner, currentIndex < 0 ? items.length - 1 : currentIndex - 1);
+      if (currentIndex < 0) return false;
+      focusMenuItem(owner, currentIndex - 1);
       return true;
     }
     if (key === "Home") {
+      if (currentIndex < 0) return false;
       focusMenuItem(owner, 0);
       return true;
     }
     if (key === "End") {
+      if (currentIndex < 0) return false;
       focusMenuItem(owner, items.length - 1);
       return true;
     }

@@ -31,9 +31,11 @@ describe("HeyBox Up theme menu keyboard contract", () => {
     document.body.append(host);
   });
 
-  function press(key: string, shiftKey = false): void {
+  function press(key: string, shiftKey = false): KeyboardEvent {
     const target = theme.themeEntry?.host.shadowRoot?.activeElement ?? document;
-    target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, composed: true, key, shiftKey }));
+    const event = new KeyboardEvent("keydown", { bubbles: true, composed: true, cancelable: true, key, shiftKey });
+    target.dispatchEvent(event);
+    return event;
   }
 
   it("moves focus to the selected theme item and cycles with arrow keys", () => {
@@ -99,6 +101,13 @@ describe("HeyBox Up theme menu keyboard contract", () => {
     const lineHeightInput = entry.settingsMenu.querySelector<HTMLInputElement>('input[aria-label="正文行距倍数"]');
     const feedWidthInput = entry.settingsMenu.querySelector<HTMLInputElement>('input[aria-label="自定义中栏宽度百分比"]');
     if (historyInput === null || lineHeightInput === null || feedWidthInput === null) throw new Error("Expected settings inputs");
+    historyInput.focus();
+    expect(press("ArrowUp").defaultPrevented).toBe(false);
+    expect(shadow.activeElement).toBe(historyInput);
+    expect(press("ArrowDown").defaultPrevented).toBe(false);
+    expect(shadow.activeElement).toBe(historyInput);
+    expect(press("Home").defaultPrevented).toBe(false);
+    expect(shadow.activeElement).toBe(historyInput);
     menuItems[5]?.focus();
     press("Tab");
     expect(shadow.activeElement).toBe(historyInput);
