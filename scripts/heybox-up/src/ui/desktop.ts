@@ -17,6 +17,20 @@ export const DESKTOP_HOT_TARGET_CLASS = "heybox-up-hot-target";
 
 export const DESKTOP_HOT_LIMIT = 6;
 
+const COMMUNITY_CARD_ACTION_SELECTOR = "#page-bbs-community .list-cotent__operation-btn";
+
+/** Give the site's icon-only card menu a usable name without changing its behavior. */
+export function labelCommunityCardActions(root: ParentNode = document): void {
+  for (const button of root.querySelectorAll<HTMLButtonElement>(COMMUNITY_CARD_ACTION_SELECTOR)) {
+    if (button.getAttribute("aria-label") === null && button.textContent?.trim() === "") {
+      button.setAttribute("aria-label", "更多帖子操作");
+    }
+    if (button.title === "" && button.getAttribute("aria-label") !== null) {
+      button.title = button.getAttribute("aria-label") || "";
+    }
+  }
+}
+
 export interface DesktopRailItem {
   readonly id: string;
   readonly label: string;
@@ -537,6 +551,7 @@ export function watchDesktopShell() {
     }
     if (!force && now - lastDesktopSyncAt < 500) return;
     lastDesktopSyncAt = now;
+    labelCommunityCardActions();
     if (!desktopViewport.matches) {
       teardown();
       return;
