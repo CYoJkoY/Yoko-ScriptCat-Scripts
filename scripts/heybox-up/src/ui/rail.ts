@@ -383,8 +383,20 @@ export const RAIL_CSS = `
   }
   .quote .quote-name { color: var(--rail-muted); }
   .status { padding: 26px 18px; text-align: center; color: var(--rail-muted); }
-  .status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   .status a { color: var(--rail-accent); text-decoration: underline; text-underline-offset: 3px; }
+  .retry-button {
+    margin-left: 8px;
+    padding: 3px 12px;
+    border: 1px solid var(--rail-line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--rail-text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .retry-button:hover { background: var(--rail-subtle); }
+  .retry-button:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: 1px; }
+  .retry-button[disabled] { opacity: .6; cursor: default; }
   .foot-bar { display: flex; gap: 8px; padding: 11px 12px; border-top: 1px solid var(--rail-line); }
   .action {
     flex: 1 1 auto;
@@ -1744,6 +1756,8 @@ export function createCommentRailAt(page: Document | HTMLElement) {
   list.className = "list";
   const status = document.createElement("div");
   status.className = "status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
   const footBar = document.createElement("div");
   footBar.className = "foot-bar";
   const moreButton = document.createElement("button");
@@ -1751,6 +1765,16 @@ export function createCommentRailAt(page: Document | HTMLElement) {
   moreButton.className = "action";
   moreButton.textContent = "加载更多";
   footBar.append(moreButton);
+  const statusText = document.createElement("span");
+  const errorLink = document.createElement("a");
+  errorLink.textContent = "打开帖子";
+  errorLink.addEventListener("click", (event) => event.stopPropagation());
+  const retryButton = document.createElement("button");
+  retryButton.type = "button";
+  retryButton.className = "retry-button";
+  retryButton.textContent = "重试";
+  retryButton.setAttribute("aria-label", "重试加载评论");
+  status.append(statusText, errorLink, retryButton);
 
   dock.append(head, meta, list, status, footBar);
   panel.append(tab, dock);
@@ -1919,31 +1943,27 @@ export function createCommentRailAt(page: Document | HTMLElement) {
     list.replaceChildren(...visible.map(createItem));
     list.hidden = visible.length === 0;
     if (state.error !== "") {
-      status.textContent = "";
-      const label = document.createElement("span");
-      label.textContent = state.error + " ";
-      const link = document.createElement("a");
-      link.href = LINK_HREF_PREFIX + state.linkId;
-      link.textContent = "打开帖子";
-      link.addEventListener("click", (event) => event.stopPropagation());
-      status.append(label, link);
-      status.classList.add("retry");
-      status.hidden = false;
-    } else if (state.loading && state.items.length === 0) {
-      status.classList.remove("retry");
-      status.textContent = "正在加载评论…";
-      status.hidden = false;
-    } else if (state.linkId === "") {
-      status.classList.remove("retry");
-      status.textContent = "这里会直接显示信息流首条帖子的评论；点其他帖子的评论数字可切换。";
-      status.hidden = false;
-    } else if (visible.length === 0) {
-      status.classList.remove("retry");
-      status.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+      statusText.textContent = state.error + " ";
+      errorLink.href = LINK_HREF_PREFIX + state.linkId;
+      errorLink.hidden = false;
+      retryButton.hidden = false;
+      retryButton.disabled = state.loading;
       status.hidden = false;
     } else {
-      status.classList.remove("retry");
-      status.hidden = true;
+      errorLink.hidden = true;
+      retryButton.hidden = true;
+      if (state.loading && state.items.length === 0) {
+        statusText.textContent = "正在加载评论…";
+        status.hidden = false;
+      } else if (state.linkId === "") {
+        statusText.textContent = "这里会直接显示信息流首条帖子的评论；点其他帖子的评论数字可切换。";
+        status.hidden = false;
+      } else if (visible.length === 0) {
+        statusText.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+        status.hidden = false;
+      } else {
+        status.hidden = true;
+      }
     }
     moreButton.hidden = state.linkId === "" || !state.hasMore;
     moreButton.textContent = state.loading ? "加载中…" : "加载更多";
@@ -2044,7 +2064,7 @@ export function createCommentRailAt(page: Document | HTMLElement) {
     render();
   });
   collapseButton.addEventListener("click", collapse);
-  status.addEventListener("click", () => {
+  retryButton.addEventListener("click", () => {
     if (state.error === "" || state.loading) return;
     void load(1);
   });

@@ -143,7 +143,7 @@ describe("comment preview routes", () => {
   it("steps through the feed with the arrow keys and ignores editable fields", async () => {
     await vi.advanceTimersByTimeAsync(0);
     const emptyState = railHost().shadowRoot!.querySelector(".status")!;
-    expect(emptyState.textContent).toBe("这条帖子还没有评论");
+    expect(emptyState.textContent).toContain("这条帖子还没有评论");
     const scrolls = new Map<Element, ReturnType<typeof vi.fn>>();
     for (const card of document.querySelectorAll<Element>(".bbs-home__content-item")) {
       const spy = vi.fn();
@@ -174,5 +174,30 @@ describe("comment preview routes", () => {
     const escape = press("Escape");
     expect(escape.defaultPrevented).toBe(true);
     expect(railHost().dataset["state"]).toBe("collapsed");
+  });
+
+  it("makes preview failures keyboard retryable", async () => {
+    // The signed request falls back to an anonymous one, so both must fail
+    // before the preview enters the error state.
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    const counter = document.querySelectorAll(".bbs-new-style-bottom__comment")[1]!;
+    counter.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await vi.advanceTimersByTimeAsync(1000);
+    const status = railPart(".status");
+    expect(status.getAttribute("role")).toBe("status");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.textContent).toContain("评论加载失败");
+    const retry = railPart<HTMLButtonElement>("button.retry-button");
+    expect(retry.hidden).toBe(false);
+    expect(retry.disabled).toBe(false);
+    expect(retry.getAttribute("aria-label")).toBe("重试加载评论");
+    const callsBeforeRetry = fetchMock.mock.calls.length;
+    retry.click();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeRetry + 1);
+    expect(retry.hidden).toBe(true);
+    expect(status.textContent).not.toContain("评论加载失败");
+    expect(status.textContent).toContain("这条帖子还没有评论");
   });
 });
