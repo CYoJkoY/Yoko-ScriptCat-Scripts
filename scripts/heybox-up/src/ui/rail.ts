@@ -2172,6 +2172,9 @@ export function watchCommentRail(): () => void {
     if (linkId === "") return;
     if (!readCommentPreviewPreference()) return;
     if (!page.querySelector(RAIL_HOVER_CARD_SELECTOR)) return;
+    // The rail is hidden by CSS at this breakpoint, so preserve the site's
+    // native comment navigation when the preview cannot be shown.
+    if (window.matchMedia("(max-width: 1199px)").matches) return;
     event.preventDefault();
     event.stopPropagation();
     route.rail.open(linkId);

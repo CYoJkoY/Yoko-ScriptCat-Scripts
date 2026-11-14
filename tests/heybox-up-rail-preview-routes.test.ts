@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const environment = vi.hoisted(() => ({ pathname: "/app/bbs/home", reducedMotion: false }));
+const environment = vi.hoisted(() => ({ pathname: "/app/bbs/home", reducedMotion: false, narrowViewport: false }));
 
 vi.hoisted(() => {
   Object.defineProperty(window, "location", {
@@ -17,7 +17,8 @@ vi.hoisted(() => {
     configurable: true,
     writable: true,
     value: (query: string): MediaQueryList => ({
-      matches: query === "(prefers-reduced-motion: reduce)" && environment.reducedMotion,
+      matches: query === "(prefers-reduced-motion: reduce)" && environment.reducedMotion
+        || query === "(max-width: 1199px)" && environment.narrowViewport,
       media: "",
       onchange: null,
       addListener: (): void => undefined,
@@ -97,6 +98,7 @@ let stopWatching: () => void = () => undefined;
 beforeEach(() => {
   environment.pathname = "/app/bbs/home";
   environment.reducedMotion = false;
+  environment.narrowViewport = false;
   fetchMock.mockClear();
   vi.stubGlobal("fetch", fetchMock);
   vi.useFakeTimers();
@@ -126,6 +128,14 @@ describe("comment preview routes", () => {
     expect(click.defaultPrevented).toBe(true);
     expect(railPart(".title").textContent).toBe("评论");
     expect((railPart("a.icon") as HTMLAnchorElement).getAttribute("href")).toContain("800");
+  });
+
+  it("keeps native comment navigation when the preview rail is hidden on narrow viewports", () => {
+    environment.narrowViewport = true;
+    const counter = document.querySelector(".bbs-new-style-bottom__comment")!;
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    counter.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
   });
 
   it("opens topic feeds from the counter instead of leaving them collapsed", () => {
