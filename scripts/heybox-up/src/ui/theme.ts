@@ -1,6 +1,6 @@
 import { ADAPTED_ROUTES, FEED_WIDTH_MAX, FEED_WIDTH_MIN, FEED_WIDTH_STEP, isOfficialHomePath, PAGE_ROUTE, READER_HISTORY_LIMIT_UNLIMITED, READER_HISTORY_LIMIT_WARN, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
 import { ensureStyleElement, registerPageSync, removeStyleElement } from "../core/page-sync";
-import { localStore, parseFeedWidthInput, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readCommentPreviewPreference, readFeedWidth, readNavMotionPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, setCommentPreviewPreference, setFeedWidthPreference, setNavMotionPreference, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderPreference, setReaderTimelinePreference } from "../state";
+import { localStore, parseFeedWidthInput, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readCommentPreviewPreference, readDesktopRailPreference, readFeedWidth, readNavMotionPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, setCommentPreviewPreference, setDesktopRailPreference, setFeedWidthPreference, setNavMotionPreference, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderPreference, setReaderTimelinePreference } from "../state";
 
 export const THEME_CLASS = "heybox-up-theme";
 
@@ -71,6 +71,10 @@ export let navMotionToggle: HTMLButtonElement | null = null;
 export let readerToggle: HTMLButtonElement | null = null;
 
 export let readerTimelineToggle: HTMLButtonElement | null = null;
+
+export let desktopHotRankingToggle: HTMLButtonElement | null = null;
+
+export let desktopShortcutsToggle: HTMLButtonElement | null = null;
 
 export let feedWidthChips: Element[] = [];
 
@@ -1777,6 +1781,8 @@ export function updateThemeEntry(): void {
   if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
   if (readerToggle) readerToggle.setAttribute("aria-checked", String(readReaderPreference()));
   if (readerTimelineToggle) readerTimelineToggle.setAttribute("aria-checked", String(readReaderTimelinePreference()));
+  if (desktopHotRankingToggle) desktopHotRankingToggle.setAttribute("aria-checked", String(readDesktopRailPreference("hotRanking")));
+  if (desktopShortcutsToggle) desktopShortcutsToggle.setAttribute("aria-checked", String(readDesktopRailPreference("shortcuts")));
   syncFeedWidthControls(readFeedWidth());
   syncNumberInput(readerLineHeightInput, readReaderLineHeight());
   syncReaderHistoryLimitControl(readReaderHistoryLimit());
@@ -1883,11 +1889,75 @@ export function createThemeEntry(): void {
     createNavMotionToggle(),
     createReaderToggle(),
     createReaderTimelineToggle(),
+    createDesktopRailToggle("hotRanking", "热门排行", "显示基于当前已加载信息流的排序"),
+    createDesktopRailToggle("shortcuts", "快捷入口", "显示收藏与文章入口"),
     createReaderHistoryLimitControl(),
     createReaderLineHeightControl(),
     createThemeMenuSeparator(),
     createFeedWidthControl()
   );
+
+  const getMenuItems = (owner: HTMLDivElement): HTMLElement[] => Array.from(
+    owner.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+  ).filter((node) => !node.hidden && !node.closest('[hidden]'));
+  const getTabStops = (owner: HTMLDivElement): HTMLElement[] => Array.from(
+    owner.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'),
+  ).filter((node) => {
+    if (node.hidden || node.closest('[hidden]') !== null || node.getAttribute('aria-hidden') === 'true') return false;
+    if (node instanceof HTMLButtonElement || node instanceof HTMLInputElement
+      || node instanceof HTMLSelectElement || node instanceof HTMLTextAreaElement) return !node.disabled;
+    return true;
+  });
+  const focusMenuItem = (owner: HTMLDivElement, index: number): void => {
+    const items = getMenuItems(owner);
+    if (items.length === 0) return;
+    const nextIndex = (index + items.length) % items.length;
+    items[nextIndex]?.focus();
+  };
+  const focusInitialMenuItem = (owner: HTMLDivElement, selectedId?: string): void => {
+    const items = getMenuItems(owner);
+    if (items.length === 0) return;
+    const selected = selectedId === undefined
+      ? undefined
+      : items.find((item) => item.dataset["theme"] === selectedId || item.getAttribute("aria-checked") === "true");
+    (selected ?? items[0])?.focus();
+  };
+  const navigateMenu = (owner: HTMLDivElement, key: string, shiftKey: boolean): boolean => {
+    const items = getMenuItems(owner);
+    if (items.length === 0) return false;
+    const root = owner.getRootNode();
+    const active = root instanceof ShadowRoot ? root.activeElement : document.activeElement;
+    const currentIndex = active instanceof HTMLElement ? items.indexOf(active) : -1;
+    if (key === "ArrowDown") {
+      if (currentIndex < 0) return false;
+      focusMenuItem(owner, currentIndex + 1);
+      return true;
+    }
+    if (key === "ArrowUp") {
+      if (currentIndex < 0) return false;
+      focusMenuItem(owner, currentIndex - 1);
+      return true;
+    }
+    if (key === "Home") {
+      if (currentIndex < 0) return false;
+      focusMenuItem(owner, 0);
+      return true;
+    }
+    if (key === "End") {
+      if (currentIndex < 0) return false;
+      focusMenuItem(owner, items.length - 1);
+      return true;
+    }
+    if (key === "Tab") {
+      const tabStops = getTabStops(owner);
+      const tabIndex = active instanceof HTMLElement ? tabStops.indexOf(active) : -1;
+      if (tabIndex < 0 || tabStops.length === 0) return false;
+      const nextIndex = (tabIndex + (shiftKey ? -1 : 1) + tabStops.length) % tabStops.length;
+      tabStops[nextIndex]?.focus();
+      return true;
+    }
+    return false;
+  };
 
   const closeThemeMenu = () => {
     if (menu.hidden) return;
@@ -1906,12 +1976,14 @@ export function createThemeEntry(): void {
     menu.hidden = !menu.hidden;
     button.setAttribute("aria-expanded", String(!menu.hidden));
     updateThemeEntry();
+    if (!menu.hidden) focusInitialMenuItem(menu, currentThemeMode);
   });
   settingsButton.addEventListener("click", () => {
     closeThemeMenu();
     settingsMenu.hidden = !settingsMenu.hidden;
     settingsButton.setAttribute("aria-expanded", String(!settingsMenu.hidden));
     updateThemeEntry();
+    if (!settingsMenu.hidden) focusInitialMenuItem(settingsMenu);
   });
   document.addEventListener("click", (event) => {
     if ((menu.hidden && settingsMenu.hidden) || event.composedPath().includes(host)) return;
@@ -1919,6 +1991,16 @@ export function createThemeEntry(): void {
     closeSettingsMenu();
   }, true);
   document.addEventListener("keydown", (event) => {
+    const path = event.composedPath();
+    const activeMenu = !menu.hidden && path.includes(menu)
+      ? menu
+      : !settingsMenu.hidden && path.includes(settingsMenu)
+        ? settingsMenu
+        : null;
+    if (activeMenu && navigateMenu(activeMenu, event.key, event.shiftKey)) {
+      event.preventDefault();
+      return;
+    }
     if (event.key !== "Escape" || (menu.hidden && settingsMenu.hidden)) return;
     event.preventDefault();
     const returnTarget = settingsMenu.hidden ? button : settingsButton;
@@ -2058,6 +2140,34 @@ export function createReaderTimelineToggle(): HTMLButtonElement {
     setReaderTimelinePreference(next);
   });
   readerTimelineToggle = node;
+  return node;
+}
+
+export function createDesktopRailToggle(module: "hotRanking" | "shortcuts", label: string, hintText: string): HTMLButtonElement {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = "item toggle";
+  node.setAttribute("role", "menuitemcheckbox");
+  node.setAttribute("aria-checked", String(readDesktopRailPreference(module)));
+  const copy = document.createElement("span");
+  copy.className = "copy";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = label;
+  const hint = document.createElement("span");
+  hint.className = "hint";
+  hint.textContent = hintText;
+  copy.append(name, hint);
+  const toggle = document.createElement("span");
+  toggle.className = "switch";
+  node.append(copy, toggle);
+  node.addEventListener("click", () => {
+    const next = node.getAttribute("aria-checked") !== "true";
+    node.setAttribute("aria-checked", String(next));
+    setDesktopRailPreference(module, next);
+  });
+  if (module === "hotRanking") desktopHotRankingToggle = node;
+  else desktopShortcutsToggle = node;
   return node;
 }
 

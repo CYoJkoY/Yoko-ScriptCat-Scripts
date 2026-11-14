@@ -1,4 +1,4 @@
-import { PAGE_ROUTE, READER_LINE_HEIGHT_DEFAULT, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
+import { PAGE_ROUTE, READER_LINE_HEIGHT_DEFAULT, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP, STORAGE_KEYS } from "../config";
 import { getHeyboxId, resolveHeyboxId } from "../core/account";
 import { LINK_HREF_PREFIX } from "../core/cy";
 import { FEED_CURSOR_KEY, FEED_DISCOVERY_PAGE_SIZE, FEED_DISCOVERY_PASS_PAGES, FEED_ORDER_KEY, FEED_ORDER_MAX, FEED_QUEUE_KEY, FEED_QUEUE_MAX, FEED_RECENT_KEY, FEED_SEEN_KEY, FEED_TITLE_MAX, PAGER_CSS, PAGER_ID, POST_HISTORY_CURSOR_KEY, POST_HISTORY_TITLES_KEY, POST_TRAIL_KEY, buildFeedStateKey, computeFeedDiscoveryOffset, hasDiscoverableNext, mergeFeedOrder, mergeFeedQueue, mergeFeedSeen, mergeRecentMetadata, normalizeFeedCandidate, normalizeFeedDiscoveryLinks, normalizeFeedId, normalizeFeedText, requestFeedDiscoveryPage, selectNextFeedCandidate } from "../core/feed";
@@ -16,7 +16,7 @@ import type { ArticleReplyTargetPayload, RailComment, RailCommentEntry, RailComm
 import { readReaderCommentMarks, removeReaderCommentMark, saveReaderCommentMark } from "./comment-marks";
 import type { ReaderCommentMark } from "./comment-marks";
 import { SETTINGS_ICON, bindNumberInput, readerLineHeightInput, readerToggle, syncNumberInput } from "./theme";
-import { HIDE_CY_EVENT, READER_EVENT, READER_HISTORY_LIMIT_EVENT, READER_TIMELINE_EVENT, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readHideCyPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderTimelinePreference } from "../state";
+import { HIDE_CY_EVENT, READER_EVENT, READER_HISTORY_LIMIT_EVENT, READER_TIMELINE_EVENT, localStore, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readHideCyPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, sessionStore, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderTimelinePreference } from "../state";
 import type { FeedCandidate } from "../core/feed";
 import { bindReaderInteraction, READER_VOTE_SELECTOR } from "./reader-interactions";
 
@@ -70,7 +70,7 @@ interface ComposerImage {
   error: string;
   /** Set when the reader removes or clears the picture mid-upload. */
   removed: boolean;
-  readonly controller: AbortController;
+  controller: AbortController;
 }
 
 export interface PostNavigationController {
@@ -102,6 +102,22 @@ export const READER_MEDIA_EXCLUDE_SELECTOR = ".comment, .link-comment, .com-awar
 export const READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
 
 export const READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
+
+/** Reading positions expire after 30 days and keep at most 200 posts. */
+const READER_POSITIONS_VERSION = 1;
+const READER_POSITIONS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const READER_POSITIONS_MAX = 200;
+const POST_ID_PATTERN = /^\d+$/;
+
+/** Comment row actions that a list redraw must keep focused on their redrawn twin. */
+const COMMENT_CONTROL_ATTRIBUTES = { reply: "replyId", remove: "deleteId", collapse: "threadId", expand: "threadId" } as const;
+const COMMENT_CONTROL_CLASSES = {
+  reply: "hbu-reader-comments-reply",
+  remove: "hbu-reader-comments-delete",
+  collapse: "hbu-reader-comments-collapse",
+  expand: "hbu-reader-comments-expand",
+} as const;
+type CommentControlAction = keyof typeof COMMENT_CONTROL_ATTRIBUTES;
 
 export const READER_PENDING_NOTICE_MS = 9000;
 
@@ -993,6 +1009,7 @@ export const READER_CSS = `
   .hbu-reader-composer-image-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .hbu-reader-composer-image-placeholder { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-composer-image-state { position: absolute; right: 0; bottom: 0; left: 0; padding: 1px 0; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 10px; text-align: center; }
+  .hbu-reader-composer-image-retry { position: absolute; right: 2px; bottom: 2px; left: 2px; min-height: 18px; padding: 0 3px; border: 1px solid var(--hbu-reader-border); border-radius: 5px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font: inherit; font-size: 10px; line-height: 16px; cursor: pointer; }
   .hbu-reader-composer-image[data-status="failed"] .hbu-reader-composer-image-frame { border-color: var(--hbu-reader-danger); }
   .hbu-reader-composer-image-remove { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
   .hbu-reader-composer-file { display: none; }
@@ -1026,6 +1043,7 @@ export const READER_CSS = `
   .hbu-reader-lightbox-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; color: rgba(233, 238, 245, .72); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .hbu-reader-lightbox-close { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid rgba(255, 255, 255, .22); border-radius: 50%; background: rgba(12, 16, 22, .6); color: inherit; cursor: pointer; }
   .hbu-reader-lightbox-close svg { width: 17px; height: 17px; }
+.hbu-reader-lightbox :is(img, button):focus-visible { outline: 2px solid var(--hbu-reader-accent); outline-offset: 2px; }
   .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border: 1px solid var(--hbu-reader-float-border); border-radius: 99px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, .18); opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
   .hbu-reader-toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
   .hbu-reader-toast--fixed { position: fixed; bottom: 58px; z-index: 4060; }
@@ -1335,6 +1353,7 @@ export function prunePostHistoryExtras(dropped: readonly string[]): void {
     }
     sessionStore.remove(READER_SCROLL_KEY + id);
     sessionStore.remove(READER_RATIO_KEY + id);
+    removeStoredReaderPosition(id);
   }
   if (changed) writeSessionValue(POST_HISTORY_TITLES_KEY, stored);
 }
@@ -1859,12 +1878,84 @@ export function writeReaderScroll(id: string, index: number): void {
   sessionStore.write(READER_SCROLL_KEY + id, String(index));
 }
 
+interface StoredReaderPosition {
+  ratio: number;
+  updatedAt: number;
+}
+
+/**
+ * A versioned, expiring map of reading positions. Session state remains the
+ * live source; this record carries a post's percentage into a later tab.
+ */
+function readStoredReaderPositions(): { changed: boolean; positions: Record<string, StoredReaderPosition> } {
+  const raw = localStore.readJson(STORAGE_KEYS.readerPositions, null);
+  const container = asRecord(raw);
+  if (container === null || container["version"] !== READER_POSITIONS_VERSION) {
+    return { changed: raw !== null, positions: {} };
+  }
+  const stored = asRecord(container["positions"]);
+  if (stored === null) return { changed: true, positions: {} };
+  const cutoff = Date.now() - READER_POSITIONS_TTL_MS;
+  const positions: Record<string, StoredReaderPosition> = {};
+  let changed = false;
+  for (const [id, value] of Object.entries(stored)) {
+    const entry = asRecord(value);
+    const ratio = entry === null ? Number.NaN : Number(entry["ratio"]);
+    const updatedAt = entry === null ? Number.NaN : Number(entry["updatedAt"]);
+    if (!POST_ID_PATTERN.test(id) || !Number.isFinite(ratio) || ratio < 0 || ratio > 1
+      || !Number.isFinite(updatedAt) || updatedAt <= cutoff) {
+      changed = true;
+      continue;
+    }
+    positions[id] = { ratio, updatedAt };
+  }
+  const ids = Object.keys(positions);
+  if (ids.length > READER_POSITIONS_MAX) {
+    changed = true;
+    for (const id of ids
+      .sort((a, b) => positions[a]!.updatedAt - positions[b]!.updatedAt)
+      .slice(0, ids.length - READER_POSITIONS_MAX)) {
+      delete positions[id];
+    }
+  }
+  return { changed, positions };
+}
+
+function writeStoredReaderPositions(positions: Record<string, StoredReaderPosition>): void {
+  localStore.writeJson(STORAGE_KEYS.readerPositions, {
+    version: READER_POSITIONS_VERSION,
+    positions,
+  });
+}
+
+/** Removes a saved position when the timeline drops its visit. */
+export function removeStoredReaderPosition(id: string): void {
+  if (id === "" || !POST_ID_PATTERN.test(id)) return;
+  const { positions } = readStoredReaderPositions();
+  if (!Object.prototype.hasOwnProperty.call(positions, id)) return;
+  delete positions[id];
+  writeStoredReaderPositions(positions);
+}
+
+/** Writes one post's percentage into the durable map; callers throttle this. */
+export function persistReaderRatio(id: string, ratio: number): void {
+  if (id === "" || !POST_ID_PATTERN.test(id) || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) return;
+  const { positions } = readStoredReaderPositions();
+  positions[id] = { ratio, updatedAt: Date.now() };
+  writeStoredReaderPositions(positions);
+}
+
 export function readReaderRatio(id: string): number {
   if (id === "") return -1;
   const stored = sessionStore.read(READER_RATIO_KEY + id);
-  if (stored === null) return -1;
-  const value = Number(stored);
-  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : -1;
+  if (stored !== null) {
+    const value = Number(stored);
+    if (Number.isFinite(value) && value >= 0 && value <= 1) return value;
+  }
+  const { changed, positions } = readStoredReaderPositions();
+  if (changed) writeStoredReaderPositions(positions);
+  const saved = positions[id];
+  return saved === undefined ? -1 : saved.ratio;
 }
 
 export function writeReaderRatio(id: string, ratio: number): void {
@@ -2026,6 +2117,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let lightboxZoom = 0;
   let lightboxBaseWidth = 0;
   let lightboxNatural = { width: 0, height: 0 };
+  let lightboxReturnFocus: HTMLElement | null = null;
   let favourPanel: HTMLDivElement | null = null;
   let favourButton: HTMLButtonElement | null = null;
   let spacingPanel: HTMLDivElement | null = null;
@@ -2060,6 +2152,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let progressFill: HTMLElement | null = null;
   let lastProgressPercent = -1;
   let ratioSaveTimer = 0;
+  let durableRatioTimer = 0;
   let pendingRatio: { id: string; ratio: number } | null = null;
   let sourceCache: ReaderSourceCache | null = null;
   const suspendedEmbeds: Map<Element, SuspendedEmbedState> = new Map();
@@ -2117,12 +2210,14 @@ export function watchReader(navigation: PostNavigationController): void {
   }
 
   const articleComposerEmojiClosers: WeakMap<Element, ComposerEmojiPicker> = new WeakMap();
+  let articleComposerSelectionCleanup: (() => void) | null = null;
   // Pictures picked for the composer live next to the element they belong to,
   // so closing or resetting the panel cannot leave an upload behind.
   const articleComposerImages: WeakMap<Element, ComposerImage[]> = new WeakMap();
   let articleComposerImageSeq = 0;
   let commentPanel: HTMLElement | null = null;
   let commentPanelList: HTMLOListElement | null = null;
+  let lastCommentControlFocus: { id: string; action: CommentControlAction } | null = null;
   let commentPanelStatus: HTMLDivElement | null = null;
   let commentPanelStatusText: HTMLDivElement | null = null;
   let commentPanelRetry: HTMLButtonElement | null = null;
@@ -3783,7 +3878,7 @@ export function watchReader(navigation: PostNavigationController): void {
       image.referrerPolicy = "no-referrer";
       image.src = segment.src;
       image.alt = "评论图片";
-      image.addEventListener("click", () => openLightbox(segment.src));
+      bindLightboxTrigger(image, () => segment.src);
       node.append(image);
     }
   };
@@ -3915,11 +4010,25 @@ export function watchReader(navigation: PostNavigationController): void {
     return holder;
   };
 
-  // Folding and unfolding redraws the list, so focus moves to the control that
-  // now represents the same branch instead of dropping back to the document.
-  const focusCommentThreadControl = (selector: string, threadId: string): void => {
-    for (const control of commentPanelList?.querySelectorAll<HTMLElement>(selector) ?? []) {
-      if (control.dataset["threadId"] !== threadId) continue;
+  // Every reload replaces the rendered list, which detaches the focused action.
+  // The control is described by its comment and action so focus can land on the
+  // redrawn twin, which keeps Tab and arrow navigation going after a refresh.
+  // Folding a branch also uses it: the control that replaces the pressed one
+  // carries the branch id, so the reader stays on the same thread.
+  const describeCommentControl = (control: HTMLElement): { id: string; action: CommentControlAction } | null => {
+    for (const [action, attribute] of Object.entries(COMMENT_CONTROL_ATTRIBUTES) as [CommentControlAction, string][]) {
+      const id = control.dataset[attribute];
+      if (id !== undefined && control.classList.contains(COMMENT_CONTROL_CLASSES[action])) return { id, action };
+    }
+    return null;
+  };
+
+  const restoreCommentControlFocus = (target: { id: string; action: CommentControlAction } | null): void => {
+    if (target === null || commentPanelList === null) return;
+    const attribute = COMMENT_CONTROL_ATTRIBUTES[target.action];
+    const selector = "." + COMMENT_CONTROL_CLASSES[target.action];
+    for (const control of commentPanelList.querySelectorAll<HTMLElement>(selector)) {
+      if (control.dataset[attribute] !== target.id) continue;
       control.focus({ preventScroll: true });
       return;
     }
@@ -4099,6 +4208,12 @@ export function watchReader(navigation: PostNavigationController): void {
 
   const renderReaderComments = (): void => {
     if (commentPanel === null) return;
+    const active = document.activeElement;
+    const focusedControl = active instanceof HTMLElement && commentPanelList?.contains(active) === true
+      ? describeCommentControl(active)
+      : active === commentPanelRefresh
+        ? lastCommentControlFocus
+        : null;
     const hideCy = readHideCyPreference();
     const loadedVisible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
     const hiddenCy = commentState.items.length - loadedVisible.length;
@@ -4114,6 +4229,7 @@ export function watchReader(navigation: PostNavigationController): void {
       commentPanelList.replaceChildren(...visible.map(createReaderCommentItem));
       commentPanelList.hidden = visible.length === 0;
     }
+    if (focusedControl !== null) restoreCommentControlFocus(focusedControl);
     if (commentPanelStatus !== null) {
       if (commentState.error !== "") {
         commentPanelStatus.hidden = false;
@@ -4515,6 +4631,15 @@ export function watchReader(navigation: PostNavigationController): void {
         state.textContent = image.status === "pending" ? "上传中…" : "上传失败";
         frame.append(state);
       }
+      if (image.status === "failed") {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "hbu-reader-composer-image-retry";
+        retry.textContent = "重试上传";
+        retry.setAttribute("aria-label", "重试上传图片 " + image.name);
+        retry.addEventListener("click", () => retryComposerImage(root, image.id));
+        item.append(retry);
+      }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "hbu-reader-composer-image-remove";
@@ -4569,6 +4694,20 @@ export function watchReader(navigation: PostNavigationController): void {
     if (status !== null) status.textContent = "";
     renderComposerImages(root);
     syncArticleComposers();
+  }
+
+  function retryComposerImage(root: Element, id: number): void {
+    const image = readComposerImages(root).find((candidate) => candidate.id === id);
+    if (image === undefined || image.removed || image.status !== "failed") return;
+    image.controller = new AbortController();
+    image.status = "pending";
+    image.error = "";
+    image.url = "";
+    const status = readComposerStatus(root);
+    if (status !== null) status.textContent = "";
+    renderComposerImages(root);
+    syncArticleComposers();
+    uploadComposerImage(root, image);
   }
 
   function clearComposerImages(root: Element): void {
@@ -5321,7 +5460,13 @@ export function watchReader(navigation: PostNavigationController): void {
     input.addEventListener("input", syncComposerText);
     input.addEventListener("keyup", () => saveComposerSelection(input));
     input.addEventListener("pointerup", () => saveComposerSelection(input));
-    document.addEventListener("selectionchange", () => saveComposerSelection(input));
+    articleComposerSelectionCleanup?.();
+    const saveSelection = (): void => saveComposerSelection(input);
+    document.addEventListener("selectionchange", saveSelection);
+    articleComposerSelectionCleanup = () => {
+      document.removeEventListener("selectionchange", saveSelection);
+      articleComposerSelectionCleanup = null;
+    };
     input.addEventListener("paste", (event) => {
       event.preventDefault();
       const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -5369,6 +5514,7 @@ export function watchReader(navigation: PostNavigationController): void {
       if (commentPanel.isConnected) return commentPanel;
       commentPanel = null;
       commentPanelList = null;
+      lastCommentControlFocus = null;
       commentPanelStatus = null;
       commentPanelStatusText = null;
       commentPanelRetry = null;
@@ -5449,6 +5595,13 @@ export function watchReader(navigation: PostNavigationController): void {
     commentPanelMore = more;
     commentPanelClose = close;
     commentPanelRefresh = refresh;
+    list.addEventListener("focusin", (event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const described = describeCommentControl(target);
+        if (described !== null) lastCommentControlFocus = described;
+      }
+    });
     close.addEventListener("click", closeComments);
     scrim.addEventListener("click", closeComments);
     refresh.addEventListener("click", () => {
@@ -5473,9 +5626,10 @@ export function watchReader(navigation: PostNavigationController): void {
         const threadId = collapse.dataset["threadId"] || "";
         if (threadId === "") return;
         event.preventDefault();
+        const redrawFrom: { id: string; action: CommentControlAction } = { id: threadId, action: "expand" };
         collapsedCommentThreads.add(threadId);
         renderReaderComments();
-        focusCommentThreadControl(".hbu-reader-comments-expand", threadId);
+        restoreCommentControlFocus(redrawFrom);
         return;
       }
       const expand = target.closest(".hbu-reader-comments-expand");
@@ -5483,9 +5637,10 @@ export function watchReader(navigation: PostNavigationController): void {
         const threadId = expand.dataset["threadId"] || "";
         if (threadId === "") return;
         event.preventDefault();
+        const redrawFrom: { id: string; action: CommentControlAction } = { id: threadId, action: "collapse" };
         collapsedCommentThreads.delete(threadId);
         renderReaderComments();
-        focusCommentThreadControl(".hbu-reader-comments-collapse", threadId);
+        restoreCommentControlFocus(redrawFrom);
         return;
       }
       const remove = target.closest(".hbu-reader-comments-delete");
@@ -5574,17 +5729,24 @@ export function watchReader(navigation: PostNavigationController): void {
   const closeComments = (): void => {
     if (commentPanel === null || commentPanel.hidden) return;
     commentPanel.hidden = true;
+    lastCommentControlFocus = null;
     if (host !== null) host.inert = false;
     host?.querySelector<HTMLElement>('[data-action="comment"]')?.focus({ preventScroll: true });
   };
 
   const closeLightbox = (): void => {
+    const active = document.activeElement;
+    const restoreFocus = lightbox !== null && active instanceof HTMLElement && lightbox.contains(active);
     lightbox?.remove();
     lightbox = null;
     lightboxImage = null;
     lightboxZoom = 0;
     lightboxBaseWidth = 0;
     lightboxNatural = { width: 0, height: 0 };
+    if (restoreFocus && lightboxReturnFocus !== null && lightboxReturnFocus.isConnected) {
+      lightboxReturnFocus.focus({ preventScroll: true });
+    }
+    lightboxReturnFocus = null;
   };
 
   /** Applies the current zoom step to the open picture without reopening it. */
@@ -5597,9 +5759,47 @@ export function watchReader(navigation: PostNavigationController): void {
     const hint = lightbox?.querySelector<HTMLElement>(".hbu-reader-lightbox-hint");
     if (hint !== null && hint !== undefined) {
       hint.textContent = lightboxZoom === 0
-        ? "左键放大 · 右键缩小 · 滚轮或拖动查看长图"
+        ? "左键或 Enter 放大 · 右键或 Shift+Enter 缩小 · 0 复位 · 滚轮查看长图"
         : "左键放大 · 右键缩小 · 已放大 " + Math.round((width / Math.max(1, lightboxBaseWidth)) * 100) + "%";
     }
+  };
+
+  const stepLightboxZoom = (delta: number): void => {
+    if (lightboxImage === null) return;
+    lightboxZoom = Math.max(0, Math.min(LIGHTBOX_ZOOM_MAX, lightboxZoom + delta));
+    applyLightboxZoom();
+  };
+
+  const resetLightboxZoom = (): void => {
+    if (lightboxImage === null) return;
+    lightboxZoom = 0;
+    applyLightboxZoom();
+  };
+
+  /** Tab is trapped inside the modal and cycles over its own controls. */
+  const cycleLightboxFocus = (backwards: boolean): void => {
+    if (lightbox === null) return;
+    const focusables = Array.from(lightbox.querySelectorAll<HTMLElement>('button, [href], [tabindex]:not([tabindex="-1"])'));
+    if (focusables.length === 0) return;
+    const index = focusables.findIndex((node) => node === document.activeElement);
+    const next = backwards
+      ? (index <= 0 ? focusables.length - 1 : index - 1)
+      : (index === -1 || index === focusables.length - 1 ? 0 : index + 1);
+    focusables[next]!.focus({ preventScroll: true });
+  };
+
+  /** Reader pictures open the lightbox like a button: by click, Enter, or Space. */
+  const bindLightboxTrigger = (image: HTMLImageElement, source: () => string): void => {
+    image.tabIndex = 0;
+    image.setAttribute("role", "button");
+    image.setAttribute("aria-label", "查看大图");
+    image.title = "查看大图";
+    image.addEventListener("click", () => openLightbox(source()));
+    image.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openLightbox(source());
+    });
   };
 
   /**
@@ -5621,7 +5821,7 @@ export function watchReader(navigation: PostNavigationController): void {
       bar.className = "hbu-reader-lightbox-bar";
       const hint = document.createElement("div");
       hint.className = "hbu-reader-lightbox-hint";
-      hint.textContent = "左键放大 · 右键缩小 · 滚轮或拖动查看长图";
+      hint.textContent = "左键或 Enter 放大 · 右键或 Shift+Enter 缩小 · 0 复位 · 滚轮查看长图";
       const close = document.createElement("button");
       close.type = "button";
       close.className = "hbu-reader-lightbox-close";
@@ -5642,19 +5842,26 @@ export function watchReader(navigation: PostNavigationController): void {
       // double click keeps the familiar browser shortcut to the base size.
       img.addEventListener("click", (event) => {
         event.stopPropagation();
-        lightboxZoom = Math.min(LIGHTBOX_ZOOM_MAX, lightboxZoom + 1);
-        applyLightboxZoom();
+        stepLightboxZoom(1);
       });
       img.addEventListener("contextmenu", (event) => {
         event.preventDefault();
-        lightboxZoom = Math.max(0, lightboxZoom - 1);
-        applyLightboxZoom();
+        stepLightboxZoom(-1);
       });
       img.addEventListener("dblclick", (event) => {
         event.preventDefault();
-        lightboxZoom = 0;
-        applyLightboxZoom();
+        resetLightboxZoom();
       });
+      // Keyboard users zoom the focused picture: Enter zooms in, Shift+Enter
+      // steps back out, and +/- or 0 work from anywhere inside the dialog.
+      img.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        stepLightboxZoom(event.shiftKey ? -1 : 1);
+      });
+      img.tabIndex = 0;
+      img.setAttribute("role", "button");
+      img.setAttribute("aria-label", "放大图片");
       img.addEventListener("load", () => {
         lightboxNatural = { width: img.naturalWidth, height: img.naturalHeight };
         lightboxBaseWidth = computeLightboxBaseWidth(img.naturalWidth, img.naturalHeight, window.innerWidth, window.innerHeight);
@@ -5667,6 +5874,7 @@ export function watchReader(navigation: PostNavigationController): void {
       document.body.append(overlay);
       lightbox = overlay;
       lightboxImage = img;
+      lightboxReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     }
     const img = lightboxImage;
     if (img === null) return;
@@ -5775,7 +5983,7 @@ export function watchReader(navigation: PostNavigationController): void {
       if (source !== "") image.src = source;
       image.loading = "lazy";
       image.decoding = "async";
-      image.addEventListener("click", () => openLightbox(readImageSource(image)));
+      bindLightboxTrigger(image, () => readImageSource(image));
     }
   };
 
@@ -6162,7 +6370,7 @@ export function watchReader(navigation: PostNavigationController): void {
     img.alt = caption || "正文图片";
     img.loading = "lazy";
     img.decoding = "async";
-    img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
+    bindLightboxTrigger(img, () => img.currentSrc || img.src);
     page.append(img);
     target.append(page);
   };
@@ -6374,16 +6582,33 @@ export function watchReader(navigation: PostNavigationController): void {
       window.clearTimeout(ratioSaveTimer);
       ratioSaveTimer = 0;
     }
+    if (durableRatioTimer !== 0) {
+      window.clearTimeout(durableRatioTimer);
+      durableRatioTimer = 0;
+    }
     if (pendingRatio === null) return;
     writeReaderRatio(pendingRatio.id, pendingRatio.ratio);
+    persistReaderRatio(pendingRatio.id, pendingRatio.ratio);
     pendingRatio = null;
   };
 
   const scheduleReaderRatio = (id: string, ratio: number): void => {
     if (id === "") return;
     pendingRatio = { id: id, ratio: ratio };
-    if (ratioSaveTimer !== 0) return;
-    ratioSaveTimer = window.setTimeout(flushReaderRatio, 400);
+    if (ratioSaveTimer === 0) {
+      ratioSaveTimer = window.setTimeout(() => {
+        ratioSaveTimer = 0;
+        if (pendingRatio !== null) writeReaderRatio(pendingRatio.id, pendingRatio.ratio);
+      }, 400);
+    }
+    // The durable copy is written on a slower cadence so scrolling never
+    // serialises the whole position map on every progress tick.
+    if (durableRatioTimer === 0) {
+      durableRatioTimer = window.setTimeout(() => {
+        durableRatioTimer = 0;
+        if (pendingRatio !== null) persistReaderRatio(pendingRatio.id, pendingRatio.ratio);
+      }, 2000);
+    }
   };
 
   const updateProgress = () => {
@@ -6694,7 +6919,7 @@ export function watchReader(navigation: PostNavigationController): void {
         if (img.naturalWidth > 0 && img.naturalHeight > 0) return;
         dropFailedCover(img);
       }, { once: true });
-      img.addEventListener("click", () => openLightbox(readImageSource(img)));
+      bindLightboxTrigger(img, () => readImageSource(img));
       stage.append(img);
       images.push(img);
       img.src = source;
@@ -7310,6 +7535,7 @@ export function watchReader(navigation: PostNavigationController): void {
     cyStatus = null;
     articleCommentBusy = false;
     clearArticleComposers();
+    articleComposerSelectionCleanup?.();
     document.body.classList.remove(READER_CLASS);
     if (host !== null) host.inert = false;
     commentPanel?.remove();
@@ -7481,6 +7707,38 @@ export function watchReader(navigation: PostNavigationController): void {
       } else {
         event.preventDefault();
         closeCurrentReader();
+      }
+      return;
+    }
+    if (lightbox !== null) {
+      if (!lightbox.isConnected) {
+        // A wiped body can leave this closure holding a detached overlay;
+        // forget it so a stale dialog never swallows reader keys.
+        closeLightbox();
+        return;
+      }
+      // The modal picture owns the keyboard: zoom keys work from anywhere in
+      // the dialog, Tab cycles its own controls, and reader shortcuts cannot
+      // navigate behind the overlay.
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        stepLightboxZoom(1);
+        return;
+      }
+      if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        stepLightboxZoom(-1);
+        return;
+      }
+      if (event.key === "0") {
+        event.preventDefault();
+        resetLightboxZoom();
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        cycleLightboxFocus(event.shiftKey);
+        return;
       }
       return;
     }

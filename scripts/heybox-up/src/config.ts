@@ -12,6 +12,10 @@ export const STORAGE_KEYS = Object.freeze({
   feedWidth: "heybox-up.feedWidth.v1",
   readerLineHeight: "heybox-up.readerLineHeight.v1",
   theme: "heybox-up.theme.v1",
+  readerPositions: "heybox-up.readerPositions.v1",
+  communitySearch: "heybox-up.communitySearch.v1",
+  desktopHotRanking: "heybox-up.desktopHotRanking.v1",
+  desktopShortcuts: "heybox-up.desktopShortcuts.v1",
 });
 
 export const PREFERENCE_DEFAULTS = Object.freeze({
@@ -23,6 +27,8 @@ export const PREFERENCE_DEFAULTS = Object.freeze({
   readerHistoryLimit: 40,
   feedWidth: 56,
   readerLineHeight: 1.7,
+  desktopHotRanking: true,
+  desktopShortcuts: true,
 });
 
 export const FEED_WIDTH_MIN = 40;

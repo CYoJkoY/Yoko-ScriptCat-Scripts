@@ -12,7 +12,7 @@ export const CY_API_PATH = "/bbs/app/profile/bbs/comment/list";
 export const CY_PAGE_SIZE = 20;
 export const CY_MAX_ITEMS = 200;
 export const CACHE_TTL_MS = 10 * 60 * 1000;
-export const CACHE_KEY_PREFIX = "heybox-up.cy.v1:";
+export const CACHE_KEY_PREFIX = "heybox-up.cy.v2:";
 export const LINK_HREF_PREFIX = "/app/bbs/link/";
 
 export interface CyItem {
@@ -27,6 +27,24 @@ export interface CyItem {
 export interface CyPage {
   readonly list: unknown[];
   readonly noMore: boolean;
+}
+
+/**
+ * One bounded read of the favourites endpoint. A batch stops at the item cap
+ * or when the API says the list is done; hasNext mirrors the API's own
+ * pagination signal instead of guessing from the item count.
+ */
+export interface CyFavoritesBatch {
+  readonly items: CyItem[];
+  readonly hasNext: boolean;
+  readonly nextOffset: number;
+}
+
+/** Cached list plus the pagination position a later load-more resumes from. */
+export interface CyFavoritesCache {
+  readonly items: CyItem[];
+  readonly hasNext: boolean;
+  readonly nextOffset: number;
 }
 
 export function buildCyApiUrl(userId: string, offset: number): string {
@@ -144,14 +162,31 @@ export function normalizeCyItem(raw: unknown): CyItem | null {
   };
 }
 
-export async function loadCyFavorites(
+/**
+ * Reads pages from startOffset until the API reports the end, the batch
+ * accumulates CY_MAX_ITEMS new items, or the same page window as the old
+ * fixed loader is exhausted. Each call is bounded, so a load-more click can
+ * never turn into an unbounded request loop.
+ */
+export async function loadCyFavoritesBatch(
   userId: string,
-  onProgress: (count: number) => void,
+  options: { offset?: number; seenIds?: readonly string[]; onProgress?: (count: number) => void } = {},
   signal?: AbortSignal | null,
-): Promise<CyItem[]> {
-  const seen = new Set<string>();
+): Promise<CyFavoritesBatch> {
+  const seen = new Set<string>(options.seenIds ?? []);
   const items: CyItem[] = [];
-  let offset = 0;
+  const requestedOffset = options.offset;
+  const startOffset =
+    typeof requestedOffset === "number" && Number.isInteger(requestedOffset) && requestedOffset >= 0
+      ? requestedOffset
+      : 0;
+  // The safe page window restarts from this batch's resume position. Keeping
+  // it relative lets every load-more click advance past the initial 200-item
+  // boundary instead of stopping at the same absolute offset forever.
+  const maxOffset = startOffset + CY_MAX_ITEMS;
+  let offset = startOffset;
+  let hasMore = false;
+  let nextOffset = startOffset;
   for (;;) {
     const page = await fetchCyPage(userId, offset, signal);
     for (const raw of page.list) {
@@ -161,12 +196,36 @@ export async function loadCyFavorites(
         items.push(item);
       }
     }
-    onProgress(items.length);
+    hasMore = !page.noMore;
+    nextOffset = offset + CY_PAGE_SIZE;
+    options.onProgress?.(items.length);
     if (page.noMore || items.length >= CY_MAX_ITEMS) break;
-    offset += CY_PAGE_SIZE;
-    if (offset >= CY_MAX_ITEMS + CY_PAGE_SIZE) break;
+    if (offset >= maxOffset) break;
+    offset = nextOffset;
   }
-  return items.slice(0, CY_MAX_ITEMS);
+  return { items, hasNext: hasMore, nextOffset };
+}
+
+/** Appends items the merged list does not hold yet, keeping the given order. */
+export function mergeCyFavorites(
+  existing: readonly CyItem[],
+  incoming: readonly CyItem[],
+): CyItem[] {
+  const seen = new Set<string>();
+  const merged: CyItem[] = [];
+  for (const item of existing) {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      merged.push(item);
+    }
+  }
+  for (const item of incoming) {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      merged.push(item);
+    }
+  }
+  return merged;
 }
 
 // Cached rows are re-validated on read: a partially written entry from an
@@ -191,23 +250,32 @@ function asCachedItem(value: unknown): CyItem | null {
   };
 }
 
-export function readCache(userId: string): CyItem[] | null {
+export function readCache(userId: string): CyFavoritesCache | null {
   const parsed = localStore.readJson(CACHE_KEY_PREFIX + userId, null);
   const record = asRecord(parsed);
   if (record === null) return null;
   const rawItems = record["items"];
   if (!Array.isArray(rawItems)) return null;
   if (Date.now() - Number(record["savedAt"]) > CACHE_TTL_MS) return null;
+  const hasNext = record["hasNext"];
+  if (typeof hasNext !== "boolean") return null;
+  const nextOffset = Number(record["nextOffset"]);
+  if (!Number.isInteger(nextOffset) || nextOffset < 0) return null;
   const items: CyItem[] = [];
   for (const raw of rawItems) {
     const item = asCachedItem(raw);
     if (item !== null) items.push(item);
   }
-  return items;
+  return { items, hasNext, nextOffset };
 }
 
-export function writeCache(userId: string, items: readonly CyItem[]): void {
-  localStore.writeJson(CACHE_KEY_PREFIX + userId, { savedAt: Date.now(), items: items });
+export function writeCache(userId: string, favorites: CyFavoritesCache): void {
+  localStore.writeJson(CACHE_KEY_PREFIX + userId, {
+    savedAt: Date.now(),
+    items: favorites.items,
+    hasNext: favorites.hasNext,
+    nextOffset: favorites.nextOffset,
+  });
 }
 
 export function formatTime(value: number): string {

@@ -19,7 +19,8 @@ vi.hoisted(() => {
 });
 
 import { COMMUNITY_SEARCH_ICONS } from "../scripts/heybox-up/src/ui/community-search";
-import { createDesktopLeftRail, createDesktopRightRail } from "../scripts/heybox-up/src/ui/desktop";
+import { createDesktopLeftRail, createDesktopRightRail, DESKTOP_CSS, syncDesktopHot } from "../scripts/heybox-up/src/ui/desktop";
+import { readDesktopRailPreference, setDesktopRailPreference } from "../scripts/heybox-up/src/state";
 import {
   NAV_ANIM_CLASS,
   NAV_CSS,
@@ -225,5 +226,44 @@ describe("navigation icon preference", () => {
     expect(before).toBe(expected.innerHTML);
     syncNavIconVariant(true);
     expect(searchIcon?.outerHTML).toBe(before);
+  });
+});
+
+describe("desktop right rail preferences", () => {
+  it("defaults both modules on and persists independent choices", () => {
+    expect(readDesktopRailPreference("hotRanking")).toBe(true);
+    expect(readDesktopRailPreference("shortcuts")).toBe(true);
+    setDesktopRailPreference("hotRanking", false);
+    expect(readDesktopRailPreference("hotRanking")).toBe(false);
+    expect(readDesktopRailPreference("shortcuts")).toBe(true);
+    setDesktopRailPreference("hotRanking", true);
+  });
+
+  it("labels the ranking scope and exposes independent module blocks", () => {
+    const rail = createDesktopRightRail();
+    expect(rail.hotBlock.textContent).toContain("仅统计当前已加载的信息流");
+    expect(rail.hotBlock.hidden).toBe(false);
+    expect(rail.shortcutsBlock.hidden).toBe(false);
+    expect(rail.root.querySelectorAll(".rail-block")).toHaveLength(2);
+  });
+
+  it("removes the leading gap and empty rail as modules are hidden", () => {
+    const rail = createDesktopRightRail();
+    const cache = { channels: "", hot: "" };
+    document.body.append(rail.root);
+
+    setDesktopRailPreference("hotRanking", false);
+    syncDesktopHot(rail, cache);
+    expect(rail.hotBlock.hidden).toBe(true);
+    expect(rail.shortcutsBlock.hidden).toBe(false);
+    expect(rail.root.hidden).toBe(false);
+    expect(DESKTOP_CSS).toContain(".rail-block[hidden] + .rail-block { margin-top: 0;");
+
+    setDesktopRailPreference("shortcuts", false);
+    syncDesktopHot(rail, cache);
+    expect(rail.root.hidden).toBe(true);
+
+    setDesktopRailPreference("hotRanking", true);
+    setDesktopRailPreference("shortcuts", true);
   });
 });

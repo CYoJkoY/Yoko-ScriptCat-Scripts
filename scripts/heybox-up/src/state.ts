@@ -36,6 +36,7 @@ export const NAV_MOTION_EVENT = "heybox-up:nav-motion";
 export const READER_EVENT = "heybox-up:reader";
 export const READER_TIMELINE_EVENT = "heybox-up:reader-timeline";
 export const READER_HISTORY_LIMIT_EVENT = "heybox-up:reader-history-limit";
+export const DESKTOP_RAIL_PREFERENCE_EVENT = "heybox-up:desktop-rail-preference";
 
 const HIDE_CY_STYLE_ID = "heybox-up-cy-style";
 const HIDE_CY_CLASS = "heybox-up-hide-cy";
@@ -122,6 +123,17 @@ export function readReaderTimelinePreference(): boolean {
 export function setReaderTimelinePreference(value: boolean): void {
   localStore.write(STORAGE_KEYS.readerTimeline, value ? "1" : "0");
   document.dispatchEvent(new CustomEvent(READER_TIMELINE_EVENT, { detail: value }));
+}
+
+export function readDesktopRailPreference(module: "hotRanking" | "shortcuts"): boolean {
+  const key = module === "hotRanking" ? STORAGE_KEYS.desktopHotRanking : STORAGE_KEYS.desktopShortcuts;
+  return localStore.read(key) !== "0";
+}
+
+export function setDesktopRailPreference(module: "hotRanking" | "shortcuts", value: boolean): void {
+  const key = module === "hotRanking" ? STORAGE_KEYS.desktopHotRanking : STORAGE_KEYS.desktopShortcuts;
+  localStore.write(key, value ? "1" : "0");
+  document.dispatchEvent(new CustomEvent(DESKTOP_RAIL_PREFERENCE_EVENT, { detail: { module, value } }));
 }
 
 /**
