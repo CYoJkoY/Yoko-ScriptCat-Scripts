@@ -2107,6 +2107,7 @@ export function bindCommentRail(
   readRoute: () => string = readPageRoute,
 ): CommentRailBinding {
   let autoOpened = false;
+  let lastRoute = readRoute();
   // The community home opens the first post on arrival; topic and creator
   // feeds stay collapsed until the reader picks a post.
   const isFeedPage = (): boolean => RAIL_PREVIEW_ROUTES.has(readRoute());
@@ -2115,6 +2116,12 @@ export function bindCommentRail(
     return readRailCardLinkIds(page)[0] ?? "";
   };
   const sync = (): void => {
+    const route = readRoute();
+    const routeChanged = route !== lastRoute;
+    if (routeChanged) {
+      lastRoute = route;
+      autoOpened = false;
+    }
     if (!isEnabled()) {
       autoOpened = false;
       rail.setActive(false);
@@ -2124,6 +2131,7 @@ export function bindCommentRail(
     }
     const active = isFeedPage();
     rail.setActive(active);
+    if (routeChanged && active) rail.collapse();
     if (!active) {
       autoOpened = false;
       rail.host.remove();

@@ -150,6 +150,17 @@ describe("comment preview routes", () => {
     expect((railPart("a.icon") as HTMLAnchorElement).getAttribute("href")).toContain("901");
   });
 
+  it("clears the home preview when the SPA moves to a topic feed", async () => {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(railHost().dataset["state"]).toBe("open");
+
+    environment.pathname = "/app/topic/link/12";
+    document.body.innerHTML = TOPIC_MARKUP;
+    document.dispatchEvent(new CustomEvent("heybox-up:comment-preview"));
+
+    expect(railHost().dataset["state"]).toBe("collapsed");
+  });
+
   it("steps through the feed with the arrow keys and ignores editable fields", async () => {
     await vi.advanceTimersByTimeAsync(0);
     const emptyState = railHost().shadowRoot!.querySelector(".status")!;
