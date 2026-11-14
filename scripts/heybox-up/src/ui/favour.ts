@@ -112,6 +112,8 @@ export function createFavourSection(): FavourSection {
   head.append(heading, refresh);
   const note = document.createElement("div");
   note.className = "note";
+  note.setAttribute("role", "status");
+  note.setAttribute("aria-live", "polite");
   note.textContent = "正在读取插眼收藏…";
   const retry = document.createElement("button");
   retry.type = "button";

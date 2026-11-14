@@ -306,6 +306,13 @@ describe("favour section load-more", () => {
     expect(note.textContent).toContain("接口已确认没有更多记录。");
   });
 
+  it("announces note updates politely for screen readers", async () => {
+    const section = createFavourSection();
+    const note = part<HTMLElement>(section, ".note");
+    expect(note.getAttribute("role")).toBe("status");
+    expect(note.getAttribute("aria-live")).toBe("polite");
+  });
+
   it("keeps existing results on failure and retries the same offset", async () => {
     const section = createFavourSection();
     await flush();
