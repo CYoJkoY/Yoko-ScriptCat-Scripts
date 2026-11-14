@@ -1897,6 +1897,48 @@ export function createThemeEntry(): void {
     createFeedWidthControl()
   );
 
+  const getMenuItems = (owner: HTMLDivElement): HTMLElement[] => Array.from(
+    owner.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+  ).filter((node) => !node.hidden && !node.closest('[hidden]'));
+  const focusMenuItem = (owner: HTMLDivElement, index: number): void => {
+    const items = getMenuItems(owner);
+    if (items.length === 0) return;
+    const nextIndex = (index + items.length) % items.length;
+    items[nextIndex]?.focus();
+  };
+  const focusInitialMenuItem = (owner: HTMLDivElement, selectedId?: string): void => {
+    const items = getMenuItems(owner);
+    if (items.length === 0) return;
+    const selected = selectedId === undefined
+      ? undefined
+      : items.find((item) => item.dataset["theme"] === selectedId || item.getAttribute("aria-checked") === "true");
+    (selected ?? items[0])?.focus();
+  };
+  const navigateMenu = (owner: HTMLDivElement, key: string): boolean => {
+    const items = getMenuItems(owner);
+    if (items.length === 0) return false;
+    const root = owner.getRootNode();
+    const active = root instanceof ShadowRoot ? root.activeElement : document.activeElement;
+    const currentIndex = active instanceof HTMLElement ? items.indexOf(active) : -1;
+    if (key === "ArrowDown") {
+      focusMenuItem(owner, currentIndex < 0 ? 0 : currentIndex + 1);
+      return true;
+    }
+    if (key === "ArrowUp") {
+      focusMenuItem(owner, currentIndex < 0 ? items.length - 1 : currentIndex - 1);
+      return true;
+    }
+    if (key === "Home") {
+      focusMenuItem(owner, 0);
+      return true;
+    }
+    if (key === "End") {
+      focusMenuItem(owner, items.length - 1);
+      return true;
+    }
+    return false;
+  };
+
   const closeThemeMenu = () => {
     if (menu.hidden) return;
     menu.hidden = true;
@@ -1914,12 +1956,14 @@ export function createThemeEntry(): void {
     menu.hidden = !menu.hidden;
     button.setAttribute("aria-expanded", String(!menu.hidden));
     updateThemeEntry();
+    if (!menu.hidden) focusInitialMenuItem(menu, currentThemeMode);
   });
   settingsButton.addEventListener("click", () => {
     closeThemeMenu();
     settingsMenu.hidden = !settingsMenu.hidden;
     settingsButton.setAttribute("aria-expanded", String(!settingsMenu.hidden));
     updateThemeEntry();
+    if (!settingsMenu.hidden) focusInitialMenuItem(settingsMenu);
   });
   document.addEventListener("click", (event) => {
     if ((menu.hidden && settingsMenu.hidden) || event.composedPath().includes(host)) return;
@@ -1927,6 +1971,16 @@ export function createThemeEntry(): void {
     closeSettingsMenu();
   }, true);
   document.addEventListener("keydown", (event) => {
+    const path = event.composedPath();
+    const activeMenu = !menu.hidden && path.includes(menu)
+      ? menu
+      : !settingsMenu.hidden && path.includes(settingsMenu)
+        ? settingsMenu
+        : null;
+    if (activeMenu && navigateMenu(activeMenu, event.key)) {
+      event.preventDefault();
+      return;
+    }
     if (event.key !== "Escape" || (menu.hidden && settingsMenu.hidden)) return;
     event.preventDefault();
     const returnTarget = settingsMenu.hidden ? button : settingsButton;
