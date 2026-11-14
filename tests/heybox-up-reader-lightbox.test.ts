@@ -198,6 +198,86 @@ describe("reader lightbox interaction", () => {
     overlay?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(document.querySelector(".hbu-reader-lightbox")).toBeNull();
   });
+
+  it("opens from Enter on a focused comment picture and returns focus on close", async () => {
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const thumbnail = host.ownerDocument.querySelector<HTMLImageElement>(".hbu-reader-comments-image");
+    expect(thumbnail).not.toBeNull();
+    expect(thumbnail?.getAttribute("role")).toBe("button");
+    expect(thumbnail?.getAttribute("tabindex")).toBe("0");
+    expect(thumbnail?.getAttribute("aria-label")).toBe("查看大图");
+
+    thumbnail?.focus();
+    thumbnail?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    const overlay = document.querySelector<HTMLElement>(".hbu-reader-lightbox");
+    expect(overlay).not.toBeNull();
+    expect(document.activeElement).toBe(overlay);
+    const hint = overlay?.querySelector<HTMLElement>(".hbu-reader-lightbox-hint");
+    expect(hint?.textContent).toContain("Enter");
+
+    // Closing from the dialog restores the place the keyboard opened it from.
+    overlay?.querySelector<HTMLButtonElement>(".hbu-reader-lightbox-close")?.click();
+    expect(document.querySelector(".hbu-reader-lightbox")).toBeNull();
+    expect(document.activeElement).toBe(thumbnail);
+  });
+
+  it("zooms the focused picture with Enter and Shift+Enter", async () => {
+    const host = mountReader();
+    const viewer = await openCommentLightbox(host);
+    const base = viewer.style.width;
+    viewer.focus();
+    viewer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(viewer.dataset["zoom"]).toBe("1");
+    expect(Number.parseInt(viewer.style.width, 10)).toBeGreaterThan(Number.parseInt(base, 10));
+
+    viewer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+    expect(viewer.dataset["zoom"]).toBe("0");
+    expect(viewer.style.width).toBe(base);
+  });
+
+  it("steps zoom with plus, minus, and reset keys while the dialog owns the keyboard", async () => {
+    const host = mountReader();
+    const viewer = await openCommentLightbox(host);
+    const base = viewer.style.width;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true, cancelable: true }));
+    expect(viewer.dataset["zoom"]).toBe("1");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "-", bubbles: true, cancelable: true }));
+    expect(viewer.dataset["zoom"]).toBe("0");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "=", bubbles: true, cancelable: true }));
+    expect(viewer.dataset["zoom"]).toBe("1");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true, cancelable: true }));
+    expect(viewer.dataset["zoom"]).toBe("0");
+    expect(viewer.style.width).toBe(base);
+
+    // Reader shortcuts stay behind the modal while it is open.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true, cancelable: true }));
+    expect(document.querySelector(".hbu-reader-lightbox")).not.toBeNull();
+  });
+
+  it("keeps Tab cycling inside the dialog", async () => {
+    const host = mountReader();
+    const viewer = await openCommentLightbox(host);
+    const overlay = document.querySelector<HTMLElement>(".hbu-reader-lightbox");
+    expect(overlay).not.toBeNull();
+    const close = overlay?.querySelector<HTMLButtonElement>(".hbu-reader-lightbox-close");
+    expect(close).not.toBeNull();
+
+    const tab = (): void => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    };
+    tab();
+    expect(document.activeElement).toBe(close);
+    tab();
+    expect(document.activeElement).toBe(viewer);
+    tab();
+    expect(document.activeElement).toBe(close);
+    tab();
+    expect(document.activeElement).toBe(viewer);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(close);
+  });
 });
 
 describe("reader lightbox layering", () => {

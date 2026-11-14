@@ -330,6 +330,13 @@ v0.5.0 的评论发图与查看器层级回归由 `tests/heybox-up-upload.test.t
 
 ## 九、版本历史
 
+### v0.12.2
+
+- 沉浸阅读的大图查看器支持键盘操作：正文、评论、封面与媒体图片都可聚焦后用 Enter 或空格打开；查看器支持 Enter、Shift+Enter、+、-、=、0 进行放大、缩小和复位。
+- 大图查看器打开后将 Tab 焦点限制在查看器内，关闭时把焦点还给触发图片；图片补齐按钮语义与可见焦点轮廓，避免键盘用户失去当前位置。
+- 新增大图查看器键盘打开、缩放、焦点循环、关闭焦点恢复与遮罩快捷键隔离回归测试。
+- Version updated from 0.12.1 to 0.12.2 for the compatible reader lightbox accessibility fix (PATCH).
+
 ### v0.12.1
 
 - 收藏页插眼提示行补齐 `role=status` 与 `aria-live=polite` 语义：读取进度、加载更多进度、完成计数与失败原因会礼貌播报，不再对屏幕阅读器静默。

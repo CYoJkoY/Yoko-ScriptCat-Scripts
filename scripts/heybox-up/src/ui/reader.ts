@@ -1042,6 +1042,7 @@ export const READER_CSS = `
   .hbu-reader-lightbox-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; color: rgba(233, 238, 245, .72); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .hbu-reader-lightbox-close { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid rgba(255, 255, 255, .22); border-radius: 50%; background: rgba(12, 16, 22, .6); color: inherit; cursor: pointer; }
   .hbu-reader-lightbox-close svg { width: 17px; height: 17px; }
+.hbu-reader-lightbox :is(img, button):focus-visible { outline: 2px solid var(--hbu-reader-accent); outline-offset: 2px; }
   .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border: 1px solid var(--hbu-reader-float-border); border-radius: 99px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, .18); opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
   .hbu-reader-toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
   .hbu-reader-toast--fixed { position: fixed; bottom: 58px; z-index: 4060; }
@@ -2115,6 +2116,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let lightboxZoom = 0;
   let lightboxBaseWidth = 0;
   let lightboxNatural = { width: 0, height: 0 };
+  let lightboxReturnFocus: HTMLElement | null = null;
   let favourPanel: HTMLDivElement | null = null;
   let favourButton: HTMLButtonElement | null = null;
   let spacingPanel: HTMLDivElement | null = null;
@@ -3874,7 +3876,7 @@ export function watchReader(navigation: PostNavigationController): void {
       image.referrerPolicy = "no-referrer";
       image.src = segment.src;
       image.alt = "评论图片";
-      image.addEventListener("click", () => openLightbox(segment.src));
+      bindLightboxTrigger(image, () => segment.src);
       node.append(image);
     }
   };
@@ -5702,12 +5704,18 @@ export function watchReader(navigation: PostNavigationController): void {
   };
 
   const closeLightbox = (): void => {
+    const active = document.activeElement;
+    const restoreFocus = lightbox !== null && active instanceof HTMLElement && lightbox.contains(active);
     lightbox?.remove();
     lightbox = null;
     lightboxImage = null;
     lightboxZoom = 0;
     lightboxBaseWidth = 0;
     lightboxNatural = { width: 0, height: 0 };
+    if (restoreFocus && lightboxReturnFocus !== null && lightboxReturnFocus.isConnected) {
+      lightboxReturnFocus.focus({ preventScroll: true });
+    }
+    lightboxReturnFocus = null;
   };
 
   /** Applies the current zoom step to the open picture without reopening it. */
@@ -5720,9 +5728,47 @@ export function watchReader(navigation: PostNavigationController): void {
     const hint = lightbox?.querySelector<HTMLElement>(".hbu-reader-lightbox-hint");
     if (hint !== null && hint !== undefined) {
       hint.textContent = lightboxZoom === 0
-        ? "左键放大 · 右键缩小 · 滚轮或拖动查看长图"
+        ? "左键或 Enter 放大 · 右键或 Shift+Enter 缩小 · 0 复位 · 滚轮查看长图"
         : "左键放大 · 右键缩小 · 已放大 " + Math.round((width / Math.max(1, lightboxBaseWidth)) * 100) + "%";
     }
+  };
+
+  const stepLightboxZoom = (delta: number): void => {
+    if (lightboxImage === null) return;
+    lightboxZoom = Math.max(0, Math.min(LIGHTBOX_ZOOM_MAX, lightboxZoom + delta));
+    applyLightboxZoom();
+  };
+
+  const resetLightboxZoom = (): void => {
+    if (lightboxImage === null) return;
+    lightboxZoom = 0;
+    applyLightboxZoom();
+  };
+
+  /** Tab is trapped inside the modal and cycles over its own controls. */
+  const cycleLightboxFocus = (backwards: boolean): void => {
+    if (lightbox === null) return;
+    const focusables = Array.from(lightbox.querySelectorAll<HTMLElement>('button, [href], [tabindex]:not([tabindex="-1"])'));
+    if (focusables.length === 0) return;
+    const index = focusables.findIndex((node) => node === document.activeElement);
+    const next = backwards
+      ? (index <= 0 ? focusables.length - 1 : index - 1)
+      : (index === -1 || index === focusables.length - 1 ? 0 : index + 1);
+    focusables[next]!.focus({ preventScroll: true });
+  };
+
+  /** Reader pictures open the lightbox like a button: by click, Enter, or Space. */
+  const bindLightboxTrigger = (image: HTMLImageElement, source: () => string): void => {
+    image.tabIndex = 0;
+    image.setAttribute("role", "button");
+    image.setAttribute("aria-label", "查看大图");
+    image.title = "查看大图";
+    image.addEventListener("click", () => openLightbox(source()));
+    image.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openLightbox(source());
+    });
   };
 
   /**
@@ -5744,7 +5790,7 @@ export function watchReader(navigation: PostNavigationController): void {
       bar.className = "hbu-reader-lightbox-bar";
       const hint = document.createElement("div");
       hint.className = "hbu-reader-lightbox-hint";
-      hint.textContent = "左键放大 · 右键缩小 · 滚轮或拖动查看长图";
+      hint.textContent = "左键或 Enter 放大 · 右键或 Shift+Enter 缩小 · 0 复位 · 滚轮查看长图";
       const close = document.createElement("button");
       close.type = "button";
       close.className = "hbu-reader-lightbox-close";
@@ -5765,19 +5811,26 @@ export function watchReader(navigation: PostNavigationController): void {
       // double click keeps the familiar browser shortcut to the base size.
       img.addEventListener("click", (event) => {
         event.stopPropagation();
-        lightboxZoom = Math.min(LIGHTBOX_ZOOM_MAX, lightboxZoom + 1);
-        applyLightboxZoom();
+        stepLightboxZoom(1);
       });
       img.addEventListener("contextmenu", (event) => {
         event.preventDefault();
-        lightboxZoom = Math.max(0, lightboxZoom - 1);
-        applyLightboxZoom();
+        stepLightboxZoom(-1);
       });
       img.addEventListener("dblclick", (event) => {
         event.preventDefault();
-        lightboxZoom = 0;
-        applyLightboxZoom();
+        resetLightboxZoom();
       });
+      // Keyboard users zoom the focused picture: Enter zooms in, Shift+Enter
+      // steps back out, and +/- or 0 work from anywhere inside the dialog.
+      img.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        stepLightboxZoom(event.shiftKey ? -1 : 1);
+      });
+      img.tabIndex = 0;
+      img.setAttribute("role", "button");
+      img.setAttribute("aria-label", "放大图片");
       img.addEventListener("load", () => {
         lightboxNatural = { width: img.naturalWidth, height: img.naturalHeight };
         lightboxBaseWidth = computeLightboxBaseWidth(img.naturalWidth, img.naturalHeight, window.innerWidth, window.innerHeight);
@@ -5790,6 +5843,7 @@ export function watchReader(navigation: PostNavigationController): void {
       document.body.append(overlay);
       lightbox = overlay;
       lightboxImage = img;
+      lightboxReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     }
     const img = lightboxImage;
     if (img === null) return;
@@ -5898,7 +5952,7 @@ export function watchReader(navigation: PostNavigationController): void {
       if (source !== "") image.src = source;
       image.loading = "lazy";
       image.decoding = "async";
-      image.addEventListener("click", () => openLightbox(readImageSource(image)));
+      bindLightboxTrigger(image, () => readImageSource(image));
     }
   };
 
@@ -6285,7 +6339,7 @@ export function watchReader(navigation: PostNavigationController): void {
     img.alt = caption || "正文图片";
     img.loading = "lazy";
     img.decoding = "async";
-    img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
+    bindLightboxTrigger(img, () => img.currentSrc || img.src);
     page.append(img);
     target.append(page);
   };
@@ -6834,7 +6888,7 @@ export function watchReader(navigation: PostNavigationController): void {
         if (img.naturalWidth > 0 && img.naturalHeight > 0) return;
         dropFailedCover(img);
       }, { once: true });
-      img.addEventListener("click", () => openLightbox(readImageSource(img)));
+      bindLightboxTrigger(img, () => readImageSource(img));
       stage.append(img);
       images.push(img);
       img.src = source;
@@ -7621,6 +7675,38 @@ export function watchReader(navigation: PostNavigationController): void {
       } else {
         event.preventDefault();
         closeCurrentReader();
+      }
+      return;
+    }
+    if (lightbox !== null) {
+      if (!lightbox.isConnected) {
+        // A wiped body can leave this closure holding a detached overlay;
+        // forget it so a stale dialog never swallows reader keys.
+        closeLightbox();
+        return;
+      }
+      // The modal picture owns the keyboard: zoom keys work from anywhere in
+      // the dialog, Tab cycles its own controls, and reader shortcuts cannot
+      // navigate behind the overlay.
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        stepLightboxZoom(1);
+        return;
+      }
+      if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        stepLightboxZoom(-1);
+        return;
+      }
+      if (event.key === "0") {
+        event.preventDefault();
+        resetLightboxZoom();
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        cycleLightboxFocus(event.shiftKey);
+        return;
       }
       return;
     }
