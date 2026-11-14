@@ -159,6 +159,8 @@ describe("comment preview routes", () => {
     document.dispatchEvent(new CustomEvent("heybox-up:comment-preview"));
 
     expect(railHost().dataset["state"]).toBe("collapsed");
+    railPart<HTMLButtonElement>(".tab").click();
+    expect((railPart("a.icon") as HTMLAnchorElement).getAttribute("href")).toContain("900");
   });
 
   it("steps through the feed with the arrow keys and ignores editable fields", async () => {

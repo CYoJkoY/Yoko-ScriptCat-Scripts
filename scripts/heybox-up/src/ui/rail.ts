@@ -2039,6 +2039,24 @@ export function createCommentRailAt(page: Document | HTMLElement) {
     applyMode();
   };
 
+  const reset = (): void => {
+    loadController?.abort();
+    loadController = null;
+    state.seq += 1;
+    state.mode = "hidden";
+    state.linkId = "";
+    state.title = "";
+    state.total = 0;
+    state.page = 0;
+    state.items = [];
+    state.loading = false;
+    state.error = "";
+    state.hasMore = false;
+    state.loadedGroups = 0;
+    applyMode();
+    render();
+  };
+
   const setActive = (active: boolean): void => {
     if (!active) {
       if (state.mode === "hidden" && !state.loading && loadController === null) return;
@@ -2081,6 +2099,7 @@ export function createCommentRailAt(page: Document | HTMLElement) {
     host,
     open,
     collapse,
+    reset,
     setActive,
     isOpen: () => state.mode === "open",
     getLinkId: () => state.linkId,
@@ -2089,7 +2108,7 @@ export function createCommentRailAt(page: Document | HTMLElement) {
 
 /** Everything the panel needs from the page, so tests can drive it directly. */
 export interface CommentRailBinding {
-  readonly rail: Pick<ReturnType<typeof createCommentRail>, "host" | "open" | "collapse" | "setActive" | "isOpen" | "getLinkId">;
+  readonly rail: Pick<ReturnType<typeof createCommentRail>, "host" | "open" | "collapse" | "reset" | "setActive" | "isOpen" | "getLinkId">;
   readonly isFeedPage: () => boolean;
   readonly readFirstFeedLinkId: () => string;
   sync: () => void;
@@ -2121,6 +2140,7 @@ export function bindCommentRail(
     if (routeChanged) {
       lastRoute = route;
       autoOpened = false;
+      rail.reset();
     }
     if (!isEnabled()) {
       autoOpened = false;
@@ -2131,7 +2151,6 @@ export function bindCommentRail(
     }
     const active = isFeedPage();
     rail.setActive(active);
-    if (routeChanged && active) rail.collapse();
     if (!active) {
       autoOpened = false;
       rail.host.remove();
