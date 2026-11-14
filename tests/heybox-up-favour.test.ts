@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
+import { formatFavourCountNote } from "../scripts/heybox-up/src/ui/favour";
 import {
   normalizeFavourFolders,
   planFavourChanges,
@@ -10,6 +11,17 @@ import {
 } from "../scripts/heybox-up/src/ui/favour";
 
 describe("favour folders", () => {
+  it("warns when the single-load safety limit is reached without claiming more pages exist", () => {
+    expect(formatFavourCountNote(200, 200, "")).toContain(
+      "结果可能不完整；接口是否还有更多记录尚未确认。",
+    );
+    expect(formatFavourCountNote(199, 199, "")).not.toContain("结果可能不完整");
+  });
+
+  it("preserves the search match count in the limit notice", () => {
+    expect(formatFavourCountNote(200, 3, "tag")).toContain("匹配 3 条");
+  });
+
   it("normalizes ids and names and drops duplicates", () => {
     expect(normalizeFavourFolders([
       { id: 12, name: " 默认 " },

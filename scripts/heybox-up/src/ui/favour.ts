@@ -1,6 +1,6 @@
 import { PAGE_ROUTE } from "../config";
 import { resolveHeyboxId } from "../core/account";
-import { createCard, loadCyFavorites, readCache, writeCache, type CyItem } from "../core/cy";
+import { createCard, CY_MAX_ITEMS, loadCyFavorites, readCache, writeCache, type CyItem } from "../core/cy";
 import { readPageRoute, registerPageSync } from "../core/page-sync";
 import { isAbortError } from "../core/request";
 import { asRecord } from "../core/json";
@@ -13,6 +13,14 @@ export const LOGIN_RETRY_DELAY_MS = 1500;
 export const LOGIN_RETRY_MAX = 3;
 
 export const FAVOUR_LIST_SELECTOR = ".user-favour__list";
+
+export function formatFavourCountNote(total: number, matched: number, query: string): string {
+  const filtered = query.trim() !== "" ? "，匹配 " + matched + " 条" : "";
+  const count = "共 " + total + " 条插眼收藏" + filtered + "，网页收藏列表默认不显示。";
+  return total >= CY_MAX_ITEMS
+    ? count + " 已达到脚本单次读取上限，结果可能不完整；接口是否还有更多记录尚未确认。"
+    : count;
+}
 
 export interface FavourSectionState {
   items: CyItem[];
@@ -138,7 +146,7 @@ export function createFavourSection(): FavourSection {
     } else if (matched.length === 0) {
       note.textContent = "没有匹配“" + query + "”的插眼条目。";
     } else {
-      note.textContent = "共 " + state.items.length + " 条插眼收藏" + (query !== "" ? "，匹配 " + matched.length + " 条" : "") + "，网页收藏列表默认不显示。";
+      note.textContent = formatFavourCountNote(state.items.length, matched.length, query);
     }
     if (matched.length === 0) return;
     const fragment = document.createDocumentFragment();
