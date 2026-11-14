@@ -124,6 +124,7 @@ function jsonResponse(payload: unknown): { ok: boolean; status: number; json: ()
 
 function stubUploads(options: { failUpload?: boolean } = {}): RecordedCall[] {
   const calls: RecordedCall[] = [];
+  let failedUploadsRemaining = options.failUpload === true ? 1 : 0;
   vi.stubGlobal("fetch", vi.fn((input: unknown, init: RequestInit = {}) => {
     const url = String(input);
     const body = typeof init.body === "string" ? init.body : "";
@@ -142,7 +143,11 @@ function stubUploads(options: { failUpload?: boolean } = {}): RecordedCall[] {
       }));
     }
     if (init.method === "PUT") {
-      return Promise.resolve(options.failUpload === true ? { ok: false, status: 403, json: () => Promise.resolve({}) } : { ok: true, status: 200 });
+      if (failedUploadsRemaining > 0) {
+        failedUploadsRemaining -= 1;
+        return Promise.resolve({ ok: false, status: 403, json: () => Promise.resolve({}) });
+      }
+      return Promise.resolve({ ok: true, status: 200 });
     }
     if (url.includes("/upload/callback/v2")) {
       return Promise.resolve(jsonResponse({
@@ -236,7 +241,7 @@ describe("reader composer pictures", () => {
     expect(query.get("target")).toBeNull();
   });
 
-  it("keeps the composer usable when the upload fails", async () => {
+  it("retries a failed upload without making the reader select the file again", async () => {
     stubUploads({ failUpload: true });
     const host = mountReader();
     await openComposer(host);
@@ -250,10 +255,12 @@ describe("reader composer pictures", () => {
     expect(document.querySelector(".hbu-reader-composer-status")?.textContent).toContain("上传失败");
     // A failed picture cannot be sent, so an empty comment stays disabled.
     expect(document.querySelector<HTMLButtonElement>(".hbu-reader-composer-submit")?.disabled).toBe(true);
-    // Removing it frees the picker again.
-    document.querySelector<HTMLButtonElement>(".hbu-reader-composer-image-remove")?.click();
-    expect(document.querySelector(".hbu-reader-composer-image")).toBeNull();
-    expect(document.querySelector<HTMLButtonElement>(".hbu-reader-composer-image-toggle")?.disabled).toBe(false);
+    const retry = document.querySelector<HTMLButtonElement>(".hbu-reader-composer-image-retry");
+    expect(retry?.getAttribute("aria-label")).toBe("重试上传图片 bad.png");
+    retry?.click();
+    await settle();
+    expect(document.querySelector<HTMLElement>(".hbu-reader-composer-image")?.dataset["status"]).toBe("ready");
+    expect(document.querySelector<HTMLButtonElement>(".hbu-reader-composer-submit")?.disabled).toBe(false);
   });
 
   it("rejects a non-image choice with the site wording", async () => {

@@ -70,7 +70,7 @@ interface ComposerImage {
   error: string;
   /** Set when the reader removes or clears the picture mid-upload. */
   removed: boolean;
-  readonly controller: AbortController;
+  controller: AbortController;
 }
 
 export interface PostNavigationController {
@@ -1009,6 +1009,7 @@ export const READER_CSS = `
   .hbu-reader-composer-image-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .hbu-reader-composer-image-placeholder { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-composer-image-state { position: absolute; right: 0; bottom: 0; left: 0; padding: 1px 0; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 10px; text-align: center; }
+  .hbu-reader-composer-image-retry { position: absolute; right: 2px; bottom: 2px; left: 2px; min-height: 18px; padding: 0 3px; border: 1px solid var(--hbu-reader-border); border-radius: 5px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font: inherit; font-size: 10px; line-height: 16px; cursor: pointer; }
   .hbu-reader-composer-image[data-status="failed"] .hbu-reader-composer-image-frame { border-color: var(--hbu-reader-danger); }
   .hbu-reader-composer-image-remove { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
   .hbu-reader-composer-file { display: none; }
@@ -4630,6 +4631,15 @@ export function watchReader(navigation: PostNavigationController): void {
         state.textContent = image.status === "pending" ? "上传中…" : "上传失败";
         frame.append(state);
       }
+      if (image.status === "failed") {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "hbu-reader-composer-image-retry";
+        retry.textContent = "重试上传";
+        retry.setAttribute("aria-label", "重试上传图片 " + image.name);
+        retry.addEventListener("click", () => retryComposerImage(root, image.id));
+        item.append(retry);
+      }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "hbu-reader-composer-image-remove";
@@ -4684,6 +4694,20 @@ export function watchReader(navigation: PostNavigationController): void {
     if (status !== null) status.textContent = "";
     renderComposerImages(root);
     syncArticleComposers();
+  }
+
+  function retryComposerImage(root: Element, id: number): void {
+    const image = readComposerImages(root).find((candidate) => candidate.id === id);
+    if (image === undefined || image.removed || image.status !== "failed") return;
+    image.controller = new AbortController();
+    image.status = "pending";
+    image.error = "";
+    image.url = "";
+    const status = readComposerStatus(root);
+    if (status !== null) status.textContent = "";
+    renderComposerImages(root);
+    syncArticleComposers();
+    uploadComposerImage(root, image);
   }
 
   function clearComposerImages(root: Element): void {
