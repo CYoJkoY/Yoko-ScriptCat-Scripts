@@ -20,6 +20,7 @@ vi.hoisted(() => {
 
 import { COMMUNITY_SEARCH_ICONS } from "../scripts/heybox-up/src/ui/community-search";
 import { createDesktopLeftRail, createDesktopRightRail } from "../scripts/heybox-up/src/ui/desktop";
+import { readDesktopRailPreference, setDesktopRailPreference } from "../scripts/heybox-up/src/state";
 import {
   NAV_ANIM_CLASS,
   NAV_CSS,
@@ -225,5 +226,24 @@ describe("navigation icon preference", () => {
     expect(before).toBe(expected.innerHTML);
     syncNavIconVariant(true);
     expect(searchIcon?.outerHTML).toBe(before);
+  });
+});
+
+describe("desktop right rail preferences", () => {
+  it("defaults both modules on and persists independent choices", () => {
+    expect(readDesktopRailPreference("hotRanking")).toBe(true);
+    expect(readDesktopRailPreference("shortcuts")).toBe(true);
+    setDesktopRailPreference("hotRanking", false);
+    expect(readDesktopRailPreference("hotRanking")).toBe(false);
+    expect(readDesktopRailPreference("shortcuts")).toBe(true);
+    setDesktopRailPreference("hotRanking", true);
+  });
+
+  it("labels the ranking scope and exposes independent module blocks", () => {
+    const rail = createDesktopRightRail();
+    expect(rail.hotBlock.textContent).toContain("仅统计当前已加载的信息流");
+    expect(rail.hotBlock.hidden).toBe(false);
+    expect(rail.shortcutsBlock.hidden).toBe(false);
+    expect(rail.root.querySelectorAll(".rail-block")).toHaveLength(2);
   });
 });

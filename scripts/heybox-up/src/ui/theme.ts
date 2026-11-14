@@ -1,6 +1,6 @@
 import { ADAPTED_ROUTES, FEED_WIDTH_MAX, FEED_WIDTH_MIN, FEED_WIDTH_STEP, isOfficialHomePath, PAGE_ROUTE, READER_HISTORY_LIMIT_UNLIMITED, READER_HISTORY_LIMIT_WARN, READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, READER_LINE_HEIGHT_STEP } from "../config";
 import { ensureStyleElement, registerPageSync, removeStyleElement } from "../core/page-sync";
-import { localStore, parseFeedWidthInput, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readCommentPreviewPreference, readFeedWidth, readNavMotionPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, setCommentPreviewPreference, setFeedWidthPreference, setNavMotionPreference, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderPreference, setReaderTimelinePreference } from "../state";
+import { localStore, parseFeedWidthInput, parseReaderHistoryLimitInput, parseReaderLineHeightInput, readCommentPreviewPreference, readDesktopRailPreference, readFeedWidth, readNavMotionPreference, readReaderHistoryLimit, readReaderLineHeight, readReaderPreference, readReaderTimelinePreference, setCommentPreviewPreference, setDesktopRailPreference, setFeedWidthPreference, setNavMotionPreference, setReaderHistoryLimitPreference, setReaderLineHeightPreference, setReaderPreference, setReaderTimelinePreference } from "../state";
 
 export const THEME_CLASS = "heybox-up-theme";
 
@@ -71,6 +71,10 @@ export let navMotionToggle: HTMLButtonElement | null = null;
 export let readerToggle: HTMLButtonElement | null = null;
 
 export let readerTimelineToggle: HTMLButtonElement | null = null;
+
+export let desktopHotRankingToggle: HTMLButtonElement | null = null;
+
+export let desktopShortcutsToggle: HTMLButtonElement | null = null;
 
 export let feedWidthChips: Element[] = [];
 
@@ -1777,6 +1781,8 @@ export function updateThemeEntry(): void {
   if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
   if (readerToggle) readerToggle.setAttribute("aria-checked", String(readReaderPreference()));
   if (readerTimelineToggle) readerTimelineToggle.setAttribute("aria-checked", String(readReaderTimelinePreference()));
+  if (desktopHotRankingToggle) desktopHotRankingToggle.setAttribute("aria-checked", String(readDesktopRailPreference("hotRanking")));
+  if (desktopShortcutsToggle) desktopShortcutsToggle.setAttribute("aria-checked", String(readDesktopRailPreference("shortcuts")));
   syncFeedWidthControls(readFeedWidth());
   syncNumberInput(readerLineHeightInput, readReaderLineHeight());
   syncReaderHistoryLimitControl(readReaderHistoryLimit());
@@ -1883,6 +1889,8 @@ export function createThemeEntry(): void {
     createNavMotionToggle(),
     createReaderToggle(),
     createReaderTimelineToggle(),
+    createDesktopRailToggle("hotRanking", "热门排行", "显示基于当前已加载信息流的排序"),
+    createDesktopRailToggle("shortcuts", "快捷入口", "显示收藏与文章入口"),
     createReaderHistoryLimitControl(),
     createReaderLineHeightControl(),
     createThemeMenuSeparator(),
@@ -2058,6 +2066,34 @@ export function createReaderTimelineToggle(): HTMLButtonElement {
     setReaderTimelinePreference(next);
   });
   readerTimelineToggle = node;
+  return node;
+}
+
+export function createDesktopRailToggle(module: "hotRanking" | "shortcuts", label: string, hintText: string): HTMLButtonElement {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = "item toggle";
+  node.setAttribute("role", "menuitemcheckbox");
+  node.setAttribute("aria-checked", String(readDesktopRailPreference(module)));
+  const copy = document.createElement("span");
+  copy.className = "copy";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = label;
+  const hint = document.createElement("span");
+  hint.className = "hint";
+  hint.textContent = hintText;
+  copy.append(name, hint);
+  const toggle = document.createElement("span");
+  toggle.className = "switch";
+  node.append(copy, toggle);
+  node.addEventListener("click", () => {
+    const next = node.getAttribute("aria-checked") !== "true";
+    node.setAttribute("aria-checked", String(next));
+    setDesktopRailPreference(module, next);
+  });
+  if (module === "hotRanking") desktopHotRankingToggle = node;
+  else desktopShortcutsToggle = node;
   return node;
 }
 

@@ -1,5 +1,6 @@
 import { PAGE_ROUTE } from "../config";
 import { ensureStyleElement, registerPageSync } from "../core/page-sync";
+import { readDesktopRailPreference } from "../state";
 import { COMMUNITY_SEARCH_ICONS } from "./community-search";
 import { navIconMarkupFor, navigateToPath } from "./navigation";
 import { normalizeRailText } from "./rail";
@@ -46,6 +47,8 @@ export interface DesktopLeftRail {
 export interface DesktopRightRail {
   readonly root: HTMLElement;
   readonly hot: HTMLElement;
+  readonly hotBlock: HTMLElement;
+  readonly shortcutsBlock: HTMLElement;
 }
 
 export interface DesktopCache {
@@ -76,6 +79,8 @@ export const DESKTOP_CSS = `
   }
   #heybox-up-left-rail .rail-block + .rail-block,
   #heybox-up-right-rail .rail-block + .rail-block { margin-top: 12px; }
+  #heybox-up-right-rail .rail-block[hidden] { display: none !important; }
+  #heybox-up-right-rail[hidden] { display: none !important; }
   #heybox-up-left-rail .rail-title,
   #heybox-up-right-rail .rail-title {
     margin: 0 0 7px;
@@ -254,6 +259,13 @@ export const DESKTOP_CSS = `
       margin: 0 !important;
       flex: none !important;
     }
+    body:not(.heybox-up-rail-open) #page-bbs-community.heybox-up-desktop.heybox-up-no-right-modules .content {
+      grid-template-columns: minmax(208px, 1fr) minmax(320px, min(var(--heybox-up-feed-w), calc(100vw - 256px))) !important;
+      justify-content: center;
+    }
+    body:not(.heybox-up-rail-open) #page-bbs-community.heybox-up-desktop.heybox-up-no-right-modules .content > main.list { grid-column: 2; }
+    body:not(.heybox-up-rail-open) #page-bbs-community.heybox-up-desktop.heybox-up-no-right-modules .content > #heybox-up-left-rail { grid-column: 1; }
+    #page-bbs-community.heybox-up-desktop.heybox-up-no-right-modules .content > #heybox-up-right-rail { display: none !important; }
     /* 评论预览只占右侧一列的真实宽度。旧实现再叠一层“侧栏 + 48px”右内边距，
        会在面板与信息流之间留下近乎双倍于面板的空白，并把中栏挤向左侧。 */
     body.heybox-up-rail-open #app > main { max-width: none !important; }
@@ -364,9 +376,12 @@ export function createDesktopRightRail(): DesktopRightRail {
   const hotTitle = document.createElement("p");
   hotTitle.className = "rail-title";
   hotTitle.textContent = "热门排行";
+  const hotHint = document.createElement("p");
+  hotHint.className = "rail-hint";
+  hotHint.textContent = "仅统计当前已加载的信息流";
   const hot = document.createElement("ol");
   hot.className = "hot-list";
-  hotBlock.append(hotTitle, hot);
+  hotBlock.append(hotTitle, hotHint, hot);
 
   const toolsBlock = document.createElement("section");
   toolsBlock.className = "rail-block";
@@ -380,7 +395,7 @@ export function createDesktopRightRail(): DesktopRightRail {
   ];
   for (const item of tools) toolsBlock.append(createDesktopRailLink(item, false));
   root.append(hotBlock, toolsBlock);
-  return { root, hot };
+  return { root, hot, hotBlock, shortcutsBlock: toolsBlock };
 }
 
 export function readDesktopChannels(): DesktopChannel[] {
@@ -453,6 +468,9 @@ export function readDesktopHotItems(): DesktopHotItem[] {
 }
 
 export function syncDesktopHot(ui: DesktopRightRail, cache: DesktopCache): void {
+  ui.hotBlock.hidden = !readDesktopRailPreference("hotRanking");
+  ui.shortcutsBlock.hidden = !readDesktopRailPreference("shortcuts");
+  ui.root.hidden = ui.hotBlock.hidden && ui.shortcutsBlock.hidden;
   const items = readDesktopHotItems();
   const signature = items.map((item) => item.id + ":" + item.score + ":" + item.title).join("|");
   if (signature === cache.hot) return;
@@ -530,6 +548,7 @@ export function watchDesktopShell() {
     }
     ensureDesktopStyle();
     page.classList.add(DESKTOP_PAGE_CLASS);
+    page.classList.toggle("heybox-up-no-right-modules", !readDesktopRailPreference("hotRanking") && !readDesktopRailPreference("shortcuts"));
     document.body.classList.add("heybox-up-desktop-on");
     if (left.root.parentNode !== content) content.prepend(left.root);
     if (right.root.parentNode !== content) content.append(right.root);
@@ -538,6 +557,7 @@ export function watchDesktopShell() {
   };
 
   registerPageSync(sync, 400, [PAGE_ROUTE.FEED], "feed");
+  document.addEventListener("heybox-up:desktop-rail-preference", () => sync(true));
   window.addEventListener("popstate", () => requestAnimationFrame(() => sync(true)));
   desktopViewport.addEventListener("change", () => sync(true));
   sync(true);
