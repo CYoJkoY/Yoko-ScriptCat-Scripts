@@ -2213,6 +2213,7 @@ export function watchReader(navigation: PostNavigationController): void {
   let articleComposerImageSeq = 0;
   let commentPanel: HTMLElement | null = null;
   let commentPanelList: HTMLOListElement | null = null;
+  let lastCommentControlFocus: { id: string; action: CommentControlAction } | null = null;
   let commentPanelStatus: HTMLDivElement | null = null;
   let commentPanelStatusText: HTMLDivElement | null = null;
   let commentPanelRetry: HTMLButtonElement | null = null;
@@ -4206,7 +4207,9 @@ export function watchReader(navigation: PostNavigationController): void {
     const active = document.activeElement;
     const focusedControl = active instanceof HTMLElement && commentPanelList?.contains(active) === true
       ? describeCommentControl(active)
-      : null;
+      : active === commentPanelRefresh
+        ? lastCommentControlFocus
+        : null;
     const hideCy = readHideCyPreference();
     const loadedVisible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
     const hiddenCy = commentState.items.length - loadedVisible.length;
@@ -5478,6 +5481,7 @@ export function watchReader(navigation: PostNavigationController): void {
       if (commentPanel.isConnected) return commentPanel;
       commentPanel = null;
       commentPanelList = null;
+      lastCommentControlFocus = null;
       commentPanelStatus = null;
       commentPanelStatusText = null;
       commentPanelRetry = null;
@@ -5558,6 +5562,13 @@ export function watchReader(navigation: PostNavigationController): void {
     commentPanelMore = more;
     commentPanelClose = close;
     commentPanelRefresh = refresh;
+    list.addEventListener("focusin", (event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const described = describeCommentControl(target);
+        if (described !== null) lastCommentControlFocus = described;
+      }
+    });
     close.addEventListener("click", closeComments);
     scrim.addEventListener("click", closeComments);
     refresh.addEventListener("click", () => {
@@ -5685,6 +5696,7 @@ export function watchReader(navigation: PostNavigationController): void {
   const closeComments = (): void => {
     if (commentPanel === null || commentPanel.hidden) return;
     commentPanel.hidden = true;
+    lastCommentControlFocus = null;
     if (host !== null) host.inert = false;
     host?.querySelector<HTMLElement>('[data-action="comment"]')?.focus({ preventScroll: true });
   };

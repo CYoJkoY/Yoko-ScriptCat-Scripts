@@ -413,21 +413,19 @@ describe("reader comment panel first open", () => {
       .find((button) => button.dataset["replyId"] === "9501");
     if (reply === undefined) throw new Error("Expected the second floor reply action");
     reply.focus();
+    const focusedBeforeRefresh = document.activeElement;
     const refresh = document.querySelector<HTMLButtonElement>(".hbu-reader-comments-refresh");
     if (refresh === null) throw new Error("Expected the comment refresh button");
-    let focusedAtClick: Element | null = null;
-    const recordFocus = (): void => { focusedAtClick ??= document.activeElement; };
-    refresh.addEventListener("click", recordFocus, { capture: true });
+    refresh.focus();
     refresh.click();
     await vi.waitFor(() => {
       expect(document.activeElement).toMatchObject({
         dataset: expect.objectContaining({ replyId: "9501" }),
       });
     }, { timeout: 5000 });
-    refresh.removeEventListener("click", recordFocus, { capture: true });
     // The reload redraws the list, so focus lands on the redrawn twin instead of
     // leaving the reader at the top of the document or on the close button.
-    expect(focusedAtClick).toBe(reply);
+    expect(focusedBeforeRefresh).toBe(reply);
     expect(document.querySelectorAll(".hbu-reader-comments-list")).toHaveLength(1);
     expect(document.querySelector<HTMLButtonElement>(".hbu-reader-comments-close")).not.toBe(document.activeElement);
   });
