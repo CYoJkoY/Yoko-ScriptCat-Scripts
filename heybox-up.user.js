@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HeyBox Up
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.8.5
-// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，顶部操作栏独占一行，图片不再被渐变遮挡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，表情目录从站点静态资源在线同步（12 小时本机缓存，失败回退内置目录），评论输入框里的已知 cube 与 heygirl 令牌即时渲染为精灵图，提交仍发送原令牌文本，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，关闭后回到原生双栏。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
+// @version      0.12.11
+// @description  补全小黑盒网页收藏：网页收藏列表不显示“插眼”(CY)，本脚本单独拉取 CY 列表，在收藏页（/app/user/favour/content）把 CY 条目补进收藏列表末尾，按帖子去重，首批最多 200 条，接口确认还有更多时提供「加载更多」继续分批读取，结果缓存 10 分钟。社区首页（/app/bbs/home）隐藏右栏热门社区等冗余模块；收藏页、文章管理页与文章详情页隐藏右侧二维码、推广与备案栏。帖子详情页（/app/bbs/link/*）默认进入全屏沉浸阅读：封面优先取站点头图，头图加载失败时回退正文最大图，没有可用图片时取消封面而不留空白占位；多图封面的分页条独占图片下方 32px 的空白条带，不覆盖画面；底部阅读进度条独占 46px 栏位，标题、正文、媒体与结尾文字都不被压住；正文图片移除黑色衬底与阴影，桌面上下留白 2rem、移动端 1.5rem，顶部操作栏独占一行，图片不再被渐变遮挡；正文连续滚动并支持懒加载图片，右侧竖排点赞/收藏/评论/CY 发布/分享/行距设置；收藏按钮打开收藏夹对话框，可多选加入、取消勾选移除，并能在面板里直接新建收藏夹后保存，无法核对归属的收藏夹标记「待核对」且不会因未勾选而被移除。评论区改用自建侧栏，原生评论区与回复框隐藏；侧栏顶部可发布文章主评论（is_cy: 0），楼层与楼中楼条目均提供回复入口，发送对应的 reply_id 与 root_id，表情目录从站点静态资源在线同步（12 小时本机缓存，失败回退内置目录），评论输入框里的已知 cube 与 heygirl 令牌即时渲染为精灵图，提交仍发送原令牌文本，评论里的 cube、heygirl 以及旧版图标字体与 img 标记形态的表情都能按精灵图渲染、Ctrl/⌘+Enter 提交、字数统计、提交锁、失败重试与取消回复；评论正文里的图片与接口 imgs 字段的配图都以块级图片独占一行渲染，并与正文内联图片去重；评论输入框可一次选最多 9 张图片，选后逐张上传到站点自己的对象存储，上传完成的地址随评论以 imgs 字段提交，纯图片评论也能发布；评论图片可点开大图，查看器盖在评论侧栏之上，左键逐级放大、右键逐级缩小、双击复位，长图按约半屏宽度展开，并按 is_cy 标记屏蔽插眼评论，楼中楼按回复关系递归成树，用分支竖线逐层缩进展示，缩进到第 4 层后改为同列显示，任意一层都能连整棵子树一起收起，收起处保留短缩进、虚线分支与“N 条回复已收起”提示，嵌套再深也不会把侧栏撑宽，子回复带头像并标注“回复 @昵称”，头像与昵称可点击进入对方主页，登录账号自己发布的楼层与楼中楼回复带“删除”入口，二次确认后调用站点删除接口，并从列表与评论数中同步减去。评论侧栏每次重新打开都回源读取第一页，退出帖子再进入也能看到自己刚发的评论；侧栏顶部另有“刷新评论”按钮，回复提交后先插入一行本地待同步行，再重读目标楼层所在页并合并进已加载列表，同 ID 楼层原位替换、新楼层排到顶部、其他页楼层保持原位置，随后按接口返回的 id、同账号同文本或该楼层新出现的评论 id 轮询该页直到站点回显，确认窗口内未回显的本地行改标“已提交”并在后台稀疏复查；刷新评论与删除也按同一页合并，不再用第一页整页替换列表；写操作后的 10 秒内既不读取也不写入该帖缓存，第一页缓存的新鲜期收窄到 15 秒，重开超过一分钟的旧面板也会自动刷新。非沉浸模式下，原生评论区监听评论列自身的滚动，接近底部时触发站点加载更多，不再依赖整页滚动。纯视频帖生成独立视频阅读页，保留原生播放控件并在没有可用来源时给出提示；帖子尚未渲染时显示可重试的等待页。支持滚轮、方向键、触屏、图片大图与阅读位置记忆，阅读位置除当前标签页外还写入本机记录（30 天过期、最多 200 篇），关闭标签页或在另一个窗口回到同一帖时仍能续读，关闭阅读器后回到原生双栏。评论“作者优先”排序按用户 ID 比对帖子作者，同名账号不再一并置顶。评论预览侧栏同样提供 CY 开关，面板展开后鼠标在卡片上停留即可切换预览，点评论数字始终可用。顶部导航改为社区、收藏、文章三个「SVG + 文本」入口（官方根首页 `/` 不挂载脚本），静态与动态两套 SVG 图标按齿轮设置菜单的“动态导航图标”开关切换：开启后三个入口全部换成常驻描边流转加轻微呼吸的 CSS 动态 SVG，关闭开关时退回完全静止的静态 SVG，系统减少动效时默认静止，但手动开启的开关优先；帖子页左右两侧纵轴中心提供 SVG 上一篇/下一篇箭头（快捷键 [ 与 ]），切换走站内路由，不整页刷新，上一篇沿本次会话的访问顺序逐篇回退；沉浸阅读右侧栏常驻完整“阅读时间轴”，大于 900px 时距视口右缘 16px 常驻显示，900px 及以下通过按钮打开抽屉；正文及相邻原生投票完整展示，选择与提交交给网站原生组件，状态局部同步；按访问顺序倒序列出本次会话读过的帖子并高亮当前篇，点任意一行直接跳回，右侧另有可拖动的时间轴滑轨，滑块显示 x/n 并支持拖动预览后松手跳转，每行右侧标出该篇上次读到的百分比或“读完”，行底细条同步显示进度，方向键可在记录间移动焦点；时间轴只按帖子 ID 与标题节点化保存，保留条数可在齿轮设置中调整（默认 40，0 表示不限，条数过多会提示占用内存），也可单独关闭（默认开启）；下一篇优先从已发现队列按作者与话题降低关联度选取，队列不足时连续拉取信息流补充，相关推荐仅作兜底。社区页（/app/topic/link/*）提供只在本社区内生效的帖子搜索，支持时间筛选与加载更多。宽屏社区页改为左频道、中信息流、右热度三栏工作台，中间栏居中且宽度可在齿轮设置菜单按屏幕百分比调节（预设或自定义数值），窄屏自动退回双栏或单栏。帖子正文内嵌的游戏、专辑、百科、比赛、模组等卡片，以及“我的文章”创作者页、频道页与用户主页补齐深色适配，用户主页隐藏右栏下载二维码等冗余信息，作者信息浮层同样套用主题；正文按主题校正字色对比，段落间距收窄，正文行距可在齿轮设置或阅读页右侧面板按倍数调节。另提供跟随系统、夜航、纯黑、浅色、纸页、雾青六套主题预设，在导航栏一键切换；沉浸阅读的顶栏、互动栏、收藏夹与行距菜单、进度条、提示条与遮罩按当前预设取色，纸页与雾青不再沿用深色阅读器外观，正文图片跟随主题背景，封面与视频保留中性黑底。需要登录小黑盒：脚本以浏览器内已有登录态请求小黑盒自己的插眼收藏接口（含本地计算的请求签名）；浏览与补全只读，点赞、收藏、文章评论、楼层回复、评论删除与 CY 发布仅在用户主动点击时调用站点写接口，不改动站点收藏总数。
 // @author       Yoko
 // @homepageURL  https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/main/docs/heybox-up.md
 // @supportURL   https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/issues
@@ -29,7 +29,11 @@
     readerHistoryLimit: "heybox-up.readerHistoryLimit.v1",
     feedWidth: "heybox-up.feedWidth.v1",
     readerLineHeight: "heybox-up.readerLineHeight.v1",
-    theme: "heybox-up.theme.v1"
+    theme: "heybox-up.theme.v1",
+    readerPositions: "heybox-up.readerPositions.v1",
+    communitySearch: "heybox-up.communitySearch.v1",
+    desktopHotRanking: "heybox-up.desktopHotRanking.v1",
+    desktopShortcuts: "heybox-up.desktopShortcuts.v1"
   });
   var PREFERENCE_DEFAULTS = Object.freeze({
     hideCy: false,
@@ -39,7 +43,9 @@
     readerTimeline: true,
     readerHistoryLimit: 40,
     feedWidth: 56,
-    readerLineHeight: 1.7
+    readerLineHeight: 1.7,
+    desktopHotRanking: true,
+    desktopShortcuts: true
   });
   var FEED_WIDTH_MIN = 40;
   var FEED_WIDTH_MAX = 76;
@@ -445,6 +451,7 @@
   var READER_EVENT = "heybox-up:reader";
   var READER_TIMELINE_EVENT = "heybox-up:reader-timeline";
   var READER_HISTORY_LIMIT_EVENT = "heybox-up:reader-history-limit";
+  var DESKTOP_RAIL_PREFERENCE_EVENT = "heybox-up:desktop-rail-preference";
   var HIDE_CY_STYLE_ID = "heybox-up-cy-style";
   var HIDE_CY_CLASS = "heybox-up-hide-cy";
   function readHideCyPreference() {
@@ -505,6 +512,15 @@
   function setReaderTimelinePreference(value) {
     localStore.write(STORAGE_KEYS.readerTimeline, value ? "1" : "0");
     document.dispatchEvent(new CustomEvent(READER_TIMELINE_EVENT, { detail: value }));
+  }
+  function readDesktopRailPreference(module) {
+    const key = module === "hotRanking" ? STORAGE_KEYS.desktopHotRanking : STORAGE_KEYS.desktopShortcuts;
+    return localStore.read(key) !== "0";
+  }
+  function setDesktopRailPreference(module, value) {
+    const key = module === "hotRanking" ? STORAGE_KEYS.desktopHotRanking : STORAGE_KEYS.desktopShortcuts;
+    localStore.write(key, value ? "1" : "0");
+    document.dispatchEvent(new CustomEvent(DESKTOP_RAIL_PREFERENCE_EVENT, { detail: { module, value } }));
   }
   function normalizeReaderHistoryLimit(value) {
     if (value === null || value === void 0 || value === "") return PREFERENCE_DEFAULTS.readerHistoryLimit;
@@ -875,7 +891,7 @@
   var CY_PAGE_SIZE = 20;
   var CY_MAX_ITEMS = 200;
   var CACHE_TTL_MS = 10 * 60 * 1e3;
-  var CACHE_KEY_PREFIX = "heybox-up.cy.v1:";
+  var CACHE_KEY_PREFIX = "heybox-up.cy.v2:";
   var LINK_HREF_PREFIX = "/app/bbs/link/";
   function buildCyApiUrl(userId, offset) {
     const time = Math.floor(Date.now() / 1e3);
@@ -972,10 +988,15 @@
       kind: record["comment_type"] === 1 ? "回复" : "评论"
     };
   }
-  async function loadCyFavorites(userId, onProgress, signal) {
-    const seen = /* @__PURE__ */ new Set();
+  async function loadCyFavoritesBatch(userId, options = {}, signal) {
+    const seen = new Set(options.seenIds ?? []);
     const items = [];
-    let offset = 0;
+    const requestedOffset = options.offset;
+    const startOffset = typeof requestedOffset === "number" && Number.isInteger(requestedOffset) && requestedOffset >= 0 ? requestedOffset : 0;
+    const maxOffset = startOffset + CY_MAX_ITEMS;
+    let offset = startOffset;
+    let hasMore = false;
+    let nextOffset = startOffset;
     for (; ; ) {
       const page = await fetchCyPage(userId, offset, signal);
       for (const raw of page.list) {
@@ -985,12 +1006,31 @@
           items.push(item);
         }
       }
-      onProgress(items.length);
+      hasMore = !page.noMore;
+      nextOffset = offset + CY_PAGE_SIZE;
+      options.onProgress?.(items.length);
       if (page.noMore || items.length >= CY_MAX_ITEMS) break;
-      offset += CY_PAGE_SIZE;
-      if (offset >= CY_MAX_ITEMS + CY_PAGE_SIZE) break;
+      if (offset >= maxOffset) break;
+      offset = nextOffset;
     }
-    return items.slice(0, CY_MAX_ITEMS);
+    return { items, hasNext: hasMore, nextOffset };
+  }
+  function mergeCyFavorites(existing, incoming) {
+    const seen = /* @__PURE__ */ new Set();
+    const merged = [];
+    for (const item of existing) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        merged.push(item);
+      }
+    }
+    for (const item of incoming) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        merged.push(item);
+      }
+    }
+    return merged;
   }
   function asCachedItem(value) {
     const record = asRecord(value);
@@ -1018,15 +1058,24 @@
     const rawItems = record["items"];
     if (!Array.isArray(rawItems)) return null;
     if (Date.now() - Number(record["savedAt"]) > CACHE_TTL_MS) return null;
+    const hasNext = record["hasNext"];
+    if (typeof hasNext !== "boolean") return null;
+    const nextOffset = Number(record["nextOffset"]);
+    if (!Number.isInteger(nextOffset) || nextOffset < 0) return null;
     const items = [];
     for (const raw of rawItems) {
       const item = asCachedItem(raw);
       if (item !== null) items.push(item);
     }
-    return items;
+    return { items, hasNext, nextOffset };
   }
-  function writeCache(userId, items) {
-    localStore.writeJson(CACHE_KEY_PREFIX + userId, { savedAt: Date.now(), items });
+  function writeCache(userId, favorites) {
+    localStore.writeJson(CACHE_KEY_PREFIX + userId, {
+      savedAt: Date.now(),
+      items: favorites.items,
+      hasNext: favorites.hasNext,
+      nextOffset: favorites.nextOffset
+    });
   }
   function formatTime(value) {
     if (!value) return "";
@@ -1292,6 +1341,69 @@
   var DELETE_COMMENT_API_PATH = "/bbs/app/comment/delete";
   var RAIL_PAGE_SIZE = 20;
   var RAIL_TRIGGER_SELECTOR = ".bbs-new-style-bottom__comment, .content-list__comment";
+  var RAIL_HOVER_CARD_SELECTOR = [
+    "#page-bbs-community .bbs-home__content-item",
+    "#page-topic-link .content-list__item",
+    "#page-topic-link .bbs-home__content-item",
+    "#page-creator-content-management .content-list__item",
+    "#page-creator-content-management .bbs-home__content-item",
+    ".bbs-home__content-list .bbs-home__content-item",
+    ".content-list .content-list__item"
+  ].join(", ");
+  var RAIL_TEXT_INPUT_SELECTOR = [
+    "input",
+    "textarea",
+    "select",
+    "[contenteditable]:not([contenteditable='false'])",
+    "button",
+    "a[href]",
+    "audio[controls]",
+    "video[controls]",
+    "iframe",
+    "embed",
+    "object"
+  ].join(", ");
+  var RAIL_PREVIEW_ROUTES = /* @__PURE__ */ new Set([PAGE_ROUTE.FEED, PAGE_ROUTE.TOPIC, PAGE_ROUTE.CREATOR]);
+  function readRailLinkId(href) {
+    const match = /link\/(\d+)/.exec(href || "");
+    return match ? match[1] : "";
+  }
+  function readRailCardLinkId(element) {
+    if (element === null) return "";
+    const anchor = element.closest('a[href*="/app/bbs/link/"]');
+    if (anchor !== null) return readRailLinkId(anchor.getAttribute("href"));
+    const card = element.closest(RAIL_HOVER_CARD_SELECTOR + ", li");
+    if (card === null) return "";
+    const inner = card.querySelector('a[href*="/app/bbs/link/"]');
+    return inner === null ? "" : readRailLinkId(inner.getAttribute("href"));
+  }
+  function readRailCardLinkIds(root) {
+    const ids = [];
+    for (const card of root.querySelectorAll(RAIL_HOVER_CARD_SELECTOR)) {
+      const linkId = readRailCardLinkId(card);
+      if (linkId !== "" && !ids.includes(linkId)) ids.push(linkId);
+    }
+    return ids;
+  }
+  function stepRailCardLinkId(ids, current, step) {
+    if (ids.length === 0) return "";
+    const index = ids.indexOf(current);
+    const forward = step >= 0;
+    if (index < 0) return forward ? ids[0] : ids[ids.length - 1];
+    const next = index + (forward ? 1 : -1);
+    if (next < 0 || next >= ids.length) return "";
+    return ids[next];
+  }
+  function revealRailCardByLinkId(root, linkId) {
+    for (const card of root.querySelectorAll(RAIL_HOVER_CARD_SELECTOR)) {
+      if (readRailCardLinkId(card) !== linkId) continue;
+      if (typeof card.scrollIntoView !== "function") return false;
+      const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      card.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
+      return true;
+    }
+    return false;
+  }
   var RAIL_ICONS = {
     comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-3-.4L4 21l1.4-4.4A8.3 8.3 0 0 1 3.6 11.5 8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z"/></svg>',
     external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
@@ -1429,8 +1541,20 @@
   }
   .quote .quote-name { color: var(--rail-muted); }
   .status { padding: 26px 18px; text-align: center; color: var(--rail-muted); }
-  .status.retry { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   .status a { color: var(--rail-accent); text-decoration: underline; text-underline-offset: 3px; }
+  .retry-button {
+    margin-left: 8px;
+    padding: 3px 12px;
+    border: 1px solid var(--rail-line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--rail-text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .retry-button:hover { background: var(--rail-subtle); }
+  .retry-button:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: 1px; }
+  .retry-button[disabled] { opacity: .6; cursor: default; }
   .foot-bar { display: flex; gap: 8px; padding: 11px 12px; border-top: 1px solid var(--rail-line); }
   .action {
     flex: 1 1 auto;
@@ -2529,6 +2653,9 @@
     return formatTime(value).slice(0, 10);
   }
   function createCommentRail() {
+    return createCommentRailAt(document.body);
+  }
+  function createCommentRailAt(page) {
     const host = document.createElement("div");
     host.id = RAIL_ID;
     host.dataset["state"] = "hidden";
@@ -2584,6 +2711,8 @@
     list.className = "list";
     const status = document.createElement("div");
     status.className = "status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
     const footBar = document.createElement("div");
     footBar.className = "foot-bar";
     const moreButton = document.createElement("button");
@@ -2591,6 +2720,16 @@
     moreButton.className = "action";
     moreButton.textContent = "加载更多";
     footBar.append(moreButton);
+    const statusText = document.createElement("span");
+    const errorLink = document.createElement("a");
+    errorLink.textContent = "打开帖子";
+    errorLink.addEventListener("click", (event) => event.stopPropagation());
+    const retryButton = document.createElement("button");
+    retryButton.type = "button";
+    retryButton.className = "retry-button";
+    retryButton.textContent = "重试";
+    retryButton.setAttribute("aria-label", "重试加载评论");
+    status.append(statusText, errorLink, retryButton);
     dock.append(head, meta, list, status, footBar);
     panel.append(tab, dock);
     shadow.append(style, panel);
@@ -2629,7 +2768,8 @@
     const applyMode = () => {
       host.dataset["state"] = state.mode;
       tab.setAttribute("aria-expanded", String(state.mode === "open"));
-      if (document.body) document.body.classList.toggle("heybox-up-rail-open", state.mode === "open");
+      const owner = page instanceof Document ? page.body : page;
+      if (owner) owner.classList.toggle("heybox-up-rail-open", state.mode === "open");
     };
     const createEmoji = (segment) => createRailEmojiElement(segment, "emoji");
     const createImage = (src) => {
@@ -2724,7 +2864,7 @@
       const loadedText = visible.length > 0 ? " · 已加载 " + visible.length + " 条" : "";
       const cyText = hiddenCy > 0 ? " · 已屏蔽 " + hiddenCy + " 条 CY" : "";
       if (state.error !== "") {
-        meta.textContent = "";
+        meta.textContent = "加载失败";
       } else if (state.total > 0) {
         meta.textContent = "共 " + state.total + " 条评论" + loadedText + cyText;
       } else {
@@ -2733,37 +2873,33 @@
       list.replaceChildren(...visible.map(createItem));
       list.hidden = visible.length === 0;
       if (state.error !== "") {
-        status.textContent = "";
-        const label = document.createElement("span");
-        label.textContent = state.error + " ";
-        const link = document.createElement("a");
-        link.href = LINK_HREF_PREFIX + state.linkId;
-        link.textContent = "打开帖子";
-        link.addEventListener("click", (event) => event.stopPropagation());
-        status.append(label, link);
-        status.classList.add("retry");
-        status.hidden = false;
-      } else if (state.loading && state.items.length === 0) {
-        status.classList.remove("retry");
-        status.textContent = "正在加载评论…";
-        status.hidden = false;
-      } else if (state.linkId === "") {
-        status.classList.remove("retry");
-        status.textContent = "这里会直接显示信息流首条帖子的评论；点其他帖子的评论数字可切换。";
-        status.hidden = false;
-      } else if (visible.length === 0) {
-        status.classList.remove("retry");
-        status.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+        statusText.textContent = state.error + " ";
+        errorLink.href = LINK_HREF_PREFIX + state.linkId;
+        errorLink.hidden = false;
+        retryButton.hidden = false;
+        retryButton.disabled = state.loading;
         status.hidden = false;
       } else {
-        status.classList.remove("retry");
-        status.hidden = true;
+        errorLink.hidden = true;
+        retryButton.hidden = true;
+        if (state.loading && state.items.length === 0) {
+          statusText.textContent = "正在加载评论…";
+          status.hidden = false;
+        } else if (state.linkId === "") {
+          statusText.textContent = "这里会直接显示信息流首条帖子的评论；点其他帖子的评论数字可切换。";
+          status.hidden = false;
+        } else if (visible.length === 0) {
+          statusText.textContent = hiddenCy > 0 ? "已屏蔽全部 " + hiddenCy + " 条 CY 评论" : "这条帖子还没有评论";
+          status.hidden = false;
+        } else {
+          status.hidden = true;
+        }
       }
       moreButton.hidden = state.linkId === "" || !state.hasMore;
       moreButton.textContent = state.loading ? "加载中…" : "加载更多";
       footBar.hidden = moreButton.hidden;
     };
-    const load = async (page) => {
+    const load = async (page2) => {
       const seq = ++state.seq;
       state.loading = true;
       state.error = "";
@@ -2771,16 +2907,16 @@
       loadController?.abort();
       loadController = new AbortController();
       try {
-        const data = await fetchRailPage(state.linkId, page, { signal: loadController.signal });
+        const data = await fetchRailPage(state.linkId, page2, { signal: loadController.signal });
         if (seq !== state.seq) return;
         const seen = new Set(state.items.map((item) => item.id));
         const fresh = data.items.filter((item) => item.id === "" || !seen.has(item.id));
-        state.items = page === 1 ? fresh : state.items.concat(fresh);
-        state.page = page;
+        state.items = page2 === 1 ? fresh : state.items.concat(fresh);
+        state.page = page2;
         const progress = resolveCommentPageProgress({
           rawGroupCount: data.items.length,
           freshGroupCount: fresh.length,
-          previouslyLoadedGroups: page === 1 ? 0 : state.loadedGroups,
+          previouslyLoadedGroups: page2 === 1 ? 0 : state.loadedGroups,
           floorTotal: data.floorTotal
         });
         state.loadedGroups = progress.loadedGroups;
@@ -2803,10 +2939,10 @@
     };
     const open = (linkId) => {
       const next = String(linkId === void 0 || linkId === null ? "" : linkId);
-      if (next === "") return;
+      if (next === "") return false;
       state.mode = "open";
       applyMode();
-      if (next === state.linkId) return;
+      if (next === state.linkId) return true;
       loadController?.abort();
       loadController = null;
       state.seq += 1;
@@ -2821,10 +2957,28 @@
       state.error = "";
       render();
       void load(1);
+      return true;
     };
     const collapse = () => {
       state.mode = state.linkId === "" ? "hidden" : "collapsed";
       applyMode();
+    };
+    const reset = () => {
+      loadController?.abort();
+      loadController = null;
+      state.seq += 1;
+      state.mode = "hidden";
+      state.linkId = "";
+      state.title = "";
+      state.total = 0;
+      state.page = 0;
+      state.items = [];
+      state.loading = false;
+      state.error = "";
+      state.hasMore = false;
+      state.loadedGroups = 0;
+      applyMode();
+      render();
     };
     const setActive = (active) => {
       if (!active) {
@@ -2845,17 +2999,12 @@
       state.mode = "open";
       applyMode();
       if (state.linkId === "") {
-        const anchor = document.querySelector("#page-bbs-community .bbs-home__content-list a[href*='/app/bbs/link/']");
-        const match = anchor ? /link\/(\d+)/.exec(anchor.getAttribute("href") || "") : null;
-        if (match) {
-          open(match[1]);
-          return;
-        }
+        open(readRailCardLinkIds(document)[0] ?? "");
       }
       render();
     });
     collapseButton.addEventListener("click", collapse);
-    status.addEventListener("click", () => {
+    retryButton.addEventListener("click", () => {
       if (state.error === "" || state.loading) return;
       void load(1);
     });
@@ -2870,93 +3019,36 @@
       host,
       open,
       collapse,
+      reset,
       setActive,
       isOpen: () => state.mode === "open",
       getLinkId: () => state.linkId
     };
   }
-  function watchCommentRail() {
-    if (!document.body) return;
-    const rail = createCommentRail();
-    document.body.append(rail.host);
-    const isFeedPage = () => readPageRoute() === PAGE_ROUTE.FEED && document.querySelector("#page-bbs-community .bbs-home__content-list") !== null;
-    const readLinkId = (href) => {
-      const match = /link\/(\d+)/.exec(href || "");
-      return match ? match[1] : "";
-    };
-    const readFirstFeedLinkId = () => {
-      const anchor = document.querySelector("#page-bbs-community .bbs-home__content-list a[href*='/app/bbs/link/']");
-      if (!anchor) return "";
-      return readLinkId(anchor.getAttribute("href"));
-    };
-    const readCardLinkId = (element) => {
-      const anchor = element.closest('a[href*="/app/bbs/link/"]');
-      if (anchor) return readLinkId(anchor.getAttribute("href"));
-      const card = element.closest(".bbs-home__content-item, .content-list__item, li");
-      if (!card) return "";
-      const inner = card.querySelector('a[href*="/app/bbs/link/"]');
-      return inner ? readLinkId(inner.getAttribute("href")) : "";
-    };
-    const isEnabled = () => readCommentPreviewPreference();
-    document.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const trigger = target.closest(RAIL_TRIGGER_SELECTOR);
-      if (!trigger) return;
-      const linkId = readCardLinkId(trigger);
-      if (linkId === "") return;
-      if (!isEnabled()) return;
-      if (!isFeedPage()) return;
-      event.preventDefault();
-      event.stopPropagation();
-      rail.open(linkId);
-    }, true);
-    let hoverTimer = 0;
-    let hoverId = "";
-    const cancelHover = () => {
-      if (hoverTimer !== 0) window.clearTimeout(hoverTimer);
-      hoverTimer = 0;
-      hoverId = "";
-    };
-    document.addEventListener("pointerover", (event) => {
-      if (!isEnabled() || !rail.isOpen()) return;
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const card = target.closest("#page-bbs-community .bbs-home__content-item");
-      if (!card) return;
-      const linkId = readCardLinkId(card);
-      if (linkId === "" || linkId === hoverId) return;
-      cancelHover();
-      hoverId = linkId;
-      hoverTimer = window.setTimeout(() => {
-        hoverTimer = 0;
-        if (!rail.isOpen() || rail.getLinkId() === linkId) return;
-        rail.open(linkId);
-      }, 600);
-    }, true);
-    document.addEventListener("pointerout", (event) => {
-      if (hoverTimer === 0) return;
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const card = target.closest("#page-bbs-community .bbs-home__content-item");
-      if (!card) return;
-      const related = event.relatedTarget;
-      if (related instanceof Node && card.contains(related)) return;
-      cancelHover();
-    }, true);
-    document.addEventListener("pointerdown", cancelHover, true);
-    document.addEventListener("scroll", cancelHover, true);
-    document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || !rail.isOpen()) return;
-      event.preventDefault();
-      rail.collapse();
-    });
+  function syncCommentRailOpenClass(owner, open) {
+    if (owner !== null) owner.classList.toggle("heybox-up-rail-open", open);
+  }
+  function bindCommentRail(rail, page, isEnabled, readRoute = readPageRoute) {
     let autoOpened = false;
+    let lastRoute = readRoute();
+    const isFeedPage = () => RAIL_PREVIEW_ROUTES.has(readRoute());
+    const readFirstFeedLinkId = () => {
+      if (readRoute() !== PAGE_ROUTE.FEED) return "";
+      return readRailCardLinkIds(page)[0] ?? "";
+    };
     const sync = () => {
+      const route = readRoute();
+      const routeChanged = route !== lastRoute;
+      if (routeChanged) {
+        lastRoute = route;
+        autoOpened = false;
+        rail.reset();
+      }
       if (!isEnabled()) {
         autoOpened = false;
         rail.setActive(false);
         rail.host.remove();
+        syncCommentRailOpenClass(page instanceof Document ? page.body : page, false);
         return;
       }
       const active = isFeedPage();
@@ -2966,18 +3058,106 @@
         rail.host.remove();
         return;
       }
-      if (rail.host.parentNode !== document.body) document.body.append(rail.host);
+      const owner = page instanceof Document ? page.body : page;
+      if (owner && rail.host.parentNode !== owner) owner.append(rail.host);
       if (!autoOpened && !rail.isOpen()) {
         const linkId = readFirstFeedLinkId();
         if (linkId !== "") {
           autoOpened = true;
           rail.open(linkId);
+          syncCommentRailOpenClass(page instanceof Document ? page.body : page, true);
         }
       }
     };
-    document.addEventListener(COMMENT_PREVIEW_EVENT, sync);
-    registerPageSync(sync, 200, [PAGE_ROUTE.FEED], "feed");
-    sync();
+    return { rail, isFeedPage, readFirstFeedLinkId, sync };
+  }
+  function watchCommentRail() {
+    if (!document.body) return () => void 0;
+    const page = document;
+    const route = bindCommentRail(createCommentRail(), page, () => readCommentPreviewPreference());
+    document.body.append(route.rail.host);
+    const controller = new AbortController();
+    const listen = (type, listener, capture = false) => document.addEventListener(type, listener, { capture, signal: controller.signal });
+    const on = (type, listener, capture = false) => listen(type, listener, capture);
+    const readCardLinkId = readRailCardLinkId;
+    listen("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const trigger = target.closest(RAIL_TRIGGER_SELECTOR);
+      if (!trigger) return;
+      const linkId = readCardLinkId(trigger);
+      if (linkId === "") return;
+      if (!readCommentPreviewPreference()) return;
+      if (!page.querySelector(RAIL_HOVER_CARD_SELECTOR)) return;
+      if (window.matchMedia("(max-width: 1199px)").matches) return;
+      event.preventDefault();
+      event.stopPropagation();
+      route.rail.open(linkId);
+    }, true);
+    let hoverTimer = 0;
+    let hoverId = "";
+    const cancelHover = () => {
+      if (hoverTimer !== 0) window.clearTimeout(hoverTimer);
+      hoverTimer = 0;
+      hoverId = "";
+    };
+    on("pointerover", (event) => {
+      if (!readCommentPreviewPreference() || !route.rail.isOpen()) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const card = target.closest(RAIL_HOVER_CARD_SELECTOR);
+      if (!card) return;
+      const linkId = readCardLinkId(card);
+      if (linkId === "" || linkId === hoverId) return;
+      cancelHover();
+      hoverId = linkId;
+      hoverTimer = window.setTimeout(() => {
+        hoverTimer = 0;
+        if (!route.rail.isOpen() || route.rail.getLinkId() === linkId) return;
+        route.rail.open(linkId);
+      }, 600);
+    }, true);
+    on("pointerout", (event) => {
+      if (hoverTimer === 0) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const card = target.closest(RAIL_HOVER_CARD_SELECTOR);
+      if (!card) return;
+      const related = event.relatedTarget;
+      if (related instanceof Node && card.contains(related)) return;
+      cancelHover();
+    }, true);
+    on("pointerdown", cancelHover, true);
+    on("scroll", cancelHover, true);
+    on("keydown", (event) => {
+      if (!route.rail.isOpen()) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        route.rail.collapse();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest(RAIL_TEXT_INPUT_SELECTOR) !== null) return;
+      const ids = readRailCardLinkIds(page);
+      const next = stepRailCardLinkId(ids, route.rail.getLinkId(), event.key === "ArrowDown" ? 1 : -1);
+      if (next === "" || !route.rail.open(next)) return;
+      event.preventDefault();
+      cancelHover();
+      revealRailCardByLinkId(page, next);
+    });
+    listen(COMMENT_PREVIEW_EVENT, () => route.sync());
+    const syncTask = () => route.sync();
+    registerPageSync(syncTask, 200, ADAPTED_ROUTES, "feed");
+    route.sync();
+    return () => {
+      controller.abort();
+      cancelHover();
+      pageSyncTasks.delete(syncTask);
+      route.rail.host.remove();
+      syncCommentRailOpenClass(document.body, false);
+    };
   }
 
   // scripts/heybox-up/src/ui/comment-sort.ts
@@ -3046,6 +3226,28 @@
     const parsed = Date.parse(value.replace(/-/g, "/"));
     return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : (Date.now() - parsed) / 1e3;
   }
+  function readCommentUserId(scope, selectors) {
+    const links = Array.from(scope.querySelectorAll("a[href*='/app/user/profile/'], a[href*='userid=']"));
+    if (selectors !== "") {
+      const named = scope.querySelector(selectors);
+      if (named !== null) {
+        if (named instanceof HTMLAnchorElement) links.unshift(named);
+        else links.unshift(...Array.from(named.querySelectorAll("a[href]")));
+      }
+    }
+    for (const link of links) {
+      const href = link.getAttribute("href") || "";
+      const match = /\/app\/user\/profile\/(\d+)/.exec(href) || /[?&]userid=(\d+)/.exec(href);
+      if (match) return match[1];
+    }
+    return "";
+  }
+  function isCommentAuthor(item, authorId, authorName) {
+    const id = readCommentUserId(item, ".info-box, .info-box__username, .comment-item__username");
+    if (authorId !== "") return id !== "" && id === authorId;
+    const name = (item.querySelector(".info-box__username")?.textContent || "").trim();
+    return authorName !== "" && name === authorName;
+  }
   function applyCommentSort(tree, mode) {
     const list = tree.querySelector(".link-comment__list");
     if (!list) return;
@@ -3057,12 +3259,13 @@
       for (const item of items) item.style.order = "";
       return;
     }
-    const authorName = (document.querySelector("#page-bbs-link .link-user__username")?.textContent || "").trim();
+    const articleHeader = document.querySelector("#page-bbs-link .link-user, #page-bbs-link .page-header, #page-bbs-link #page-bbs-link");
+    const authorId = articleHeader === null ? "" : readCommentUserId(articleHeader, ".link-user__user-wrapper, .page-header__user-wrapper");
+    const authorName = (document.querySelector("#page-bbs-link .link-user__username, #page-bbs-link .page-header__username")?.textContent || "").trim();
     const keyed = items.map((item, index) => {
       const likes = Number((item.querySelector(".like-box__cnt")?.textContent || "0").trim()) || 0;
       const age = parseCommentAge(item.querySelector(".info-box__create-time")?.textContent || "");
-      const name = (item.querySelector(".info-box__username")?.textContent || "").trim();
-      return { item, index, likes, age, isAuthor: authorName !== "" && name === authorName };
+      return { item, index, likes, age, isAuthor: isCommentAuthor(item, authorId, authorName) };
     });
     keyed.sort((a, b) => {
       if (mode === "likes") return b.likes - a.likes || a.index - b.index;
@@ -3636,6 +3839,15 @@
   var COMMUNITY_SEARCH_STYLE_ID = "heybox-up-community-search-style";
   var COMMUNITY_SEARCH_ACTIVE_CLASS = "heybox-up-cs-active";
   var COMMUNITY_SEARCH_PAGE_SIZE = 30;
+  var COMMUNITY_SEARCH_STATE_VERSION = 1;
+  var COMMUNITY_SEARCH_KEYWORD_MAX = 120;
+  var COMMUNITY_SEARCH_RANGE_MAX = 32;
+  var COMMUNITY_SEARCH_DUPLICATE_PAGE_LIMIT = 3;
+  var COMMUNITY_SEARCH_RESULT_CACHE_MAX = 60;
+  var COMMUNITY_SEARCH_SESSION_MAX_CHARS = 96e3;
+  function communitySearchStorageKey(topicId) {
+    return STORAGE_KEYS.communitySearch + ":" + topicId;
+  }
   var COMMUNITY_SEARCH_ICONS = {
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.4"/><path d="m16.1 16.1 4.4 4.4"/></svg>'
   };
@@ -3716,7 +3928,48 @@
     transition: filter .16s ease;
   }
   #heybox-up-community-search button.go:hover { filter: brightness(1.06); }
+  #heybox-up-community-search button.reset {
+    position: relative;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--heybox-up-muted, #6b7280);
+    font: inherit;
+    cursor: pointer;
+    transition: background .16s ease, color .16s ease;
+  }
+  #heybox-up-community-search button.reset::after {
+    content: "";
+    display: inline-block;
+    font-size: 0;
+    line-height: 0;
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid currentColor;
+    border-radius: 2px;
+    transform: rotate(45deg);
+  }
+  #heybox-up-community-search button.reset::before {
+    content: "清空";
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  #heybox-up-community-search button.reset[hidden] { display: none !important; }
+  #heybox-up-community-search button.reset:hover {
+    background: var(--heybox-up-subtle, rgba(20, 25, 30, .06));
+    color: var(--heybox-up-text, #14191e);
+  }
   #heybox-up-community-search button.go:focus-visible,
+  #heybox-up-community-search button.reset:focus-visible,
   #heybox-up-community-search .chip:focus-visible,
   #heybox-up-community-search .more:focus-visible,
   #heybox-up-community-search .close:focus-visible {
@@ -3787,6 +4040,14 @@
     border-bottom: 1px solid var(--heybox-up-border, rgba(20, 25, 30, .1));
   }
   #heybox-up-community-search .filters[hidden] { display: none !important; }
+  #heybox-up-community-search .filter-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 3px;
+    color: var(--heybox-up-text-2, #3c4249);
+    font-size: 12px;
+    font-weight: 600;
+  }
   #heybox-up-community-search .chip {
     height: 26px;
     margin: 0;
@@ -3926,7 +4187,7 @@
     if (name === "") name = normalizeRailText((document.title || "").replace(/[-_|].*$/, "")).slice(0, 24);
     return { topicId, name: name === "" ? "本社区" : name };
   }
-  function buildCommunitySearchUrl(topicId, keyword, offset, timeRange, signed) {
+  function buildCommunitySearchUrl(topicId, keyword, offset, timeRange, filterTag, signed) {
     const query = new URLSearchParams({
       os_type: "web",
       app: "heybox",
@@ -3946,6 +4207,7 @@
       topic_id: String(topicId)
     });
     if (timeRange !== "") query.set("time_range", timeRange);
+    if (filterTag !== "") query.set("filter_tag", filterTag);
     if (signed === true) {
       const time = Math.floor(Date.now() / 1e3);
       const nonce = md5Hex(String(time) + String(Math.random())).toUpperCase();
@@ -3978,26 +4240,27 @@
       return { ok: false, message: message === "" ? "接口返回失败状态" : message };
     }
     const result = asRecord(data["result"]) ?? {};
-    const items = Array.isArray(result["items"]) ? result["items"] : [];
-    const linkCount = items.filter((entry) => {
-      const record = asRecord(entry);
-      if (record === null) return false;
-      const type = record["type"];
-      return typeof type !== "string" || type === "" || type === "link";
-    }).length;
+    const items = [];
+    for (const entry of Array.isArray(result["items"]) ? result["items"] : []) {
+      if (normalizeSearchResult(entry) !== null) items.push(entry);
+    }
+    const linkCount = items.length;
     const rawRanges = Array.isArray(result["time_range_list"]) ? result["time_range_list"] : [];
     const timeRanges = rawRanges.map((entry) => asRecord(entry)).filter((entry) => entry !== null).filter((entry) => typeof entry["value"] === "string" && typeof entry["name"] === "string").map((entry) => ({ value: String(entry["value"]), name: String(entry["name"]) }));
+    const rawFilterItem = (Array.isArray(result["items"]) ? result["items"] : []).map((entry) => asRecord(entry)).find((entry) => entry !== null && entry["type"] === "filter_tag");
+    const rawFilterTags = rawFilterItem !== void 0 && rawFilterItem !== null && Array.isArray(rawFilterItem["filter_tags"]) ? rawFilterItem["filter_tags"] : [];
+    const filterTags = rawFilterTags.map((entry) => asRecord(entry)).filter((entry) => entry !== null).filter((entry) => isSearchFilterTagValue(entry["tag"]) && typeof entry["name"] === "string").map((entry) => ({ tag: String(entry["tag"]), name: String(entry["name"]).slice(0, 24) })).slice(0, 12);
     const rawScopedTip = data["search_not_result_tips"];
     const scopedTip = typeof rawScopedTip === "string" ? rawScopedTip.trim() : "";
     const rawResultTip = result["search_not_result_tips"];
     const resultTip = typeof rawResultTip === "string" ? rawResultTip.trim() : "";
-    return { ok: true, items, linkCount, timeRanges, tip: scopedTip !== "" ? scopedTip : resultTip };
+    return { ok: true, items, linkCount, timeRanges, filterTags, tip: scopedTip !== "" ? scopedTip : resultTip };
   }
-  async function requestCommunitySearch(topicId, keyword, offset, timeRange, signal) {
-    const signed = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, true), signal);
+  async function requestCommunitySearch(topicId, keyword, offset, timeRange, filterTag, signal) {
+    const signed = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, filterTag, true), signal);
     if (signed.aborted === true) return signed;
     if (signed.ok === true) return signed;
-    const plain = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, false), signal);
+    const plain = await fetchCommunitySearchPage(buildCommunitySearchUrl(topicId, keyword, offset, timeRange, filterTag, false), signal);
     return plain.ok === true ? plain : signed;
   }
   function pickSearchText(values) {
@@ -4013,6 +4276,172 @@
       if (parsed !== null && parsed > 0) return parsed;
     }
     return 0;
+  }
+  function isSearchTopicId(value) {
+    return typeof value === "string" && /^\d{1,20}$/.test(value);
+  }
+  function isSearchTimeRange(value) {
+    return typeof value === "string" && value.length <= COMMUNITY_SEARCH_RANGE_MAX && /^[A-Za-z0-9_-]*$/.test(value);
+  }
+  function isSearchFilterTagValue(value) {
+    return typeof value === "string" && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
+  }
+  function normalizeSearchKeyword(value) {
+    if (typeof value !== "string") return "";
+    return value.replace(/\s+/g, " ").trim().slice(0, COMMUNITY_SEARCH_KEYWORD_MAX);
+  }
+  function parseCommunitySearchSavedState(raw) {
+    const record = asRecord(raw);
+    if (record === null) return null;
+    if (record["version"] !== COMMUNITY_SEARCH_STATE_VERSION) return null;
+    const body = asRecord(record["state"]);
+    if (body === null) return null;
+    const topicId = body["topicId"];
+    if (!isSearchTopicId(topicId)) return null;
+    const rawKeyword = body["keyword"];
+    if (typeof rawKeyword !== "string") return null;
+    const keyword = normalizeSearchKeyword(rawKeyword);
+    if (keyword === "" || rawKeyword.length > COMMUNITY_SEARCH_KEYWORD_MAX * 2) return null;
+    const timeRange = body["timeRange"];
+    if (!isSearchTimeRange(timeRange)) return null;
+    const rawFilterTag = body["filterTag"];
+    const filterTag = rawFilterTag === void 0 ? "" : rawFilterTag;
+    if (typeof filterTag !== "string" || filterTag !== "" && !isSearchFilterTagValue(filterTag)) return null;
+    const open = body["open"];
+    if (typeof open !== "boolean") return null;
+    const results = body["results"];
+    if (results !== void 0 && typeof results !== "boolean") return null;
+    return {
+      topicId,
+      keyword,
+      timeRange,
+      filterTag,
+      open,
+      results: open === true && results === true
+    };
+  }
+  function isCommunitySearchItem(value) {
+    const record = asRecord(value);
+    if (record === null) return false;
+    return isSearchTopicId(record["id"]) && typeof record["title"] === "string" && typeof record["desc"] === "string" && typeof record["author"] === "string" && typeof record["thumb"] === "string" && isFiniteCount(record["createAt"]) && isFiniteCount(record["like"]) && isFiniteCount(record["comment"]);
+  }
+  function isFiniteCount(value) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0;
+  }
+  function isSearchRange(value) {
+    const record = asRecord(value);
+    return record !== null && isSearchTimeRange(record["value"]) && typeof record["name"] === "string" && record["name"].length <= 24;
+  }
+  function isSearchFilterTag(value) {
+    const record = asRecord(value);
+    return record !== null && isSearchFilterTagValue(record["tag"]) && typeof record["name"] === "string" && record["name"].length <= 24;
+  }
+  function parseCommunitySearchSession(raw, topicId) {
+    if (!isSearchTopicId(topicId)) return null;
+    try {
+      if (JSON.stringify(raw).length > COMMUNITY_SEARCH_SESSION_MAX_CHARS) return null;
+    } catch {
+      return null;
+    }
+    const record = asRecord(raw);
+    if (record === null) return null;
+    const saved = parseCommunitySearchSavedState(raw);
+    if (saved === null || saved.topicId !== topicId) return null;
+    const rawItems = record["items"];
+    if (!Array.isArray(rawItems) || rawItems.length > COMMUNITY_SEARCH_RESULT_CACHE_MAX) return null;
+    const items = [];
+    const ids = /* @__PURE__ */ new Set();
+    for (const entry of rawItems) {
+      if (!isCommunitySearchItem(entry) || ids.has(entry.id)) return null;
+      ids.add(entry.id);
+      items.push({
+        id: entry.id,
+        title: entry.title.slice(0, 200),
+        desc: entry.desc.slice(0, 240),
+        author: entry.author.slice(0, 40),
+        thumb: /^https?:\/\//i.test(entry.thumb) ? entry.thumb : "",
+        createAt: Number.isFinite(entry.createAt) && entry.createAt > 0 ? entry.createAt : 0,
+        like: Number.isFinite(entry.like) && entry.like > 0 ? entry.like : 0,
+        comment: Number.isFinite(entry.comment) && entry.comment > 0 ? entry.comment : 0
+      });
+    }
+    const offset = record["offset"];
+    const noMore = record["noMore"];
+    if (!Number.isSafeInteger(offset) || Number(offset) < 0 || typeof noMore !== "boolean") return null;
+    const rawRanges = record["timeRanges"];
+    if (!Array.isArray(rawRanges) || rawRanges.length > 12) return null;
+    const timeRanges = [];
+    for (const entry of rawRanges) {
+      if (!isSearchRange(entry)) return null;
+      timeRanges.push({ value: entry.value, name: entry.name.slice(0, 24) });
+    }
+    const rawFilterTags = record["filterTags"];
+    const filterTags = [];
+    if (rawFilterTags !== void 0) {
+      if (!Array.isArray(rawFilterTags) || rawFilterTags.length > 12) return null;
+      for (const entry of rawFilterTags) {
+        if (!isSearchFilterTag(entry)) return null;
+        filterTags.push({ tag: entry.tag, name: entry.name.slice(0, 24) });
+      }
+    }
+    return {
+      version: 1,
+      topicId: saved.topicId,
+      keyword: saved.keyword,
+      timeRange: resolveCommunitySearchRange(timeRanges, saved.timeRange),
+      filterTag: filterTags.some((entry) => entry.tag === saved.filterTag) ? saved.filterTag : "",
+      open: saved.open,
+      results: saved.results,
+      items,
+      offset: Number(offset),
+      noMore,
+      timeRanges,
+      filterTags
+    };
+  }
+  function readCommunitySearchSession(topicId) {
+    if (!isSearchTopicId(topicId)) return null;
+    return parseCommunitySearchSession(sessionStore.readJson(communitySearchStorageKey(topicId), null), topicId);
+  }
+  function writeCommunitySearchSession(state) {
+    if (!isSearchTopicId(state.topicId)) return;
+    if (parseCommunitySearchSavedState({ version: 1, state }) === null) return;
+    if (!state.items.every(isCommunitySearchItem)) return;
+    const record = {
+      version: COMMUNITY_SEARCH_STATE_VERSION,
+      state: {
+        topicId: state.topicId,
+        keyword: normalizeSearchKeyword(state.keyword),
+        timeRange: state.timeRange,
+        filterTag: state.filterTag,
+        open: state.open === true,
+        results: state.results === true
+      },
+      items: state.items.slice(0, COMMUNITY_SEARCH_RESULT_CACHE_MAX).map((item) => ({
+        id: item.id,
+        title: item.title.slice(0, 200),
+        desc: item.desc.slice(0, 240),
+        author: item.author.slice(0, 40),
+        thumb: item.thumb,
+        createAt: item.createAt,
+        like: item.like,
+        comment: item.comment
+      })),
+      offset: state.offset,
+      noMore: state.noMore === true,
+      timeRanges: state.timeRanges.slice(0, 12).map((range) => ({ value: range.value, name: range.name.slice(0, 24) })),
+      filterTags: state.filterTags.slice(0, 12).map((tag) => ({ tag: tag.tag, name: tag.name.slice(0, 24) }))
+    };
+    if (parseCommunitySearchSession(record, state.topicId) === null) return;
+    sessionStore.writeJson(communitySearchStorageKey(state.topicId), record);
+  }
+  function clearCommunitySearchSavedState(topicId) {
+    if (!isSearchTopicId(topicId)) return;
+    sessionStore.remove(communitySearchStorageKey(topicId));
+  }
+  function resolveCommunitySearchRange(ranges, savedValue) {
+    if (savedValue === "") return "";
+    return ranges.some((entry) => entry.value === savedValue) ? savedValue : "";
   }
   function normalizeSearchResult(entry) {
     const record = asRecord(entry);
@@ -4034,6 +4463,24 @@
       like: pickSearchNumber([info["like_num"], info["like_count"], info["up"], info["likes"]]),
       comment: pickSearchNumber([info["comment_num"], info["link_comment_num"], info["comment_count"], info["comments"]])
     };
+  }
+  function collectCommunitySearchPage(collector, response, reset) {
+    const known = new Set(collector.items.map((item) => item.id));
+    const incoming = [];
+    let linkCount = 0;
+    for (const entry of response.items) {
+      const item = normalizeSearchResult(entry);
+      if (item !== null) linkCount += 1;
+      if (item === null || known.has(item.id)) continue;
+      known.add(item.id);
+      incoming.push(item);
+    }
+    collector.items = reset === true ? incoming : collector.items.concat(incoming);
+    const reported = Number(response.linkCount) || 0;
+    const step = reported > 0 || linkCount > 0 ? Math.max(reported, linkCount) : 0;
+    collector.offset += step;
+    const exhausted = linkCount === 0;
+    return { added: incoming.length, duplicateOnly: exhausted !== true && incoming.length === 0, exhausted };
   }
   function createCommunitySearchItem(item) {
     const node = document.createElement("a");
@@ -4090,7 +4537,7 @@
     scope.className = "scope";
     const input = document.createElement("input");
     input.className = "q";
-    input.type = "search";
+    input.type = "text";
     input.name = "q";
     input.autocomplete = "off";
     input.placeholder = "搜索本社区的帖子";
@@ -4099,7 +4546,12 @@
     go.type = "submit";
     go.className = "go";
     go.textContent = "搜索";
-    bar.append(icon, scope, input, go);
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "reset";
+    reset.textContent = "清空";
+    reset.hidden = true;
+    bar.append(icon, scope, input, reset, go);
     const panel = document.createElement("div");
     panel.className = "panel";
     panel.hidden = true;
@@ -4150,13 +4602,14 @@
     foot.append(more, status);
     panel.append(head, filters, list, foot);
     root.append(bar, panel);
-    return { root, bar, input, scope, panel, headTitle, headMeta, globalLink, filters, list, foot, more, status, close };
+    return { root, bar, input, reset, scope, panel, headTitle, headMeta, globalLink, filters, list, foot, more, status, close };
   }
   function watchCommunitySearch() {
-    if (!document.body) return;
+    if (!document.body) return () => void 0;
     const ui = createCommunitySearchPanel();
     let state = null;
     let searchController = null;
+    let restoredTopicId = "";
     const pageNode = () => document.querySelector("#page-topic-link");
     const mainNode = () => document.querySelector("#page-topic-link .topic-link__main");
     const setActive = (active) => {
@@ -4167,7 +4620,8 @@
     const renderChips = () => {
       ui.filters.textContent = "";
       const ranges = state === null ? [] : state.timeRanges;
-      if (ranges.length === 0) {
+      const filterTags = state === null ? [] : state.filterTags;
+      if (ranges.length === 0 && filterTags.length === 0) {
         ui.filters.hidden = true;
         return;
       }
@@ -4185,12 +4639,41 @@
           current.offset = 0;
           current.items = [];
           current.noMore = false;
+          current.duplicatePages = 0;
+          persist();
           void run(true);
         });
         ui.filters.append(chip);
       };
       build("不限时间", "");
       for (const range of ranges) build(range.name, range.value);
+      if (filterTags.length > 0) {
+        const divider = document.createElement("span");
+        divider.className = "filter-label";
+        divider.textContent = "分类";
+        ui.filters.append(divider);
+        const buildTag = (label, value) => {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "chip";
+          chip.textContent = label;
+          chip.setAttribute("aria-pressed", String(state !== null && state.filterTag === value));
+          chip.addEventListener("click", () => {
+            const current = state;
+            if (current === null || current.loading === true || current.filterTag === value) return;
+            current.filterTag = value;
+            current.offset = 0;
+            current.items = [];
+            current.noMore = false;
+            current.duplicatePages = 0;
+            persist();
+            void run(true);
+          });
+          ui.filters.append(chip);
+        };
+        buildTag("全部分类", "");
+        for (const tag of filterTags) buildTag(tag.name, tag.tag);
+      }
     };
     const renderItems = () => {
       ui.list.textContent = "";
@@ -4208,6 +4691,10 @@
       else empty.textContent = "这个社区里没有匹配的帖子，换个关键词试试。";
       ui.list.append(empty);
     };
+    const syncResetVisibility = () => {
+      const hidden = ui.input.value === "";
+      if (ui.reset.hidden !== hidden) ui.reset.hidden = hidden;
+    };
     const render = () => {
       if (state === null) return;
       ui.headTitle.textContent = "在「" + state.topicName + "」中搜索 “" + state.keyword + "”";
@@ -4222,6 +4709,8 @@
       ui.globalLink.setAttribute("href", "/app/search/list?q=" + encodeURIComponent(state.keyword));
       renderChips();
       renderItems();
+      if (ui.input.value !== state.keyword) ui.input.value = state.keyword;
+      syncResetVisibility();
       const moreHadFocus = document.activeElement === ui.more;
       ui.foot.hidden = loaded > 0 || state.loading === true ? false : true;
       ui.more.hidden = state.noMore === true;
@@ -4233,24 +4722,25 @@
     };
     const run = async (reset) => {
       const current = state;
-      if (current === null || current.loading === true) return;
+      if (current === null || current.loading === true) return false;
       current.loading = true;
       current.error = "";
       current.status = reset === true ? "" : "加载中…";
       render();
       const offset = reset === true ? 0 : current.offset;
+      if (reset === true) current.offset = 0;
       searchController?.abort();
-      const controller = new AbortController();
-      searchController = controller;
-      const response = await requestCommunitySearch(current.topicId, current.keyword, offset, current.timeRange, controller.signal);
-      if (state !== current || searchController !== controller) return;
+      const controller2 = new AbortController();
+      searchController = controller2;
+      const response = await requestCommunitySearch(current.topicId, current.keyword, offset, current.timeRange, current.filterTag, controller2.signal);
+      if (state !== current || searchController !== controller2) return false;
       searchController = null;
       current.loading = false;
       current.status = "";
       if (response.aborted === true) {
         current.status = "搜索已取消";
         render();
-        return;
+        return false;
       }
       if (response.ok !== true) {
         if (reset === true) {
@@ -4260,22 +4750,25 @@
           current.status = "加载失败：" + response.message;
         }
         render();
-        return;
+        return false;
       }
-      const known = new Set(current.items.map((item) => item.id));
-      const incoming = [];
-      for (const entry of response.items) {
-        const item = normalizeSearchResult(entry);
-        if (item === null || known.has(item.id)) continue;
-        known.add(item.id);
-        incoming.push(item);
-      }
-      current.items = reset === true ? incoming : current.items.concat(incoming);
-      current.offset = offset + response.linkCount;
-      current.noMore = response.linkCount === 0;
+      const collection = collectCommunitySearchPage(current, response, reset);
+      current.noMore = collection.exhausted;
       current.tip = response.tip;
       if (current.timeRanges.length === 0 && response.timeRanges.length > 0) current.timeRanges = response.timeRanges;
+      if (current.filterTags.length === 0 && response.filterTags.length > 0) current.filterTags = response.filterTags;
+      if (reset !== true && collection.duplicateOnly === true) {
+        const duplicates = Math.min(current.duplicatePages + 1, COMMUNITY_SEARCH_DUPLICATE_PAGE_LIMIT);
+        current.duplicatePages = duplicates;
+        if (duplicates < COMMUNITY_SEARCH_DUPLICATE_PAGE_LIMIT) {
+          return await run(false);
+        }
+        current.status = "已连续 " + duplicates + " 页没有新帖子，已暂停自动翻页";
+      } else if (collection.added > 0 || reset === true) {
+        current.duplicatePages = 0;
+      }
       render();
+      return true;
     };
     const clearPanel = () => {
       ui.list.textContent = "";
@@ -4290,6 +4783,10 @@
       state = null;
       clearPanel();
       setActive(false);
+      if (restoreFocus === true) {
+        ui.input.setSelectionRange(ui.input.value.length, ui.input.value.length);
+      }
+      persist();
       if (restoreFocus === true) ui.input.focus();
     };
     const submit = () => {
@@ -4307,24 +4804,48 @@
         topicName: context.name,
         keyword,
         timeRange: "",
+        filterTag: "",
         items: [],
         offset: 0,
         noMore: false,
         timeRanges: [],
+        filterTags: [],
         tip: "",
         error: "",
         status: "",
-        loading: false
+        loading: false,
+        duplicatePages: 0
       };
       setActive(true);
       render();
-      void run(true);
+      persist();
+      void run(true).then(persist, () => void 0);
     };
     ui.bar.addEventListener("submit", (event) => {
       event.preventDefault();
       submit();
     });
-    document.addEventListener("keydown", (event) => {
+    ui.input.addEventListener("input", syncResetVisibility);
+    ui.reset.addEventListener("click", () => {
+      searchController?.abort();
+      searchController = null;
+      state = null;
+      clearPanel();
+      setActive(false);
+      ui.input.value = "";
+      const context = readTopicContext();
+      if (context !== null) clearCommunitySearchSavedState(context.topicId);
+      syncResetVisibility();
+      ui.input.focus();
+    });
+    ui.input.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || ui.input.value === "") return;
+      event.preventDefault();
+      ui.input.value = "";
+      syncResetVisibility();
+    });
+    ui.input.addEventListener("change", persist);
+    const onKeyDown = (event) => {
       if (event.key !== "Escape" || state === null || event.defaultPrevented === true) return;
       const target = event.target;
       if (target instanceof Element) {
@@ -4338,10 +4859,11 @@
       }
       event.preventDefault();
       close(true);
-    });
+    };
+    document.addEventListener("keydown", onKeyDown);
     ui.close.addEventListener("click", () => close(true));
     ui.more.addEventListener("click", () => {
-      void run(false);
+      void run(false).then(persist, () => void 0);
     });
     const sync = () => {
       ensureCommunitySearchStyle();
@@ -4351,6 +4873,9 @@
         searchController?.abort();
         searchController = null;
         if (ui.root.parentNode !== null) ui.root.remove();
+        restoredTopicId = "";
+        ui.input.value = "";
+        syncResetVisibility();
         if (state !== null) {
           state = null;
           clearPanel();
@@ -4376,13 +4901,82 @@
         state = null;
         clearPanel();
       }
+      restore(context);
       setActive(state !== null);
     };
+    function persist() {
+      const context = readTopicContext();
+      if (context === null) return;
+      const current = state !== null && state.topicId === context.topicId ? state : null;
+      const keyword = current !== null ? current.keyword : normalizeSearchKeyword(ui.input.value);
+      if (keyword === "") {
+        clearCommunitySearchSavedState(context.topicId);
+        return;
+      }
+      const ranges = current !== null ? current.timeRanges : [];
+      writeCommunitySearchSession({
+        version: 1,
+        topicId: context.topicId,
+        keyword,
+        timeRange: current !== null ? resolveCommunitySearchRange(ranges, current.timeRange) : "",
+        filterTag: current !== null ? current.filterTag : "",
+        open: current !== null || ui.input.value.trim() !== "",
+        results: current !== null,
+        items: current !== null ? current.items : [],
+        offset: current !== null ? current.offset : 0,
+        noMore: current !== null ? current.noMore : false,
+        timeRanges: ranges,
+        filterTags: current !== null ? current.filterTags : []
+      });
+    }
+    const restore = (context) => {
+      if (restoredTopicId === context.topicId) return;
+      if (restoredTopicId !== "") {
+        ui.input.value = "";
+        syncResetVisibility();
+      }
+      restoredTopicId = context.topicId;
+      const saved = readCommunitySearchSession(context.topicId);
+      if (saved === null) return;
+      ui.input.value = saved.keyword;
+      syncResetVisibility();
+      if (saved.open !== true) return;
+      state = {
+        topicId: context.topicId,
+        topicName: context.name,
+        keyword: saved.keyword,
+        timeRange: saved.timeRange,
+        filterTag: saved.filterTag,
+        items: saved.results === true ? saved.items : [],
+        offset: saved.offset,
+        noMore: saved.noMore,
+        timeRanges: saved.timeRanges,
+        filterTags: saved.filterTags,
+        tip: "",
+        error: "",
+        status: "",
+        loading: false,
+        duplicatePages: 0
+      };
+      setActive(true);
+      render();
+      if (saved.results !== true) void run(true).then(persist, () => void 0);
+    };
     registerPageSync(sync, 250, [PAGE_ROUTE.TOPIC], "topic");
+    const controller = new AbortController();
     window.addEventListener("popstate", () => {
       if (state !== null) close(false);
-    });
+    }, { signal: controller.signal });
     sync();
+    return () => {
+      controller.abort();
+      searchController?.abort();
+      searchController = null;
+      pageSyncTasks.delete(sync);
+      ui.root.remove();
+      document.removeEventListener("keydown", onKeyDown);
+      setActive(false);
+    };
   }
 
   // scripts/heybox-up/src/ui/desktop.ts
@@ -4415,6 +5009,9 @@
   }
   #heybox-up-left-rail .rail-block + .rail-block,
   #heybox-up-right-rail .rail-block + .rail-block { margin-top: 12px; }
+  #heybox-up-right-rail .rail-block[hidden] { display: none !important; }
+  #heybox-up-right-rail .rail-block[hidden] + .rail-block { margin-top: 0; }
+  #heybox-up-right-rail[hidden] { display: none !important; }
   #heybox-up-left-rail .rail-title,
   #heybox-up-right-rail .rail-title {
     margin: 0 0 7px;
@@ -4593,6 +5190,13 @@
       margin: 0 !important;
       flex: none !important;
     }
+    body:not(.heybox-up-rail-open) #page-bbs-community.heybox-up-desktop.heybox-up-no-right-modules .content {
+      grid-template-columns: minmax(208px, 1fr) minmax(320px, min(var(--heybox-up-feed-w), calc(100vw - 256px))) !important;
+      justify-content: center;
+    }
+    body:not(.heybox-up-rail-open) #page-bbs-community.heybox-up-desktop.heybox-up-no-right-modules .content > main.list { grid-column: 2; }
+    body:not(.heybox-up-rail-open) #page-bbs-community.heybox-up-desktop.heybox-up-no-right-modules .content > #heybox-up-left-rail { grid-column: 1; }
+    #page-bbs-community.heybox-up-desktop.heybox-up-no-right-modules .content > #heybox-up-right-rail { display: none !important; }
     /* 评论预览只占右侧一列的真实宽度。旧实现再叠一层“侧栏 + 48px”右内边距，
        会在面板与信息流之间留下近乎双倍于面板的空白，并把中栏挤向左侧。 */
     body.heybox-up-rail-open #app > main { max-width: none !important; }
@@ -4695,9 +5299,12 @@
     const hotTitle = document.createElement("p");
     hotTitle.className = "rail-title";
     hotTitle.textContent = "热门排行";
+    const hotHint = document.createElement("p");
+    hotHint.className = "rail-hint";
+    hotHint.textContent = "仅统计当前已加载的信息流";
     const hot = document.createElement("ol");
     hot.className = "hot-list";
-    hotBlock.append(hotTitle, hot);
+    hotBlock.append(hotTitle, hotHint, hot);
     const toolsBlock = document.createElement("section");
     toolsBlock.className = "rail-block";
     const toolsTitle = document.createElement("p");
@@ -4710,7 +5317,7 @@
     ];
     for (const item of tools) toolsBlock.append(createDesktopRailLink(item, false));
     root.append(hotBlock, toolsBlock);
-    return { root, hot };
+    return { root, hot, hotBlock, shortcutsBlock: toolsBlock };
   }
   function readDesktopChannels() {
     return Array.from(document.querySelectorAll("#page-bbs-community .bbs-home__topic-item")).map((button) => {
@@ -4777,6 +5384,9 @@
     }).filter((entry) => entry.title !== "").sort((left, right) => right.score - left.score).slice(0, DESKTOP_HOT_LIMIT);
   }
   function syncDesktopHot(ui, cache) {
+    ui.hotBlock.hidden = !readDesktopRailPreference("hotRanking");
+    ui.shortcutsBlock.hidden = !readDesktopRailPreference("shortcuts");
+    ui.root.hidden = ui.hotBlock.hidden && ui.shortcutsBlock.hidden;
     const items = readDesktopHotItems();
     const signature = items.map((item) => item.id + ":" + item.score + ":" + item.title).join("|");
     if (signature === cache.hot) return;
@@ -4851,6 +5461,7 @@
       }
       ensureDesktopStyle();
       page.classList.add(DESKTOP_PAGE_CLASS);
+      page.classList.toggle("heybox-up-no-right-modules", !readDesktopRailPreference("hotRanking") && !readDesktopRailPreference("shortcuts"));
       document.body.classList.add("heybox-up-desktop-on");
       if (left.root.parentNode !== content) content.prepend(left.root);
       if (right.root.parentNode !== content) content.append(right.root);
@@ -4858,6 +5469,7 @@
       syncDesktopHot(right, cache);
     };
     registerPageSync(sync, 400, [PAGE_ROUTE.FEED], "feed");
+    document.addEventListener("heybox-up:desktop-rail-preference", () => sync(true));
     window.addEventListener("popstate", () => requestAnimationFrame(() => sync(true)));
     desktopViewport.addEventListener("change", () => sync(true));
     sync(true);
@@ -4868,6 +5480,13 @@
   var LOGIN_RETRY_DELAY_MS = 1500;
   var LOGIN_RETRY_MAX = 3;
   var FAVOUR_LIST_SELECTOR = ".user-favour__list";
+  function formatFavourCountNote(total, matched, query, hasNext) {
+    const filtered = query.trim() !== "" ? "，匹配 " + matched + " 条" : "";
+    const prefix = total >= CY_MAX_ITEMS && hasNext ? "已加载" : "共";
+    const count = prefix + " " + total + " 条插眼收藏" + filtered + "，网页收藏列表默认不显示。";
+    if (total < CY_MAX_ITEMS) return count;
+    return hasNext ? count + " 已达到单批读取上限，可点击「加载更多」继续读取。" : count + " 接口已确认没有更多记录。";
+  }
   var FAVOUR_CSS = `
   :host { display: block; scroll-margin-top: 80px; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
   .section { padding: 14px 8px 4px; }
@@ -4880,6 +5499,12 @@
   .refresh:hover:not(:disabled), .retry:hover { border-color: rgba(127,127,127,.55); }
   .refresh:disabled { opacity: .5; cursor: default; }
   .retry { margin: -2px 0 10px; }
+  .load-more {
+    display: block; margin: 2px auto 12px; font: inherit; font-size: 12px; padding: 5px 14px;
+    border-radius: 8px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; cursor: pointer;
+  }
+  .load-more:hover:not(:disabled) { border-color: rgba(127,127,127,.55); }
+  .load-more:disabled { opacity: .5; cursor: default; }
   .note { font-size: 12px; opacity: .62; margin-bottom: 10px; }
   .search {
     width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 7px 10px;
@@ -4930,6 +5555,8 @@
     head.append(heading, refresh);
     const note = document.createElement("div");
     note.className = "note";
+    note.setAttribute("role", "status");
+    note.setAttribute("aria-live", "polite");
     note.textContent = "正在读取插眼收藏…";
     const retry = document.createElement("button");
     retry.type = "button";
@@ -4944,10 +5571,27 @@
     search.hidden = true;
     const list = document.createElement("div");
     list.className = "list";
-    section.append(head, note, retry, search, list);
+    const moreButton = document.createElement("button");
+    moreButton.type = "button";
+    moreButton.className = "load-more";
+    moreButton.textContent = "加载更多";
+    moreButton.hidden = true;
+    moreButton.setAttribute("aria-label", "加载更多插眼收藏");
+    section.append(head, note, retry, search, list, moreButton);
     shadow.append(section);
-    const state = { items: [], loading: false, error: "", notice: "", progress: 0, query: "" };
+    const state = {
+      items: [],
+      loading: false,
+      loadingMore: false,
+      error: "",
+      notice: "",
+      progress: 0,
+      query: "",
+      hasNext: false,
+      nextOffset: 0
+    };
     let loadController = null;
+    let moreController = null;
     let loginRetryTimer = 0;
     let loginRetryLeft = 0;
     let disposed = false;
@@ -4956,22 +5600,27 @@
       const needle = query.toLowerCase();
       const matched = needle === "" ? state.items : state.items.filter((item) => item.title.toLowerCase().includes(needle) || item.text.toLowerCase().includes(needle));
       list.replaceChildren();
-      refresh.disabled = state.loading;
+      refresh.disabled = state.loading || state.loadingMore;
       refresh.textContent = state.loading ? "读取中…" : "刷新";
-      retry.hidden = state.error === "";
+      retry.hidden = state.error === "" || state.items.length > 0 && state.hasNext;
       search.hidden = state.items.length === 0;
+      moreButton.hidden = state.loading || state.items.length === 0 || !state.hasNext;
+      moreButton.disabled = state.loadingMore;
+      moreButton.textContent = state.loadingMore ? "加载中…" : "加载更多";
       if (state.error !== "") {
         note.textContent = "读取失败：" + state.error + (state.items.length > 0 ? "（显示上次结果）" : "");
       } else if (state.notice !== "") {
         note.textContent = state.notice;
       } else if (state.loading) {
         note.textContent = "正在读取插眼收藏…" + (state.progress > 0 ? " 已获取 " + state.progress + " 条" : "");
+      } else if (state.loadingMore) {
+        note.textContent = "正在加载更多插眼收藏…" + (state.progress > 0 ? " 已获取 " + state.progress + " 条" : "");
       } else if (state.items.length === 0) {
         note.textContent = "没有插眼收藏。";
       } else if (matched.length === 0) {
         note.textContent = "没有匹配“" + query + "”的插眼条目。";
       } else {
-        note.textContent = "共 " + state.items.length + " 条插眼收藏" + (query !== "" ? "，匹配 " + matched.length + " 条" : "") + "，网页收藏列表默认不显示。";
+        note.textContent = formatFavourCountNote(state.items.length, matched.length, query, state.hasNext);
       }
       if (matched.length === 0) return;
       const fragment = document.createDocumentFragment();
@@ -5006,6 +5655,7 @@
       state.progress = 0;
       render();
       loadController?.abort();
+      moreController?.abort();
       loadController = new AbortController();
       let loginMissing = false;
       try {
@@ -5018,14 +5668,21 @@
         loginRetryLeft = 0;
         const cached = force ? null : readCache(userId);
         if (cached) {
-          state.items = cached;
+          state.items = cached.items;
+          state.hasNext = cached.hasNext;
+          state.nextOffset = cached.nextOffset;
           return;
         }
-        state.items = await loadCyFavorites(userId, (count) => {
-          state.progress = count;
-          note.textContent = "正在读取插眼收藏… 已获取 " + count + " 条";
+        const batch = await loadCyFavoritesBatch(userId, {
+          onProgress: (count) => {
+            state.progress = count;
+            note.textContent = "正在读取插眼收藏… 已获取 " + count + " 条";
+          }
         }, loadController.signal);
-        writeCache(userId, state.items);
+        state.items = batch.items;
+        state.hasNext = batch.hasNext;
+        state.nextOffset = batch.nextOffset;
+        writeCache(userId, { items: state.items, hasNext: state.hasNext, nextOffset: state.nextOffset });
       } catch (error) {
         if (isAbortError(error)) return;
         state.error = error instanceof Error ? error.message : String(error);
@@ -5039,8 +5696,47 @@
         }
       }
     };
+    const loadMore = async () => {
+      if (disposed || state.loading || state.loadingMore || !state.hasNext) return;
+      window.clearTimeout(loginRetryTimer);
+      loginRetryTimer = 0;
+      state.loadingMore = true;
+      state.error = "";
+      state.notice = "";
+      state.progress = 0;
+      render();
+      moreController?.abort();
+      moreController = new AbortController();
+      try {
+        const userId = await resolveHeyboxId(moreController.signal);
+        if (userId === "") {
+          state.error = "登录状态已失效，无法读取更多插眼收藏。";
+          return;
+        }
+        const batch = await loadCyFavoritesBatch(userId, {
+          offset: state.nextOffset,
+          seenIds: state.items.map((item) => item.id),
+          onProgress: (count) => {
+            state.progress = count;
+            note.textContent = "正在加载更多插眼收藏… 已获取 " + count + " 条";
+          }
+        }, moreController.signal);
+        state.items = mergeCyFavorites(state.items, batch.items);
+        state.hasNext = batch.hasNext;
+        state.nextOffset = batch.nextOffset;
+        writeCache(userId, { items: state.items, hasNext: state.hasNext, nextOffset: state.nextOffset });
+      } catch (error) {
+        if (isAbortError(error)) return;
+        state.error = error instanceof Error ? error.message : String(error);
+      } finally {
+        state.loadingMore = false;
+        moreController = null;
+        render();
+      }
+    };
     refresh.addEventListener("click", () => void load(true));
     retry.addEventListener("click", () => void load(true));
+    moreButton.addEventListener("click", () => void loadMore());
     search.addEventListener("input", () => {
       state.query = search.value;
       render();
@@ -5057,7 +5753,10 @@
         loginRetryLeft = LOGIN_RETRY_MAX;
         loadController?.abort();
         loadController = null;
+        moreController?.abort();
+        moreController = null;
         state.loading = false;
+        state.loadingMore = false;
       }
     };
   }
@@ -6249,6 +6948,8 @@
   var navMotionToggle = null;
   var readerToggle = null;
   var readerTimelineToggle = null;
+  var desktopHotRankingToggle = null;
+  var desktopShortcutsToggle = null;
   var feedWidthChips = [];
   var feedWidthInput = null;
   var readerLineHeightInput = null;
@@ -7942,6 +8643,8 @@
     if (navMotionToggle) navMotionToggle.setAttribute("aria-checked", String(readNavMotionPreference()));
     if (readerToggle) readerToggle.setAttribute("aria-checked", String(readReaderPreference()));
     if (readerTimelineToggle) readerTimelineToggle.setAttribute("aria-checked", String(readReaderTimelinePreference()));
+    if (desktopHotRankingToggle) desktopHotRankingToggle.setAttribute("aria-checked", String(readDesktopRailPreference("hotRanking")));
+    if (desktopShortcutsToggle) desktopShortcutsToggle.setAttribute("aria-checked", String(readDesktopRailPreference("shortcuts")));
     syncFeedWidthControls(readFeedWidth());
     syncNumberInput(readerLineHeightInput, readReaderLineHeight());
     syncReaderHistoryLimitControl(readReaderHistoryLimit());
@@ -8045,11 +8748,71 @@
       createNavMotionToggle(),
       createReaderToggle(),
       createReaderTimelineToggle(),
+      createDesktopRailToggle("hotRanking", "热门排行", "显示基于当前已加载信息流的排序"),
+      createDesktopRailToggle("shortcuts", "快捷入口", "显示收藏与文章入口"),
       createReaderHistoryLimitControl(),
       createReaderLineHeightControl(),
       createThemeMenuSeparator(),
       createFeedWidthControl()
     );
+    const getMenuItems = (owner) => Array.from(
+      owner.querySelectorAll('[role^="menuitem"]')
+    ).filter((node) => !node.hidden && !node.closest("[hidden]"));
+    const getTabStops = (owner) => Array.from(
+      owner.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])')
+    ).filter((node) => {
+      if (node.hidden || node.closest("[hidden]") !== null || node.getAttribute("aria-hidden") === "true") return false;
+      if (node instanceof HTMLButtonElement || node instanceof HTMLInputElement || node instanceof HTMLSelectElement || node instanceof HTMLTextAreaElement) return !node.disabled;
+      return true;
+    });
+    const focusMenuItem = (owner, index) => {
+      const items2 = getMenuItems(owner);
+      if (items2.length === 0) return;
+      const nextIndex = (index + items2.length) % items2.length;
+      items2[nextIndex]?.focus();
+    };
+    const focusInitialMenuItem = (owner, selectedId) => {
+      const items2 = getMenuItems(owner);
+      if (items2.length === 0) return;
+      const selected = selectedId === void 0 ? void 0 : items2.find((item) => item.dataset["theme"] === selectedId || item.getAttribute("aria-checked") === "true");
+      (selected ?? items2[0])?.focus();
+    };
+    const navigateMenu = (owner, key, shiftKey) => {
+      const items2 = getMenuItems(owner);
+      if (items2.length === 0) return false;
+      const root = owner.getRootNode();
+      const active = root instanceof ShadowRoot ? root.activeElement : document.activeElement;
+      const currentIndex = active instanceof HTMLElement ? items2.indexOf(active) : -1;
+      if (key === "ArrowDown") {
+        if (currentIndex < 0) return false;
+        focusMenuItem(owner, currentIndex + 1);
+        return true;
+      }
+      if (key === "ArrowUp") {
+        if (currentIndex < 0) return false;
+        focusMenuItem(owner, currentIndex - 1);
+        return true;
+      }
+      if (key === "Home") {
+        if (currentIndex < 0) return false;
+        focusMenuItem(owner, 0);
+        return true;
+      }
+      if (key === "End") {
+        if (currentIndex < 0) return false;
+        focusMenuItem(owner, items2.length - 1);
+        return true;
+      }
+      if (key === "Tab") {
+        const tabStops = getTabStops(owner);
+        const tabIndex = active instanceof HTMLElement ? tabStops.indexOf(active) : -1;
+        if (tabIndex < 0 || tabStops.length === 0) return false;
+        const nextIndex = (tabIndex + (shiftKey ? -1 : 1) + tabStops.length) % tabStops.length;
+        tabStops[nextIndex]?.focus();
+        return true;
+      }
+      return false;
+    };
     const closeThemeMenu = () => {
       if (menu.hidden) return;
       menu.hidden = true;
@@ -8067,12 +8830,14 @@
       menu.hidden = !menu.hidden;
       button.setAttribute("aria-expanded", String(!menu.hidden));
       updateThemeEntry();
+      if (!menu.hidden) focusInitialMenuItem(menu, currentThemeMode);
     });
     settingsButton.addEventListener("click", () => {
       closeThemeMenu();
       settingsMenu.hidden = !settingsMenu.hidden;
       settingsButton.setAttribute("aria-expanded", String(!settingsMenu.hidden));
       updateThemeEntry();
+      if (!settingsMenu.hidden) focusInitialMenuItem(settingsMenu);
     });
     document.addEventListener("click", (event) => {
       if (menu.hidden && settingsMenu.hidden || event.composedPath().includes(host)) return;
@@ -8080,6 +8845,12 @@
       closeSettingsMenu();
     }, true);
     document.addEventListener("keydown", (event) => {
+      const path = event.composedPath();
+      const activeMenu = !menu.hidden && path.includes(menu) ? menu : !settingsMenu.hidden && path.includes(settingsMenu) ? settingsMenu : null;
+      if (activeMenu && navigateMenu(activeMenu, event.key, event.shiftKey)) {
+        event.preventDefault();
+        return;
+      }
       if (event.key !== "Escape" || menu.hidden && settingsMenu.hidden) return;
       event.preventDefault();
       const returnTarget = settingsMenu.hidden ? button : settingsButton;
@@ -8211,6 +8982,33 @@
       setReaderTimelinePreference(next);
     });
     readerTimelineToggle = node;
+    return node;
+  }
+  function createDesktopRailToggle(module, label, hintText) {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "item toggle";
+    node.setAttribute("role", "menuitemcheckbox");
+    node.setAttribute("aria-checked", String(readDesktopRailPreference(module)));
+    const copy = document.createElement("span");
+    copy.className = "copy";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = label;
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = hintText;
+    copy.append(name, hint);
+    const toggle = document.createElement("span");
+    toggle.className = "switch";
+    node.append(copy, toggle);
+    node.addEventListener("click", () => {
+      const next = node.getAttribute("aria-checked") !== "true";
+      node.setAttribute("aria-checked", String(next));
+      setDesktopRailPreference(module, next);
+    });
+    if (module === "hotRanking") desktopHotRankingToggle = node;
+    else desktopShortcutsToggle = node;
     return node;
   }
   var FEED_WIDTH_STEPS = [40, 48, 56, 64, 72];
@@ -8686,6 +9484,17 @@
   var READER_MEDIA_EXCLUDE_SELECTOR = ".comment, .link-comment, .com-award-table, .com-game-card, .bbs-link__related-recommend, .bbs-video__user, .bbs-video__tags, .link-user, [class*='avatar'], [class*='icon'], [class*='emoji']";
   var READER_SCROLL_KEY = "heybox-up.readerScroll.v1:";
   var READER_RATIO_KEY = "heybox-up.readerRatio.v1:";
+  var READER_POSITIONS_VERSION = 1;
+  var READER_POSITIONS_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+  var READER_POSITIONS_MAX = 200;
+  var POST_ID_PATTERN = /^\d+$/;
+  var COMMENT_CONTROL_ATTRIBUTES = { reply: "replyId", remove: "deleteId", collapse: "threadId", expand: "threadId" };
+  var COMMENT_CONTROL_CLASSES = {
+    reply: "hbu-reader-comments-reply",
+    remove: "hbu-reader-comments-delete",
+    collapse: "hbu-reader-comments-collapse",
+    expand: "hbu-reader-comments-expand"
+  };
   var READER_PENDING_NOTICE_MS = 9e3;
   var LIGHTBOX_LONG_IMAGE_RATIO = 1.6;
   var LIGHTBOX_LONG_IMAGE_WIDTH_RATIO = 0.5;
@@ -9522,6 +10331,7 @@
   .hbu-reader-composer-image-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .hbu-reader-composer-image-placeholder { color: var(--hbu-reader-muted); font-size: 11px; }
   .hbu-reader-composer-image-state { position: absolute; right: 0; bottom: 0; left: 0; padding: 1px 0; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 10px; text-align: center; }
+  .hbu-reader-composer-image-retry { position: absolute; right: 2px; bottom: 2px; left: 2px; min-height: 18px; padding: 0 3px; border: 1px solid var(--hbu-reader-border); border-radius: 5px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font: inherit; font-size: 10px; line-height: 16px; cursor: pointer; }
   .hbu-reader-composer-image[data-status="failed"] .hbu-reader-composer-image-frame { border-color: var(--hbu-reader-danger); }
   .hbu-reader-composer-image-remove { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--hbu-reader-border); border-radius: 50%; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
   .hbu-reader-composer-file { display: none; }
@@ -9555,6 +10365,7 @@
   .hbu-reader-lightbox-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; color: rgba(233, 238, 245, .72); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .hbu-reader-lightbox-close { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border: 1px solid rgba(255, 255, 255, .22); border-radius: 50%; background: rgba(12, 16, 22, .6); color: inherit; cursor: pointer; }
   .hbu-reader-lightbox-close svg { width: 17px; height: 17px; }
+.hbu-reader-lightbox :is(img, button):focus-visible { outline: 2px solid var(--hbu-reader-accent); outline-offset: 2px; }
   .hbu-reader-toast { position: absolute; bottom: 58px; left: 50%; z-index: 20; padding: 7px 13px; border: 1px solid var(--hbu-reader-float-border); border-radius: 99px; background: var(--hbu-reader-float); color: var(--hbu-reader-float-ink); font-size: 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, .18); opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .18s ease, transform .18s ease; }
   .hbu-reader-toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
   .hbu-reader-toast--fixed { position: fixed; bottom: 58px; z-index: 4060; }
@@ -9827,6 +10638,7 @@
       }
       sessionStore.remove(READER_SCROLL_KEY + id);
       sessionStore.remove(READER_RATIO_KEY + id);
+      removeStoredReaderPosition(id);
     }
     if (changed) writeSessionValue(POST_HISTORY_TITLES_KEY, stored);
   }
@@ -10286,12 +11098,66 @@
     if (id === "") return;
     sessionStore.write(READER_SCROLL_KEY + id, String(index));
   }
+  function readStoredReaderPositions() {
+    const raw = localStore.readJson(STORAGE_KEYS.readerPositions, null);
+    const container = asRecord(raw);
+    if (container === null || container["version"] !== READER_POSITIONS_VERSION) {
+      return { changed: raw !== null, positions: {} };
+    }
+    const stored = asRecord(container["positions"]);
+    if (stored === null) return { changed: true, positions: {} };
+    const cutoff = Date.now() - READER_POSITIONS_TTL_MS;
+    const positions = {};
+    let changed = false;
+    for (const [id, value] of Object.entries(stored)) {
+      const entry = asRecord(value);
+      const ratio = entry === null ? Number.NaN : Number(entry["ratio"]);
+      const updatedAt = entry === null ? Number.NaN : Number(entry["updatedAt"]);
+      if (!POST_ID_PATTERN.test(id) || !Number.isFinite(ratio) || ratio < 0 || ratio > 1 || !Number.isFinite(updatedAt) || updatedAt <= cutoff) {
+        changed = true;
+        continue;
+      }
+      positions[id] = { ratio, updatedAt };
+    }
+    const ids = Object.keys(positions);
+    if (ids.length > READER_POSITIONS_MAX) {
+      changed = true;
+      for (const id of ids.sort((a, b) => positions[a].updatedAt - positions[b].updatedAt).slice(0, ids.length - READER_POSITIONS_MAX)) {
+        delete positions[id];
+      }
+    }
+    return { changed, positions };
+  }
+  function writeStoredReaderPositions(positions) {
+    localStore.writeJson(STORAGE_KEYS.readerPositions, {
+      version: READER_POSITIONS_VERSION,
+      positions
+    });
+  }
+  function removeStoredReaderPosition(id) {
+    if (id === "" || !POST_ID_PATTERN.test(id)) return;
+    const { positions } = readStoredReaderPositions();
+    if (!Object.prototype.hasOwnProperty.call(positions, id)) return;
+    delete positions[id];
+    writeStoredReaderPositions(positions);
+  }
+  function persistReaderRatio(id, ratio) {
+    if (id === "" || !POST_ID_PATTERN.test(id) || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) return;
+    const { positions } = readStoredReaderPositions();
+    positions[id] = { ratio, updatedAt: Date.now() };
+    writeStoredReaderPositions(positions);
+  }
   function readReaderRatio(id) {
     if (id === "") return -1;
     const stored = sessionStore.read(READER_RATIO_KEY + id);
-    if (stored === null) return -1;
-    const value = Number(stored);
-    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : -1;
+    if (stored !== null) {
+      const value = Number(stored);
+      if (Number.isFinite(value) && value >= 0 && value <= 1) return value;
+    }
+    const { changed, positions } = readStoredReaderPositions();
+    if (changed) writeStoredReaderPositions(positions);
+    const saved = positions[id];
+    return saved === void 0 ? -1 : saved.ratio;
   }
   function writeReaderRatio(id, ratio) {
     if (id === "") return;
@@ -10308,6 +11174,7 @@
     let lightboxZoom = 0;
     let lightboxBaseWidth = 0;
     let lightboxNatural = { width: 0, height: 0 };
+    let lightboxReturnFocus = null;
     let favourPanel = null;
     let favourButton = null;
     let spacingPanel = null;
@@ -10340,6 +11207,7 @@
     let progressFill = null;
     let lastProgressPercent = -1;
     let ratioSaveTimer = 0;
+    let durableRatioTimer = 0;
     let pendingRatio = null;
     let sourceCache = null;
     const suspendedEmbeds = /* @__PURE__ */ new Map();
@@ -10388,10 +11256,12 @@
       }).catch(() => void 0);
     };
     const articleComposerEmojiClosers = /* @__PURE__ */ new WeakMap();
+    let articleComposerSelectionCleanup = null;
     const articleComposerImages = /* @__PURE__ */ new WeakMap();
     let articleComposerImageSeq = 0;
     let commentPanel = null;
     let commentPanelList = null;
+    let lastCommentControlFocus = null;
     let commentPanelStatus = null;
     let commentPanelStatusText = null;
     let commentPanelRetry = null;
@@ -11871,7 +12741,7 @@
         image.referrerPolicy = "no-referrer";
         image.src = segment.src;
         image.alt = "评论图片";
-        image.addEventListener("click", () => openLightbox(segment.src));
+        bindLightboxTrigger(image, () => segment.src);
         node.append(image);
       }
     };
@@ -11961,9 +12831,19 @@
       holder.append(hiddenRow);
       return holder;
     };
-    const focusCommentThreadControl = (selector, threadId) => {
-      for (const control of commentPanelList?.querySelectorAll(selector) ?? []) {
-        if (control.dataset["threadId"] !== threadId) continue;
+    const describeCommentControl = (control) => {
+      for (const [action, attribute] of Object.entries(COMMENT_CONTROL_ATTRIBUTES)) {
+        const id = control.dataset[attribute];
+        if (id !== void 0 && control.classList.contains(COMMENT_CONTROL_CLASSES[action])) return { id, action };
+      }
+      return null;
+    };
+    const restoreCommentControlFocus = (target) => {
+      if (target === null || commentPanelList === null) return;
+      const attribute = COMMENT_CONTROL_ATTRIBUTES[target.action];
+      const selector = "." + COMMENT_CONTROL_CLASSES[target.action];
+      for (const control of commentPanelList.querySelectorAll(selector)) {
+        if (control.dataset[attribute] !== target.id) continue;
         control.focus({ preventScroll: true });
         return;
       }
@@ -12124,6 +13004,8 @@
     };
     const renderReaderComments = () => {
       if (commentPanel === null) return;
+      const active = document.activeElement;
+      const focusedControl = active instanceof HTMLElement && commentPanelList?.contains(active) === true ? describeCommentControl(active) : active === commentPanelRefresh ? lastCommentControlFocus : null;
       const hideCy = readHideCyPreference();
       const loadedVisible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
       const hiddenCy = commentState.items.length - loadedVisible.length;
@@ -12137,6 +13019,7 @@
         commentPanelList.replaceChildren(...visible.map(createReaderCommentItem));
         commentPanelList.hidden = visible.length === 0;
       }
+      if (focusedControl !== null) restoreCommentControlFocus(focusedControl);
       if (commentPanelStatus !== null) {
         if (commentState.error !== "") {
           commentPanelStatus.hidden = false;
@@ -12463,6 +13346,15 @@
           state.textContent = image.status === "pending" ? "上传中…" : "上传失败";
           frame.append(state);
         }
+        if (image.status === "failed") {
+          const retry = document.createElement("button");
+          retry.type = "button";
+          retry.className = "hbu-reader-composer-image-retry";
+          retry.textContent = "重试上传";
+          retry.setAttribute("aria-label", "重试上传图片 " + image.name);
+          retry.addEventListener("click", () => retryComposerImage(root, image.id));
+          item.append(retry);
+        }
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "hbu-reader-composer-image-remove";
@@ -12515,6 +13407,19 @@
       if (status !== null) status.textContent = "";
       renderComposerImages(root);
       syncArticleComposers();
+    }
+    function retryComposerImage(root, id) {
+      const image = readComposerImages(root).find((candidate) => candidate.id === id);
+      if (image === void 0 || image.removed || image.status !== "failed") return;
+      image.controller = new AbortController();
+      image.status = "pending";
+      image.error = "";
+      image.url = "";
+      const status = readComposerStatus(root);
+      if (status !== null) status.textContent = "";
+      renderComposerImages(root);
+      syncArticleComposers();
+      uploadComposerImage(root, image);
     }
     function clearComposerImages(root) {
       for (const image of readComposerImages(root)) {
@@ -13172,7 +14077,13 @@
       input.addEventListener("input", syncComposerText);
       input.addEventListener("keyup", () => saveComposerSelection(input));
       input.addEventListener("pointerup", () => saveComposerSelection(input));
-      document.addEventListener("selectionchange", () => saveComposerSelection(input));
+      articleComposerSelectionCleanup?.();
+      const saveSelection = () => saveComposerSelection(input);
+      document.addEventListener("selectionchange", saveSelection);
+      articleComposerSelectionCleanup = () => {
+        document.removeEventListener("selectionchange", saveSelection);
+        articleComposerSelectionCleanup = null;
+      };
       input.addEventListener("paste", (event) => {
         event.preventDefault();
         const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -13216,6 +14127,7 @@
         if (commentPanel.isConnected) return commentPanel;
         commentPanel = null;
         commentPanelList = null;
+        lastCommentControlFocus = null;
         commentPanelStatus = null;
         commentPanelStatusText = null;
         commentPanelRetry = null;
@@ -13296,6 +14208,13 @@
       commentPanelMore = more;
       commentPanelClose = close;
       commentPanelRefresh = refresh;
+      list.addEventListener("focusin", (event) => {
+        const target = event.target;
+        if (target instanceof HTMLElement) {
+          const described = describeCommentControl(target);
+          if (described !== null) lastCommentControlFocus = described;
+        }
+      });
       close.addEventListener("click", closeComments);
       scrim.addEventListener("click", closeComments);
       refresh.addEventListener("click", () => {
@@ -13318,9 +14237,10 @@
           const threadId = collapse.dataset["threadId"] || "";
           if (threadId === "") return;
           event.preventDefault();
+          const redrawFrom = { id: threadId, action: "expand" };
           collapsedCommentThreads.add(threadId);
           renderReaderComments();
-          focusCommentThreadControl(".hbu-reader-comments-expand", threadId);
+          restoreCommentControlFocus(redrawFrom);
           return;
         }
         const expand = target.closest(".hbu-reader-comments-expand");
@@ -13328,9 +14248,10 @@
           const threadId = expand.dataset["threadId"] || "";
           if (threadId === "") return;
           event.preventDefault();
+          const redrawFrom = { id: threadId, action: "collapse" };
           collapsedCommentThreads.delete(threadId);
           renderReaderComments();
-          focusCommentThreadControl(".hbu-reader-comments-collapse", threadId);
+          restoreCommentControlFocus(redrawFrom);
           return;
         }
         const remove = target.closest(".hbu-reader-comments-delete");
@@ -13403,16 +14324,23 @@
     const closeComments = () => {
       if (commentPanel === null || commentPanel.hidden) return;
       commentPanel.hidden = true;
+      lastCommentControlFocus = null;
       if (host !== null) host.inert = false;
       host?.querySelector('[data-action="comment"]')?.focus({ preventScroll: true });
     };
     const closeLightbox = () => {
+      const active = document.activeElement;
+      const restoreFocus = lightbox !== null && active instanceof HTMLElement && lightbox.contains(active);
       lightbox?.remove();
       lightbox = null;
       lightboxImage = null;
       lightboxZoom = 0;
       lightboxBaseWidth = 0;
       lightboxNatural = { width: 0, height: 0 };
+      if (restoreFocus && lightboxReturnFocus !== null && lightboxReturnFocus.isConnected) {
+        lightboxReturnFocus.focus({ preventScroll: true });
+      }
+      lightboxReturnFocus = null;
     };
     const applyLightboxZoom = () => {
       if (lightboxImage === null) return;
@@ -13422,8 +14350,38 @@
       lightboxImage.dataset["zoom"] = String(lightboxZoom);
       const hint = lightbox?.querySelector(".hbu-reader-lightbox-hint");
       if (hint !== null && hint !== void 0) {
-        hint.textContent = lightboxZoom === 0 ? "左键放大 · 右键缩小 · 滚轮或拖动查看长图" : "左键放大 · 右键缩小 · 已放大 " + Math.round(width / Math.max(1, lightboxBaseWidth) * 100) + "%";
+        hint.textContent = lightboxZoom === 0 ? "左键或 Enter 放大 · 右键或 Shift+Enter 缩小 · 0 复位 · 滚轮查看长图" : "左键放大 · 右键缩小 · 已放大 " + Math.round(width / Math.max(1, lightboxBaseWidth) * 100) + "%";
       }
+    };
+    const stepLightboxZoom = (delta) => {
+      if (lightboxImage === null) return;
+      lightboxZoom = Math.max(0, Math.min(LIGHTBOX_ZOOM_MAX, lightboxZoom + delta));
+      applyLightboxZoom();
+    };
+    const resetLightboxZoom = () => {
+      if (lightboxImage === null) return;
+      lightboxZoom = 0;
+      applyLightboxZoom();
+    };
+    const cycleLightboxFocus = (backwards) => {
+      if (lightbox === null) return;
+      const focusables = Array.from(lightbox.querySelectorAll('button, [href], [tabindex]:not([tabindex="-1"])'));
+      if (focusables.length === 0) return;
+      const index = focusables.findIndex((node) => node === document.activeElement);
+      const next = backwards ? index <= 0 ? focusables.length - 1 : index - 1 : index === -1 || index === focusables.length - 1 ? 0 : index + 1;
+      focusables[next].focus({ preventScroll: true });
+    };
+    const bindLightboxTrigger = (image, source) => {
+      image.tabIndex = 0;
+      image.setAttribute("role", "button");
+      image.setAttribute("aria-label", "查看大图");
+      image.title = "查看大图";
+      image.addEventListener("click", () => openLightbox(source()));
+      image.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        openLightbox(source());
+      });
     };
     const openLightbox = (source) => {
       if (source === "") return;
@@ -13438,7 +14396,7 @@
         bar.className = "hbu-reader-lightbox-bar";
         const hint = document.createElement("div");
         hint.className = "hbu-reader-lightbox-hint";
-        hint.textContent = "左键放大 · 右键缩小 · 滚轮或拖动查看长图";
+        hint.textContent = "左键或 Enter 放大 · 右键或 Shift+Enter 缩小 · 0 复位 · 滚轮查看长图";
         const close = document.createElement("button");
         close.type = "button";
         close.className = "hbu-reader-lightbox-close";
@@ -13456,19 +14414,24 @@
         img2.dataset["zoom"] = "0";
         img2.addEventListener("click", (event) => {
           event.stopPropagation();
-          lightboxZoom = Math.min(LIGHTBOX_ZOOM_MAX, lightboxZoom + 1);
-          applyLightboxZoom();
+          stepLightboxZoom(1);
         });
         img2.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          lightboxZoom = Math.max(0, lightboxZoom - 1);
-          applyLightboxZoom();
+          stepLightboxZoom(-1);
         });
         img2.addEventListener("dblclick", (event) => {
           event.preventDefault();
-          lightboxZoom = 0;
-          applyLightboxZoom();
+          resetLightboxZoom();
         });
+        img2.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          stepLightboxZoom(event.shiftKey ? -1 : 1);
+        });
+        img2.tabIndex = 0;
+        img2.setAttribute("role", "button");
+        img2.setAttribute("aria-label", "放大图片");
         img2.addEventListener("load", () => {
           lightboxNatural = { width: img2.naturalWidth, height: img2.naturalHeight };
           lightboxBaseWidth = computeLightboxBaseWidth(img2.naturalWidth, img2.naturalHeight, window.innerWidth, window.innerHeight);
@@ -13480,6 +14443,7 @@
         document.body.append(overlay);
         lightbox = overlay;
         lightboxImage = img2;
+        lightboxReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       }
       const img = lightboxImage;
       if (img === null) return;
@@ -13577,7 +14541,7 @@
         if (source !== "") image.src = source;
         image.loading = "lazy";
         image.decoding = "async";
-        image.addEventListener("click", () => openLightbox(readImageSource(image)));
+        bindLightboxTrigger(image, () => readImageSource(image));
       }
     };
     const EMBED_TAGS = /* @__PURE__ */ new Set(["iframe", "video", "audio", "embed", "object"]);
@@ -13912,7 +14876,7 @@
       img.alt = caption || "正文图片";
       img.loading = "lazy";
       img.decoding = "async";
-      img.addEventListener("click", () => openLightbox(img.currentSrc || img.src));
+      bindLightboxTrigger(img, () => img.currentSrc || img.src);
       page.append(img);
       target.append(page);
     };
@@ -14109,15 +15073,30 @@
         window.clearTimeout(ratioSaveTimer);
         ratioSaveTimer = 0;
       }
+      if (durableRatioTimer !== 0) {
+        window.clearTimeout(durableRatioTimer);
+        durableRatioTimer = 0;
+      }
       if (pendingRatio === null) return;
       writeReaderRatio(pendingRatio.id, pendingRatio.ratio);
+      persistReaderRatio(pendingRatio.id, pendingRatio.ratio);
       pendingRatio = null;
     };
     const scheduleReaderRatio = (id, ratio) => {
       if (id === "") return;
       pendingRatio = { id, ratio };
-      if (ratioSaveTimer !== 0) return;
-      ratioSaveTimer = window.setTimeout(flushReaderRatio, 400);
+      if (ratioSaveTimer === 0) {
+        ratioSaveTimer = window.setTimeout(() => {
+          ratioSaveTimer = 0;
+          if (pendingRatio !== null) writeReaderRatio(pendingRatio.id, pendingRatio.ratio);
+        }, 400);
+      }
+      if (durableRatioTimer === 0) {
+        durableRatioTimer = window.setTimeout(() => {
+          durableRatioTimer = 0;
+          if (pendingRatio !== null) persistReaderRatio(pendingRatio.id, pendingRatio.ratio);
+        }, 2e3);
+      }
     };
     const updateProgress = () => {
       const scroll = progressScroll;
@@ -14400,7 +15379,7 @@
           if (img.naturalWidth > 0 && img.naturalHeight > 0) return;
           dropFailedCover(img);
         }, { once: true });
-        img.addEventListener("click", () => openLightbox(readImageSource(img)));
+        bindLightboxTrigger(img, () => readImageSource(img));
         stage.append(img);
         images.push(img);
         img.src = source;
@@ -14980,6 +15959,7 @@
       cyStatus = null;
       articleCommentBusy = false;
       clearArticleComposers();
+      articleComposerSelectionCleanup?.();
       document.body.classList.remove(READER_CLASS);
       if (host !== null) host.inert = false;
       commentPanel?.remove();
@@ -15142,6 +16122,33 @@
         } else {
           event.preventDefault();
           closeCurrentReader();
+        }
+        return;
+      }
+      if (lightbox !== null) {
+        if (!lightbox.isConnected) {
+          closeLightbox();
+          return;
+        }
+        if (event.key === "+" || event.key === "=") {
+          event.preventDefault();
+          stepLightboxZoom(1);
+          return;
+        }
+        if (event.key === "-" || event.key === "_") {
+          event.preventDefault();
+          stepLightboxZoom(-1);
+          return;
+        }
+        if (event.key === "0") {
+          event.preventDefault();
+          resetLightboxZoom();
+          return;
+        }
+        if (event.key === "Tab") {
+          event.preventDefault();
+          cycleLightboxFocus(event.shiftKey);
+          return;
         }
         return;
       }
