@@ -78,7 +78,7 @@ describe("HeyBox Up theme menu keyboard contract", () => {
     expect(shadow.activeElement?.getAttribute("data-theme")).toBe("system");
   });
 
-  it("enters the settings menu at its first menu item and skips inputs", () => {
+  it("enters the settings menu at its first menu item and tabs through inputs", () => {
     const entry = theme.themeEntry;
     if (entry === null) throw new Error("Expected theme entry");
     entry.settingsButton.click();
@@ -88,11 +88,31 @@ describe("HeyBox Up theme menu keyboard contract", () => {
     if (firstItem === null) throw new Error("Expected a settings menu item");
     expect(shadow.activeElement).toBe(firstItem);
 
-    press("End");
+    const menuItems = entry.settingsMenu.querySelectorAll<HTMLElement>('[role^="menuitem"]');
+    menuItems[5]?.focus();
     expect(shadow.activeElement?.getAttribute("role")).toMatch(/^menuitem/);
     expect(shadow.activeElement?.tagName).toBe("BUTTON");
     press("ArrowDown");
     expect(shadow.activeElement?.getAttribute("role")).toMatch(/^menuitem/);
+
+    const historyInput = entry.settingsMenu.querySelector<HTMLInputElement>('input[aria-label="阅读时间轴最多保留的帖子数量"]');
+    const lineHeightInput = entry.settingsMenu.querySelector<HTMLInputElement>('input[aria-label="正文行距倍数"]');
+    const feedWidthInput = entry.settingsMenu.querySelector<HTMLInputElement>('input[aria-label="自定义中栏宽度百分比"]');
+    if (historyInput === null || lineHeightInput === null || feedWidthInput === null) throw new Error("Expected settings inputs");
+    menuItems[5]?.focus();
+    press("Tab");
+    expect(shadow.activeElement).toBe(historyInput);
+    press("Tab");
+    expect(shadow.activeElement).toBe(lineHeightInput);
+    const chips = Array.from(entry.settingsMenu.querySelectorAll<HTMLButtonElement>(".chip"));
+    for (const chip of chips) {
+      press("Tab");
+      expect(shadow.activeElement).toBe(chip);
+    }
+    press("Tab");
+    expect(shadow.activeElement).toBe(feedWidthInput);
+    press("Tab", true);
+    expect(shadow.activeElement).toBe(chips[chips.length - 1]);
   });
 
   it("returns focus to the matching trigger when Escape closes a menu", () => {

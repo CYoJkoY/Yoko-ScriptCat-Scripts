@@ -1900,6 +1900,14 @@ export function createThemeEntry(): void {
   const getMenuItems = (owner: HTMLDivElement): HTMLElement[] => Array.from(
     owner.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
   ).filter((node) => !node.hidden && !node.closest('[hidden]'));
+  const getTabStops = (owner: HTMLDivElement): HTMLElement[] => Array.from(
+    owner.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'),
+  ).filter((node) => {
+    if (node.hidden || node.closest('[hidden]') !== null || node.getAttribute('aria-hidden') === 'true') return false;
+    if (node instanceof HTMLButtonElement || node instanceof HTMLInputElement
+      || node instanceof HTMLSelectElement || node instanceof HTMLTextAreaElement) return !node.disabled;
+    return true;
+  });
   const focusMenuItem = (owner: HTMLDivElement, index: number): void => {
     const items = getMenuItems(owner);
     if (items.length === 0) return;
@@ -1936,8 +1944,12 @@ export function createThemeEntry(): void {
       focusMenuItem(owner, items.length - 1);
       return true;
     }
-    if (key === "Tab" && currentIndex >= 0) {
-      focusMenuItem(owner, currentIndex + (shiftKey ? -1 : 1));
+    if (key === "Tab") {
+      const tabStops = getTabStops(owner);
+      const tabIndex = active instanceof HTMLElement ? tabStops.indexOf(active) : -1;
+      if (tabIndex < 0 || tabStops.length === 0) return false;
+      const nextIndex = (tabIndex + (shiftKey ? -1 : 1) + tabStops.length) % tabStops.length;
+      tabStops[nextIndex]?.focus();
       return true;
     }
     return false;
