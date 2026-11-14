@@ -1,6 +1,6 @@
 import { PAGE_ROUTE } from "../config";
 import { resolveHeyboxId } from "../core/account";
-import { createCard, CY_MAX_ITEMS, loadCyFavorites, readCache, writeCache, type CyItem } from "../core/cy";
+import { createCard, CY_MAX_ITEMS, loadCyFavoritesBatch, mergeCyFavorites, readCache, writeCache, type CyItem } from "../core/cy";
 import { readPageRoute, registerPageSync } from "../core/page-sync";
 import { isAbortError } from "../core/request";
 import { asRecord } from "../core/json";
@@ -14,21 +14,26 @@ export const LOGIN_RETRY_MAX = 3;
 
 export const FAVOUR_LIST_SELECTOR = ".user-favour__list";
 
-export function formatFavourCountNote(total: number, matched: number, query: string): string {
+export function formatFavourCountNote(total: number, matched: number, query: string, hasNext: boolean): string {
   const filtered = query.trim() !== "" ? "，匹配 " + matched + " 条" : "";
-  const count = "共 " + total + " 条插眼收藏" + filtered + "，网页收藏列表默认不显示。";
-  return total >= CY_MAX_ITEMS
-    ? count + " 已达到脚本单次读取上限，结果可能不完整；接口是否还有更多记录尚未确认。"
-    : count;
+  const prefix = total >= CY_MAX_ITEMS && hasNext ? "已加载" : "共";
+  const count = prefix + " " + total + " 条插眼收藏" + filtered + "，网页收藏列表默认不显示。";
+  if (total < CY_MAX_ITEMS) return count;
+  return hasNext
+    ? count + " 已达到单批读取上限，可点击「加载更多」继续读取。"
+    : count + " 接口已确认没有更多记录。";
 }
 
 export interface FavourSectionState {
   items: CyItem[];
   loading: boolean;
+  loadingMore: boolean;
   error: string;
   notice: string;
   progress: number;
   query: string;
+  hasNext: boolean;
+  nextOffset: number;
 }
 
 export interface FavourSection {
@@ -49,6 +54,12 @@ export const FAVOUR_CSS = `
   .refresh:hover:not(:disabled), .retry:hover { border-color: rgba(127,127,127,.55); }
   .refresh:disabled { opacity: .5; cursor: default; }
   .retry { margin: -2px 0 10px; }
+  .load-more {
+    display: block; margin: 2px auto 12px; font: inherit; font-size: 12px; padding: 5px 14px;
+    border-radius: 8px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; cursor: pointer;
+  }
+  .load-more:hover:not(:disabled) { border-color: rgba(127,127,127,.55); }
+  .load-more:disabled { opacity: .5; cursor: default; }
   .note { font-size: 12px; opacity: .62; margin-bottom: 10px; }
   .search {
     width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 7px 10px;
@@ -115,11 +126,21 @@ export function createFavourSection(): FavourSection {
   search.hidden = true;
   const list = document.createElement("div");
   list.className = "list";
-  section.append(head, note, retry, search, list);
+  const moreButton = document.createElement("button");
+  moreButton.type = "button";
+  moreButton.className = "load-more";
+  moreButton.textContent = "加载更多";
+  moreButton.hidden = true;
+  moreButton.setAttribute("aria-label", "加载更多插眼收藏");
+  section.append(head, note, retry, search, list, moreButton);
   shadow.append(section);
 
-  const state: FavourSectionState = { items: [], loading: false, error: "", notice: "", progress: 0, query: "" };
+  const state: FavourSectionState = {
+    items: [], loading: false, loadingMore: false, error: "", notice: "", progress: 0, query: "",
+    hasNext: false, nextOffset: 0,
+  };
   let loadController: AbortController | null = null;
+  let moreController: AbortController | null = null;
   let loginRetryTimer = 0;
   let loginRetryLeft = 0;
   let disposed = false;
@@ -131,22 +152,27 @@ export function createFavourSection(): FavourSection {
       ? state.items
       : state.items.filter((item) => item.title.toLowerCase().includes(needle) || item.text.toLowerCase().includes(needle));
     list.replaceChildren();
-    refresh.disabled = state.loading;
+    refresh.disabled = state.loading || state.loadingMore;
     refresh.textContent = state.loading ? "读取中…" : "刷新";
-    retry.hidden = state.error === "";
+    retry.hidden = state.error === "" || (state.items.length > 0 && state.hasNext);
     search.hidden = state.items.length === 0;
+    moreButton.hidden = state.loading || state.items.length === 0 || !state.hasNext;
+    moreButton.disabled = state.loadingMore;
+    moreButton.textContent = state.loadingMore ? "加载中…" : "加载更多";
     if (state.error !== "") {
       note.textContent = "读取失败：" + state.error + (state.items.length > 0 ? "（显示上次结果）" : "");
     } else if (state.notice !== "") {
       note.textContent = state.notice;
     } else if (state.loading) {
       note.textContent = "正在读取插眼收藏…" + (state.progress > 0 ? " 已获取 " + state.progress + " 条" : "");
+    } else if (state.loadingMore) {
+      note.textContent = "正在加载更多插眼收藏…" + (state.progress > 0 ? " 已获取 " + state.progress + " 条" : "");
     } else if (state.items.length === 0) {
       note.textContent = "没有插眼收藏。";
     } else if (matched.length === 0) {
       note.textContent = "没有匹配“" + query + "”的插眼条目。";
     } else {
-      note.textContent = formatFavourCountNote(state.items.length, matched.length, query);
+      note.textContent = formatFavourCountNote(state.items.length, matched.length, query, state.hasNext);
     }
     if (matched.length === 0) return;
     const fragment = document.createDocumentFragment();
@@ -187,6 +213,7 @@ export function createFavourSection(): FavourSection {
     state.progress = 0;
     render();
     loadController?.abort();
+    moreController?.abort();
     loadController = new AbortController();
     let loginMissing = false;
     try {
@@ -199,14 +226,21 @@ export function createFavourSection(): FavourSection {
       loginRetryLeft = 0;
       const cached = force ? null : readCache(userId);
       if (cached) {
-        state.items = cached;
+        state.items = cached.items;
+        state.hasNext = cached.hasNext;
+        state.nextOffset = cached.nextOffset;
         return;
       }
-      state.items = await loadCyFavorites(userId, (count) => {
-        state.progress = count;
-        note.textContent = "正在读取插眼收藏… 已获取 " + count + " 条";
+      const batch = await loadCyFavoritesBatch(userId, {
+        onProgress: (count) => {
+          state.progress = count;
+          note.textContent = "正在读取插眼收藏… 已获取 " + count + " 条";
+        },
       }, loadController.signal);
-      writeCache(userId, state.items);
+      state.items = batch.items;
+      state.hasNext = batch.hasNext;
+      state.nextOffset = batch.nextOffset;
+      writeCache(userId, { items: state.items, hasNext: state.hasNext, nextOffset: state.nextOffset });
     } catch (error) {
       if (isAbortError(error)) return;
       state.error = error instanceof Error ? error.message : String(error);
@@ -224,8 +258,51 @@ export function createFavourSection(): FavourSection {
     }
   };
 
+  // A load-more click only appends the next bounded batch. Existing cards and
+  // the search filter stay untouched, and on failure the same button retries
+  // from the recorded offset without a full refresh.
+  const loadMore = async (): Promise<void> => {
+    if (disposed || state.loading || state.loadingMore || !state.hasNext) return;
+    window.clearTimeout(loginRetryTimer);
+    loginRetryTimer = 0;
+    state.loadingMore = true;
+    state.error = "";
+    state.notice = "";
+    state.progress = 0;
+    render();
+    moreController?.abort();
+    moreController = new AbortController();
+    try {
+      const userId = await resolveHeyboxId(moreController.signal);
+      if (userId === "") {
+        state.error = "登录状态已失效，无法读取更多插眼收藏。";
+        return;
+      }
+      const batch = await loadCyFavoritesBatch(userId, {
+        offset: state.nextOffset,
+        seenIds: state.items.map((item) => item.id),
+        onProgress: (count) => {
+          state.progress = count;
+          note.textContent = "正在加载更多插眼收藏… 已获取 " + count + " 条";
+        },
+      }, moreController.signal);
+      state.items = mergeCyFavorites(state.items, batch.items);
+      state.hasNext = batch.hasNext;
+      state.nextOffset = batch.nextOffset;
+      writeCache(userId, { items: state.items, hasNext: state.hasNext, nextOffset: state.nextOffset });
+    } catch (error) {
+      if (isAbortError(error)) return;
+      state.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      state.loadingMore = false;
+      moreController = null;
+      render();
+    }
+  };
+
   refresh.addEventListener("click", () => void load(true));
   retry.addEventListener("click", () => void load(true));
+  moreButton.addEventListener("click", () => void loadMore());
   search.addEventListener("input", () => {
     state.query = search.value;
     render();
@@ -243,7 +320,10 @@ export function createFavourSection(): FavourSection {
       loginRetryLeft = LOGIN_RETRY_MAX;
       loadController?.abort();
       loadController = null;
+      moreController?.abort();
+      moreController = null;
       state.loading = false;
+      state.loadingMore = false;
     },
   };
 }
