@@ -145,6 +145,21 @@ describe("reader comment panel first open", () => {
     document.cookie = "heybox_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   });
 
+  it("releases the composer selection listener when the reader closes", () => {
+    const addListener = vi.spyOn(document, "addEventListener");
+    const removeListener = vi.spyOn(document, "removeEventListener");
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+
+    const selectionListener = addListener.mock.calls.find(([type]) => type === "selectionchange")?.[1];
+    expect(selectionListener).toBeTypeOf("function");
+    host.querySelector<HTMLButtonElement>('[aria-label="关闭当前文章的沉浸阅读"]')?.click();
+
+    expect(removeListener).toHaveBeenCalledWith("selectionchange", selectionListener);
+    addListener.mockRestore();
+    removeListener.mockRestore();
+  });
+
   it("re-reads page one from the network instead of the cached copy", async () => {
     writeRailPageCache("123456", 1, "42", stalePage());
     const calls: { url: string; body: string }[] = [];
