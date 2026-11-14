@@ -80,6 +80,7 @@ export const DESKTOP_CSS = `
   #heybox-up-left-rail .rail-block + .rail-block,
   #heybox-up-right-rail .rail-block + .rail-block { margin-top: 12px; }
   #heybox-up-right-rail .rail-block[hidden] { display: none !important; }
+  #heybox-up-right-rail .rail-block[hidden] + .rail-block { margin-top: 0; }
   #heybox-up-right-rail[hidden] { display: none !important; }
   #heybox-up-left-rail .rail-title,
   #heybox-up-right-rail .rail-title {
