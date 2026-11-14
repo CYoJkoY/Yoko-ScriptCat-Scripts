@@ -2209,6 +2209,7 @@ export function watchReader(navigation: PostNavigationController): void {
   }
 
   const articleComposerEmojiClosers: WeakMap<Element, ComposerEmojiPicker> = new WeakMap();
+  let articleComposerSelectionCleanup: (() => void) | null = null;
   // Pictures picked for the composer live next to the element they belong to,
   // so closing or resetting the panel cannot leave an upload behind.
   const articleComposerImages: WeakMap<Element, ComposerImage[]> = new WeakMap();
@@ -5435,7 +5436,13 @@ export function watchReader(navigation: PostNavigationController): void {
     input.addEventListener("input", syncComposerText);
     input.addEventListener("keyup", () => saveComposerSelection(input));
     input.addEventListener("pointerup", () => saveComposerSelection(input));
-    document.addEventListener("selectionchange", () => saveComposerSelection(input));
+    articleComposerSelectionCleanup?.();
+    const saveSelection = (): void => saveComposerSelection(input);
+    document.addEventListener("selectionchange", saveSelection);
+    articleComposerSelectionCleanup = () => {
+      document.removeEventListener("selectionchange", saveSelection);
+      articleComposerSelectionCleanup = null;
+    };
     input.addEventListener("paste", (event) => {
       event.preventDefault();
       const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -7504,6 +7511,7 @@ export function watchReader(navigation: PostNavigationController): void {
     cyStatus = null;
     articleCommentBusy = false;
     clearArticleComposers();
+    articleComposerSelectionCleanup?.();
     document.body.classList.remove(READER_CLASS);
     if (host !== null) host.inert = false;
     commentPanel?.remove();
