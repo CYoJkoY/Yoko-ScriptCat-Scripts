@@ -109,6 +109,16 @@ const READER_POSITIONS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const READER_POSITIONS_MAX = 200;
 const POST_ID_PATTERN = /^\d+$/;
 
+/** Comment row actions that a list redraw must keep focused on their redrawn twin. */
+const COMMENT_CONTROL_ATTRIBUTES = { reply: "replyId", remove: "deleteId", collapse: "threadId", expand: "threadId" } as const;
+const COMMENT_CONTROL_CLASSES = {
+  reply: "hbu-reader-comments-reply",
+  remove: "hbu-reader-comments-delete",
+  collapse: "hbu-reader-comments-collapse",
+  expand: "hbu-reader-comments-expand",
+} as const;
+type CommentControlAction = keyof typeof COMMENT_CONTROL_ATTRIBUTES;
+
 export const READER_PENDING_NOTICE_MS = 9000;
 
 /** Ratio above which a picture counts as a long, scroll-through image. */
@@ -3995,11 +4005,25 @@ export function watchReader(navigation: PostNavigationController): void {
     return holder;
   };
 
-  // Folding and unfolding redraws the list, so focus moves to the control that
-  // now represents the same branch instead of dropping back to the document.
-  const focusCommentThreadControl = (selector: string, threadId: string): void => {
-    for (const control of commentPanelList?.querySelectorAll<HTMLElement>(selector) ?? []) {
-      if (control.dataset["threadId"] !== threadId) continue;
+  // Every reload replaces the rendered list, which detaches the focused action.
+  // The control is described by its comment and action so focus can land on the
+  // redrawn twin, which keeps Tab and arrow navigation going after a refresh.
+  // Folding a branch also uses it: the control that replaces the pressed one
+  // carries the branch id, so the reader stays on the same thread.
+  const describeCommentControl = (control: HTMLElement): { id: string; action: CommentControlAction } | null => {
+    for (const [action, attribute] of Object.entries(COMMENT_CONTROL_ATTRIBUTES) as [CommentControlAction, string][]) {
+      const id = control.dataset[attribute];
+      if (id !== undefined && control.classList.contains(COMMENT_CONTROL_CLASSES[action])) return { id, action };
+    }
+    return null;
+  };
+
+  const restoreCommentControlFocus = (target: { id: string; action: CommentControlAction } | null): void => {
+    if (target === null || commentPanelList === null) return;
+    const attribute = COMMENT_CONTROL_ATTRIBUTES[target.action];
+    const selector = "." + COMMENT_CONTROL_CLASSES[target.action];
+    for (const control of commentPanelList.querySelectorAll<HTMLElement>(selector)) {
+      if (control.dataset[attribute] !== target.id) continue;
       control.focus({ preventScroll: true });
       return;
     }
@@ -4179,6 +4203,10 @@ export function watchReader(navigation: PostNavigationController): void {
 
   const renderReaderComments = (): void => {
     if (commentPanel === null) return;
+    const active = document.activeElement;
+    const focusedControl = active instanceof HTMLElement && commentPanelList?.contains(active) === true
+      ? describeCommentControl(active)
+      : null;
     const hideCy = readHideCyPreference();
     const loadedVisible = commentState.items.filter((item) => !hideCy || item.isCy !== true);
     const hiddenCy = commentState.items.length - loadedVisible.length;
@@ -4194,6 +4222,7 @@ export function watchReader(navigation: PostNavigationController): void {
       commentPanelList.replaceChildren(...visible.map(createReaderCommentItem));
       commentPanelList.hidden = visible.length === 0;
     }
+    if (focusedControl !== null) restoreCommentControlFocus(focusedControl);
     if (commentPanelStatus !== null) {
       if (commentState.error !== "") {
         commentPanelStatus.hidden = false;
@@ -5553,9 +5582,10 @@ export function watchReader(navigation: PostNavigationController): void {
         const threadId = collapse.dataset["threadId"] || "";
         if (threadId === "") return;
         event.preventDefault();
+        const redrawFrom: { id: string; action: CommentControlAction } = { id: threadId, action: "expand" };
         collapsedCommentThreads.add(threadId);
         renderReaderComments();
-        focusCommentThreadControl(".hbu-reader-comments-expand", threadId);
+        restoreCommentControlFocus(redrawFrom);
         return;
       }
       const expand = target.closest(".hbu-reader-comments-expand");
@@ -5563,9 +5593,10 @@ export function watchReader(navigation: PostNavigationController): void {
         const threadId = expand.dataset["threadId"] || "";
         if (threadId === "") return;
         event.preventDefault();
+        const redrawFrom: { id: string; action: CommentControlAction } = { id: threadId, action: "collapse" };
         collapsedCommentThreads.delete(threadId);
         renderReaderComments();
-        focusCommentThreadControl(".hbu-reader-comments-collapse", threadId);
+        restoreCommentControlFocus(redrawFrom);
         return;
       }
       const remove = target.closest(".hbu-reader-comments-delete");

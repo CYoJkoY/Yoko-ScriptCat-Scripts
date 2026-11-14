@@ -202,6 +202,7 @@ describe("reader comment panel first open", () => {
     }));
     const host = mountReader();
     host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
     await vi.waitFor(() => {
       expect(calls.filter((url) => url.includes("link_id=123456") && url.includes("page=1")).length).toBeGreaterThanOrEqual(2);
       expect(host.ownerDocument.querySelector(".hbu-reader-comments-list")?.textContent ?? "").toContain("my persisted comment");
@@ -386,6 +387,49 @@ describe("reader comment panel first open", () => {
     expect(new URLSearchParams(created?.body ?? "").get("text")).toBe(
       "手动[cube_哭泣]粘贴[heygirl_挨刀]",
     );
+  });
+
+  it("keeps keyboard focus on the same floor reply after reloading the list", async () => {
+    const floors = [
+      { comment_id: "9500", text: "<p>first floor</p>", user: { username: "a", userid: 43 } },
+      { comment_id: "9501", text: "<p>second floor</p>", user: { username: "b", userid: 44 } },
+      { comment_id: "9502", text: "<p>third floor</p>", user: { username: "c", userid: 45 } },
+    ];
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        status: "ok",
+        result: { comments: floors.map((floor) => ({ comment: [floor] })), link: { comment_num: floors.length, title: "t" } },
+      }),
+    })));
+    const host = mountReader();
+    host.querySelector<HTMLElement>('[data-action="comment"]')?.click();
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(".hbu-reader-comments-reply")).toHaveLength(floors.length);
+      expect(document.querySelector(".hbu-reader-comments-reply[data-reply-id='9501']")).not.toBeNull();
+    }, { timeout: 5000 });
+    const reply = Array.from(document.querySelectorAll<HTMLButtonElement>(".hbu-reader-comments-reply"))
+      .find((button) => button.dataset["replyId"] === "9501");
+    if (reply === undefined) throw new Error("Expected the second floor reply action");
+    reply.focus();
+    const refresh = document.querySelector<HTMLButtonElement>(".hbu-reader-comments-refresh");
+    if (refresh === null) throw new Error("Expected the comment refresh button");
+    let focusedAtClick: Element | null = null;
+    const recordFocus = (): void => { focusedAtClick ??= document.activeElement; };
+    refresh.addEventListener("click", recordFocus, { capture: true });
+    refresh.click();
+    await vi.waitFor(() => {
+      expect(document.activeElement).toMatchObject({
+        dataset: expect.objectContaining({ replyId: "9501" }),
+      });
+    }, { timeout: 5000 });
+    refresh.removeEventListener("click", recordFocus, { capture: true });
+    // The reload redraws the list, so focus lands on the redrawn twin instead of
+    // leaving the reader at the top of the document or on the close button.
+    expect(focusedAtClick).toBe(reply);
+    expect(document.querySelectorAll(".hbu-reader-comments-list")).toHaveLength(1);
+    expect(document.querySelector<HTMLButtonElement>(".hbu-reader-comments-close")).not.toBe(document.activeElement);
   });
 
   it("loads the live emoji catalog and renders composer tokens", async () => {
