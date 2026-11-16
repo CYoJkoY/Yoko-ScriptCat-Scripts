@@ -73,7 +73,13 @@ interface SiblingSnapshot {
 
 interface ControlSizes {
   readonly icon: number | null;
-  readonly control: number | null;
+  readonly controlWidth: number | null;
+  readonly controlHeight: number | null;
+}
+
+interface CssBoxSize {
+  readonly width: number;
+  readonly height: number;
 }
 
 interface FitSnapshot {
@@ -127,14 +133,21 @@ function axisScaleOf(element: StyledElement): AxisScale {
  * box by the transform chain the clone will inherit so a scaled control bar
  * does not scale the copied size a second time.
  */
-function measuredCssSizeOf(element: Element, scale: AxisScale): number | null {
+function measuredCssBoxOf(element: Element, scale: AxisScale): CssBoxSize | null {
   if (!(scale.x > MIN_TRANSFORM_SCALE) || !(scale.y > MIN_TRANSFORM_SCALE)) {
     return null;
   }
   const rect = element.getBoundingClientRect();
   if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
-  const size = Math.min(rect.width / scale.x, rect.height / scale.y);
-  return size >= MIN_MEASURED_SIZE_PX ? size : null;
+  const width = rect.width / scale.x;
+  const height = rect.height / scale.y;
+  if (width < MIN_MEASURED_SIZE_PX || height < MIN_MEASURED_SIZE_PX) return null;
+  return { width, height };
+}
+
+function measuredCssSizeOf(element: Element, scale: AxisScale): number | null {
+  const box = measuredCssBoxOf(element, scale);
+  return box === null ? null : Math.min(box.width, box.height);
 }
 
 function iconElementOf(control: Element, scale: AxisScale): Element | null {
@@ -189,9 +202,11 @@ function measureControlSizes(
   const cloneIcon = button.querySelector("svg");
   const iconScale =
     cloneIcon === null ? controlScale : axisScaleOf(cloneIcon);
+  const control = measuredCssBoxOf(anchor, controlScale);
   return {
     icon: measureIconTarget(anchor, button, iconScale),
-    control: measuredCssSizeOf(anchor, controlScale),
+    controlWidth: control?.width ?? null,
+    controlHeight: control?.height ?? null,
   };
 }
 
@@ -305,7 +320,8 @@ function isSameFitSnapshot(left: FitSnapshot, right: FitSnapshot): boolean {
 function isSameControlSizes(left: ControlSizes, right: ControlSizes): boolean {
   return (
     isSameOptionalSize(left.icon, right.icon) &&
-    isSameOptionalSize(left.control, right.control)
+    isSameOptionalSize(left.controlWidth, right.controlWidth) &&
+    isSameOptionalSize(left.controlHeight, right.controlHeight)
   );
 }
 
@@ -830,6 +846,44 @@ function copyAnchorPosition(
   button.style.setProperty("position", position);
 }
 
+type SizeAxis = "horizontal" | "vertical";
+
+const CONTENT_BOX_EDGES: Readonly<Record<SizeAxis, readonly string[]>> = {
+  horizontal: [
+    "padding-left",
+    "padding-right",
+    "border-left-width",
+    "border-right-width",
+  ],
+  vertical: [
+    "padding-top",
+    "padding-bottom",
+    "border-top-width",
+    "border-bottom-width",
+  ],
+};
+
+/**
+ * The measured rect is an outer size. A content-box minimum only constrains
+ * the inner content area, so subtract the clone's own padding and borders
+ * before applying it; otherwise those edges are added twice.
+ */
+function contentBoxSizeOf(
+  element: HTMLElement,
+  outerSize: number,
+  axis: SizeAxis,
+): number {
+  const style = computedStyleOf(element);
+  if (style === null) return outerSize;
+  const boxSizing = style.getPropertyValue("box-sizing").trim().toLowerCase();
+  if (boxSizing === "border-box") return outerSize;
+  let edgesPx = 0;
+  for (const property of CONTENT_BOX_EDGES[axis]) {
+    edgesPx += readPx(style, property) ?? 0;
+  }
+  return Math.max(0, outerSize - edgesPx);
+}
+
 function applyMeasuredSizes(
   anchor: HTMLElement,
   button: HTMLElement,
@@ -844,12 +898,17 @@ function applyMeasuredSizes(
     icon.style.setProperty("width", size);
     icon.style.setProperty("height", size);
   }
-  if (sizes.control === null) return;
-  const size = formatPx(sizes.control);
+  if (sizes.controlWidth === null || sizes.controlHeight === null) return;
+  const width = formatPx(
+    contentBoxSizeOf(button, sizes.controlWidth, "horizontal"),
+  );
+  const height = formatPx(
+    contentBoxSizeOf(button, sizes.controlHeight, "vertical"),
+  );
   captureStyle(snapshots, button, "min-width");
   captureStyle(snapshots, button, "min-height");
-  button.style.setProperty("min-width", size);
-  button.style.setProperty("min-height", size);
+  button.style.setProperty("min-width", width);
+  button.style.setProperty("min-height", height);
 }
 
 function copyAnchorOffsets(
