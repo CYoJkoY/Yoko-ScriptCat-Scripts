@@ -18,6 +18,7 @@ import {
   insertBeforeFullscreen,
   positionFloatingButton,
 } from "./ui/button";
+import { fitInControlBar } from "./ui/layout";
 
 interface Binding {
   readonly video: HTMLVideoElement;
@@ -25,6 +26,7 @@ interface Binding {
   button: HTMLElement | null;
   floating: boolean;
   removeButton: (() => void) | null;
+  removeFit: (() => void) | null;
 }
 
 function setAttributeIfChanged(
@@ -42,6 +44,8 @@ function isEligibleVideo(video: HTMLVideoElement): boolean {
 }
 
 function disposeButton(binding: Binding): void {
+  binding.removeFit?.();
+  binding.removeFit = null;
   binding.removeButton?.();
   binding.removeButton = null;
   binding.button?.remove();
@@ -137,10 +141,13 @@ export function installWebFullscreen(
     const match = binding.match;
     if (match.mode === "skip") return false;
     if (match.mode === "custom") {
+      const anchor = match.fullscreenButton;
+      if (anchor === null) return false;
       const button = createFullscreenButton(match);
       if (!insertBeforeFullscreen(match, button)) return false;
       binding.button = button;
       binding.floating = false;
+      binding.removeFit = fitInControlBar(anchor, button);
       binding.removeButton = attachHandlers(button, binding);
       return true;
     }
@@ -149,6 +156,7 @@ export function installWebFullscreen(
     doc.body.append(button);
     binding.button = button;
     binding.floating = true;
+    binding.removeFit = null;
     binding.removeButton = attachHandlers(button, binding);
     positionFloatingButton(button, binding.video, frameWindow);
     return true;
@@ -224,6 +232,7 @@ export function installWebFullscreen(
           button: null,
           floating: false,
           removeButton: null,
+          removeFit: null,
         };
         bindings.set(video, binding);
       }
