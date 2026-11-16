@@ -27,6 +27,7 @@ interface Binding {
   floating: boolean;
   removeButton: (() => void) | null;
   fit: ControlBarFit | null;
+  fitTargets: Element[];
   activated: boolean;
   activationRoot: HTMLElement | null;
   removeActivation: (() => void) | null;
@@ -53,7 +54,11 @@ function isEligibleVideo(video: HTMLVideoElement): boolean {
   return rect.width >= MIN_VIDEO_WIDTH_PX && rect.height >= MIN_VIDEO_HEIGHT_PX;
 }
 
-function disposeButton(binding: Binding): void {
+function disposeButton(
+  binding: Binding,
+  observer: ResizeObserver | null,
+): void {
+  releaseFitTargets(binding, observer);
   binding.fit?.dispose();
   binding.fit = null;
   binding.removeButton?.();
@@ -61,6 +66,36 @@ function disposeButton(binding: Binding): void {
   binding.button?.remove();
   binding.button = null;
   binding.floating = false;
+}
+
+/**
+ * A webfont swap or a hover rule can resize a control icon without a window,
+ * video, or DOM mutation, so observe the elements whose sizes feed the fit.
+ */
+function observeFitTargets(
+  binding: Binding,
+  observer: ResizeObserver | null,
+): void {
+  if (observer === null) return;
+  const next = binding.fit?.resizeTargets() ?? [];
+  if (
+    next.length === binding.fitTargets.length &&
+    next.every((target, index) => binding.fitTargets[index] === target)
+  ) {
+    return;
+  }
+  for (const target of binding.fitTargets) observer.unobserve(target);
+  binding.fitTargets = [...next];
+  for (const target of binding.fitTargets) observer.observe(target);
+}
+
+function releaseFitTargets(
+  binding: Binding,
+  observer: ResizeObserver | null,
+): void {
+  if (observer === null) return;
+  for (const target of binding.fitTargets) observer.unobserve(target);
+  binding.fitTargets = [];
 }
 
 function releaseActivation(binding: Binding): void {
@@ -202,6 +237,7 @@ export function installWebFullscreen(
       binding.button = button;
       binding.floating = false;
       binding.fit = fitInControlBar(anchor, button);
+      observeFitTargets(binding, resizeObserver);
       binding.removeButton = attachHandlers(button, binding);
       return true;
     }
@@ -230,7 +266,7 @@ export function installWebFullscreen(
   function refreshBinding(binding: Binding): void {
     const match = findPlayerMatch(binding.video);
     if (match.mode === "skip") {
-      disposeButton(binding);
+      disposeButton(binding, resizeObserver);
       releaseActivation(binding);
       binding.match = match;
       return;
@@ -239,7 +275,7 @@ export function installWebFullscreen(
       // A floating fallback was already active because the controls had not
       // rendered yet; now that the bar exists, inject without another hover.
       const controlsJustAppeared = binding.match.mode === "native";
-      disposeButton(binding);
+      disposeButton(binding, resizeObserver);
       binding.match = match;
       if (controlsJustAppeared) {
         binding.activated = true;
@@ -251,7 +287,7 @@ export function installWebFullscreen(
     }
     if (match.mode === "native") releaseActivation(binding);
     if (needsRemount(binding, match)) {
-      disposeButton(binding);
+      disposeButton(binding, resizeObserver);
       binding.match = match;
       mountButton(binding);
       return;
@@ -285,14 +321,18 @@ export function installWebFullscreen(
   // Visibility or size changes among the preceding controls do not move an
   // absolute anchor, so their mutations need an unconditional refit.
   function refitControlBars(): void {
-    for (const binding of bindings.values()) binding.fit?.refit();
+    for (const binding of bindings.values()) {
+      if (binding.fit === null) continue;
+      binding.fit.refit();
+      observeFitTargets(binding, resizeObserver);
+    }
   }
 
   function removeBinding(binding: Binding): void {
     if (controller.isActiveFor(binding.video)) controller.exit();
     resizeObserver?.unobserve(binding.video);
     releaseActivation(binding);
-    disposeButton(binding);
+    disposeButton(binding, resizeObserver);
     bindings.delete(binding.video);
   }
 
@@ -317,6 +357,7 @@ export function installWebFullscreen(
           floating: false,
           removeButton: null,
           fit: null,
+          fitTargets: [],
           activated: false,
           activationRoot: null,
           removeActivation: null,
@@ -325,6 +366,7 @@ export function installWebFullscreen(
       }
       refreshBinding(binding);
       binding.fit?.sync();
+      observeFitTargets(binding, resizeObserver);
       updateButtonState(binding);
     }
     syncFloatingPositions();
@@ -425,7 +467,7 @@ export function installWebFullscreen(
     controller.exit();
     for (const binding of [...bindings.values()]) {
       releaseActivation(binding);
-      disposeButton(binding);
+      disposeButton(binding, resizeObserver);
     }
     bindings.clear();
     knownVideos.clear();
