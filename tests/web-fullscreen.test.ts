@@ -562,6 +562,48 @@ describe("control bar spacing", () => {
     expect(button.style.getPropertyValue("right")).toBe("");
   });
 
+  it("clears inherited class insets when the anchor overrides them to auto", () => {
+    document.body.innerHTML = `
+      <style>
+        .control-btn { position: absolute; top: 8px; right: 12px; }
+        #native-fs { top: auto; bottom: 20px; right: 20px; }
+      </style>
+      <div class="player" style="position: relative">
+        <video></video>
+        <div class="bar" style="position: relative">
+          <button id="native-fs" class="control-btn" aria-label="全屏">全屏</button>
+        </div>
+      </div>
+    `;
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const anchor = document.querySelector<HTMLButtonElement>("#native-fs");
+    if (video === null || anchor === null) {
+      throw new Error("The overridden inset fixture is incomplete");
+    }
+    stubVideoRect(video);
+    const match = findPlayerMatch(video);
+    const button = createFullscreenButton(match);
+    expect(insertBeforeFullscreen(match, button)).toBe(true);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("position")).toBe("");
+    expect(button.style.getPropertyValue("top")).toBe("auto");
+    expect(button.style.getPropertyValue("bottom")).toBe("20px");
+    expect(button.style.getPropertyValue("right")).toBe("20px");
+    expect(button.style.getPropertyValue("left")).toBe("");
+    expect(getComputedStyle(button).top).toBe("auto");
+    expect(getComputedStyle(button).bottom).toBe("20px");
+    expect(getComputedStyle(button).right).toBe("20px");
+    expect(getComputedStyle(button).left).toBe("auto");
+
+    fit.dispose();
+    expect(button.style.getPropertyValue("top")).toBe("");
+    expect(button.style.getPropertyValue("bottom")).toBe("");
+    expect(button.style.getPropertyValue("right")).toBe("");
+    expect(button.style.getPropertyValue("left")).toBe("");
+  });
+
   it("refits the absolute cluster when the anchor's layout box changes", () => {
     document.body.innerHTML = `
       <div class="bar">

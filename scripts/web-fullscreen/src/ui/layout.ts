@@ -685,7 +685,7 @@ function copyAnchorOffsets(
   if (buttonStyle === null) return;
   for (const property of POSITION_OFFSET_PROPERTIES) {
     const value = anchorStyle.getPropertyValue(property).trim();
-    if (value.length === 0 || value === "auto") continue;
+    if (value.length === 0) continue;
     if (buttonStyle.getPropertyValue(property).trim() === value) continue;
     captureStyle(snapshots, button, property);
     button.style.setProperty(property, value);
