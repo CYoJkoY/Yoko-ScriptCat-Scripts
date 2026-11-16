@@ -324,9 +324,17 @@ function shiftAbsoluteCluster(
 ): void {
   const buttonStyle = computedStyleOf(button);
   if (buttonStyle === null) return;
-  if (buttonStyle.getPropertyValue("position").trim() === "static") {
+  // The clone keeps the anchor's classes, so a shared rule can leave it
+  // `relative` while an ID rule positions the anchor absolutely. Copying the
+  // insets onto a flow-positioned clone would offset it from its own place
+  // instead of from the anchor, so the positioning mode must match first.
+  const anchorPosition = anchorStyle.getPropertyValue("position").trim();
+  if (
+    anchorPosition.length > 0 &&
+    buttonStyle.getPropertyValue("position").trim() !== anchorPosition
+  ) {
     captureStyle(snapshots, button, "position");
-    button.style.setProperty("position", anchorStyle.getPropertyValue("position").trim());
+    button.style.setProperty("position", anchorPosition);
   }
   copyAnchorOffsets(anchorStyle, button, snapshots);
 

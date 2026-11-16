@@ -383,6 +383,38 @@ describe("control bar spacing", () => {
     expect(button.style.getPropertyValue("box-sizing")).toBe("");
   });
 
+  it("matches the clone's position to an absolutely positioned anchor", () => {
+    document.body.innerHTML = `
+      <div class="bar" style="position: relative">
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || anchor === null) {
+      throw new Error("The positioned anchor fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    anchor.style.top = "4px";
+    anchor.style.right = "20px";
+    // A shared class rule leaves the clone in the flow even though the ID rule
+    // positions the native control absolutely.
+    const button = document.createElement("button");
+    button.style.position = "relative";
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("position")).toBe("absolute");
+    expect(button.style.getPropertyValue("top")).toBe("4px");
+    expect(button.style.getPropertyValue("right")).toBe("20px");
+
+    fit.dispose();
+    expect(button.style.getPropertyValue("position")).toBe("relative");
+    expect(button.style.getPropertyValue("top")).toBe("");
+    expect(button.style.getPropertyValue("right")).toBe("");
+  });
+
   it("refits the absolute cluster when the anchor's layout box changes", () => {
     document.body.innerHTML = `
       <div class="bar">
