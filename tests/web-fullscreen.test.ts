@@ -214,13 +214,13 @@ describe("control bar spacing", () => {
       value: (): DOMRect => new DOMRect(520, 0, 40, 20),
     });
 
-    const cleanup = fitInControlBar(anchor, button);
+    const fit = fitInControlBar(anchor, button);
 
     expect(button.style.getPropertyValue("position")).toBe("absolute");
     expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
     expect(prev.style.getPropertyValue("translate")).toBe("-51.2px 0");
 
-    cleanup();
+    fit.dispose();
     expect(button.style.getPropertyValue("position")).toBe("");
     expect(button.style.getPropertyValue("translate")).toBe("");
     expect(prev.style.getPropertyValue("translate")).toBe("");
@@ -320,14 +320,14 @@ describe("control bar spacing", () => {
       value: (): DOMRect => new DOMRect(540, 0, 40, 20),
     });
 
-    const cleanup = fitInControlBar(anchor, button);
+    const fit = fitInControlBar(anchor, button);
 
     expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
     expect(prev.style.getPropertyValue("translate")).toBe(
       "calc(10px - 41.2px) 0",
     );
 
-    cleanup();
+    fit.dispose();
     expect(prev.style.getPropertyValue("translate")).toBe("10px 0");
   });
 
@@ -356,17 +356,123 @@ describe("control bar spacing", () => {
       value: (): DOMRect => new DOMRect(540, 0, 40, 20),
     });
 
-    const cleanup = fitInControlBar(anchor, button);
+    const fit = fitInControlBar(anchor, button);
 
     expect(button.style.getPropertyValue("position")).toBe("absolute");
     expect(button.style.getPropertyValue("top")).toBe("4px");
     expect(button.style.getPropertyValue("right")).toBe("20px");
 
-    cleanup();
+    fit.dispose();
     expect(button.style.getPropertyValue("position")).toBe("");
     expect(button.style.getPropertyValue("top")).toBe("");
     expect(button.style.getPropertyValue("right")).toBe("");
     expect(button.style.getPropertyValue("translate")).toBe("");
+  });
+
+  it("retains the anchor's content-box sizing instead of forcing border-box", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.style.boxSizing = "content-box";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("box-sizing")).toBe("content-box");
+
+    fit.dispose();
+    expect(button.style.getPropertyValue("box-sizing")).toBe("");
+  });
+
+  it("refits the absolute cluster when the anchor's layout box changes", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The resized control bar fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    let anchorLeft = 540;
+    Object.defineProperty(anchor, "offsetLeft", {
+      configurable: true,
+      get: (): number => anchorLeft,
+    });
+    Object.defineProperty(anchor, "offsetWidth", {
+      configurable: true,
+      value: 40,
+    });
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(anchorLeft, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(anchorLeft, 0, 40, 20),
+    });
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
+    expect(prev.style.getPropertyValue("translate")).toBe("-41.2px 0");
+
+    // A breakpoint moves the anchor and enlarges its icon.
+    anchorLeft = 580;
+    anchor.style.fontSize = "32px";
+    fit.sync();
+
+    expect(button.style.getPropertyValue("translate")).toBe("-51.2px 0");
+    expect(prev.style.getPropertyValue("translate")).toBe("-12.4px 0");
+
+    fit.dispose();
+    expect(prev.style.getPropertyValue("translate")).toBe("");
+  });
+
+  it("scales the absolute shift by the element's transform", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The transformed control bar fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    prev.style.transform = "scale(0.5)";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    fitInControlBar(anchor, button);
+
+    // 41.2 screen px at scale(.5) needs an 82.4 px local translation.
+    expect(prev.style.getPropertyValue("translate")).toBe("-82.4px 0");
   });
 });
 
@@ -654,5 +760,72 @@ describe("installation", () => {
 
     cleanup();
     expect(prev.style.getPropertyValue("translate")).toBe("");
+  });
+
+  it("refits an absolute control bar when the player resizes", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+        <div class="player-controls" style="position: absolute; width: 640px; height: 360px">
+          <button class="prev" style="position: absolute; right: 84px" aria-label="字幕">字幕</button>
+          <button id="native-fullscreen" style="position: absolute; right: 20px" aria-label="进入全屏">全屏</button>
+        </div>
+      </div>
+    `;
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const player = document.querySelector<HTMLElement>(".player");
+    const controls = document.querySelector<HTMLElement>(".player-controls");
+    const prev = document.querySelector<HTMLElement>(".prev");
+    const anchor = document.querySelector<HTMLElement>("#native-fullscreen");
+    if (
+      video === null ||
+      player === null ||
+      controls === null ||
+      prev === null ||
+      anchor === null
+    ) {
+      throw new Error("The resized player fixture is incomplete");
+    }
+    let anchorLeft = 560;
+    Object.defineProperty(anchor, "offsetLeft", {
+      configurable: true,
+      get: (): number => anchorLeft,
+    });
+    Object.defineProperty(anchor, "offsetWidth", {
+      configurable: true,
+      value: 40,
+    });
+    const rects = new Map<Element, DOMRect>([
+      [video, new DOMRect(0, 0, 640, 360)],
+      [player, new DOMRect(0, 0, 640, 360)],
+      [controls, new DOMRect(0, 0, 640, 360)],
+      [prev, new DOMRect(520, 0, 40, 20)],
+      [anchor, new DOMRect(anchorLeft, 0, 40, 20)],
+    ]);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        const rect = rects.get(this);
+        if (rect !== undefined) return rect;
+        if (this.hasAttribute(BUTTON_ATTRIBUTE)) {
+          return new DOMRect(anchorLeft, 0, 40, 20);
+        }
+        return new DOMRect(0, 0, 0, 0);
+      },
+    );
+
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+    const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
+    if (button === null) throw new Error("The web fullscreen button was not inserted");
+    expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
+
+    anchorLeft = 580;
+    anchor.style.fontSize = "32px";
+    rects.set(anchor, new DOMRect(anchorLeft, 0, 40, 20));
+    window.dispatchEvent(new Event("resize"));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(button.style.getPropertyValue("translate")).toBe("-51.2px 0");
+    expect(prev.style.getPropertyValue("translate")).toBe("-42.4px 0");
   });
 });

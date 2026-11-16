@@ -18,7 +18,7 @@ import {
   insertBeforeFullscreen,
   positionFloatingButton,
 } from "./ui/button";
-import { fitInControlBar } from "./ui/layout";
+import { fitInControlBar, type ControlBarFit } from "./ui/layout";
 
 interface Binding {
   readonly video: HTMLVideoElement;
@@ -26,7 +26,7 @@ interface Binding {
   button: HTMLElement | null;
   floating: boolean;
   removeButton: (() => void) | null;
-  removeFit: (() => void) | null;
+  fit: ControlBarFit | null;
 }
 
 function setAttributeIfChanged(
@@ -44,8 +44,8 @@ function isEligibleVideo(video: HTMLVideoElement): boolean {
 }
 
 function disposeButton(binding: Binding): void {
-  binding.removeFit?.();
-  binding.removeFit = null;
+  binding.fit?.dispose();
+  binding.fit = null;
   binding.removeButton?.();
   binding.removeButton = null;
   binding.button?.remove();
@@ -147,7 +147,7 @@ export function installWebFullscreen(
       if (!insertBeforeFullscreen(match, button)) return false;
       binding.button = button;
       binding.floating = false;
-      binding.removeFit = fitInControlBar(anchor, button);
+      binding.fit = fitInControlBar(anchor, button);
       binding.removeButton = attachHandlers(button, binding);
       return true;
     }
@@ -156,7 +156,7 @@ export function installWebFullscreen(
     doc.body.append(button);
     binding.button = button;
     binding.floating = true;
-    binding.removeFit = null;
+    binding.fit = null;
     binding.removeButton = attachHandlers(button, binding);
     positionFloatingButton(button, binding.video, frameWindow);
     return true;
@@ -205,6 +205,12 @@ export function installWebFullscreen(
     }
   }
 
+  // Absolute clusters store the anchor's pixel offsets, so a breakpoint or
+  // player resize must re-run the fit once the layout box actually moved.
+  function syncControlBars(): void {
+    for (const binding of bindings.values()) binding.fit?.sync();
+  }
+
   function removeBinding(binding: Binding): void {
     if (controller.isActiveFor(binding.video)) controller.exit();
     resizeObserver?.unobserve(binding.video);
@@ -232,11 +238,12 @@ export function installWebFullscreen(
           button: null,
           floating: false,
           removeButton: null,
-          removeFit: null,
+          fit: null,
         };
         bindings.set(video, binding);
       }
       refreshBinding(binding);
+      binding.fit?.sync();
       updateButtonState(binding);
     }
     syncFloatingPositions();
@@ -272,7 +279,13 @@ export function installWebFullscreen(
     });
   };
   frameWindow.addEventListener("scroll", requestPositionSync, true);
-  frameWindow.addEventListener("resize", requestPositionSync);
+  // Scroll only moves the floating button; a controlled bar's pixel offsets go
+  // stale only when the viewport changes the anchor's own layout box.
+  const onResize = (): void => {
+    requestPositionSync();
+    syncControlBars();
+  };
+  frameWindow.addEventListener("resize", onResize);
 
   const removeFrameBridge = installFrameBridge(doc, {
     scrollLock,
@@ -284,7 +297,7 @@ export function installWebFullscreen(
     schedule.cancel();
     resizeObserver?.disconnect();
     frameWindow.removeEventListener("scroll", requestPositionSync, true);
-    frameWindow.removeEventListener("resize", requestPositionSync);
+    frameWindow.removeEventListener("resize", onResize);
     if (positionFrame !== 0) frameWindow.cancelAnimationFrame(positionFrame);
     unsubscribe();
     controller.exit();

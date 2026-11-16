@@ -1,6 +1,8 @@
 const FALLBACK_GAP_EM = 0.35;
 const DEFAULT_FONT_SIZE_PX = 16;
 const MIN_SHIFT_PX = 0.5;
+const MIN_TRANSFORM_SCALE = 0.05;
+const LAYOUT_EPSILON_PX = 0.5;
 const POSITION_OFFSET_PROPERTIES = ["top", "right", "bottom", "left"] as const;
 const NO_TRANSLATE_VALUES: ReadonlySet<string> = new Set([
   "",
@@ -26,6 +28,20 @@ interface StyleSnapshot {
   readonly priority: string;
 }
 
+interface LayoutBox {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface ControlBarFit {
+  /** Re-apply the fit when the anchor's layout box moved or resized. */
+  sync(): void;
+  /** Restore every site-owned inline value. */
+  dispose(): void;
+}
+
 function formatPx(value: number): string {
   return `${Math.round(value * 100) / 100}px`;
 }
@@ -43,6 +59,24 @@ function readPx(
 
 function computedStyleOf(element: HTMLElement): CSSStyleDeclaration | null {
   return element.ownerDocument.defaultView?.getComputedStyle(element) ?? null;
+}
+
+function layoutBoxOf(element: HTMLElement): LayoutBox {
+  return {
+    left: element.offsetLeft,
+    top: element.offsetTop,
+    width: element.offsetWidth,
+    height: element.offsetHeight,
+  };
+}
+
+function isSameLayoutBox(left: LayoutBox, right: LayoutBox): boolean {
+  return (
+    Math.abs(left.left - right.left) < LAYOUT_EPSILON_PX &&
+    Math.abs(left.top - right.top) < LAYOUT_EPSILON_PX &&
+    Math.abs(left.width - right.width) < LAYOUT_EPSILON_PX &&
+    Math.abs(left.height - right.height) < LAYOUT_EPSILON_PX
+  );
 }
 
 function isRtl(style: CSSStyleDeclaration | null): boolean {
@@ -142,7 +176,11 @@ function reserveFlexSpace(
   button: HTMLElement,
   parentStyle: CSSStyleDeclaration | null,
   anchorStyle: CSSStyleDeclaration,
+  snapshots: StyleSnapshot[],
 ): void {
+  captureStyle(snapshots, button, "flex-grow");
+  captureStyle(snapshots, button, "flex-shrink");
+  captureStyle(snapshots, button, "flex-basis");
   button.style.setProperty("flex-grow", "0");
   button.style.setProperty("flex-shrink", "0");
   button.style.setProperty("flex-basis", "auto");
@@ -157,14 +195,20 @@ function reserveFlexSpace(
     "margin-inline-start",
     "margin-left",
   );
-  if (!hasLeftGap) button.style.setProperty("margin-inline-start", space);
+  if (!hasLeftGap) {
+    captureStyle(snapshots, button, "margin-inline-start");
+    button.style.setProperty("margin-inline-start", space);
+  }
 
   // The clone can lose an ID- or data-* selector's margin, so inspect the
   // button's own end margin as well as the anchor's leading margin.
   const hasRightGap =
     hasPositiveMargin(anchorStyle, "margin-inline-start", "margin-left") ||
     hasPositiveMargin(buttonStyle, "margin-inline-end", "margin-right");
-  if (!hasRightGap) button.style.setProperty("margin-inline-end", space);
+  if (!hasRightGap) {
+    captureStyle(snapshots, button, "margin-inline-end");
+    button.style.setProperty("margin-inline-end", space);
+  }
 }
 
 function splitComponentValues(value: string): string[] {
@@ -206,6 +250,47 @@ function composeShiftedTranslate(
   const z = parts[2];
   const shiftedX = `calc(${x} - ${formatPx(deltaPx)})`;
   return z === undefined ? `${shiftedX} ${y}` : `${shiftedX} ${y} ${z}`;
+}
+
+/**
+ * `translate` is applied before the element's own `transform`, so a scaled
+ * control must travel a smaller local distance to cover a screen-space gap.
+ * Matrices are what browsers expose; the plain `scale()` form keeps the
+ * calculation correct where computed transforms are not resolved to a matrix.
+ */
+function transformScaleXOf(style: CSSStyleDeclaration | null): number {
+  const raw = style?.getPropertyValue("transform").trim() ?? "";
+  if (raw.length === 0 || raw.toLowerCase() === "none") return 1;
+
+  let scaleX: number;
+  let skewY: number;
+  const matrix = /^matrix(?:3d)?\(([^)]*)\)$/iu.exec(raw);
+  if (matrix !== null) {
+    const parts = (matrix[1] ?? "").split(",");
+    scaleX = Number.parseFloat(parts[0] ?? "");
+    skewY = Number.parseFloat(parts[1] ?? "");
+  } else {
+    const scale = /^scale(?:X)?\(([^)]*)\)$/iu.exec(raw);
+    if (scale === null) return 1;
+    scaleX = Number.parseFloat(scale[1] ?? "");
+    skewY = 0;
+  }
+
+  if (!Number.isFinite(scaleX) || !Number.isFinite(skewY)) return 1;
+  // A rotation mixes the axes, so use the length of the transformed X column.
+  const magnitude = Math.hypot(scaleX, skewY);
+  return magnitude >= MIN_TRANSFORM_SCALE ? magnitude : 1;
+}
+
+function copyBoxSizing(
+  anchorStyle: CSSStyleDeclaration,
+  button: HTMLElement,
+  snapshots: StyleSnapshot[],
+): void {
+  const value = anchorStyle.getPropertyValue("box-sizing").trim();
+  if (value.length === 0) return;
+  captureStyle(snapshots, button, "box-sizing");
+  button.style.setProperty("box-sizing", value);
 }
 
 function copyAnchorOffsets(
@@ -261,7 +346,13 @@ function shiftAbsoluteCluster(
   let shiftedLeft = buttonRect.left;
   if (shiftPx > MIN_SHIFT_PX) {
     captureStyle(snapshots, button, "translate");
-    button.style.setProperty("translate", composeShiftedTranslate(buttonStyle, shiftPx));
+    button.style.setProperty(
+      "translate",
+      composeShiftedTranslate(
+        buttonStyle,
+        shiftPx / transformScaleXOf(buttonStyle),
+      ),
+    );
     shiftedLeft -= shiftPx;
   }
 
@@ -288,31 +379,27 @@ function shiftAbsoluteCluster(
     captureStyle(snapshots, sibling, "translate");
     sibling.style.setProperty(
       "translate",
-      composeShiftedTranslate(siblingStyle, deltaPx),
+      composeShiftedTranslate(
+        siblingStyle,
+        deltaPx / transformScaleXOf(siblingStyle),
+      ),
     );
   }
 }
 
-/**
- * Give the injected button its own room in front of the native fullscreen
- * control. Returns a cleanup that restores every site-owned inline value.
- */
-export function fitInControlBar(
+function applyControlBarFit(
   anchor: HTMLElement,
   button: HTMLElement,
-): () => void {
-  button.style.setProperty("box-sizing", "border-box");
-
+  snapshots: StyleSnapshot[],
+): void {
   const parent = anchor.parentElement;
-  if (parent === null || parent !== button.parentElement) {
-    return (): void => undefined;
-  }
+  if (parent === null || parent !== button.parentElement) return;
 
   const anchorStyle = computedStyleOf(anchor);
-  if (anchorStyle === null) return (): void => undefined;
+  if (anchorStyle === null) return;
   const parentStyle = computedStyleOf(parent);
+  copyBoxSizing(anchorStyle, button, snapshots);
 
-  const snapshots: StyleSnapshot[] = [];
   const position = anchorStyle.getPropertyValue("position").trim();
   const absolute = position === "absolute" || position === "fixed";
 
@@ -324,11 +411,45 @@ export function fitInControlBar(
       parentStyle.getPropertyValue("display").trim().toLowerCase(),
     )
   ) {
-    reserveFlexSpace(button, parentStyle, anchorStyle);
+    reserveFlexSpace(button, parentStyle, anchorStyle, snapshots);
   }
+}
 
-  if (snapshots.length === 0) return (): void => undefined;
-  return (): void => {
+/**
+ * Give the injected button its own room in front of the native fullscreen
+ * control. Absolute clusters bake pixel offsets into inline styles, so the fit
+ * can be re-applied when the player's layout box changes.
+ */
+export function fitInControlBar(
+  anchor: HTMLElement,
+  button: HTMLElement,
+): ControlBarFit {
+  let snapshots: StyleSnapshot[] = [];
+  let box: LayoutBox | null = null;
+
+  const apply = (): void => {
+    snapshots = [];
+    applyControlBarFit(anchor, button, snapshots);
+    // Measure after applying so a flex bar's own added margins do not look
+    // like a layout change on the next check.
+    box = layoutBoxOf(anchor);
+  };
+
+  const dispose = (): void => {
     restoreStyles(snapshots);
+    snapshots = [];
+    box = null;
+  };
+
+  apply();
+
+  return {
+    sync(): void {
+      const next = layoutBoxOf(anchor);
+      if (box !== null && isSameLayoutBox(box, next)) return;
+      dispose();
+      apply();
+    },
+    dispose,
   };
 }
