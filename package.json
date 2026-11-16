@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsx tools/build.ts",
     "watch": "tsx tools/build.ts --watch",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p scripts/ai-chat-turbo-engine/tsconfig.json && tsc --noEmit -p scripts/gemini-quota-capsule/tsconfig.json && tsc --noEmit -p scripts/heybox-up/tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p scripts/ai-chat-turbo-engine/tsconfig.json && tsc --noEmit -p scripts/gemini-quota-capsule/tsconfig.json && tsc --noEmit -p scripts/heybox-up/tsconfig.json && tsc --noEmit -p scripts/web-fullscreen/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm typecheck && pnpm test && pnpm build"
