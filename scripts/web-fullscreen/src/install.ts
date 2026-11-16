@@ -178,7 +178,8 @@ export function installWebFullscreen(
     if (match.mode !== "custom") return !binding.button.isConnected;
     return (
       !binding.button.isConnected ||
-      binding.button.nextElementSibling !== match.fullscreenButton
+      binding.button.nextElementSibling !== match.fullscreenButton ||
+      binding.match.fullscreenButton !== match.fullscreenButton
     );
   }
 
@@ -297,7 +298,7 @@ export function installWebFullscreen(
     if (childListChanged) schedule();
   });
   if (doc.documentElement !== null) {
-    observer.observe(doc.documentElement, { childList: true, subtree: true });
+    observeRoot(doc.documentElement);
   }
 
   discover(doc);
