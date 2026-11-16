@@ -106,7 +106,7 @@ export function installWebFullscreen(
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["class", "style"],
+      attributeFilter: ["class", "style", "hidden"],
     });
   }
 

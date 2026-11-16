@@ -63,6 +63,18 @@ interface LayoutBox {
   readonly height: number;
 }
 
+interface SiblingSnapshot {
+  readonly element: StyledElement;
+  readonly offset: LayoutBox | null;
+  readonly rect: LayoutBox;
+}
+
+interface FitSnapshot {
+  readonly anchorOffset: LayoutBox;
+  readonly buttonRect: LayoutBox;
+  readonly siblings: readonly SiblingSnapshot[];
+}
+
 export interface ControlBarFit {
   /** Re-apply the fit when the anchor's layout box moved or resized. */
   sync(): void;
@@ -102,6 +114,22 @@ function layoutBoxOf(element: HTMLElement): LayoutBox {
   };
 }
 
+function offsetBoxOf(element: Element): LayoutBox | null {
+  const view = element.ownerDocument.defaultView;
+  if (view === null || !(element instanceof view.HTMLElement)) return null;
+  return layoutBoxOf(element);
+}
+
+function relativeRectOf(element: Element, origin: DOMRect): LayoutBox {
+  const rect = element.getBoundingClientRect();
+  return {
+    left: rect.left - origin.left,
+    top: rect.top - origin.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
 function isSameLayoutBox(left: LayoutBox, right: LayoutBox): boolean {
   return (
     Math.abs(left.left - right.left) < LAYOUT_EPSILON_PX &&
@@ -109,6 +137,53 @@ function isSameLayoutBox(left: LayoutBox, right: LayoutBox): boolean {
     Math.abs(left.width - right.width) < LAYOUT_EPSILON_PX &&
     Math.abs(left.height - right.height) < LAYOUT_EPSILON_PX
   );
+}
+
+function snapshotFit(anchor: HTMLElement, button: HTMLElement): FitSnapshot {
+  const anchorRect = anchor.getBoundingClientRect();
+  const siblings: SiblingSnapshot[] = [];
+  for (
+    let sibling = button.previousElementSibling;
+    sibling !== null;
+    sibling = sibling.previousElementSibling
+  ) {
+    if (!isStyledElement(sibling)) continue;
+    siblings.push({
+      element: sibling,
+      offset: offsetBoxOf(sibling),
+      rect: relativeRectOf(sibling, anchorRect),
+    });
+  }
+  return {
+    anchorOffset: layoutBoxOf(anchor),
+    buttonRect: relativeRectOf(button, anchorRect),
+    siblings,
+  };
+}
+
+function isSameSiblingSnapshot(
+  left: SiblingSnapshot,
+  right: SiblingSnapshot,
+): boolean {
+  if (left.element !== right.element) return false;
+  if (!isSameLayoutBox(left.rect, right.rect)) return false;
+  if (left.offset === null || right.offset === null) {
+    return left.offset === right.offset;
+  }
+  return isSameLayoutBox(left.offset, right.offset);
+}
+
+function isSameFitSnapshot(left: FitSnapshot, right: FitSnapshot): boolean {
+  if (!isSameLayoutBox(left.anchorOffset, right.anchorOffset)) return false;
+  if (!isSameLayoutBox(left.buttonRect, right.buttonRect)) return false;
+  if (left.siblings.length !== right.siblings.length) return false;
+  for (let index = 0; index < left.siblings.length; index += 1) {
+    const prevSibling = left.siblings[index];
+    const nextSibling = right.siblings[index];
+    if (prevSibling === undefined || nextSibling === undefined) return false;
+    if (!isSameSiblingSnapshot(prevSibling, nextSibling)) return false;
+  }
+  return true;
 }
 
 function isRtl(style: CSSStyleDeclaration | null): boolean {
@@ -739,7 +814,7 @@ export function fitInControlBar(
 ): ControlBarFit {
   let snapshots: StyleSnapshot[] = [];
   let ownedStyles = new Map<Element, OwnedStyle>();
-  let box: LayoutBox | null = null;
+  let fitSnapshot: FitSnapshot | null = null;
 
   const apply = (): void => {
     snapshots = [];
@@ -761,7 +836,7 @@ export function fitInControlBar(
     }
     // Measure after applying so a flex bar's own added margins do not look
     // like a layout change on the next check.
-    box = layoutBoxOf(anchor);
+    fitSnapshot = snapshotFit(anchor, button);
   };
 
   const dispose = (): void => {
@@ -769,15 +844,15 @@ export function fitInControlBar(
     restoreStyles(snapshots);
     snapshots = [];
     ownedStyles.clear();
-    box = null;
+    fitSnapshot = null;
   };
 
   apply();
 
   return {
     sync(): void {
-      const next = layoutBoxOf(anchor);
-      if (box !== null && isSameLayoutBox(box, next)) return;
+      const next = snapshotFit(anchor, button);
+      if (fitSnapshot !== null && isSameFitSnapshot(fitSnapshot, next)) return;
       dispose();
       apply();
     },

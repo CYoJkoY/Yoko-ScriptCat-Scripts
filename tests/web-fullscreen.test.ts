@@ -834,6 +834,58 @@ describe("control bar spacing", () => {
     fit.dispose();
     expect(prev.style.getPropertyValue("translate")).toBe("");
   });
+
+  it("refits sibling shifts when a preceding control changes without moving the anchor", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The sibling refit fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    Object.defineProperty(anchor, "offsetLeft", {
+      configurable: true,
+      value: 540,
+    });
+    Object.defineProperty(anchor, "offsetWidth", {
+      configurable: true,
+      value: 40,
+    });
+    let prevRect = new DOMRect(0, 0, 0, 0);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => prevRect,
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    const fit = fitInControlBar(anchor, button);
+    expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
+    expect(prev.style.getPropertyValue("translate")).toBe("");
+
+    prevRect = new DOMRect(490, 0, 40, 20);
+    fit.sync();
+
+    expect(prev.style.getPropertyValue("translate")).toBe("-41.2px 0");
+
+    fit.dispose();
+    expect(prev.style.getPropertyValue("translate")).toBe("");
+  });
 });
 
 describe("userscript metadata", () => {
@@ -1316,6 +1368,131 @@ describe("installation", () => {
     await new Promise((resolve) => setTimeout(resolve, 220));
     prev.classList.remove("is-hidden");
     await new Promise((resolve) => setTimeout(resolve, 260));
+
+    expect(prev.style.getPropertyValue("translate")).toBe("-51.2px 0");
+  });
+
+  it("refits when a preceding control toggles the hidden attribute", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+        <div class="player-controls" style="position: absolute; width: 640px; height: 360px">
+          <button class="prev" hidden style="position: absolute; right: 84px" aria-label="字幕">字幕</button>
+          <button id="native-fullscreen" style="position: absolute; right: 20px" aria-label="进入全屏">全屏</button>
+        </div>
+      </div>
+    `;
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const player = document.querySelector<HTMLElement>(".player");
+    const controls = document.querySelector<HTMLElement>(".player-controls");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLElement>("#native-fullscreen");
+    if (
+      video === null ||
+      player === null ||
+      controls === null ||
+      prev === null ||
+      anchor === null
+    ) {
+      throw new Error("The hidden attribute fixture is incomplete");
+    }
+    const rects = new Map<Element, DOMRect>([
+      [video, new DOMRect(0, 0, 640, 360)],
+      [player, new DOMRect(0, 0, 640, 360)],
+      [controls, new DOMRect(0, 0, 640, 360)],
+      [anchor, new DOMRect(560, 0, 40, 20)],
+    ]);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        const rect = rects.get(this);
+        if (rect !== undefined) return rect;
+        if (this === prev) {
+          return prev.hidden
+            ? new DOMRect(0, 0, 0, 0)
+            : new DOMRect(520, 0, 40, 20);
+        }
+        if (this.hasAttribute(BUTTON_ATTRIBUTE)) {
+          return new DOMRect(560, 0, 40, 20);
+        }
+        return new DOMRect(0, 0, 0, 0);
+      },
+    );
+
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+    const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
+    if (button === null) throw new Error("The web fullscreen button was not inserted");
+    expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
+    expect(prev.style.getPropertyValue("translate")).toBe("");
+
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    prev.hidden = false;
+    await new Promise((resolve) => setTimeout(resolve, 260));
+
+    expect(prev.style.getPropertyValue("translate")).toBe("-51.2px 0");
+  });
+
+  it("refits preceding controls on resize when a CSS breakpoint keeps the anchor fixed", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+        <div class="player-controls" style="position: absolute; width: 640px; height: 360px">
+          <button class="prev" style="position: absolute; right: 84px" aria-label="字幕">字幕</button>
+          <button id="native-fullscreen" style="position: absolute; right: 20px" aria-label="进入全屏">全屏</button>
+        </div>
+      </div>
+    `;
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const player = document.querySelector<HTMLElement>(".player");
+    const controls = document.querySelector<HTMLElement>(".player-controls");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLElement>("#native-fullscreen");
+    if (
+      video === null ||
+      player === null ||
+      controls === null ||
+      prev === null ||
+      anchor === null
+    ) {
+      throw new Error("The breakpoint control bar fixture is incomplete");
+    }
+    Object.defineProperty(anchor, "offsetLeft", {
+      configurable: true,
+      value: 560,
+    });
+    Object.defineProperty(anchor, "offsetWidth", {
+      configurable: true,
+      value: 40,
+    });
+    let prevRect = new DOMRect(0, 0, 0, 0);
+    const rects = new Map<Element, DOMRect>([
+      [video, new DOMRect(0, 0, 640, 360)],
+      [player, new DOMRect(0, 0, 640, 360)],
+      [controls, new DOMRect(0, 0, 640, 360)],
+      [anchor, new DOMRect(560, 0, 40, 20)],
+    ]);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        const rect = rects.get(this);
+        if (rect !== undefined) return rect;
+        if (this === prev) return prevRect;
+        if (this.hasAttribute(BUTTON_ATTRIBUTE)) {
+          return new DOMRect(560, 0, 40, 20);
+        }
+        return new DOMRect(0, 0, 0, 0);
+      },
+    );
+
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+    const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
+    if (button === null) throw new Error("The web fullscreen button was not inserted");
+    expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
+    expect(prev.style.getPropertyValue("translate")).toBe("");
+
+    prevRect = new DOMRect(520, 0, 40, 20);
+    window.dispatchEvent(new Event("resize"));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(prev.style.getPropertyValue("translate")).toBe("-51.2px 0");
   });
