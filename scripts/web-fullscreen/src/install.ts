@@ -18,6 +18,7 @@ import {
   insertBeforeFullscreen,
   positionFloatingButton,
 } from "./ui/button";
+import { fitInControlBar, type ControlBarFit } from "./ui/layout";
 
 interface Binding {
   readonly video: HTMLVideoElement;
@@ -25,6 +26,7 @@ interface Binding {
   button: HTMLElement | null;
   floating: boolean;
   removeButton: (() => void) | null;
+  fit: ControlBarFit | null;
 }
 
 function setAttributeIfChanged(
@@ -42,6 +44,8 @@ function isEligibleVideo(video: HTMLVideoElement): boolean {
 }
 
 function disposeButton(binding: Binding): void {
+  binding.fit?.dispose();
+  binding.fit = null;
   binding.removeButton?.();
   binding.removeButton = null;
   binding.button?.remove();
@@ -63,6 +67,11 @@ export function installWebFullscreen(
   const knownVideos = new Set<HTMLVideoElement>();
 
   const schedule = createDebounced(() => sync(), {
+    delayMs: SCAN_DEBOUNCE_MS,
+  });
+  // Class or style changes can move an absolute anchor without resizing the
+  // video, so only the bar fit needs to re-run for those.
+  const scheduleFit = createDebounced(() => refitControlBars(), {
     delayMs: SCAN_DEBOUNCE_MS,
   });
 
@@ -93,7 +102,12 @@ export function installWebFullscreen(
   function observeRoot(root: Node): void {
     if (observedRoots.has(root)) return;
     observedRoots.add(root);
-    observer.observe(root, { childList: true, subtree: true });
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "hidden"],
+    });
   }
 
   function toggleBinding(binding: Binding): void {
@@ -137,10 +151,13 @@ export function installWebFullscreen(
     const match = binding.match;
     if (match.mode === "skip") return false;
     if (match.mode === "custom") {
+      const anchor = match.fullscreenButton;
+      if (anchor === null) return false;
       const button = createFullscreenButton(match);
       if (!insertBeforeFullscreen(match, button)) return false;
       binding.button = button;
       binding.floating = false;
+      binding.fit = fitInControlBar(anchor, button);
       binding.removeButton = attachHandlers(button, binding);
       return true;
     }
@@ -149,6 +166,7 @@ export function installWebFullscreen(
     doc.body.append(button);
     binding.button = button;
     binding.floating = true;
+    binding.fit = null;
     binding.removeButton = attachHandlers(button, binding);
     positionFloatingButton(button, binding.video, frameWindow);
     return true;
@@ -160,7 +178,8 @@ export function installWebFullscreen(
     if (match.mode !== "custom") return !binding.button.isConnected;
     return (
       !binding.button.isConnected ||
-      binding.button.nextElementSibling !== match.fullscreenButton
+      binding.button.nextElementSibling !== match.fullscreenButton ||
+      binding.match.fullscreenButton !== match.fullscreenButton
     );
   }
 
@@ -197,6 +216,18 @@ export function installWebFullscreen(
     }
   }
 
+  // Absolute clusters store the anchor's pixel offsets, so a breakpoint or
+  // player resize must re-run the fit once the layout box actually moved.
+  function syncControlBars(): void {
+    for (const binding of bindings.values()) binding.fit?.sync();
+  }
+
+  // Visibility or size changes among the preceding controls do not move an
+  // absolute anchor, so their mutations need an unconditional refit.
+  function refitControlBars(): void {
+    for (const binding of bindings.values()) binding.fit?.refit();
+  }
+
   function removeBinding(binding: Binding): void {
     if (controller.isActiveFor(binding.video)) controller.exit();
     resizeObserver?.unobserve(binding.video);
@@ -224,10 +255,12 @@ export function installWebFullscreen(
           button: null,
           floating: false,
           removeButton: null,
+          fit: null,
         };
         bindings.set(video, binding);
       }
       refreshBinding(binding);
+      binding.fit?.sync();
       updateButtonState(binding);
     }
     syncFloatingPositions();
@@ -238,17 +271,57 @@ export function installWebFullscreen(
     syncFloatingPositions();
   });
 
+  // Changes in the fitted bar can move the anchor or reveal a preceding
+  // control. Ignore our own inline style writes so refitting cannot loop.
+  const affectsControlBar = (
+    target: Element,
+    attributeName: string | null,
+  ): boolean => {
+    for (const binding of bindings.values()) {
+      const fit = binding.fit;
+      const button = binding.button;
+      if (fit === null || button === null) continue;
+      if (target === button || button.contains(target)) continue;
+      if (attributeName === "style" && fit.ownsStyleOf(target)) continue;
+      const anchor = binding.match.fullscreenButton;
+      if (anchor === null) continue;
+      if (target === anchor || target.contains(anchor)) return true;
+      const bar = button.parentElement;
+      if (bar !== null && bar.contains(target)) return true;
+    }
+    return false;
+  };
+
   const observer = new MutationObserver((records) => {
+    let childListChanged = false;
+    let layoutChanged = false;
     for (const record of records) {
+      if (record.type === "attributes") {
+        if (
+          record.target instanceof Element &&
+          affectsControlBar(record.target, record.attributeName)
+        ) {
+          layoutChanged = true;
+        }
+        continue;
+      }
+      childListChanged = true;
+      if (
+        record.target instanceof Element &&
+        affectsControlBar(record.target, null)
+      ) {
+        layoutChanged = true;
+      }
       for (const node of record.addedNodes) {
         if (node instanceof Element) discover(node);
         else if (node instanceof DocumentFragment) discover(node);
       }
     }
-    schedule();
+    if (layoutChanged) scheduleFit();
+    if (childListChanged) schedule();
   });
   if (doc.documentElement !== null) {
-    observer.observe(doc.documentElement, { childList: true, subtree: true });
+    observeRoot(doc.documentElement);
   }
 
   discover(doc);
@@ -263,7 +336,13 @@ export function installWebFullscreen(
     });
   };
   frameWindow.addEventListener("scroll", requestPositionSync, true);
-  frameWindow.addEventListener("resize", requestPositionSync);
+  // Scroll only moves the floating button; a controlled bar's pixel offsets go
+  // stale only when the viewport changes the anchor's own layout box.
+  const onResize = (): void => {
+    requestPositionSync();
+    syncControlBars();
+  };
+  frameWindow.addEventListener("resize", onResize);
 
   const removeFrameBridge = installFrameBridge(doc, {
     scrollLock,
@@ -273,9 +352,10 @@ export function installWebFullscreen(
   return () => {
     observer.disconnect();
     schedule.cancel();
+    scheduleFit.cancel();
     resizeObserver?.disconnect();
     frameWindow.removeEventListener("scroll", requestPositionSync, true);
-    frameWindow.removeEventListener("resize", requestPositionSync);
+    frameWindow.removeEventListener("resize", onResize);
     if (positionFrame !== 0) frameWindow.cancelAnimationFrame(positionFrame);
     unsubscribe();
     controller.exit();
