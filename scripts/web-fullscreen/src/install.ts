@@ -27,7 +27,17 @@ interface Binding {
   floating: boolean;
   removeButton: (() => void) | null;
   fit: ControlBarFit | null;
+  activated: boolean;
+  activationRoot: HTMLElement | null;
+  removeActivation: (() => void) | null;
 }
+
+const ACTIVATION_EVENTS = [
+  "pointerover",
+  "pointerdown",
+  "touchstart",
+  "focusin",
+] as const;
 
 function setAttributeIfChanged(
   element: HTMLElement,
@@ -51,6 +61,12 @@ function disposeButton(binding: Binding): void {
   binding.button?.remove();
   binding.button = null;
   binding.floating = false;
+}
+
+function releaseActivation(binding: Binding): void {
+  binding.removeActivation?.();
+  binding.removeActivation = null;
+  binding.activationRoot = null;
 }
 
 export function installWebFullscreen(
@@ -124,6 +140,34 @@ export function installWebFullscreen(
     syncFloatingPositions();
   }
 
+  function activateBinding(binding: Binding): void {
+    if (binding.activated) return;
+    binding.activated = true;
+    releaseActivation(binding);
+    // Let a lazily rendered native web-fullscreen control appear before the
+    // scan decides whether this player still needs our button.
+    schedule();
+  }
+
+  function retainActivation(binding: Binding): void {
+    if (binding.activated || binding.match.mode !== "custom") return;
+    const root = binding.match.root;
+    if (binding.removeActivation !== null && binding.activationRoot === root) {
+      return;
+    }
+    releaseActivation(binding);
+    const onActivate = (): void => activateBinding(binding);
+    for (const event of ACTIVATION_EVENTS) {
+      root.addEventListener(event, onActivate);
+    }
+    binding.activationRoot = root;
+    binding.removeActivation = () => {
+      for (const event of ACTIVATION_EVENTS) {
+        root.removeEventListener(event, onActivate);
+      }
+    };
+  }
+
   function attachHandlers(button: HTMLElement, binding: Binding): () => void {
     const onClick = (event: MouseEvent): void => {
       event.preventDefault();
@@ -187,9 +231,25 @@ export function installWebFullscreen(
     const match = findPlayerMatch(binding.video);
     if (match.mode === "skip") {
       disposeButton(binding);
+      releaseActivation(binding);
       binding.match = match;
       return;
     }
+    if (match.mode === "custom" && !binding.activated) {
+      // A floating fallback was already active because the controls had not
+      // rendered yet; now that the bar exists, inject without another hover.
+      const controlsJustAppeared = binding.match.mode === "native";
+      disposeButton(binding);
+      binding.match = match;
+      if (controlsJustAppeared) {
+        binding.activated = true;
+        mountButton(binding);
+        return;
+      }
+      retainActivation(binding);
+      return;
+    }
+    if (match.mode === "native") releaseActivation(binding);
     if (needsRemount(binding, match)) {
       disposeButton(binding);
       binding.match = match;
@@ -231,6 +291,7 @@ export function installWebFullscreen(
   function removeBinding(binding: Binding): void {
     if (controller.isActiveFor(binding.video)) controller.exit();
     resizeObserver?.unobserve(binding.video);
+    releaseActivation(binding);
     disposeButton(binding);
     bindings.delete(binding.video);
   }
@@ -256,6 +317,9 @@ export function installWebFullscreen(
           floating: false,
           removeButton: null,
           fit: null,
+          activated: false,
+          activationRoot: null,
+          removeActivation: null,
         };
         bindings.set(video, binding);
       }
@@ -359,7 +423,10 @@ export function installWebFullscreen(
     if (positionFrame !== 0) frameWindow.cancelAnimationFrame(positionFrame);
     unsubscribe();
     controller.exit();
-    for (const binding of [...bindings.values()]) disposeButton(binding);
+    for (const binding of [...bindings.values()]) {
+      releaseActivation(binding);
+      disposeButton(binding);
+    }
     bindings.clear();
     knownVideos.clear();
     observedRoots.clear();
