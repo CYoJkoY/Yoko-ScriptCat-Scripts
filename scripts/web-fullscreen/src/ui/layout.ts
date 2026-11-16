@@ -6,6 +6,8 @@ const MAX_LOCAL_SHIFT_RATIO = 1 / MIN_TRANSFORM_SCALE;
 const MIN_APPLIED_SHIFT_PX = 0.005;
 const LAYOUT_EPSILON_PX = 0.5;
 const POSITION_OFFSET_PROPERTIES = ["top", "right", "bottom", "left"] as const;
+const CONTROL_ICON_SELECTOR = "svg, img, i, [class*='icon']";
+const MIN_MEASURED_SIZE_PX = 1;
 const NO_TRANSLATE_VALUES: ReadonlySet<string> = new Set([
   "",
   "none",
@@ -69,10 +71,16 @@ interface SiblingSnapshot {
   readonly rect: LayoutBox;
 }
 
+interface ControlSizes {
+  readonly icon: number | null;
+  readonly control: number | null;
+}
+
 interface FitSnapshot {
   readonly anchorOffset: LayoutBox;
   readonly buttonRect: LayoutBox;
   readonly siblings: readonly SiblingSnapshot[];
+  readonly sizes: ControlSizes;
 }
 
 export interface ControlBarFit {
@@ -99,6 +107,71 @@ function readPx(
   if (raw.length === 0) return null;
   const parsed = Number.parseFloat(raw);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function renderedSizeOf(element: Element): number | null {
+  const rect = element.getBoundingClientRect();
+  if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
+  const size = Math.min(rect.width, rect.height);
+  return size >= MIN_MEASURED_SIZE_PX ? size : null;
+}
+
+function iconElementOf(control: Element): Element | null {
+  for (const candidate of control.querySelectorAll(CONTROL_ICON_SELECTOR)) {
+    if (renderedSizeOf(candidate) !== null) return candidate;
+  }
+  const hasText = (control.textContent ?? "").trim().length > 0;
+  return hasText ? null : control;
+}
+
+function medianSize(sizes: readonly number[]): number | null {
+  if (sizes.length === 0) return null;
+  const sorted = [...sizes].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted[middle] ?? null;
+}
+
+/**
+ * Prefer the anchor's own icon, then the icons of neighbouring controls. The
+ * median keeps one unusually large control from stretching the button.
+ */
+function measureIconTarget(
+  anchor: HTMLElement,
+  button: HTMLElement,
+): number | null {
+  const anchorIcon = iconElementOf(anchor);
+  if (anchorIcon !== null) {
+    const anchorSize = renderedSizeOf(anchorIcon);
+    if (anchorSize !== null) return anchorSize;
+  }
+
+  const parent = anchor.parentElement;
+  if (parent === null) return null;
+  const sizes: number[] = [];
+  for (const sibling of parent.children) {
+    if (sibling === anchor || sibling === button) continue;
+    if (!isStyledElement(sibling)) continue;
+    const icon = iconElementOf(sibling);
+    if (icon === null) continue;
+    const size = renderedSizeOf(icon);
+    if (size !== null) sizes.push(size);
+  }
+  return medianSize(sizes);
+}
+
+function measureControlSizes(
+  anchor: HTMLElement,
+  button: HTMLElement,
+): ControlSizes {
+  const anchorRect = anchor.getBoundingClientRect();
+  const controlSize = Math.min(anchorRect.width, anchorRect.height);
+  return {
+    icon: measureIconTarget(anchor, button),
+    control:
+      Number.isFinite(controlSize) && controlSize >= MIN_MEASURED_SIZE_PX
+        ? controlSize
+        : null,
+  };
 }
 
 function computedStyleOf(element: Element): CSSStyleDeclaration | null {
@@ -158,6 +231,7 @@ function snapshotFit(anchor: HTMLElement, button: HTMLElement): FitSnapshot {
     anchorOffset: layoutBoxOf(anchor),
     buttonRect: relativeRectOf(button, anchorRect),
     siblings,
+    sizes: measureControlSizes(anchor, button),
   };
 }
 
@@ -176,6 +250,7 @@ function isSameSiblingSnapshot(
 function isSameFitSnapshot(left: FitSnapshot, right: FitSnapshot): boolean {
   if (!isSameLayoutBox(left.anchorOffset, right.anchorOffset)) return false;
   if (!isSameLayoutBox(left.buttonRect, right.buttonRect)) return false;
+  if (!isSameControlSizes(left.sizes, right.sizes)) return false;
   if (left.siblings.length !== right.siblings.length) return false;
   for (let index = 0; index < left.siblings.length; index += 1) {
     const prevSibling = left.siblings[index];
@@ -184,6 +259,18 @@ function isSameFitSnapshot(left: FitSnapshot, right: FitSnapshot): boolean {
     if (!isSameSiblingSnapshot(prevSibling, nextSibling)) return false;
   }
   return true;
+}
+
+function isSameControlSizes(left: ControlSizes, right: ControlSizes): boolean {
+  return (
+    isSameOptionalSize(left.icon, right.icon) &&
+    isSameOptionalSize(left.control, right.control)
+  );
+}
+
+function isSameOptionalSize(left: number | null, right: number | null): boolean {
+  if (left === null || right === null) return left === right;
+  return Math.abs(left - right) < LAYOUT_EPSILON_PX;
 }
 
 function isRtl(style: CSSStyleDeclaration | null): boolean {
@@ -676,6 +763,54 @@ function copyBoxSizing(
   button.style.setProperty("box-sizing", value);
 }
 
+function copyFontSize(
+  anchorStyle: CSSStyleDeclaration,
+  button: HTMLElement,
+  snapshots: StyleSnapshot[],
+): void {
+  const value = anchorStyle.getPropertyValue("font-size").trim();
+  if (value.length === 0) return;
+  const buttonStyle = computedStyleOf(button);
+  if (buttonStyle?.getPropertyValue("font-size").trim() === value) return;
+  captureStyle(snapshots, button, "font-size");
+  button.style.setProperty("font-size", value);
+}
+
+function copyAnchorPosition(
+  anchorStyle: CSSStyleDeclaration,
+  button: HTMLElement,
+  snapshots: StyleSnapshot[],
+): void {
+  const position = anchorStyle.getPropertyValue("position").trim();
+  if (position.length === 0) return;
+  const buttonStyle = computedStyleOf(button);
+  if (buttonStyle?.getPropertyValue("position").trim() === position) return;
+  captureStyle(snapshots, button, "position");
+  button.style.setProperty("position", position);
+}
+
+function applyMeasuredSizes(
+  anchor: HTMLElement,
+  button: HTMLElement,
+  snapshots: StyleSnapshot[],
+): void {
+  const sizes = measureControlSizes(anchor, button);
+  const icon = button.querySelector("svg");
+  if (icon !== null && sizes.icon !== null) {
+    const size = formatPx(sizes.icon);
+    captureStyle(snapshots, icon, "width");
+    captureStyle(snapshots, icon, "height");
+    icon.style.setProperty("width", size);
+    icon.style.setProperty("height", size);
+  }
+  if (sizes.control === null) return;
+  const size = formatPx(sizes.control);
+  captureStyle(snapshots, button, "min-width");
+  captureStyle(snapshots, button, "min-height");
+  button.style.setProperty("min-width", size);
+  button.style.setProperty("min-height", size);
+}
+
 function copyAnchorOffsets(
   anchorStyle: CSSStyleDeclaration,
   button: HTMLElement,
@@ -711,14 +846,7 @@ function shiftAbsoluteCluster(
   // `relative` while an ID rule positions the anchor absolutely. Copying the
   // insets onto a flow-positioned clone would offset it from its own place
   // instead of from the anchor, so the positioning mode must match first.
-  const anchorPosition = anchorStyle.getPropertyValue("position").trim();
-  if (
-    anchorPosition.length > 0 &&
-    buttonStyle.getPropertyValue("position").trim() !== anchorPosition
-  ) {
-    captureStyle(snapshots, button, "position");
-    button.style.setProperty("position", anchorPosition);
-  }
+  copyAnchorPosition(anchorStyle, button, snapshots);
   copyAnchorOffsets(anchorStyle, button, snapshots);
 
   const anchorRect = anchor.getBoundingClientRect();
@@ -787,13 +915,27 @@ function applyControlBarFit(
   if (anchorStyle === null) return;
   const parentStyle = computedStyleOf(parent);
   copyBoxSizing(anchorStyle, button, snapshots);
+  copyFontSize(anchorStyle, button, snapshots);
+  applyMeasuredSizes(anchor, button, snapshots);
+  // The anchor may be positioned by an ID rule while the clone only keeps the
+  // shared class. Align the mode in every layout path before insets or flex
+  // spacing are derived from it.
+  copyAnchorPosition(anchorStyle, button, snapshots);
 
   const position = anchorStyle.getPropertyValue("position").trim();
   const absolute = position === "absolute" || position === "fixed";
+  const offsetRelative = position === "relative" || position === "sticky";
 
   if (absolute && !isRtl(anchorStyle) && !isRtl(parentStyle)) {
     shiftAbsoluteCluster(anchor, button, parentStyle, anchorStyle, snapshots);
-  } else if (
+    return;
+  }
+  if (offsetRelative) {
+    // Relative and sticky insets shift the control visually without changing
+    // its flow slot, so the clone must carry the same nudge.
+    copyAnchorOffsets(anchorStyle, button, snapshots);
+  }
+  if (
     parentStyle !== null &&
     FLEX_OR_GRID_DISPLAYS.has(
       parentStyle.getPropertyValue("display").trim().toLowerCase(),
