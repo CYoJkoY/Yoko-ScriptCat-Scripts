@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BUTTON_ATTRIBUTE, FRAME_CHANNEL } from "../scripts/web-fullscreen/src/config";
+import {
+  BUTTON_ATTRIBUTE,
+  FLOATING_BUTTON_CLASS,
+  FRAME_CHANNEL,
+} from "../scripts/web-fullscreen/src/config";
 import { createWebFullscreenController } from "../scripts/web-fullscreen/src/core/controller";
 import { findPlayerMatch } from "../scripts/web-fullscreen/src/core/detect";
 import { installFrameBridge } from "../scripts/web-fullscreen/src/core/frameBridge";
@@ -53,6 +57,11 @@ afterEach(() => {
   Reflect.deleteProperty(document, "fullscreenElement");
   vi.restoreAllMocks();
 });
+
+async function activatePlayer(player: HTMLElement): Promise<void> {
+  player.dispatchEvent(new Event("pointerover", { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 220));
+}
 
 describe("player detection", () => {
   it("finds the native fullscreen control in the nearest player wrapper", () => {
@@ -560,6 +569,145 @@ describe("control bar spacing", () => {
     expect(button.style.getPropertyValue("position")).toBe("relative");
     expect(button.style.getPropertyValue("top")).toBe("");
     expect(button.style.getPropertyValue("right")).toBe("");
+  });
+
+  it("matches the clone's position to a relatively positioned anchor", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.style.position = "relative";
+    anchor.style.top = "4px";
+    anchor.style.right = "20px";
+    // A shared class can leave the clone absolutely positioned even though
+    // the anchor's own rule keeps it in flow.
+    const button = document.createElement("button");
+    button.style.position = "absolute";
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("position")).toBe("relative");
+    expect(button.style.getPropertyValue("top")).toBe("4px");
+    expect(button.style.getPropertyValue("right")).toBe("20px");
+
+    fit.dispose();
+    expect(button.style.getPropertyValue("position")).toBe("absolute");
+    expect(button.style.getPropertyValue("top")).toBe("");
+    expect(button.style.getPropertyValue("right")).toBe("");
+  });
+
+  it("matches the clone's position and insets to a sticky anchor", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.style.position = "sticky";
+    anchor.style.top = "6px";
+    anchor.style.bottom = "auto";
+    const button = document.createElement("button");
+    button.style.position = "static";
+    button.style.bottom = "12px";
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("position")).toBe("sticky");
+    expect(button.style.getPropertyValue("top")).toBe("6px");
+    expect(button.style.getPropertyValue("bottom")).toBe("auto");
+
+    fit.dispose();
+    expect(button.style.getPropertyValue("position")).toBe("static");
+    expect(button.style.getPropertyValue("top")).toBe("");
+    expect(button.style.getPropertyValue("bottom")).toBe("12px");
+  });
+
+  it("sizes the icon from the anchor's rendered icon", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.textContent = "";
+    const anchorIcon = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg",
+    );
+    anchor.append(anchorIcon);
+    Object.defineProperty(anchorIcon, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, 32, 32),
+    });
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    button.append(icon);
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(icon.style.getPropertyValue("width")).toBe("32px");
+    expect(icon.style.getPropertyValue("height")).toBe("32px");
+    expect(getComputedStyle(button).fontSize).toBe(
+      getComputedStyle(anchor).fontSize,
+    );
+
+    fit.dispose();
+    expect(icon.style.getPropertyValue("width")).toBe("");
+    expect(icon.style.getPropertyValue("height")).toBe("");
+  });
+
+  it("uses the median size of neighbouring control icons", () => {
+    document.body.innerHTML = `
+      <div class="bar" style="display: flex">
+        <button class="prev"><svg></svg></button>
+        <button class="prev"><svg></svg></button>
+        <button class="prev"><svg></svg></button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || anchor === null) {
+      throw new Error("The icon median fixture is incomplete");
+    }
+    const sizes = [20, 24, 40];
+    const icons = [...bar.querySelectorAll<SVGElement>(".prev svg")];
+    icons.forEach((icon, index) => {
+      const size = sizes[index];
+      if (size === undefined) throw new Error("The icon fixture is incomplete");
+      Object.defineProperty(icon, "getBoundingClientRect", {
+        configurable: true,
+        value: (): DOMRect => new DOMRect(0, 0, size, size),
+      });
+    });
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    button.append(icon);
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(icon.style.getPropertyValue("width")).toBe("24px");
+    expect(icon.style.getPropertyValue("height")).toBe("24px");
+    fit.dispose();
+  });
+
+  it("refits the icon when controls change size without moving the anchor", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.textContent = "";
+    const anchorIcon = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg",
+    );
+    anchor.append(anchorIcon);
+    let iconSize = 24;
+    Object.defineProperty(anchorIcon, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, iconSize, iconSize),
+    });
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    button.append(icon);
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+    expect(icon.style.getPropertyValue("width")).toBe("24px");
+
+    iconSize = 40;
+    fit.sync();
+
+    expect(icon.style.getPropertyValue("width")).toBe("40px");
+    expect(icon.style.getPropertyValue("height")).toBe("40px");
   });
 
   it("clears inherited class insets when the anchor overrides them to auto", () => {
@@ -1101,10 +1249,81 @@ describe("iframe bridge", () => {
 });
 
 describe("installation", () => {
-  it("inserts our button before the native control and toggles the viewport", () => {
+  it("waits for the first player interaction before injecting", async () => {
+    const { player } = mountCustomPlayer();
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+
+    expect(player.querySelector(`[${BUTTON_ATTRIBUTE}]`)).toBeNull();
+
+    player.dispatchEvent(new Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    expect(player.querySelector(`[${BUTTON_ATTRIBUTE}]`)).not.toBeNull();
+  });
+
+  it("also injects after keyboard focus reaches the player", async () => {
+    const { player } = mountCustomPlayer();
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+
+    player.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    expect(player.querySelector(`[${BUTTON_ATTRIBUTE}]`)).not.toBeNull();
+  });
+
+  it("does not inject when a lazy native web-fullscreen control appears first", async () => {
+    const { player } = mountCustomPlayer();
+    const controls = player.querySelector<HTMLElement>(".player-controls");
+    if (controls === null) throw new Error("The control bar is missing");
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+
+    player.dispatchEvent(new Event("pointerover", { bubbles: true }));
+    controls.insertAdjacentHTML(
+      "afterbegin",
+      '<button aria-label="网页全屏">网页全屏</button>',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    expect(player.querySelector(`[${BUTTON_ATTRIBUTE}]`)).toBeNull();
+  });
+
+  it("moves a floating fallback into the bar once lazy controls render", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+      </div>
+    `;
+    const player = document.querySelector<HTMLElement>(".player");
+    const video = document.querySelector<HTMLVideoElement>("video");
+    if (player === null || video === null) {
+      throw new Error("The lazy player fixture is incomplete");
+    }
+    stubVideoRect(video);
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+
+    expect(
+      document.querySelector(`.${FLOATING_BUTTON_CLASS}`),
+    ).not.toBeNull();
+
+    player.insertAdjacentHTML(
+      "beforeend",
+      '<div class="player-controls"><button aria-label="进入全屏">全屏</button></div>',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    expect(document.querySelector(`.${FLOATING_BUTTON_CLASS}`)).toBeNull();
+    expect(player.querySelector(`[${BUTTON_ATTRIBUTE}]`)).not.toBeNull();
+  });
+
+  it("inserts our button before the native control and toggles the viewport", async () => {
     const { player, anchor } = mountCustomPlayer();
     const cleanup = installWebFullscreen(document);
     cleanups.push(cleanup);
+    await activatePlayer(player);
 
     const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
     if (button === null) throw new Error("The web fullscreen button was not inserted");
@@ -1163,7 +1382,7 @@ describe("installation", () => {
     );
   });
 
-  it("fits an absolute control bar and restores shifted controls on teardown", () => {
+  it("fits an absolute control bar and restores shifted controls on teardown", async () => {
     document.body.innerHTML = `
       <div class="player" style="position: absolute; width: 640px; height: 360px">
         <video style="width: 100%; height: 100%"></video>
@@ -1207,6 +1426,7 @@ describe("installation", () => {
 
     const cleanup = installWebFullscreen(document);
     cleanups.push(cleanup);
+    await activatePlayer(player);
     const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
     if (button === null) throw new Error("The web fullscreen button was not inserted");
     expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
@@ -1269,6 +1489,7 @@ describe("installation", () => {
 
     const cleanup = installWebFullscreen(document);
     cleanups.push(cleanup);
+    await activatePlayer(player);
     const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
     if (button === null) throw new Error("The web fullscreen button was not inserted");
     expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
@@ -1336,6 +1557,7 @@ describe("installation", () => {
 
     const cleanup = installWebFullscreen(document);
     cleanups.push(cleanup);
+    await activatePlayer(player);
     const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
     if (button === null) throw new Error("The web fullscreen button was not inserted");
     expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
@@ -1401,6 +1623,7 @@ describe("installation", () => {
 
     const cleanup = installWebFullscreen(document);
     cleanups.push(cleanup);
+    await activatePlayer(player);
     const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
     if (button === null) throw new Error("The web fullscreen button was not inserted");
     expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
@@ -1462,6 +1685,7 @@ describe("installation", () => {
 
     const cleanup = installWebFullscreen(document);
     cleanups.push(cleanup);
+    await activatePlayer(player);
     const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
     if (button === null) throw new Error("The web fullscreen button was not inserted");
     expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
@@ -1527,6 +1751,7 @@ describe("installation", () => {
 
     const cleanup = installWebFullscreen(document);
     cleanups.push(cleanup);
+    await activatePlayer(player);
     const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
     if (button === null) throw new Error("The web fullscreen button was not inserted");
     expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
@@ -1584,6 +1809,7 @@ describe("installation", () => {
 
     const cleanup = installWebFullscreen(document);
     cleanups.push(cleanup);
+    await activatePlayer(player);
     const oldButton = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
     if (oldButton === null) throw new Error("The web fullscreen button was not inserted");
     expect(oldButton.style.getPropertyValue("translate")).toBe("-45.6px 0");
