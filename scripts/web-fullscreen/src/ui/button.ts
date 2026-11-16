@@ -34,8 +34,6 @@ function applyFallbackStyle(button: HTMLElement): void {
   style.display = "inline-flex";
   style.alignItems = "center";
   style.justifyContent = "center";
-  style.width = "2em";
-  style.height = "2em";
   style.padding = "0";
   style.border = "0";
   style.background = "transparent";

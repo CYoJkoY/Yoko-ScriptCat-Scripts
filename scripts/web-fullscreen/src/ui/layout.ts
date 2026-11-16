@@ -6,6 +6,10 @@ const MAX_LOCAL_SHIFT_RATIO = 1 / MIN_TRANSFORM_SCALE;
 const MIN_APPLIED_SHIFT_PX = 0.005;
 const LAYOUT_EPSILON_PX = 0.5;
 const POSITION_OFFSET_PROPERTIES = ["top", "right", "bottom", "left"] as const;
+const CONTROL_ICON_SELECTOR = "svg, img, i, [class*='icon']";
+const INTERACTIVE_CONTROL_SELECTOR =
+  'button, [role="button"], a[href], [tabindex], [onclick]';
+const MIN_MEASURED_SIZE_PX = 1;
 const NO_TRANSLATE_VALUES: ReadonlySet<string> = new Set([
   "",
   "none",
@@ -69,10 +73,22 @@ interface SiblingSnapshot {
   readonly rect: LayoutBox;
 }
 
+interface ControlSizes {
+  readonly icon: number | null;
+  readonly controlWidth: number | null;
+  readonly controlHeight: number | null;
+}
+
+interface CssBoxSize {
+  readonly width: number;
+  readonly height: number;
+}
+
 interface FitSnapshot {
   readonly anchorOffset: LayoutBox;
   readonly buttonRect: LayoutBox;
   readonly siblings: readonly SiblingSnapshot[];
+  readonly sizes: ControlSizes;
 }
 
 export interface ControlBarFit {
@@ -80,6 +96,8 @@ export interface ControlBarFit {
   sync(): void;
   /** Re-apply the fit when surrounding controls changed without moving the anchor. */
   refit(): void;
+  /** Elements whose rendered size feeds the measured button and icon sizes. */
+  resizeTargets(): readonly Element[];
   /** Whether this fit currently owns an inline style on the element. */
   ownsStyleOf(element: Element): boolean;
   /** Restore every site-owned inline value. */
@@ -99,6 +117,137 @@ function readPx(
   if (raw.length === 0) return null;
   const parsed = Number.parseFloat(raw);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * A bounding rect already includes the element's own and its ancestors'
+ * transforms, while a CSS width is applied before them. The axis-aligned
+ * bounding box of a local `width` x `height` box is
+ * `|a| * width + |c| * height` by `|b| * width + |d| * height`, so solve that
+ * system to recover the untransformed size the clone should carry. This also
+ * undoes a rotation, which axis scale lengths alone cannot.
+ */
+function measuredCssBoxOf(
+  element: Element,
+  axes: TransformAxes,
+): CssBoxSize | null {
+  const a = Math.abs(axes.a);
+  const b = Math.abs(axes.b);
+  const c = Math.abs(axes.c);
+  const d = Math.abs(axes.d);
+  const det = a * d - b * c;
+  // Near 45 degrees a rotation makes both local dimensions indistinguishable
+  // from the bounding box; skip the write instead of guessing.
+  if (!(Math.abs(det) > MIN_TRANSFORM_SCALE * MIN_TRANSFORM_SCALE)) return null;
+  const rect = element.getBoundingClientRect();
+  if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
+  const width = (rect.width * d - c * rect.height) / det;
+  const height = (a * rect.height - b * rect.width) / det;
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+  if (width < MIN_MEASURED_SIZE_PX || height < MIN_MEASURED_SIZE_PX) return null;
+  return { width, height };
+}
+
+function measuredCssSizeOf(
+  element: Element,
+  axes: TransformAxes,
+): number | null {
+  const box = measuredCssBoxOf(element, axes);
+  return box === null ? null : Math.min(box.width, box.height);
+}
+
+/**
+ * A control container such as `<button class="icon-button">` is not the glyph
+ * itself. Only plain glyph elements and non-interactive icon-named marks may
+ * represent their own size; interactive containers fall back to neighbours.
+ */
+function isGlyphElement(element: Element): boolean {
+  if (element.matches("svg, img, i")) return true;
+  return !element.matches(INTERACTIVE_CONTROL_SELECTOR);
+}
+
+function iconElementOf(control: Element, axes: TransformAxes): Element | null {
+  for (const candidate of control.querySelectorAll(CONTROL_ICON_SELECTOR)) {
+    if (!isGlyphElement(candidate)) continue;
+    if (measuredCssSizeOf(candidate, axes) !== null) return candidate;
+  }
+  // An empty control can draw its glyph with a pseudo-element or background.
+  // Its whole box is not the icon, so fall back to neighbouring icons instead.
+  return control.matches(CONTROL_ICON_SELECTOR) && isGlyphElement(control)
+    ? control
+    : null;
+}
+
+function medianSize(sizes: readonly number[]): number | null {
+  if (sizes.length === 0) return null;
+  const sorted = [...sizes].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted[middle] ?? null;
+}
+
+/**
+ * Prefer the anchor's own icon, then the icons of neighbouring controls. The
+ * median keeps one unusually large control from stretching the button.
+ */
+function measureIconTarget(
+  anchor: HTMLElement,
+  button: HTMLElement,
+  axes: TransformAxes,
+): number | null {
+  const anchorIcon = iconElementOf(anchor, axes);
+  if (anchorIcon !== null) {
+    const anchorSize = measuredCssSizeOf(anchorIcon, axes);
+    if (anchorSize !== null) return anchorSize;
+  }
+
+  const parent = anchor.parentElement;
+  if (parent === null) return null;
+  const sizes: number[] = [];
+  for (const sibling of parent.children) {
+    if (sibling === anchor || sibling === button) continue;
+    if (!isStyledElement(sibling)) continue;
+    const icon = iconElementOf(sibling, axes);
+    if (icon === null) continue;
+    const size = measuredCssSizeOf(icon, axes);
+    if (size !== null) sizes.push(size);
+  }
+  return medianSize(sizes);
+}
+
+function measureControlSizes(
+  anchor: HTMLElement,
+  button: HTMLElement,
+): ControlSizes {
+  const controlAxes = combinedTransformAxesOf(button);
+  const cloneIcon = button.querySelector("svg");
+  const iconAxes =
+    cloneIcon === null ? controlAxes : combinedTransformAxesOf(cloneIcon);
+  const control = measuredCssBoxOf(anchor, controlAxes);
+  return {
+    icon: measureIconTarget(anchor, button, iconAxes),
+    controlWidth: control?.width ?? null,
+    controlHeight: control?.height ?? null,
+  };
+}
+
+/**
+ * The anchor and the icons the fit measures. The installer observes them so a
+ * webfont swap or a hover rule that only changes a control's rendered size
+ * still refreshes the cloned button.
+ */
+function resizeTargetsOf(anchor: HTMLElement, button: HTMLElement): Element[] {
+  const targets = new Set<Element>();
+  const parent = anchor.parentElement;
+  const scopes =
+    parent === null ? [anchor] : [anchor, ...parent.children];
+  for (const scope of scopes) {
+    if (!isStyledElement(scope) || scope === button) continue;
+    targets.add(scope);
+    for (const icon of scope.querySelectorAll(CONTROL_ICON_SELECTOR)) {
+      targets.add(icon);
+    }
+  }
+  return [...targets];
 }
 
 function computedStyleOf(element: Element): CSSStyleDeclaration | null {
@@ -158,6 +307,7 @@ function snapshotFit(anchor: HTMLElement, button: HTMLElement): FitSnapshot {
     anchorOffset: layoutBoxOf(anchor),
     buttonRect: relativeRectOf(button, anchorRect),
     siblings,
+    sizes: measureControlSizes(anchor, button),
   };
 }
 
@@ -176,6 +326,7 @@ function isSameSiblingSnapshot(
 function isSameFitSnapshot(left: FitSnapshot, right: FitSnapshot): boolean {
   if (!isSameLayoutBox(left.anchorOffset, right.anchorOffset)) return false;
   if (!isSameLayoutBox(left.buttonRect, right.buttonRect)) return false;
+  if (!isSameControlSizes(left.sizes, right.sizes)) return false;
   if (left.siblings.length !== right.siblings.length) return false;
   for (let index = 0; index < left.siblings.length; index += 1) {
     const prevSibling = left.siblings[index];
@@ -184,6 +335,19 @@ function isSameFitSnapshot(left: FitSnapshot, right: FitSnapshot): boolean {
     if (!isSameSiblingSnapshot(prevSibling, nextSibling)) return false;
   }
   return true;
+}
+
+function isSameControlSizes(left: ControlSizes, right: ControlSizes): boolean {
+  return (
+    isSameOptionalSize(left.icon, right.icon) &&
+    isSameOptionalSize(left.controlWidth, right.controlWidth) &&
+    isSameOptionalSize(left.controlHeight, right.controlHeight)
+  );
+}
+
+function isSameOptionalSize(left: number | null, right: number | null): boolean {
+  if (left === null || right === null) return left === right;
+  return Math.abs(left - right) < LAYOUT_EPSILON_PX;
 }
 
 function isRtl(style: CSSStyleDeclaration | null): boolean {
@@ -676,6 +840,97 @@ function copyBoxSizing(
   button.style.setProperty("box-sizing", value);
 }
 
+function copyFontSize(
+  anchorStyle: CSSStyleDeclaration,
+  button: HTMLElement,
+  snapshots: StyleSnapshot[],
+): void {
+  const value = anchorStyle.getPropertyValue("font-size").trim();
+  if (value.length === 0) return;
+  const buttonStyle = computedStyleOf(button);
+  if (buttonStyle?.getPropertyValue("font-size").trim() === value) return;
+  captureStyle(snapshots, button, "font-size");
+  button.style.setProperty("font-size", value);
+}
+
+function copyAnchorPosition(
+  anchorStyle: CSSStyleDeclaration,
+  button: HTMLElement,
+  snapshots: StyleSnapshot[],
+): void {
+  const position = anchorStyle.getPropertyValue("position").trim();
+  if (position.length === 0) return;
+  const buttonStyle = computedStyleOf(button);
+  if (buttonStyle?.getPropertyValue("position").trim() === position) return;
+  captureStyle(snapshots, button, "position");
+  button.style.setProperty("position", position);
+}
+
+type SizeAxis = "horizontal" | "vertical";
+
+const CONTENT_BOX_EDGES: Readonly<Record<SizeAxis, readonly string[]>> = {
+  horizontal: [
+    "padding-left",
+    "padding-right",
+    "border-left-width",
+    "border-right-width",
+  ],
+  vertical: [
+    "padding-top",
+    "padding-bottom",
+    "border-top-width",
+    "border-bottom-width",
+  ],
+};
+
+/**
+ * The measured rect is an outer size. A content-box minimum only constrains
+ * the inner content area, so subtract the clone's own padding and borders
+ * before applying it; otherwise those edges are added twice.
+ */
+function contentBoxSizeOf(
+  element: HTMLElement,
+  outerSize: number,
+  axis: SizeAxis,
+): number {
+  const style = computedStyleOf(element);
+  if (style === null) return outerSize;
+  const boxSizing = style.getPropertyValue("box-sizing").trim().toLowerCase();
+  if (boxSizing === "border-box") return outerSize;
+  let edgesPx = 0;
+  for (const property of CONTENT_BOX_EDGES[axis]) {
+    edgesPx += readPx(style, property) ?? 0;
+  }
+  return Math.max(0, outerSize - edgesPx);
+}
+
+function applyMeasuredSizes(
+  anchor: HTMLElement,
+  button: HTMLElement,
+  snapshots: StyleSnapshot[],
+): void {
+  const sizes = measureControlSizes(anchor, button);
+  const icon = button.querySelector("svg");
+  if (icon !== null && sizes.icon !== null) {
+    const size = formatPx(sizes.icon);
+    captureStyle(snapshots, icon, "width");
+    captureStyle(snapshots, icon, "height");
+    icon.style.setProperty("width", size);
+    icon.style.setProperty("height", size);
+  }
+  if (sizes.controlWidth === null || sizes.controlHeight === null) return;
+  const width = formatPx(
+    contentBoxSizeOf(button, sizes.controlWidth, "horizontal"),
+  );
+  const height = formatPx(
+    contentBoxSizeOf(button, sizes.controlHeight, "vertical"),
+  );
+  captureStyle(snapshots, button, "min-width");
+  captureStyle(snapshots, button, "min-height");
+  button.style.setProperty("min-width", width);
+  button.style.setProperty("min-height", height);
+}
+
 function copyAnchorOffsets(
   anchorStyle: CSSStyleDeclaration,
   button: HTMLElement,
@@ -711,14 +966,7 @@ function shiftAbsoluteCluster(
   // `relative` while an ID rule positions the anchor absolutely. Copying the
   // insets onto a flow-positioned clone would offset it from its own place
   // instead of from the anchor, so the positioning mode must match first.
-  const anchorPosition = anchorStyle.getPropertyValue("position").trim();
-  if (
-    anchorPosition.length > 0 &&
-    buttonStyle.getPropertyValue("position").trim() !== anchorPosition
-  ) {
-    captureStyle(snapshots, button, "position");
-    button.style.setProperty("position", anchorPosition);
-  }
+  copyAnchorPosition(anchorStyle, button, snapshots);
   copyAnchorOffsets(anchorStyle, button, snapshots);
 
   const anchorRect = anchor.getBoundingClientRect();
@@ -787,13 +1035,33 @@ function applyControlBarFit(
   if (anchorStyle === null) return;
   const parentStyle = computedStyleOf(parent);
   copyBoxSizing(anchorStyle, button, snapshots);
+  copyFontSize(anchorStyle, button, snapshots);
+  applyMeasuredSizes(anchor, button, snapshots);
 
   const position = anchorStyle.getPropertyValue("position").trim();
   const absolute = position === "absolute" || position === "fixed";
+  const offsetRelative = position === "relative" || position === "sticky";
+  const rtl = isRtl(anchorStyle) || isRtl(parentStyle);
 
-  if (absolute && !isRtl(anchorStyle) && !isRtl(parentStyle)) {
+  // The anchor may be positioned by an ID rule while the clone only keeps the
+  // shared class. Align the mode before insets or flex spacing are derived from
+  // it. RTL bars cannot use the absolute cluster shift below, so an
+  // out-of-flow clone would lose its control-bar slot; keep the clone in flow
+  // instead.
+  if (!(absolute && rtl)) {
+    copyAnchorPosition(anchorStyle, button, snapshots);
+  }
+
+  if (absolute && !rtl) {
     shiftAbsoluteCluster(anchor, button, parentStyle, anchorStyle, snapshots);
-  } else if (
+    return;
+  }
+  if (offsetRelative) {
+    // Relative and sticky insets shift the control visually without changing
+    // its flow slot, so the clone must carry the same nudge.
+    copyAnchorOffsets(anchorStyle, button, snapshots);
+  }
+  if (
     parentStyle !== null &&
     FLEX_OR_GRID_DISPLAYS.has(
       parentStyle.getPropertyValue("display").trim().toLowerCase(),
@@ -815,6 +1083,7 @@ export function fitInControlBar(
   let snapshots: StyleSnapshot[] = [];
   let ownedStyles = new Map<Element, OwnedStyle>();
   let fitSnapshot: FitSnapshot | null = null;
+  let resizeTargets: readonly Element[] = [];
 
   const apply = (): void => {
     snapshots = [];
@@ -837,6 +1106,7 @@ export function fitInControlBar(
     // Measure after applying so a flex bar's own added margins do not look
     // like a layout change on the next check.
     fitSnapshot = snapshotFit(anchor, button);
+    resizeTargets = resizeTargetsOf(anchor, button);
   };
 
   const dispose = (): void => {
@@ -845,6 +1115,7 @@ export function fitInControlBar(
     snapshots = [];
     ownedStyles.clear();
     fitSnapshot = null;
+    resizeTargets = [];
   };
 
   apply();
@@ -859,6 +1130,9 @@ export function fitInControlBar(
     refit(): void {
       dispose();
       apply();
+    },
+    resizeTargets(): readonly Element[] {
+      return resizeTargets;
     },
     ownsStyleOf(element: Element): boolean {
       const owned = ownedStyles.get(element);

@@ -20,6 +20,18 @@ export interface PlayerMatch {
   readonly fullscreenButton: HTMLElement | null;
 }
 
+/**
+ * A class change can make an already-present control recognizable (or no
+ * longer recognizable), so the installer uses this to decide whether a full
+ * rescan is worth scheduling.
+ */
+export function looksLikePlayerControl(identifier: string): boolean {
+  return (
+    FULLSCREEN_HINT_TEXT.test(identifier) ||
+    EXISTING_WEB_FULLSCREEN_TEXT.test(identifier)
+  );
+}
+
 interface ControlSearch {
   readonly button: HTMLElement | null;
   readonly hasWebFullscreen: boolean;
