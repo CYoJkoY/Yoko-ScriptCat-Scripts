@@ -361,6 +361,51 @@ describe("control bar spacing", () => {
     expect(prev.style.getPropertyValue("translate")).toBe("10px 0");
   });
 
+  it("preserves a site update to a shifted control when refitting", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The updated control bar fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    prev.style.translate = "10px 0";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    const fit = fitInControlBar(anchor, button);
+    expect(prev.style.getPropertyValue("translate")).toBe(
+      "calc(10px - 41.2px) 0",
+    );
+
+    prev.style.translate = "20px 0";
+    fit.refit();
+
+    expect(prev.style.getPropertyValue("translate")).toBe(
+      "calc(20px - 41.2px) 0",
+    );
+    fit.dispose();
+    expect(prev.style.getPropertyValue("translate")).toBe("20px 0");
+  });
+
   it("copies the anchor offsets onto an absolutely positioned button", () => {
     document.body.innerHTML = `
       <div class="bar" style="position: relative">
@@ -537,6 +582,41 @@ describe("control bar spacing", () => {
     expect(prev.style.getPropertyValue("translate")).toBe("-82.4px 0");
   });
 
+  it("includes an individual scale when converting the shift", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The scaled control bar fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    prev.style.scale = "0.5";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    fitInControlBar(anchor, button);
+
+    expect(prev.style.getPropertyValue("translate")).toBe("-82.4px 0");
+  });
+
   it("includes ancestor transforms when converting the shift", () => {
     document.body.innerHTML = `
       <div class="bar">
@@ -608,6 +688,41 @@ describe("control bar spacing", () => {
 
     // A local X translation of a 90-degree rotation would move the control
     // vertically, so the horizontal shift goes through its local Y axis.
+    expect(prev.style.getPropertyValue("translate")).toBe("0px 41.2px");
+  });
+
+  it("includes an individual rotation when converting the shift", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The rotated longhand fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    prev.style.rotate = "90deg";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    fitInControlBar(anchor, button);
+
     expect(prev.style.getPropertyValue("translate")).toBe("0px 41.2px");
   });
 

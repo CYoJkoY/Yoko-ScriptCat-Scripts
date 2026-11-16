@@ -32,6 +32,16 @@ interface StyleSnapshot {
   readonly priority: string;
 }
 
+interface OwnedPropertyValue {
+  readonly value: string;
+  readonly priority: string;
+}
+
+interface OwnedStyle {
+  readonly attribute: string;
+  readonly values: Map<string, OwnedPropertyValue>;
+}
+
 interface TransformAxes {
   readonly a: number;
   readonly b: number;
@@ -147,6 +157,42 @@ function restoreStyles(snapshots: readonly StyleSnapshot[]): void {
       snapshot.value,
       snapshot.priority,
     );
+  }
+}
+
+function rebaseSiteChangedProperties(
+  snapshots: StyleSnapshot[],
+  ownedStyles: ReadonlyMap<Element, OwnedStyle>,
+): void {
+  for (let index = 0; index < snapshots.length; index += 1) {
+    const snapshot = snapshots[index];
+    if (snapshot === undefined) continue;
+    const owned = ownedStyles.get(snapshot.element);
+    if (owned === undefined) continue;
+    if (
+      (snapshot.element.getAttribute("style") ?? "") === owned.attribute
+    ) {
+      continue;
+    }
+    const ownedValue = owned.values.get(snapshot.property);
+    if (ownedValue === undefined) continue;
+    const currentValue = snapshot.element.style.getPropertyValue(
+      snapshot.property,
+    );
+    const currentPriority = snapshot.element.style.getPropertyPriority(
+      snapshot.property,
+    );
+    if (
+      currentValue === ownedValue.value &&
+      currentPriority === ownedValue.priority
+    ) {
+      continue;
+    }
+    snapshots[index] = {
+      ...snapshot,
+      value: currentValue,
+      priority: currentPriority,
+    };
   }
 }
 
@@ -343,7 +389,9 @@ function angleRadiansOf(raw: string): number | null {
  * Browsers expose the resolved transform as a matrix; the plain function forms
  * keep the calculation correct where computed transforms are not resolved.
  */
-function transformAxesOf(style: CSSStyleDeclaration | null): TransformAxes {
+function transformPropertyAxesOf(
+  style: CSSStyleDeclaration | null,
+): TransformAxes {
   const raw = style?.getPropertyValue("transform").trim() ?? "";
   if (raw.length === 0 || raw.toLowerCase() === "none") return IDENTITY_AXES;
 
@@ -405,6 +453,51 @@ function multiplyAxes(left: TransformAxes, right: TransformAxes): TransformAxes 
     c: left.a * right.c + left.c * right.d,
     d: left.b * right.c + left.d * right.d,
   };
+}
+
+function individualRotateAxesOf(
+  style: CSSStyleDeclaration | null,
+): TransformAxes {
+  const raw = style?.getPropertyValue("rotate").trim() ?? "";
+  if (raw.length === 0 || raw.toLowerCase() === "none") return IDENTITY_AXES;
+  const parts = splitComponentValues(raw);
+  const angleRaw =
+    parts.length === 1
+      ? parts[0]
+      : parts.length === 2 && parts[0]?.toLowerCase() === "z"
+        ? parts[1]
+        : null;
+  const angle = angleRaw === undefined || angleRaw === null
+    ? null
+    : angleRadiansOf(angleRaw);
+  if (angle === null) return IDENTITY_AXES;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  return { a: cosine, b: sine, c: -sine, d: cosine };
+}
+
+function individualScaleAxesOf(
+  style: CSSStyleDeclaration | null,
+): TransformAxes {
+  const raw = style?.getPropertyValue("scale").trim() ?? "";
+  if (raw.length === 0 || raw.toLowerCase() === "none") return IDENTITY_AXES;
+  const parts = splitComponentValues(raw);
+  const x = Number.parseFloat(parts[0] ?? "");
+  const y = parts[1] === undefined ? x : Number.parseFloat(parts[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return IDENTITY_AXES;
+  return { a: x, b: 0, c: 0, d: y };
+}
+
+/**
+ * Individual rotate and scale properties are applied before `transform`.
+ * Include them so a longhand-scaled or rotated control gets the same local
+ * delta as one using the shorthand.
+ */
+function transformAxesOf(style: CSSStyleDeclaration | null): TransformAxes {
+  const rotate = individualRotateAxesOf(style);
+  const scale = individualScaleAxesOf(style);
+  const transform = transformPropertyAxesOf(style);
+  return multiplyAxes(transform, multiplyAxes(scale, rotate));
 }
 
 /**
@@ -597,18 +690,26 @@ export function fitInControlBar(
   button: HTMLElement,
 ): ControlBarFit {
   let snapshots: StyleSnapshot[] = [];
-  let ownedStyleValues = new Map<Element, string>();
+  let ownedStyles = new Map<Element, OwnedStyle>();
   let box: LayoutBox | null = null;
 
   const apply = (): void => {
     snapshots = [];
     applyControlBarFit(anchor, button, snapshots);
-    ownedStyleValues = new Map();
+    ownedStyles = new Map();
     for (const snapshot of snapshots) {
-      ownedStyleValues.set(
-        snapshot.element,
-        snapshot.element.getAttribute("style") ?? "",
-      );
+      const existing = ownedStyles.get(snapshot.element);
+      const values = existing?.values ?? new Map<string, OwnedPropertyValue>();
+      values.set(snapshot.property, {
+        value: snapshot.element.style.getPropertyValue(snapshot.property),
+        priority: snapshot.element.style.getPropertyPriority(
+          snapshot.property,
+        ),
+      });
+      ownedStyles.set(snapshot.element, {
+        attribute: snapshot.element.getAttribute("style") ?? "",
+        values,
+      });
     }
     // Measure after applying so a flex bar's own added margins do not look
     // like a layout change on the next check.
@@ -616,9 +717,10 @@ export function fitInControlBar(
   };
 
   const dispose = (): void => {
+    rebaseSiteChangedProperties(snapshots, ownedStyles);
     restoreStyles(snapshots);
     snapshots = [];
-    ownedStyleValues.clear();
+    ownedStyles.clear();
     box = null;
   };
 
@@ -636,11 +738,9 @@ export function fitInControlBar(
       apply();
     },
     ownsStyleOf(element: Element): boolean {
-      const value = ownedStyleValues.get(element);
-      return (
-        value !== undefined &&
-        (element.getAttribute("style") ?? "") === value
-      );
+      const owned = ownedStyles.get(element);
+      return owned !== undefined &&
+        (element.getAttribute("style") ?? "") === owned.attribute;
     },
     dispose,
   };
