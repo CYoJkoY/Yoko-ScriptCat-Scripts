@@ -1496,6 +1496,40 @@ describe("installation", () => {
     expect(player.querySelector(`[${BUTTON_ATTRIBUTE}]`)).not.toBeNull();
   });
 
+  it("rescans when a class change makes an existing control recognizable", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+        <div class="player-controls">
+          <button id="late-anchor"></button>
+        </div>
+      </div>
+    `;
+    const player = document.querySelector<HTMLElement>(".player");
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const anchor = document.querySelector<HTMLButtonElement>("#late-anchor");
+    if (player === null || video === null || anchor === null) {
+      throw new Error("The class-change fixture is incomplete");
+    }
+    stubVideoRect(video);
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+
+    // Without a label or a fullscreen hint the control is not detectable yet,
+    // so the native video keeps the floating fallback.
+    expect(findPlayerMatch(video).mode).toBe("native");
+    expect(document.querySelector(`.${FLOATING_BUTTON_CLASS}`)).not.toBeNull();
+
+    anchor.classList.add("fullscreen-btn");
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    expect(findPlayerMatch(video).mode).toBe("custom");
+    expect(document.querySelector(`.${FLOATING_BUTTON_CLASS}`)).toBeNull();
+    const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
+    if (button === null) throw new Error("The bar button was not inserted");
+    expect(button.nextElementSibling).toBe(anchor);
+  });
+
   it("inserts our button before the native control and toggles the viewport", async () => {
     const { player, anchor } = mountCustomPlayer();
     const cleanup = installWebFullscreen(document);

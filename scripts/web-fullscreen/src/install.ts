@@ -3,13 +3,18 @@ import {
   LABELS,
   MIN_VIDEO_HEIGHT_PX,
   MIN_VIDEO_WIDTH_PX,
+  PLAYER_SEARCH_DEPTH,
   SCAN_DEBOUNCE_MS,
 } from "./config";
 import {
   createWebFullscreenController,
   type WebFullscreenMode,
 } from "./core/controller";
-import { findPlayerMatch, type PlayerMatch } from "./core/detect";
+import {
+  findPlayerMatch,
+  looksLikePlayerControl,
+  type PlayerMatch,
+} from "./core/detect";
 import { installFrameBridge } from "./core/frameBridge";
 import { createScrollLock } from "./core/scrollLock";
 import {
@@ -157,6 +162,7 @@ export function installWebFullscreen(
       childList: true,
       subtree: true,
       attributes: true,
+      attributeOldValue: true,
       attributeFilter: ["class", "style", "hidden"],
     });
   }
@@ -398,16 +404,70 @@ export function installWebFullscreen(
     return false;
   };
 
+  const controlIdentifierOf = (target: Element): string => {
+    const testId = target.getAttribute("data-testid") ?? "";
+    const className = target.getAttribute("class") ?? "";
+    return `${target.id} ${className} ${testId}`;
+  };
+
+  /**
+   * A native fallback has no fit to watch, so it would never notice that an
+   * already-present control became recognizable after gaining a class such as
+   * `fullscreen-btn`. Treat class changes inside a native player's subtree as
+   * a possible player-match change and run a full scan.
+   */
+  const mayChangePlayerMatch = (
+    target: Element,
+    attributeName: string | null,
+    previousClass: string | null,
+  ): boolean => {
+    if (attributeName !== "class") return false;
+    // Class mutations are constant in player UIs, so only rescan when the new
+    // or previous identifier could make a control recognizable.
+    const identifier = controlIdentifierOf(target);
+    if (
+      !looksLikePlayerControl(identifier) &&
+      !looksLikePlayerControl(previousClass ?? "")
+    ) {
+      return false;
+    }
+    const body = doc.body;
+    for (const binding of bindings.values()) {
+      if (binding.match.mode !== "native") continue;
+      const video = binding.video;
+      if (!video.isConnected) continue;
+      let node: Element | null = video;
+      for (
+        let depth = 0;
+        node !== null && node !== body && depth <= PLAYER_SEARCH_DEPTH;
+        depth += 1
+      ) {
+        if (node.contains(target)) return true;
+        node = node.parentElement;
+      }
+    }
+    return false;
+  };
+
   const observer = new MutationObserver((records) => {
     let childListChanged = false;
     let layoutChanged = false;
+    let matchMayChange = false;
     for (const record of records) {
       if (record.type === "attributes") {
-        if (
-          record.target instanceof Element &&
-          affectsControlBar(record.target, record.attributeName)
-        ) {
-          layoutChanged = true;
+        if (record.target instanceof Element) {
+          if (affectsControlBar(record.target, record.attributeName)) {
+            layoutChanged = true;
+          }
+          if (
+            mayChangePlayerMatch(
+              record.target,
+              record.attributeName,
+              record.oldValue,
+            )
+          ) {
+            matchMayChange = true;
+          }
         }
         continue;
       }
@@ -424,7 +484,7 @@ export function installWebFullscreen(
       }
     }
     if (layoutChanged) scheduleFit();
-    if (childListChanged) schedule();
+    if (childListChanged || matchMayChange) schedule();
   });
   if (doc.documentElement !== null) {
     observeRoot(doc.documentElement);
