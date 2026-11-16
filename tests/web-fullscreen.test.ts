@@ -763,6 +763,66 @@ describe("control bar spacing", () => {
     expect(icon.style.getPropertyValue("height")).toBe("36px");
   });
 
+  it("undoes a rotated anchor when copying its box dimensions", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.style.transform = "rotate(90deg)";
+    anchor.style.boxSizing = "border-box";
+    const button = document.createElement("button");
+    button.style.transform = "rotate(90deg)";
+    button.style.boxSizing = "border-box";
+    bar.insertBefore(button, anchor);
+    // A 40x20 local box rotated by 90 degrees occupies a 20x40 bounding box.
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, 20, 40),
+    });
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("min-width")).toBe("40px");
+    expect(button.style.getPropertyValue("min-height")).toBe("20px");
+
+    fit.dispose();
+    expect(button.style.getPropertyValue("min-width")).toBe("");
+    expect(button.style.getPropertyValue("min-height")).toBe("");
+  });
+
+  it("falls back to neighbouring icons for a pseudo-element control", () => {
+    document.body.innerHTML = `
+      <div class="bar" style="display: flex">
+        <button class="prev"><svg></svg></button>
+        <button class="prev"><svg></svg></button>
+        <button class="anchor" aria-label="全屏"></button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || anchor === null) {
+      throw new Error("The pseudo-element fixture is incomplete");
+    }
+    for (const prevIcon of bar.querySelectorAll<SVGElement>(".prev svg")) {
+      Object.defineProperty(prevIcon, "getBoundingClientRect", {
+        configurable: true,
+        value: (): DOMRect => new DOMRect(0, 0, 20, 20),
+      });
+    }
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, 40, 40),
+    });
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    button.append(icon);
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    // The 40 px control box is not a 40 px glyph, so the sibling median wins.
+    expect(icon.style.getPropertyValue("width")).toBe("20px");
+    expect(icon.style.getPropertyValue("height")).toBe("20px");
+    fit.dispose();
+  });
+
   it("uses the median size of neighbouring control icons", () => {
     document.body.innerHTML = `
       <div class="bar" style="display: flex">

@@ -117,45 +117,50 @@ function readPx(
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-interface AxisScale {
-  readonly x: number;
-  readonly y: number;
-}
-
-function axisScaleOf(element: StyledElement): AxisScale {
-  const axes = combinedTransformAxesOf(element);
-  return { x: Math.hypot(axes.a, axes.b), y: Math.hypot(axes.c, axes.d) };
-}
-
 /**
  * A bounding rect already includes the element's own and its ancestors'
- * transforms, while a CSS width is applied before them. Divide the measured
- * box by the transform chain the clone will inherit so a scaled control bar
- * does not scale the copied size a second time.
+ * transforms, while a CSS width is applied before them. The axis-aligned
+ * bounding box of a local `width` x `height` box is
+ * `|a| * width + |c| * height` by `|b| * width + |d| * height`, so solve that
+ * system to recover the untransformed size the clone should carry. This also
+ * undoes a rotation, which axis scale lengths alone cannot.
  */
-function measuredCssBoxOf(element: Element, scale: AxisScale): CssBoxSize | null {
-  if (!(scale.x > MIN_TRANSFORM_SCALE) || !(scale.y > MIN_TRANSFORM_SCALE)) {
-    return null;
-  }
+function measuredCssBoxOf(
+  element: Element,
+  axes: TransformAxes,
+): CssBoxSize | null {
+  const a = Math.abs(axes.a);
+  const b = Math.abs(axes.b);
+  const c = Math.abs(axes.c);
+  const d = Math.abs(axes.d);
+  const det = a * d - b * c;
+  // Near 45 degrees a rotation makes both local dimensions indistinguishable
+  // from the bounding box; skip the write instead of guessing.
+  if (!(Math.abs(det) > MIN_TRANSFORM_SCALE * MIN_TRANSFORM_SCALE)) return null;
   const rect = element.getBoundingClientRect();
   if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
-  const width = rect.width / scale.x;
-  const height = rect.height / scale.y;
+  const width = (rect.width * d - c * rect.height) / det;
+  const height = (a * rect.height - b * rect.width) / det;
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
   if (width < MIN_MEASURED_SIZE_PX || height < MIN_MEASURED_SIZE_PX) return null;
   return { width, height };
 }
 
-function measuredCssSizeOf(element: Element, scale: AxisScale): number | null {
-  const box = measuredCssBoxOf(element, scale);
+function measuredCssSizeOf(
+  element: Element,
+  axes: TransformAxes,
+): number | null {
+  const box = measuredCssBoxOf(element, axes);
   return box === null ? null : Math.min(box.width, box.height);
 }
 
-function iconElementOf(control: Element, scale: AxisScale): Element | null {
+function iconElementOf(control: Element, axes: TransformAxes): Element | null {
   for (const candidate of control.querySelectorAll(CONTROL_ICON_SELECTOR)) {
-    if (measuredCssSizeOf(candidate, scale) !== null) return candidate;
+    if (measuredCssSizeOf(candidate, axes) !== null) return candidate;
   }
-  const hasText = (control.textContent ?? "").trim().length > 0;
-  return hasText ? null : control;
+  // An empty control can draw its glyph with a pseudo-element or background.
+  // Its whole box is not the icon, so fall back to neighbouring icons instead.
+  return control.matches(CONTROL_ICON_SELECTOR) ? control : null;
 }
 
 function medianSize(sizes: readonly number[]): number | null {
@@ -172,11 +177,11 @@ function medianSize(sizes: readonly number[]): number | null {
 function measureIconTarget(
   anchor: HTMLElement,
   button: HTMLElement,
-  scale: AxisScale,
+  axes: TransformAxes,
 ): number | null {
-  const anchorIcon = iconElementOf(anchor, scale);
+  const anchorIcon = iconElementOf(anchor, axes);
   if (anchorIcon !== null) {
-    const anchorSize = measuredCssSizeOf(anchorIcon, scale);
+    const anchorSize = measuredCssSizeOf(anchorIcon, axes);
     if (anchorSize !== null) return anchorSize;
   }
 
@@ -186,9 +191,9 @@ function measureIconTarget(
   for (const sibling of parent.children) {
     if (sibling === anchor || sibling === button) continue;
     if (!isStyledElement(sibling)) continue;
-    const icon = iconElementOf(sibling, scale);
+    const icon = iconElementOf(sibling, axes);
     if (icon === null) continue;
-    const size = measuredCssSizeOf(icon, scale);
+    const size = measuredCssSizeOf(icon, axes);
     if (size !== null) sizes.push(size);
   }
   return medianSize(sizes);
@@ -198,13 +203,13 @@ function measureControlSizes(
   anchor: HTMLElement,
   button: HTMLElement,
 ): ControlSizes {
-  const controlScale = axisScaleOf(button);
+  const controlAxes = combinedTransformAxesOf(button);
   const cloneIcon = button.querySelector("svg");
-  const iconScale =
-    cloneIcon === null ? controlScale : axisScaleOf(cloneIcon);
-  const control = measuredCssBoxOf(anchor, controlScale);
+  const iconAxes =
+    cloneIcon === null ? controlAxes : combinedTransformAxesOf(cloneIcon);
+  const control = measuredCssBoxOf(anchor, controlAxes);
   return {
-    icon: measureIconTarget(anchor, button, iconScale),
+    icon: measureIconTarget(anchor, button, iconAxes),
     controlWidth: control?.width ?? null,
     controlHeight: control?.height ?? null,
   };
