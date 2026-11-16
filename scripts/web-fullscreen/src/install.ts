@@ -1,4 +1,7 @@
-import { createDebounced } from "../../../shared/utils/debounce";
+import {
+  createDebounced,
+  type Debounced,
+} from "../../../shared/utils/debounce";
 import {
   LABELS,
   MIN_VIDEO_HEIGHT_PX,
@@ -33,6 +36,7 @@ interface Binding {
   removeButton: (() => void) | null;
   fit: ControlBarFit | null;
   fitTargets: Element[];
+  removeFitEvents: (() => void) | null;
   activated: boolean;
   activationRoot: HTMLElement | null;
   removeActivation: (() => void) | null;
@@ -44,6 +48,19 @@ const ACTIVATION_EVENTS = [
   "touchstart",
   "focusin",
 ] as const;
+
+const FIT_TRIGGER_EVENTS = [
+  "pointerover",
+  "pointerout",
+  "focusin",
+  "focusout",
+] as const;
+
+const TRANSFORM_TRANSITION_PROPERTIES: ReadonlySet<string> = new Set([
+  "transform",
+  "scale",
+  "rotate",
+]);
 
 function setAttributeIfChanged(
   element: HTMLElement,
@@ -63,6 +80,7 @@ function disposeButton(
   binding: Binding,
   observer: ResizeObserver | null,
 ): void {
+  releaseFitEvents(binding);
   releaseFitTargets(binding, observer);
   binding.fit?.dispose();
   binding.fit = null;
@@ -101,6 +119,47 @@ function releaseFitTargets(
   if (observer === null) return;
   for (const target of binding.fitTargets) observer.unobserve(target);
   binding.fitTargets = [];
+}
+
+/**
+ * A `:hover` rule can change only `transform`, which leaves the layout box
+ * untouched and never reaches `ResizeObserver`. Pointer and focus crossings
+ * still fire, so they re-run the debounced refit; a transform transition is
+ * additionally measured once it settles.
+ */
+function retainFitEvents(
+  binding: Binding,
+  requestFit: Debounced<[]>,
+): void {
+  const root = binding.fit === null
+    ? null
+    : binding.button?.parentElement ?? null;
+  releaseFitEvents(binding);
+  if (root === null) return;
+  const onInteraction = (): void => requestFit();
+  const onTransitionEnd = (event: Event): void => {
+    const propertyName = (event as TransitionEvent).propertyName;
+    if (!TRANSFORM_TRANSITION_PROPERTIES.has(propertyName)) return;
+    requestFit();
+  };
+  for (const type of FIT_TRIGGER_EVENTS) {
+    root.addEventListener(type, onInteraction);
+  }
+  root.addEventListener("transitioncancel", onTransitionEnd);
+  root.addEventListener("transitionend", onTransitionEnd);
+  binding.removeFitEvents = () => {
+    for (const type of FIT_TRIGGER_EVENTS) {
+      root.removeEventListener(type, onInteraction);
+    }
+    root.removeEventListener("transitioncancel", onTransitionEnd);
+    root.removeEventListener("transitionend", onTransitionEnd);
+    requestFit.cancel();
+  };
+}
+
+function releaseFitEvents(binding: Binding): void {
+  binding.removeFitEvents?.();
+  binding.removeFitEvents = null;
 }
 
 function releaseActivation(binding: Binding): void {
@@ -244,6 +303,16 @@ export function installWebFullscreen(
       binding.floating = false;
       binding.fit = fitInControlBar(anchor, button);
       observeFitTargets(binding, resizeObserver);
+      // A shared debounce would keep only the last binding's arguments, so a
+      // quick pointer crossing between two players could leave one stale.
+      const requestFit = createDebounced(() => {
+        if (binding.fit === null) return;
+        binding.fit.refit();
+        observeFitTargets(binding, resizeObserver);
+      }, {
+        delayMs: SCAN_DEBOUNCE_MS,
+      });
+      retainFitEvents(binding, requestFit);
       binding.removeButton = attachHandlers(button, binding);
       return true;
     }
@@ -364,6 +433,7 @@ export function installWebFullscreen(
           removeButton: null,
           fit: null,
           fitTargets: [],
+          removeFitEvents: null,
           activated: false,
           activationRoot: null,
           removeActivation: null,

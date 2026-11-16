@@ -1893,6 +1893,60 @@ describe("installation", () => {
     expect(injectedIcon.style.getPropertyValue("height")).toBe("40px");
   });
 
+  it("refits when hover changes only transformed bounds", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+        <div class="player-controls" style="display: flex">
+          <button class="prev"><svg></svg></button>
+          <button id="native-fullscreen" aria-label="全屏"><svg></svg></button>
+        </div>
+      </div>
+    `;
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const player = document.querySelector<HTMLElement>(".player");
+    const anchor = document.querySelector<HTMLButtonElement>("#native-fullscreen");
+    const anchorIcon = document.querySelector<SVGElement>("#native-fullscreen svg");
+    if (video === null || player === null || anchor === null || anchorIcon === null) {
+      throw new Error("The hover transform fixture is incomplete");
+    }
+    stubVideoRect(video);
+    let iconSize = 24;
+    Object.defineProperty(anchorIcon, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, iconSize, iconSize),
+    });
+
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+    await activatePlayer(player);
+    const injectedIcon = player.querySelector<SVGElement>(
+      `[${BUTTON_ATTRIBUTE}] svg`,
+    );
+    if (injectedIcon === null) {
+      throw new Error("The injected icon is missing");
+    }
+    expect(injectedIcon.style.getPropertyValue("width")).toBe("24px");
+
+    // A :hover rule that only scales the icon changes the rendered box but
+    // neither the layout box nor any class/style attribute.
+    iconSize = 48;
+    anchorIcon.dispatchEvent(
+      new PointerEvent("pointerover", { bubbles: true }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    expect(injectedIcon.style.getPropertyValue("width")).toBe("48px");
+    expect(injectedIcon.style.getPropertyValue("height")).toBe("48px");
+
+    iconSize = 24;
+    anchorIcon.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    expect(injectedIcon.style.getPropertyValue("width")).toBe("24px");
+    expect(injectedIcon.style.getPropertyValue("height")).toBe("24px");
+  });
+
   it("refits when a preceding control becomes visible", async () => {
     document.body.innerHTML = `
       <div class="player" style="position: absolute; width: 640px; height: 360px">
