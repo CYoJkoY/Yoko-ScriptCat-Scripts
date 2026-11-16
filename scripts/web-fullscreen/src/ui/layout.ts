@@ -2,6 +2,8 @@ const FALLBACK_GAP_EM = 0.35;
 const DEFAULT_FONT_SIZE_PX = 16;
 const MIN_SHIFT_PX = 0.5;
 const MIN_TRANSFORM_SCALE = 0.05;
+const MAX_LOCAL_SHIFT_RATIO = 1 / MIN_TRANSFORM_SCALE;
+const MIN_APPLIED_SHIFT_PX = 0.005;
 const LAYOUT_EPSILON_PX = 0.5;
 const POSITION_OFFSET_PROPERTIES = ["top", "right", "bottom", "left"] as const;
 const NO_TRANSLATE_VALUES: ReadonlySet<string> = new Set([
@@ -21,12 +23,28 @@ const FLEX_OR_GRID_DISPLAYS: ReadonlySet<string> = new Set([
   "inline-grid",
 ]);
 
+type StyledElement = HTMLElement | SVGElement;
+
 interface StyleSnapshot {
-  readonly element: HTMLElement;
+  readonly element: StyledElement;
   readonly property: string;
   readonly value: string;
   readonly priority: string;
 }
+
+interface TransformAxes {
+  readonly a: number;
+  readonly b: number;
+  readonly c: number;
+  readonly d: number;
+}
+
+interface LocalShift {
+  readonly x: number;
+  readonly y: number;
+}
+
+const IDENTITY_AXES: TransformAxes = { a: 1, b: 0, c: 0, d: 1 };
 
 interface LayoutBox {
   readonly left: number;
@@ -57,7 +75,7 @@ function readPx(
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function computedStyleOf(element: HTMLElement): CSSStyleDeclaration | null {
+function computedStyleOf(element: Element): CSSStyleDeclaration | null {
   return element.ownerDocument.defaultView?.getComputedStyle(element) ?? null;
 }
 
@@ -84,15 +102,16 @@ function isRtl(style: CSSStyleDeclaration | null): boolean {
   return style.getPropertyValue("direction").trim().toLowerCase() === "rtl";
 }
 
-function isHtmlElement(element: Element | null): element is HTMLElement {
+function isStyledElement(element: Element | null): element is StyledElement {
   if (element === null) return false;
   const view = element.ownerDocument.defaultView;
-  return view !== null && element instanceof view.HTMLElement;
+  if (view === null) return false;
+  return element instanceof view.HTMLElement || element instanceof view.SVGElement;
 }
 
 function captureStyle(
   snapshots: StyleSnapshot[],
-  element: HTMLElement,
+  element: StyledElement,
   property: string,
 ): void {
   if (
@@ -231,55 +250,145 @@ function splitComponentValues(value: string): string[] {
   return parts;
 }
 
+function composeShiftedComponent(base: string, deltaPx: number): string {
+  if (Math.abs(deltaPx) < MIN_APPLIED_SHIFT_PX) return base;
+  const operator = deltaPx < 0 ? "-" : "+";
+  return `calc(${base} ${operator} ${formatPx(Math.abs(deltaPx))})`;
+}
+
 /**
  * The measured rectangle already includes any existing translation. Compose
- * the new shift into that value instead of replacing it.
+ * the new local shift into that value instead of replacing it.
  */
 function composeShiftedTranslate(
   style: CSSStyleDeclaration | null,
-  deltaPx: number,
-): string {
+  shift: LocalShift,
+): string | null {
+  if (
+    Math.abs(shift.x) < MIN_APPLIED_SHIFT_PX &&
+    Math.abs(shift.y) < MIN_APPLIED_SHIFT_PX
+  ) {
+    return null;
+  }
   const raw = style?.getPropertyValue("translate").trim() ?? "";
   const parts = NO_TRANSLATE_VALUES.has(raw.toLowerCase())
     ? []
     : splitComponentValues(raw);
-  if (parts.length === 0) return `${formatPx(-deltaPx)} 0`;
+  if (parts.length === 0) {
+    if (Math.abs(shift.y) < MIN_APPLIED_SHIFT_PX) {
+      return `${formatPx(shift.x)} 0`;
+    }
+    return `${formatPx(shift.x)} ${formatPx(shift.y)}`;
+  }
 
-  const x = parts[0] === "0" ? "0px" : parts[0];
+  const x = parts[0] === "0" ? "0px" : (parts[0] ?? "0px");
   const y = parts[1] ?? "0";
   const z = parts[2];
-  const shiftedX = `calc(${x} - ${formatPx(deltaPx)})`;
-  return z === undefined ? `${shiftedX} ${y}` : `${shiftedX} ${y} ${z}`;
+  const shifted = `${composeShiftedComponent(x, shift.x)} ${composeShiftedComponent(y, shift.y)}`;
+  return z === undefined ? shifted : `${shifted} ${z}`;
+}
+
+function angleRadiansOf(raw: string): number | null {
+  const match = /^(-?(?:\d+\.?\d*|\.\d+))(deg|grad|rad|turn)?$/iu.exec(raw.trim());
+  if (match === null) return null;
+  const value = Number.parseFloat(match[1] ?? "");
+  if (!Number.isFinite(value)) return null;
+  switch ((match[2] ?? "deg").toLowerCase()) {
+    case "grad":
+      return (value * Math.PI) / 200;
+    case "rad":
+      return value;
+    case "turn":
+      return value * Math.PI * 2;
+    case "deg":
+      return (value * Math.PI) / 180;
+    default:
+      return null;
+  }
 }
 
 /**
- * `translate` is applied before the element's own `transform`, so a scaled
- * control must travel a smaller local distance to cover a screen-space gap.
- * Matrices are what browsers expose; the plain `scale()` form keeps the
- * calculation correct where computed transforms are not resolved to a matrix.
+ * Browsers expose the resolved transform as a matrix; the plain function forms
+ * keep the calculation correct where computed transforms are not resolved.
  */
-function transformScaleXOf(style: CSSStyleDeclaration | null): number {
+function transformAxesOf(style: CSSStyleDeclaration | null): TransformAxes {
   const raw = style?.getPropertyValue("transform").trim() ?? "";
-  if (raw.length === 0 || raw.toLowerCase() === "none") return 1;
+  if (raw.length === 0 || raw.toLowerCase() === "none") return IDENTITY_AXES;
 
-  let scaleX: number;
-  let skewY: number;
-  const matrix = /^matrix(?:3d)?\(([^)]*)\)$/iu.exec(raw);
+  const matrix = /^matrix(3d)?\(([^)]*)\)$/iu.exec(raw);
   if (matrix !== null) {
-    const parts = (matrix[1] ?? "").split(",");
-    scaleX = Number.parseFloat(parts[0] ?? "");
-    skewY = Number.parseFloat(parts[1] ?? "");
-  } else {
-    const scale = /^scale(?:X)?\(([^)]*)\)$/iu.exec(raw);
-    if (scale === null) return 1;
-    scaleX = Number.parseFloat(scale[1] ?? "");
-    skewY = 0;
+    const parts = (matrix[2] ?? "")
+      .split(",")
+      .map((part) => Number.parseFloat(part));
+    const threeD = matrix[1] !== undefined;
+    const a = parts[0];
+    const b = parts[1];
+    const c = parts[threeD ? 4 : 2];
+    const d = parts[threeD ? 5 : 3];
+    if (
+      a === undefined ||
+      b === undefined ||
+      c === undefined ||
+      d === undefined
+    ) {
+      return IDENTITY_AXES;
+    }
+    const finite =
+      Number.isFinite(a) &&
+      Number.isFinite(b) &&
+      Number.isFinite(c) &&
+      Number.isFinite(d);
+    return finite ? { a, b, c, d } : IDENTITY_AXES;
   }
 
-  if (!Number.isFinite(scaleX) || !Number.isFinite(skewY)) return 1;
-  // A rotation mixes the axes, so use the length of the transformed X column.
-  const magnitude = Math.hypot(scaleX, skewY);
-  return magnitude >= MIN_TRANSFORM_SCALE ? magnitude : 1;
+  const scale = /^scale\(([^)]*)\)$/iu.exec(raw);
+  if (scale !== null) {
+    const [rawX, rawY] = (scale[1] ?? "").split(",");
+    const a = Number.parseFloat(rawX ?? "");
+    const d = rawY === undefined ? a : Number.parseFloat(rawY);
+    return Number.isFinite(a) && Number.isFinite(d)
+      ? { a, b: 0, c: 0, d }
+      : IDENTITY_AXES;
+  }
+
+  const scaleX = /^scaleX\(([^)]*)\)$/iu.exec(raw);
+  if (scaleX !== null) {
+    const a = Number.parseFloat(scaleX[1] ?? "");
+    return Number.isFinite(a) ? { a, b: 0, c: 0, d: 1 } : IDENTITY_AXES;
+  }
+
+  const rotate = /^rotate(?:Z)?\(([^)]*)\)$/iu.exec(raw);
+  if (rotate === null) return IDENTITY_AXES;
+  const angle = angleRadiansOf(rotate[1] ?? "");
+  if (angle === null) return IDENTITY_AXES;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  return { a: cosine, b: sine, c: -sine, d: cosine };
+}
+
+/**
+ * `translate` is applied before the element's own `transform`, so the local
+ * delta is the screen-space shift pulled back through the inverse linear
+ * transform. A rotated control then moves along its own axes instead of
+ * turning the requested horizontal shift into vertical movement.
+ */
+function localShiftFor(
+  style: CSSStyleDeclaration | null,
+  screenShiftPx: number,
+): LocalShift | null {
+  const axes = transformAxesOf(style);
+  const det = axes.a * axes.d - axes.b * axes.c;
+  if (Math.abs(det) < MIN_TRANSFORM_SCALE * MIN_TRANSFORM_SCALE) return null;
+
+  const x = (-screenShiftPx * axes.d) / det;
+  const y = (screenShiftPx * axes.b) / det;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+  // A near-singular matrix would demand an absurd local distance; leaving the
+  // control in place is better than flinging it across the bar.
+  const limit = Math.abs(screenShiftPx) * MAX_LOCAL_SHIFT_RATIO;
+  if (Math.abs(x) > limit || Math.abs(y) > limit) return null;
+  return { x, y };
 }
 
 function copyBoxSizing(
@@ -353,19 +462,18 @@ function shiftAbsoluteCluster(
   const shiftPx = buttonRect.right - (anchorRect.left - spacePx);
   let shiftedLeft = buttonRect.left;
   if (shiftPx > MIN_SHIFT_PX) {
-    captureStyle(snapshots, button, "translate");
-    button.style.setProperty(
-      "translate",
-      composeShiftedTranslate(
-        buttonStyle,
-        shiftPx / transformScaleXOf(buttonStyle),
-      ),
-    );
-    shiftedLeft -= shiftPx;
+    const shift = localShiftFor(buttonStyle, shiftPx);
+    const translate =
+      shift === null ? null : composeShiftedTranslate(buttonStyle, shift);
+    if (translate !== null) {
+      captureStyle(snapshots, button, "translate");
+      button.style.setProperty("translate", translate);
+      shiftedLeft -= shiftPx;
+    }
   }
 
   const allowedRight = shiftedLeft - spacePx;
-  const siblings: HTMLElement[] = [];
+  const siblings: StyledElement[] = [];
   let deltaPx = 0;
 
   for (
@@ -373,7 +481,7 @@ function shiftAbsoluteCluster(
     sibling !== null;
     sibling = sibling.previousElementSibling
   ) {
-    if (!isHtmlElement(sibling)) continue;
+    if (!isStyledElement(sibling)) continue;
     const rect = sibling.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
     if (rect.bottom <= anchorRect.top || rect.top >= anchorRect.bottom) continue;
@@ -384,14 +492,12 @@ function shiftAbsoluteCluster(
   if (deltaPx <= MIN_SHIFT_PX) return;
   for (const sibling of siblings) {
     const siblingStyle = computedStyleOf(sibling);
+    const shift = localShiftFor(siblingStyle, deltaPx);
+    const translate =
+      shift === null ? null : composeShiftedTranslate(siblingStyle, shift);
+    if (translate === null) continue;
     captureStyle(snapshots, sibling, "translate");
-    sibling.style.setProperty(
-      "translate",
-      composeShiftedTranslate(
-        siblingStyle,
-        deltaPx / transformScaleXOf(siblingStyle),
-      ),
-    );
+    sibling.style.setProperty("translate", translate);
   }
 }
 

@@ -69,6 +69,11 @@ export function installWebFullscreen(
   const schedule = createDebounced(() => sync(), {
     delayMs: SCAN_DEBOUNCE_MS,
   });
+  // Class or style changes can move an absolute anchor without resizing the
+  // video, so only the bar fit needs to re-run for those.
+  const scheduleFit = createDebounced(() => syncControlBars(), {
+    delayMs: SCAN_DEBOUNCE_MS,
+  });
 
   let resizeObserver: ResizeObserver | null = null;
   if (typeof ResizeObserver === "function") {
@@ -97,7 +102,12 @@ export function installWebFullscreen(
   function observeRoot(root: Node): void {
     if (observedRoots.has(root)) return;
     observedRoots.add(root);
-    observer.observe(root, { childList: true, subtree: true });
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
   }
 
   function toggleBinding(binding: Binding): void {
@@ -254,14 +264,37 @@ export function installWebFullscreen(
     syncFloatingPositions();
   });
 
+  // Only class/style changes on the anchor or one of its ancestors can move a
+  // fitted control bar; other attributes (and our own button tweaks) are noise.
+  const affectsControlBar = (target: Element): boolean => {
+    for (const binding of bindings.values()) {
+      if (binding.fit === null || binding.button === null) continue;
+      if (target === binding.button) continue;
+      const anchor = binding.match.fullscreenButton;
+      if (anchor === null) continue;
+      if (target === anchor || target.contains(anchor)) return true;
+    }
+    return false;
+  };
+
   const observer = new MutationObserver((records) => {
+    let childListChanged = false;
+    let layoutChanged = false;
     for (const record of records) {
+      if (record.type === "attributes") {
+        if (record.target instanceof Element && affectsControlBar(record.target)) {
+          layoutChanged = true;
+        }
+        continue;
+      }
+      childListChanged = true;
       for (const node of record.addedNodes) {
         if (node instanceof Element) discover(node);
         else if (node instanceof DocumentFragment) discover(node);
       }
     }
-    schedule();
+    if (layoutChanged) scheduleFit();
+    if (childListChanged) schedule();
   });
   if (doc.documentElement !== null) {
     observer.observe(doc.documentElement, { childList: true, subtree: true });
@@ -295,6 +328,7 @@ export function installWebFullscreen(
   return () => {
     observer.disconnect();
     schedule.cancel();
+    scheduleFit.cancel();
     resizeObserver?.disconnect();
     frameWindow.removeEventListener("scroll", requestPositionSync, true);
     frameWindow.removeEventListener("resize", onResize);

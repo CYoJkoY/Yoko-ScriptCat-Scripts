@@ -506,6 +506,80 @@ describe("control bar spacing", () => {
     // 41.2 screen px at scale(.5) needs an 82.4 px local translation.
     expect(prev.style.getPropertyValue("translate")).toBe("-82.4px 0");
   });
+
+  it("keeps the shift horizontal when a preceding control is rotated", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The rotated control bar fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    prev.style.transform = "rotate(90deg)";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    fitInControlBar(anchor, button);
+
+    // A local X translation of a 90-degree rotation would move the control
+    // vertically, so the horizontal shift goes through its local Y axis.
+    expect(prev.style.getPropertyValue("translate")).toBe("0px 41.2px");
+  });
+
+  it("shifts a preceding SVG control with the rest of the cluster", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <svg class="prev" width="40" height="20"></svg>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<SVGElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The SVG control bar fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(prev.style.getPropertyValue("translate")).toBe("-41.2px 0");
+
+    fit.dispose();
+    expect(prev.style.getPropertyValue("translate")).toBe("");
+  });
 });
 
 describe("userscript metadata", () => {
@@ -859,5 +933,72 @@ describe("installation", () => {
 
     expect(button.style.getPropertyValue("translate")).toBe("-51.2px 0");
     expect(prev.style.getPropertyValue("translate")).toBe("-42.4px 0");
+  });
+
+  it("refits an absolute control bar when the anchor's style changes", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+        <div class="player-controls" style="position: absolute; width: 640px; height: 360px">
+          <button class="prev" style="position: absolute; right: 84px" aria-label="字幕">字幕</button>
+          <button id="native-fullscreen" style="position: absolute; right: 20px" aria-label="进入全屏">全屏</button>
+        </div>
+      </div>
+    `;
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const player = document.querySelector<HTMLElement>(".player");
+    const controls = document.querySelector<HTMLElement>(".player-controls");
+    const prev = document.querySelector<HTMLElement>(".prev");
+    const anchor = document.querySelector<HTMLElement>("#native-fullscreen");
+    if (
+      video === null ||
+      player === null ||
+      controls === null ||
+      prev === null ||
+      anchor === null
+    ) {
+      throw new Error("The restyled player fixture is incomplete");
+    }
+    let anchorLeft = 560;
+    Object.defineProperty(anchor, "offsetLeft", {
+      configurable: true,
+      get: (): number => anchorLeft,
+    });
+    Object.defineProperty(anchor, "offsetWidth", {
+      configurable: true,
+      value: 40,
+    });
+    const rects = new Map<Element, DOMRect>([
+      [video, new DOMRect(0, 0, 640, 360)],
+      [player, new DOMRect(0, 0, 640, 360)],
+      [controls, new DOMRect(0, 0, 640, 360)],
+      [prev, new DOMRect(520, 0, 40, 20)],
+      [anchor, new DOMRect(anchorLeft, 0, 40, 20)],
+    ]);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        const rect = rects.get(this);
+        if (rect !== undefined) return rect;
+        if (this.hasAttribute(BUTTON_ATTRIBUTE)) {
+          return new DOMRect(anchorLeft, 0, 40, 20);
+        }
+        return new DOMRect(0, 0, 0, 0);
+      },
+    );
+
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+    const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
+    if (button === null) throw new Error("The web fullscreen button was not inserted");
+    expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
+
+    // A player class toggle restyles the anchor through its inline style
+    // without resizing the video or firing a window resize event.
+    anchorLeft = 580;
+    anchor.style.fontSize = "32px";
+    rects.set(anchor, new DOMRect(anchorLeft, 0, 40, 20));
+    await new Promise((resolve) => setTimeout(resolve, 260));
+
+    expect(button.style.getPropertyValue("translate")).toBe("-51.2px 0");
   });
 });
