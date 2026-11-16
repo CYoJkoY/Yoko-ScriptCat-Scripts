@@ -1,6 +1,16 @@
 const FALLBACK_GAP_EM = 0.35;
 const DEFAULT_FONT_SIZE_PX = 16;
 const MIN_SHIFT_PX = 0.5;
+const POSITION_OFFSET_PROPERTIES = ["top", "right", "bottom", "left"] as const;
+const NO_TRANSLATE_VALUES: ReadonlySet<string> = new Set([
+  "",
+  "none",
+  "initial",
+  "inherit",
+  "unset",
+  "revert",
+  "revert-layer",
+]);
 
 const FLEX_OR_GRID_DISPLAYS: ReadonlySet<string> = new Set([
   "flex",
@@ -98,11 +108,29 @@ function resolveSpacePx(
   return fallbackGapPx(anchorStyle);
 }
 
-function hasInlineStartMargin(anchorStyle: CSSStyleDeclaration | null): boolean {
-  const logical = readPx(anchorStyle, "margin-inline-start");
-  if (logical !== null && logical > 0) return true;
-  const physical = readPx(anchorStyle, "margin-left");
-  return physical !== null && physical > 0;
+function isPositiveMargin(raw: string): boolean {
+  const value = raw.trim();
+  if (value.length === 0) return false;
+  if (value.toLowerCase() === "auto") return true;
+  const parsed = Number.parseFloat(value);
+  // An unparsable margin still occupies space, so treat it as present.
+  return Number.isFinite(parsed) ? parsed > 0 : true;
+}
+
+/**
+ * Logical and physical margins can disagree (logical properties are not always
+ * reflected), so a side counts as spaced when either form is positive.
+ */
+function hasPositiveMargin(
+  style: CSSStyleDeclaration | null,
+  logicalProperty: string,
+  physicalProperty: string,
+): boolean {
+  if (style === null) return false;
+  return (
+    isPositiveMargin(style.getPropertyValue(logicalProperty)) ||
+    isPositiveMargin(style.getPropertyValue(physicalProperty))
+  );
 }
 
 /**
@@ -113,19 +141,87 @@ function hasInlineStartMargin(anchorStyle: CSSStyleDeclaration | null): boolean 
 function reserveFlexSpace(
   button: HTMLElement,
   parentStyle: CSSStyleDeclaration | null,
-  anchorStyle: CSSStyleDeclaration | null,
+  anchorStyle: CSSStyleDeclaration,
 ): void {
   button.style.setProperty("flex-grow", "0");
   button.style.setProperty("flex-shrink", "0");
   button.style.setProperty("flex-basis", "auto");
 
-  if (hasInlineStartMargin(anchorStyle)) return;
   const gap = readPx(parentStyle, "column-gap") ?? readPx(parentStyle, "gap");
   if (gap !== null && gap > 0) return;
 
+  const buttonStyle = computedStyleOf(button);
   const space = formatPx(fallbackGapPx(anchorStyle));
-  button.style.setProperty("margin-inline-start", space);
-  button.style.setProperty("margin-inline-end", space);
+  const hasLeftGap = hasPositiveMargin(
+    buttonStyle,
+    "margin-inline-start",
+    "margin-left",
+  );
+  if (!hasLeftGap) button.style.setProperty("margin-inline-start", space);
+
+  // The clone can lose an ID- or data-* selector's margin, so inspect the
+  // button's own end margin as well as the anchor's leading margin.
+  const hasRightGap =
+    hasPositiveMargin(anchorStyle, "margin-inline-start", "margin-left") ||
+    hasPositiveMargin(buttonStyle, "margin-inline-end", "margin-right");
+  if (!hasRightGap) button.style.setProperty("margin-inline-end", space);
+}
+
+function splitComponentValues(value: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let depth = 0;
+  for (const character of value) {
+    if (character === "(") depth += 1;
+    else if (character === ")") depth = Math.max(0, depth - 1);
+    if (/\s/u.test(character) && depth === 0) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += character;
+  }
+  if (current.length > 0) parts.push(current);
+  return parts;
+}
+
+/**
+ * The measured rectangle already includes any existing translation. Compose
+ * the new shift into that value instead of replacing it.
+ */
+function composeShiftedTranslate(
+  style: CSSStyleDeclaration | null,
+  deltaPx: number,
+): string {
+  const raw = style?.getPropertyValue("translate").trim() ?? "";
+  const parts = NO_TRANSLATE_VALUES.has(raw.toLowerCase())
+    ? []
+    : splitComponentValues(raw);
+  if (parts.length === 0) return `${formatPx(-deltaPx)} 0`;
+
+  const x = parts[0] === "0" ? "0px" : parts[0];
+  const y = parts[1] ?? "0";
+  const z = parts[2];
+  const shiftedX = `calc(${x} - ${formatPx(deltaPx)})`;
+  return z === undefined ? `${shiftedX} ${y}` : `${shiftedX} ${y} ${z}`;
+}
+
+function copyAnchorOffsets(
+  anchorStyle: CSSStyleDeclaration,
+  button: HTMLElement,
+  snapshots: StyleSnapshot[],
+): void {
+  const buttonStyle = computedStyleOf(button);
+  if (buttonStyle === null) return;
+  for (const property of POSITION_OFFSET_PROPERTIES) {
+    const value = anchorStyle.getPropertyValue(property).trim();
+    if (value.length === 0 || value === "auto") continue;
+    if (buttonStyle.getPropertyValue(property).trim() === value) continue;
+    captureStyle(snapshots, button, property);
+    button.style.setProperty(property, value);
+  }
 }
 
 /**
@@ -138,18 +234,16 @@ function shiftAbsoluteCluster(
   anchor: HTMLElement,
   button: HTMLElement,
   parentStyle: CSSStyleDeclaration | null,
-  anchorStyle: CSSStyleDeclaration | null,
+  anchorStyle: CSSStyleDeclaration,
   snapshots: StyleSnapshot[],
 ): void {
   const buttonStyle = computedStyleOf(button);
   if (buttonStyle === null) return;
   if (buttonStyle.getPropertyValue("position").trim() === "static") {
     captureStyle(snapshots, button, "position");
-    button.style.setProperty(
-      "position",
-      anchorStyle?.getPropertyValue("position").trim() ?? "absolute",
-    );
+    button.style.setProperty("position", anchorStyle.getPropertyValue("position").trim());
   }
+  copyAnchorOffsets(anchorStyle, button, snapshots);
 
   const anchorRect = anchor.getBoundingClientRect();
   const buttonRect = button.getBoundingClientRect();
@@ -167,7 +261,7 @@ function shiftAbsoluteCluster(
   let shiftedLeft = buttonRect.left;
   if (shiftPx > MIN_SHIFT_PX) {
     captureStyle(snapshots, button, "translate");
-    button.style.setProperty("translate", `${formatPx(-shiftPx)} 0`);
+    button.style.setProperty("translate", composeShiftedTranslate(buttonStyle, shiftPx));
     shiftedLeft -= shiftPx;
   }
 
@@ -190,8 +284,12 @@ function shiftAbsoluteCluster(
 
   if (deltaPx <= MIN_SHIFT_PX) return;
   for (const sibling of siblings) {
+    const siblingStyle = computedStyleOf(sibling);
     captureStyle(snapshots, sibling, "translate");
-    sibling.style.setProperty("translate", `${formatPx(-deltaPx)} 0`);
+    sibling.style.setProperty(
+      "translate",
+      composeShiftedTranslate(siblingStyle, deltaPx),
+    );
   }
 }
 

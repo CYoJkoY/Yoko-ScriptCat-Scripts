@@ -155,10 +155,27 @@ describe("control bar spacing", () => {
     expect(button.style.getPropertyValue("margin-inline-end")).toBe("");
   });
 
-  it("accepts an existing leading margin on the native control", () => {
+  it("fills only the sides the native leading margin does not cover", () => {
     const { bar, anchor } = mountAnchor("display: flex");
     anchor.style.marginLeft = "10px";
     const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    fitInControlBar(anchor, button);
+
+    // The clone drops ID- and data-* selectors, so its own margin cannot be
+    // assumed: the button still needs a leading gap in front of itself.
+    expect(button.style.getPropertyValue("margin-inline-start")).toBe("5.6px");
+    // The anchor keeps its margin, which already separates it from the button.
+    expect(button.style.getPropertyValue("margin-inline-end")).toBe("");
+  });
+
+  it("keeps its own margins when the cloned control already has them", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.style.marginLeft = "10px";
+    const button = document.createElement("button");
+    button.style.marginLeft = "10px";
+    button.style.marginRight = "10px";
     bar.insertBefore(button, anchor);
 
     fitInControlBar(anchor, button);
@@ -271,6 +288,85 @@ describe("control bar spacing", () => {
 
     expect(button.style.getPropertyValue("translate")).toBe("");
     expect(prev.style.getPropertyValue("translate")).toBe("-25.6px 0");
+  });
+
+  it("composes the shift with the translation a control already has", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The translated control bar fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    prev.style.translate = "10px 0";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    const cleanup = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
+    expect(prev.style.getPropertyValue("translate")).toBe(
+      "calc(10px - 41.2px) 0",
+    );
+
+    cleanup();
+    expect(prev.style.getPropertyValue("translate")).toBe("10px 0");
+  });
+
+  it("copies the anchor offsets onto an absolutely positioned button", () => {
+    document.body.innerHTML = `
+      <div class="bar" style="position: relative">
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || anchor === null) {
+      throw new Error("The offset anchor fixture is incomplete");
+    }
+    anchor.style.position = "absolute";
+    anchor.style.top = "4px";
+    anchor.style.right = "20px";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    const cleanup = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("position")).toBe("absolute");
+    expect(button.style.getPropertyValue("top")).toBe("4px");
+    expect(button.style.getPropertyValue("right")).toBe("20px");
+
+    cleanup();
+    expect(button.style.getPropertyValue("position")).toBe("");
+    expect(button.style.getPropertyValue("top")).toBe("");
+    expect(button.style.getPropertyValue("right")).toBe("");
+    expect(button.style.getPropertyValue("translate")).toBe("");
   });
 });
 
