@@ -56,6 +56,7 @@ afterEach(() => {
   document.body.removeAttribute("style");
   Reflect.deleteProperty(document, "fullscreenElement");
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function activatePlayer(player: HTMLElement): Promise<void> {
@@ -293,6 +294,27 @@ describe("control bar spacing", () => {
 
     expect(button.style.getPropertyValue("margin-inline-start")).toBe("5.6px");
     expect(button.style.getPropertyValue("margin-inline-end")).toBe("");
+  });
+
+  it("keeps an RTL clone in flow when the anchor is absolutely positioned", () => {
+    const { bar, anchor } = mountAnchor("display: flex; direction: rtl");
+    anchor.style.position = "absolute";
+    anchor.style.top = "0";
+    anchor.style.right = "0";
+    const button = document.createElement("button");
+    button.style.position = "relative";
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    // The cluster shift is skipped in RTL, so copying `absolute` would remove
+    // the clone from the bar and let it overlap its neighbours.
+    expect(button.style.getPropertyValue("position")).toBe("relative");
+    expect(button.style.getPropertyValue("margin-inline-start")).toBe("5.6px");
+    expect(button.style.getPropertyValue("margin-inline-end")).toBe("5.6px");
+
+    fit.dispose();
+    expect(button.style.getPropertyValue("position")).toBe("relative");
   });
 
   it("shifts an absolute button and its preceding controls left", () => {
@@ -644,6 +666,56 @@ describe("control bar spacing", () => {
     fit.dispose();
     expect(icon.style.getPropertyValue("width")).toBe("");
     expect(icon.style.getPropertyValue("height")).toBe("");
+  });
+
+  it("undoes a scaled control bar when sizing the cloned icon", () => {
+    const { bar, anchor } = mountAnchor("display: flex; transform: scale(0.5)");
+    anchor.textContent = "";
+    const anchorIcon = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg",
+    );
+    anchor.append(anchorIcon);
+    Object.defineProperty(anchorIcon, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, 16, 16),
+    });
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    button.append(icon);
+    bar.insertBefore(button, anchor);
+
+    fitInControlBar(anchor, button);
+
+    // 16 screen px at scale(.5) is a 32 px CSS icon in the clone.
+    expect(icon.style.getPropertyValue("width")).toBe("32px");
+    expect(icon.style.getPropertyValue("height")).toBe("32px");
+  });
+
+  it("accounts for the cloned icon's own transform when sizing it", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.textContent = "";
+    const anchorIcon = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg",
+    );
+    anchorIcon.style.transform = "scale(0.5)";
+    anchor.append(anchorIcon);
+    Object.defineProperty(anchorIcon, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, 18, 18),
+    });
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.style.transform = "scale(0.5)";
+    button.append(icon);
+    bar.insertBefore(button, anchor);
+
+    fitInControlBar(anchor, button);
+
+    // 18 screen px on a half-scaled icon is a 36 px CSS icon in the clone.
+    expect(icon.style.getPropertyValue("width")).toBe("36px");
+    expect(icon.style.getPropertyValue("height")).toBe("36px");
   });
 
   it("uses the median size of neighbouring control icons", () => {
@@ -1573,6 +1645,77 @@ describe("installation", () => {
     await new Promise((resolve) => setTimeout(resolve, 260));
 
     expect(button.style.getPropertyValue("translate")).toBe("-51.2px 0");
+  });
+
+  it("refits the injected icon when an observed control icon resizes", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+        <div class="player-controls" style="display: flex">
+          <button id="native-fullscreen" aria-label="全屏"><svg></svg></button>
+        </div>
+      </div>
+    `;
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const player = document.querySelector<HTMLElement>(".player");
+    const anchor = document.querySelector<HTMLButtonElement>("#native-fullscreen");
+    const anchorIcon = document.querySelector<SVGElement>("#native-fullscreen svg");
+    if (video === null || player === null || anchor === null || anchorIcon === null) {
+      throw new Error("The observed icon fixture is incomplete");
+    }
+    stubVideoRect(video);
+    let iconSize = 24;
+    Object.defineProperty(anchorIcon, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, iconSize, iconSize),
+    });
+
+    const observers: {
+      readonly callback: ResizeObserverCallback;
+      readonly targets: Set<Element>;
+    }[] = [];
+    class FakeResizeObserver {
+      readonly targets = new Set<Element>();
+
+      constructor(readonly callback: ResizeObserverCallback) {
+        observers.push(this);
+      }
+
+      observe(target: Element): void {
+        this.targets.add(target);
+      }
+
+      unobserve(target: Element): void {
+        this.targets.delete(target);
+      }
+
+      disconnect(): void {
+        this.targets.clear();
+      }
+    }
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+    await activatePlayer(player);
+    const injectedIcon = player.querySelector<SVGElement>(
+      `[${BUTTON_ATTRIBUTE}] svg`,
+    );
+    const observer = observers[0];
+    if (injectedIcon === null || observer === undefined) {
+      throw new Error("The injected icon or resize observer is missing");
+    }
+    expect(injectedIcon.style.getPropertyValue("width")).toBe("24px");
+    expect(observer.targets.has(anchorIcon)).toBe(true);
+
+    // A font swap or hover rule can resize the source icon with no window,
+    // video, or DOM mutation to trigger a scan.
+    iconSize = 40;
+    observer.callback([], observer as unknown as ResizeObserver);
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    expect(injectedIcon.style.getPropertyValue("width")).toBe("40px");
+    expect(injectedIcon.style.getPropertyValue("height")).toBe("40px");
   });
 
   it("refits when a preceding control becomes visible", async () => {
