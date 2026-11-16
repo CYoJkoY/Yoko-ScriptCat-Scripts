@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Web Fullscreen Button
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.1
+// @version      1.0.6
 // @description  给只有全屏按钮的视频播放器补一个网页全屏按钮，并把它动态插在全屏按钮前面；网页全屏只铺满浏览器视口，不进入系统全屏。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/web-fullscreen.user.js
@@ -576,6 +576,9 @@
   }
 
   // scripts/web-fullscreen/src/core/detect.ts
+  function looksLikePlayerControl(identifier) {
+    return FULLSCREEN_HINT_TEXT.test(identifier) || EXISTING_WEB_FULLSCREEN_TEXT.test(identifier);
+  }
   function readLabels(element) {
     const labels = [];
     for (const attribute of FULLSCREEN_LABEL_ATTRIBUTES) {
@@ -722,8 +725,6 @@
     style.display = "inline-flex";
     style.alignItems = "center";
     style.justifyContent = "center";
-    style.width = "2em";
-    style.height = "2em";
     style.padding = "0";
     style.border = "0";
     style.background = "transparent";
@@ -809,6 +810,9 @@
   var MIN_APPLIED_SHIFT_PX = 5e-3;
   var LAYOUT_EPSILON_PX = 0.5;
   var POSITION_OFFSET_PROPERTIES = ["top", "right", "bottom", "left"];
+  var CONTROL_ICON_SELECTOR = "svg, img, i, [class*='icon']";
+  var INTERACTIVE_CONTROL_SELECTOR = 'button, [role="button"], a[href], [tabindex], [onclick]';
+  var MIN_MEASURED_SIZE_PX = 1;
   var NO_TRANSLATE_VALUES = /* @__PURE__ */ new Set([
     "",
     "none",
@@ -834,6 +838,85 @@
     if (raw.length === 0) return null;
     const parsed = Number.parseFloat(raw);
     return Number.isFinite(parsed) ? parsed : null;
+  }
+  function measuredCssBoxOf(element, axes) {
+    const a = Math.abs(axes.a);
+    const b = Math.abs(axes.b);
+    const c = Math.abs(axes.c);
+    const d = Math.abs(axes.d);
+    const det = a * d - b * c;
+    if (!(Math.abs(det) > MIN_TRANSFORM_SCALE * MIN_TRANSFORM_SCALE)) return null;
+    const rect = element.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
+    const width = (rect.width * d - c * rect.height) / det;
+    const height = (a * rect.height - b * rect.width) / det;
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+    if (width < MIN_MEASURED_SIZE_PX || height < MIN_MEASURED_SIZE_PX) return null;
+    return { width, height };
+  }
+  function measuredCssSizeOf(element, axes) {
+    const box = measuredCssBoxOf(element, axes);
+    return box === null ? null : Math.min(box.width, box.height);
+  }
+  function isGlyphElement(element) {
+    if (element.matches("svg, img, i")) return true;
+    return !element.matches(INTERACTIVE_CONTROL_SELECTOR);
+  }
+  function iconElementOf(control, axes) {
+    for (const candidate of control.querySelectorAll(CONTROL_ICON_SELECTOR)) {
+      if (!isGlyphElement(candidate)) continue;
+      if (measuredCssSizeOf(candidate, axes) !== null) return candidate;
+    }
+    return control.matches(CONTROL_ICON_SELECTOR) && isGlyphElement(control) ? control : null;
+  }
+  function medianSize(sizes) {
+    if (sizes.length === 0) return null;
+    const sorted = [...sizes].sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted[middle] ?? null;
+  }
+  function measureIconTarget(anchor, button, axes) {
+    const anchorIcon = iconElementOf(anchor, axes);
+    if (anchorIcon !== null) {
+      const anchorSize = measuredCssSizeOf(anchorIcon, axes);
+      if (anchorSize !== null) return anchorSize;
+    }
+    const parent = anchor.parentElement;
+    if (parent === null) return null;
+    const sizes = [];
+    for (const sibling of parent.children) {
+      if (sibling === anchor || sibling === button) continue;
+      if (!isStyledElement(sibling)) continue;
+      const icon = iconElementOf(sibling, axes);
+      if (icon === null) continue;
+      const size = measuredCssSizeOf(icon, axes);
+      if (size !== null) sizes.push(size);
+    }
+    return medianSize(sizes);
+  }
+  function measureControlSizes(anchor, button) {
+    const controlAxes = combinedTransformAxesOf(button);
+    const cloneIcon = button.querySelector("svg");
+    const iconAxes = cloneIcon === null ? controlAxes : combinedTransformAxesOf(cloneIcon);
+    const control = measuredCssBoxOf(anchor, controlAxes);
+    return {
+      icon: measureIconTarget(anchor, button, iconAxes),
+      controlWidth: control?.width ?? null,
+      controlHeight: control?.height ?? null
+    };
+  }
+  function resizeTargetsOf(anchor, button) {
+    const targets = /* @__PURE__ */ new Set();
+    const parent = anchor.parentElement;
+    const scopes = parent === null ? [anchor] : [anchor, ...parent.children];
+    for (const scope of scopes) {
+      if (!isStyledElement(scope) || scope === button) continue;
+      targets.add(scope);
+      for (const icon of scope.querySelectorAll(CONTROL_ICON_SELECTOR)) {
+        targets.add(icon);
+      }
+    }
+    return [...targets];
   }
   function computedStyleOf(element) {
     return element.ownerDocument.defaultView?.getComputedStyle(element) ?? null;
@@ -877,7 +960,8 @@
     return {
       anchorOffset: layoutBoxOf(anchor),
       buttonRect: relativeRectOf(button, anchorRect),
-      siblings
+      siblings,
+      sizes: measureControlSizes(anchor, button)
     };
   }
   function isSameSiblingSnapshot(left, right) {
@@ -891,6 +975,7 @@
   function isSameFitSnapshot(left, right) {
     if (!isSameLayoutBox(left.anchorOffset, right.anchorOffset)) return false;
     if (!isSameLayoutBox(left.buttonRect, right.buttonRect)) return false;
+    if (!isSameControlSizes(left.sizes, right.sizes)) return false;
     if (left.siblings.length !== right.siblings.length) return false;
     for (let index = 0; index < left.siblings.length; index += 1) {
       const prevSibling = left.siblings[index];
@@ -899,6 +984,13 @@
       if (!isSameSiblingSnapshot(prevSibling, nextSibling)) return false;
     }
     return true;
+  }
+  function isSameControlSizes(left, right) {
+    return isSameOptionalSize(left.icon, right.icon) && isSameOptionalSize(left.controlWidth, right.controlWidth) && isSameOptionalSize(left.controlHeight, right.controlHeight);
+  }
+  function isSameOptionalSize(left, right) {
+    if (left === null || right === null) return left === right;
+    return Math.abs(left - right) < LAYOUT_EPSILON_PX;
   }
   function isRtl(style) {
     if (style === null) return false;
@@ -1206,6 +1298,69 @@
     captureStyle(snapshots, button, "box-sizing");
     button.style.setProperty("box-sizing", value);
   }
+  function copyFontSize(anchorStyle, button, snapshots) {
+    const value = anchorStyle.getPropertyValue("font-size").trim();
+    if (value.length === 0) return;
+    const buttonStyle = computedStyleOf(button);
+    if (buttonStyle?.getPropertyValue("font-size").trim() === value) return;
+    captureStyle(snapshots, button, "font-size");
+    button.style.setProperty("font-size", value);
+  }
+  function copyAnchorPosition(anchorStyle, button, snapshots) {
+    const position = anchorStyle.getPropertyValue("position").trim();
+    if (position.length === 0) return;
+    const buttonStyle = computedStyleOf(button);
+    if (buttonStyle?.getPropertyValue("position").trim() === position) return;
+    captureStyle(snapshots, button, "position");
+    button.style.setProperty("position", position);
+  }
+  var CONTENT_BOX_EDGES = {
+    horizontal: [
+      "padding-left",
+      "padding-right",
+      "border-left-width",
+      "border-right-width"
+    ],
+    vertical: [
+      "padding-top",
+      "padding-bottom",
+      "border-top-width",
+      "border-bottom-width"
+    ]
+  };
+  function contentBoxSizeOf(element, outerSize, axis) {
+    const style = computedStyleOf(element);
+    if (style === null) return outerSize;
+    const boxSizing = style.getPropertyValue("box-sizing").trim().toLowerCase();
+    if (boxSizing === "border-box") return outerSize;
+    let edgesPx = 0;
+    for (const property of CONTENT_BOX_EDGES[axis]) {
+      edgesPx += readPx(style, property) ?? 0;
+    }
+    return Math.max(0, outerSize - edgesPx);
+  }
+  function applyMeasuredSizes(anchor, button, snapshots) {
+    const sizes = measureControlSizes(anchor, button);
+    const icon = button.querySelector("svg");
+    if (icon !== null && sizes.icon !== null) {
+      const size = formatPx(sizes.icon);
+      captureStyle(snapshots, icon, "width");
+      captureStyle(snapshots, icon, "height");
+      icon.style.setProperty("width", size);
+      icon.style.setProperty("height", size);
+    }
+    if (sizes.controlWidth === null || sizes.controlHeight === null) return;
+    const width = formatPx(
+      contentBoxSizeOf(button, sizes.controlWidth, "horizontal")
+    );
+    const height = formatPx(
+      contentBoxSizeOf(button, sizes.controlHeight, "vertical")
+    );
+    captureStyle(snapshots, button, "min-width");
+    captureStyle(snapshots, button, "min-height");
+    button.style.setProperty("min-width", width);
+    button.style.setProperty("min-height", height);
+  }
   function copyAnchorOffsets(anchorStyle, button, snapshots) {
     const buttonStyle = computedStyleOf(button);
     if (buttonStyle === null) return;
@@ -1220,11 +1375,7 @@
   function shiftAbsoluteCluster(anchor, button, parentStyle, anchorStyle, snapshots) {
     const buttonStyle = computedStyleOf(button);
     if (buttonStyle === null) return;
-    const anchorPosition = anchorStyle.getPropertyValue("position").trim();
-    if (anchorPosition.length > 0 && buttonStyle.getPropertyValue("position").trim() !== anchorPosition) {
-      captureStyle(snapshots, button, "position");
-      button.style.setProperty("position", anchorPosition);
-    }
+    copyAnchorPosition(anchorStyle, button, snapshots);
     copyAnchorOffsets(anchorStyle, button, snapshots);
     const anchorRect = anchor.getBoundingClientRect();
     const buttonRect = button.getBoundingClientRect();
@@ -1271,11 +1422,23 @@
     if (anchorStyle === null) return;
     const parentStyle = computedStyleOf(parent);
     copyBoxSizing(anchorStyle, button, snapshots);
+    copyFontSize(anchorStyle, button, snapshots);
+    applyMeasuredSizes(anchor, button, snapshots);
     const position = anchorStyle.getPropertyValue("position").trim();
     const absolute = position === "absolute" || position === "fixed";
-    if (absolute && !isRtl(anchorStyle) && !isRtl(parentStyle)) {
+    const offsetRelative = position === "relative" || position === "sticky";
+    const rtl = isRtl(anchorStyle) || isRtl(parentStyle);
+    if (!(absolute && rtl)) {
+      copyAnchorPosition(anchorStyle, button, snapshots);
+    }
+    if (absolute && !rtl) {
       shiftAbsoluteCluster(anchor, button, parentStyle, anchorStyle, snapshots);
-    } else if (parentStyle !== null && FLEX_OR_GRID_DISPLAYS.has(
+      return;
+    }
+    if (offsetRelative) {
+      copyAnchorOffsets(anchorStyle, button, snapshots);
+    }
+    if (parentStyle !== null && FLEX_OR_GRID_DISPLAYS.has(
       parentStyle.getPropertyValue("display").trim().toLowerCase()
     )) {
       reserveFlexSpace(button, parentStyle, anchorStyle, snapshots);
@@ -1285,6 +1448,7 @@
     let snapshots = [];
     let ownedStyles = /* @__PURE__ */ new Map();
     let fitSnapshot = null;
+    let resizeTargets = [];
     const apply = () => {
       snapshots = [];
       applyControlBarFit(anchor, button, snapshots);
@@ -1304,6 +1468,7 @@
         });
       }
       fitSnapshot = snapshotFit(anchor, button);
+      resizeTargets = resizeTargetsOf(anchor, button);
     };
     const dispose = () => {
       rebaseSiteChangedProperties(snapshots, ownedStyles);
@@ -1311,6 +1476,7 @@
       snapshots = [];
       ownedStyles.clear();
       fitSnapshot = null;
+      resizeTargets = [];
     };
     apply();
     return {
@@ -1324,6 +1490,9 @@
         dispose();
         apply();
       },
+      resizeTargets() {
+        return resizeTargets;
+      },
       ownsStyleOf(element) {
         const owned = ownedStyles.get(element);
         return owned !== void 0 && (element.getAttribute("style") ?? "") === owned.attribute;
@@ -1333,6 +1502,23 @@
   }
 
   // scripts/web-fullscreen/src/install.ts
+  var ACTIVATION_EVENTS = [
+    "pointerover",
+    "pointerdown",
+    "touchstart",
+    "focusin"
+  ];
+  var FIT_TRIGGER_EVENTS = [
+    "pointerover",
+    "pointerout",
+    "focusin",
+    "focusout"
+  ];
+  var TRANSFORM_TRANSITION_PROPERTIES = /* @__PURE__ */ new Set([
+    "transform",
+    "scale",
+    "rotate"
+  ]);
   function setAttributeIfChanged(element, name, value) {
     if (element.getAttribute(name) !== value) element.setAttribute(name, value);
   }
@@ -1341,7 +1527,9 @@
     const rect = video.getBoundingClientRect();
     return rect.width >= MIN_VIDEO_WIDTH_PX && rect.height >= MIN_VIDEO_HEIGHT_PX;
   }
-  function disposeButton(binding) {
+  function disposeButton(binding, observer) {
+    releaseFitEvents(binding);
+    releaseFitTargets(binding, observer);
     binding.fit?.dispose();
     binding.fit = null;
     binding.removeButton?.();
@@ -1349,6 +1537,54 @@
     binding.button?.remove();
     binding.button = null;
     binding.floating = false;
+  }
+  function observeFitTargets(binding, observer) {
+    if (observer === null) return;
+    const next = binding.fit?.resizeTargets() ?? [];
+    if (next.length === binding.fitTargets.length && next.every((target, index) => binding.fitTargets[index] === target)) {
+      return;
+    }
+    for (const target of binding.fitTargets) observer.unobserve(target);
+    binding.fitTargets = [...next];
+    for (const target of binding.fitTargets) observer.observe(target);
+  }
+  function releaseFitTargets(binding, observer) {
+    if (observer === null) return;
+    for (const target of binding.fitTargets) observer.unobserve(target);
+    binding.fitTargets = [];
+  }
+  function retainFitEvents(binding, requestFit) {
+    const root = binding.fit === null ? null : binding.button?.parentElement ?? null;
+    releaseFitEvents(binding);
+    if (root === null) return;
+    const onInteraction = () => requestFit();
+    const onTransitionEnd = (event) => {
+      const propertyName = event.propertyName;
+      if (!TRANSFORM_TRANSITION_PROPERTIES.has(propertyName)) return;
+      requestFit();
+    };
+    for (const type of FIT_TRIGGER_EVENTS) {
+      root.addEventListener(type, onInteraction);
+    }
+    root.addEventListener("transitioncancel", onTransitionEnd);
+    root.addEventListener("transitionend", onTransitionEnd);
+    binding.removeFitEvents = () => {
+      for (const type of FIT_TRIGGER_EVENTS) {
+        root.removeEventListener(type, onInteraction);
+      }
+      root.removeEventListener("transitioncancel", onTransitionEnd);
+      root.removeEventListener("transitionend", onTransitionEnd);
+      requestFit.cancel();
+    };
+  }
+  function releaseFitEvents(binding) {
+    binding.removeFitEvents?.();
+    binding.removeFitEvents = null;
+  }
+  function releaseActivation(binding) {
+    binding.removeActivation?.();
+    binding.removeActivation = null;
+    binding.activationRoot = null;
   }
   function installWebFullscreen(doc = document) {
     const view = doc.defaultView;
@@ -1392,6 +1628,7 @@
         childList: true,
         subtree: true,
         attributes: true,
+        attributeOldValue: true,
         attributeFilter: ["class", "style", "hidden"]
       });
     }
@@ -1404,6 +1641,30 @@
         mode
       });
       syncFloatingPositions();
+    }
+    function activateBinding(binding) {
+      if (binding.activated) return;
+      binding.activated = true;
+      releaseActivation(binding);
+      schedule();
+    }
+    function retainActivation(binding) {
+      if (binding.activated || binding.match.mode !== "custom") return;
+      const root = binding.match.root;
+      if (binding.removeActivation !== null && binding.activationRoot === root) {
+        return;
+      }
+      releaseActivation(binding);
+      const onActivate = () => activateBinding(binding);
+      for (const event of ACTIVATION_EVENTS) {
+        root.addEventListener(event, onActivate);
+      }
+      binding.activationRoot = root;
+      binding.removeActivation = () => {
+        for (const event of ACTIVATION_EVENTS) {
+          root.removeEventListener(event, onActivate);
+        }
+      };
     }
     function attachHandlers(button, binding) {
       const onClick = (event) => {
@@ -1438,6 +1699,15 @@
         binding.button = button2;
         binding.floating = false;
         binding.fit = fitInControlBar(anchor, button2);
+        observeFitTargets(binding, resizeObserver);
+        const requestFit = createDebounced(() => {
+          if (binding.fit === null) return;
+          binding.fit.refit();
+          observeFitTargets(binding, resizeObserver);
+        }, {
+          delayMs: SCAN_DEBOUNCE_MS
+        });
+        retainFitEvents(binding, requestFit);
         binding.removeButton = attachHandlers(button2, binding);
         return true;
       }
@@ -1460,12 +1730,26 @@
     function refreshBinding(binding) {
       const match = findPlayerMatch(binding.video);
       if (match.mode === "skip") {
-        disposeButton(binding);
+        disposeButton(binding, resizeObserver);
+        releaseActivation(binding);
         binding.match = match;
         return;
       }
+      if (match.mode === "custom" && !binding.activated) {
+        const controlsJustAppeared = binding.match.mode === "native";
+        disposeButton(binding, resizeObserver);
+        binding.match = match;
+        if (controlsJustAppeared) {
+          binding.activated = true;
+          mountButton(binding);
+          return;
+        }
+        retainActivation(binding);
+        return;
+      }
+      if (match.mode === "native") releaseActivation(binding);
       if (needsRemount(binding, match)) {
-        disposeButton(binding);
+        disposeButton(binding, resizeObserver);
         binding.match = match;
         mountButton(binding);
         return;
@@ -1491,12 +1775,17 @@
       for (const binding of bindings.values()) binding.fit?.sync();
     }
     function refitControlBars() {
-      for (const binding of bindings.values()) binding.fit?.refit();
+      for (const binding of bindings.values()) {
+        if (binding.fit === null) continue;
+        binding.fit.refit();
+        observeFitTargets(binding, resizeObserver);
+      }
     }
     function removeBinding(binding) {
       if (controller.isActiveFor(binding.video)) controller.exit();
       resizeObserver?.unobserve(binding.video);
-      disposeButton(binding);
+      releaseActivation(binding);
+      disposeButton(binding, resizeObserver);
       bindings.delete(binding.video);
     }
     function sync() {
@@ -1518,12 +1807,18 @@
             button: null,
             floating: false,
             removeButton: null,
-            fit: null
+            fit: null,
+            fitTargets: [],
+            removeFitEvents: null,
+            activated: false,
+            activationRoot: null,
+            removeActivation: null
           };
           bindings.set(video, binding);
         }
         refreshBinding(binding);
         binding.fit?.sync();
+        observeFitTargets(binding, resizeObserver);
         updateButtonState(binding);
       }
       syncFloatingPositions();
@@ -1547,13 +1842,47 @@
       }
       return false;
     };
+    const controlIdentifierOf = (target) => {
+      const testId = target.getAttribute("data-testid") ?? "";
+      const className = target.getAttribute("class") ?? "";
+      return `${target.id} ${className} ${testId}`;
+    };
+    const mayChangePlayerMatch = (target, attributeName, previousClass) => {
+      if (attributeName !== "class") return false;
+      const identifier = controlIdentifierOf(target);
+      if (!looksLikePlayerControl(identifier) && !looksLikePlayerControl(previousClass ?? "")) {
+        return false;
+      }
+      const body = doc.body;
+      for (const binding of bindings.values()) {
+        if (binding.match.mode !== "native") continue;
+        const video = binding.video;
+        if (!video.isConnected) continue;
+        let node = video;
+        for (let depth = 0; node !== null && node !== body && depth <= PLAYER_SEARCH_DEPTH; depth += 1) {
+          if (node.contains(target)) return true;
+          node = node.parentElement;
+        }
+      }
+      return false;
+    };
     const observer = new MutationObserver((records) => {
       let childListChanged = false;
       let layoutChanged = false;
+      let matchMayChange = false;
       for (const record of records) {
         if (record.type === "attributes") {
-          if (record.target instanceof Element && affectsControlBar(record.target, record.attributeName)) {
-            layoutChanged = true;
+          if (record.target instanceof Element) {
+            if (affectsControlBar(record.target, record.attributeName)) {
+              layoutChanged = true;
+            }
+            if (mayChangePlayerMatch(
+              record.target,
+              record.attributeName,
+              record.oldValue
+            )) {
+              matchMayChange = true;
+            }
           }
           continue;
         }
@@ -1567,7 +1896,7 @@
         }
       }
       if (layoutChanged) scheduleFit();
-      if (childListChanged) schedule();
+      if (childListChanged || matchMayChange) schedule();
     });
     if (doc.documentElement !== null) {
       observeRoot(doc.documentElement);
@@ -1602,7 +1931,10 @@
       if (positionFrame !== 0) frameWindow.cancelAnimationFrame(positionFrame);
       unsubscribe();
       controller.exit();
-      for (const binding of [...bindings.values()]) disposeButton(binding);
+      for (const binding of [...bindings.values()]) {
+        releaseActivation(binding);
+        disposeButton(binding, resizeObserver);
+      }
       bindings.clear();
       knownVideos.clear();
       observedRoots.clear();
