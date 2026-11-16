@@ -214,6 +214,78 @@ describe("control bar spacing", () => {
     expect(button.style.getPropertyValue("margin-inline-end")).toBe("");
   });
 
+  it("treats anchor margin-left as outer in a row-reverse flex bar", () => {
+    const { bar, anchor } = mountAnchor(
+      "display: flex; flex-direction: row-reverse",
+    );
+    anchor.style.marginLeft = "10px";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("margin-inline-start")).toBe("5.6px");
+    expect(button.style.getPropertyValue("margin-inline-end")).toBe("5.6px");
+  });
+
+  it("uses anchor margin-right toward the button in a row-reverse flex bar", () => {
+    const { bar, anchor } = mountAnchor(
+      "display: flex; flex-direction: row-reverse",
+    );
+    anchor.style.marginRight = "10px";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("margin-inline-start")).toBe("");
+    expect(button.style.getPropertyValue("margin-inline-end")).toBe("5.6px");
+  });
+
+  it("chooses the inner anchor margin side in a column-reverse flex bar", () => {
+    const { bar, anchor } = mountAnchor(
+      "display: flex; flex-direction: column-reverse",
+    );
+    anchor.style.marginTop = "10px";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("margin-block-start")).toBe("5.6px");
+    expect(button.style.getPropertyValue("margin-block-end")).toBe("5.6px");
+
+    fit.dispose();
+    anchor.style.marginTop = "";
+    anchor.style.marginBottom = "10px";
+
+    fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("margin-block-start")).toBe("");
+    expect(button.style.getPropertyValue("margin-block-end")).toBe("5.6px");
+  });
+
+  it("maps inline physical margins using RTL direction in a flex bar", () => {
+    const { bar, anchor } = mountAnchor("display: flex; direction: rtl");
+    anchor.style.marginLeft = "10px";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("margin-inline-start")).toBe("5.6px");
+    expect(button.style.getPropertyValue("margin-inline-end")).toBe("5.6px");
+
+    fit.dispose();
+    anchor.style.marginLeft = "";
+    anchor.style.marginRight = "10px";
+
+    fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("margin-inline-start")).toBe("5.6px");
+    expect(button.style.getPropertyValue("margin-inline-end")).toBe("");
+  });
+
   it("shifts an absolute button and its preceding controls left", () => {
     document.body.innerHTML = `
       <div class="bar">

@@ -220,41 +220,88 @@ function isPositiveMargin(raw: string): boolean {
   return Number.isFinite(parsed) ? parsed > 0 : true;
 }
 
+interface MarginSide {
+  readonly logical: string;
+  readonly physical: string;
+}
+
 /**
  * Logical and physical margins can disagree (logical properties are not always
  * reflected), so a side counts as spaced when either form is positive.
  */
 function hasPositiveMargin(
   style: CSSStyleDeclaration | null,
-  logicalProperty: string,
-  physicalProperty: string,
+  side: MarginSide,
 ): boolean {
   if (style === null) return false;
   return (
-    isPositiveMargin(style.getPropertyValue(logicalProperty)) ||
-    isPositiveMargin(style.getPropertyValue(physicalProperty))
+    isPositiveMargin(style.getPropertyValue(side.logical)) ||
+    isPositiveMargin(style.getPropertyValue(side.physical))
   );
 }
 
-function usesBlockMainAxis(parentStyle: CSSStyleDeclaration | null): boolean {
-  if (parentStyle === null) return false;
+type MainAxisOrientation = "block" | "inline";
+
+interface FlexMainAxis {
+  readonly orientation: MainAxisOrientation;
+  readonly reversed: boolean;
+}
+
+function resolveMainAxis(parentStyle: CSSStyleDeclaration | null): FlexMainAxis {
+  if (parentStyle === null) return { orientation: "inline", reversed: false };
   const display = parentStyle.getPropertyValue("display").trim().toLowerCase();
   if (display === "flex" || display === "inline-flex") {
-    return parentStyle
+    const direction = parentStyle
       .getPropertyValue("flex-direction")
       .trim()
-      .toLowerCase()
-      .startsWith("column");
+      .toLowerCase();
+    return {
+      orientation: direction.startsWith("column") ? "block" : "inline",
+      reversed: direction.endsWith("-reverse"),
+    };
   }
   if (display === "grid" || display === "inline-grid") {
-    return parentStyle
+    const block = parentStyle
       .getPropertyValue("grid-auto-flow")
       .trim()
       .toLowerCase()
       .split(/\s+/u)
       .includes("column");
+    return { orientation: block ? "block" : "inline", reversed: false };
   }
-  return false;
+  return { orientation: "inline", reversed: false };
+}
+
+function marginSidesFor(
+  orientation: MainAxisOrientation,
+  style: CSSStyleDeclaration | null,
+): { readonly start: MarginSide; readonly end: MarginSide } {
+  if (orientation === "block") {
+    return {
+      start: { logical: "margin-block-start", physical: "margin-top" },
+      end: { logical: "margin-block-end", physical: "margin-bottom" },
+    };
+  }
+  const rtl = isRtl(style);
+  return {
+    start: {
+      logical: "margin-inline-start",
+      physical: rtl ? "margin-right" : "margin-left",
+    },
+    end: {
+      logical: "margin-inline-end",
+      physical: rtl ? "margin-left" : "margin-right",
+    },
+  };
+}
+
+function resolveMainAxisGap(
+  parentStyle: CSSStyleDeclaration | null,
+  orientation: MainAxisOrientation,
+): number | null {
+  return orientation === "block"
+    ? readPx(parentStyle, "row-gap") ?? readPx(parentStyle, "gap")
+    : readPx(parentStyle, "column-gap") ?? readPx(parentStyle, "gap");
 }
 
 /**
@@ -275,36 +322,37 @@ function reserveFlexSpace(
   button.style.setProperty("flex-shrink", "0");
   button.style.setProperty("flex-basis", "auto");
 
-  const blockAxis = usesBlockMainAxis(parentStyle);
-  const gap = blockAxis
-    ? readPx(parentStyle, "row-gap") ?? readPx(parentStyle, "gap")
-    : readPx(parentStyle, "column-gap") ?? readPx(parentStyle, "gap");
+  const axis = resolveMainAxis(parentStyle);
+  const gap = resolveMainAxisGap(parentStyle, axis.orientation);
   if (gap !== null && gap > 0) return;
 
   const buttonStyle = computedStyleOf(button);
   const space = formatPx(fallbackGapPx(anchorStyle));
-  const startLogical = blockAxis ? "margin-block-start" : "margin-inline-start";
-  const startPhysical = blockAxis ? "margin-top" : "margin-left";
-  const endLogical = blockAxis ? "margin-block-end" : "margin-inline-end";
-  const endPhysical = blockAxis ? "margin-bottom" : "margin-right";
-  const hasStartGap = hasPositiveMargin(
-    buttonStyle,
-    startLogical,
-    startPhysical,
-  );
-  if (!hasStartGap) {
-    captureStyle(snapshots, button, startLogical);
-    button.style.setProperty(startLogical, space);
+  const buttonSides = marginSidesFor(axis.orientation, buttonStyle);
+  const anchorSides = marginSidesFor(axis.orientation, anchorStyle);
+  const precedingButtonSide = axis.reversed
+    ? buttonSides.end
+    : buttonSides.start;
+  const anchorFacingButtonSide = axis.reversed
+    ? buttonSides.start
+    : buttonSides.end;
+  const buttonFacingAnchorSide = axis.reversed
+    ? anchorSides.end
+    : anchorSides.start;
+
+  if (!hasPositiveMargin(buttonStyle, precedingButtonSide)) {
+    captureStyle(snapshots, button, precedingButtonSide.logical);
+    button.style.setProperty(precedingButtonSide.logical, space);
   }
 
   // The clone can lose an ID- or data-* selector's margin, so inspect the
-  // button's own end margin as well as the anchor's leading margin.
-  const hasEndGap =
-    hasPositiveMargin(anchorStyle, startLogical, startPhysical) ||
-    hasPositiveMargin(buttonStyle, endLogical, endPhysical);
-  if (!hasEndGap) {
-    captureStyle(snapshots, button, endLogical);
-    button.style.setProperty(endLogical, space);
+  // button's anchor-facing margin as well as the anchor's button-facing margin.
+  const hasAnchorGap =
+    hasPositiveMargin(anchorStyle, buttonFacingAnchorSide) ||
+    hasPositiveMargin(buttonStyle, anchorFacingButtonSide);
+  if (!hasAnchorGap) {
+    captureStyle(snapshots, button, anchorFacingButtonSide.logical);
+    button.style.setProperty(anchorFacingButtonSide.logical, space);
   }
 }
 
