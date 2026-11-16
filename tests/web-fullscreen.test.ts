@@ -823,6 +823,42 @@ describe("control bar spacing", () => {
     fit.dispose();
   });
 
+  it("does not treat an icon-named button as its own glyph", () => {
+    document.body.innerHTML = `
+      <div class="bar" style="display: flex">
+        <button class="prev"><svg></svg></button>
+        <button class="prev"><svg></svg></button>
+        <button class="anchor icon-button" aria-label="全屏"></button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || anchor === null) {
+      throw new Error("The icon-named button fixture is incomplete");
+    }
+    for (const prevIcon of bar.querySelectorAll<SVGElement>(".prev svg")) {
+      Object.defineProperty(prevIcon, "getBoundingClientRect", {
+        configurable: true,
+        value: (): DOMRect => new DOMRect(0, 0, 20, 20),
+      });
+    }
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, 40, 40),
+    });
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    button.append(icon);
+    bar.insertBefore(button, anchor);
+
+    const fit = fitInControlBar(anchor, button);
+
+    // The 40 px button is a control container, not a 40 px glyph.
+    expect(icon.style.getPropertyValue("width")).toBe("20px");
+    expect(icon.style.getPropertyValue("height")).toBe("20px");
+    fit.dispose();
+  });
+
   it("uses the median size of neighbouring control icons", () => {
     document.body.innerHTML = `
       <div class="bar" style="display: flex">

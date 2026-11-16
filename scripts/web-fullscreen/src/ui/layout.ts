@@ -7,6 +7,8 @@ const MIN_APPLIED_SHIFT_PX = 0.005;
 const LAYOUT_EPSILON_PX = 0.5;
 const POSITION_OFFSET_PROPERTIES = ["top", "right", "bottom", "left"] as const;
 const CONTROL_ICON_SELECTOR = "svg, img, i, [class*='icon']";
+const INTERACTIVE_CONTROL_SELECTOR =
+  'button, [role="button"], a[href], [tabindex], [onclick]';
 const MIN_MEASURED_SIZE_PX = 1;
 const NO_TRANSLATE_VALUES: ReadonlySet<string> = new Set([
   "",
@@ -154,13 +156,26 @@ function measuredCssSizeOf(
   return box === null ? null : Math.min(box.width, box.height);
 }
 
+/**
+ * A control container such as `<button class="icon-button">` is not the glyph
+ * itself. Only plain glyph elements and non-interactive icon-named marks may
+ * represent their own size; interactive containers fall back to neighbours.
+ */
+function isGlyphElement(element: Element): boolean {
+  if (element.matches("svg, img, i")) return true;
+  return !element.matches(INTERACTIVE_CONTROL_SELECTOR);
+}
+
 function iconElementOf(control: Element, axes: TransformAxes): Element | null {
   for (const candidate of control.querySelectorAll(CONTROL_ICON_SELECTOR)) {
+    if (!isGlyphElement(candidate)) continue;
     if (measuredCssSizeOf(candidate, axes) !== null) return candidate;
   }
   // An empty control can draw its glyph with a pseudo-element or background.
   // Its whole box is not the icon, so fall back to neighbouring icons instead.
-  return control.matches(CONTROL_ICON_SELECTOR) ? control : null;
+  return control.matches(CONTROL_ICON_SELECTOR) && isGlyphElement(control)
+    ? control
+    : null;
 }
 
 function medianSize(sizes: readonly number[]): number | null {
