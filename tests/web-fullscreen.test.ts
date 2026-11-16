@@ -561,6 +561,51 @@ describe("control bar spacing", () => {
     expect(button.style.getPropertyValue("box-sizing")).toBe("");
   });
 
+  it("converts an outer control size to content-box minima", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.style.boxSizing = "content-box";
+    anchor.style.padding = "4px 6px";
+    anchor.style.border = "2px solid transparent";
+    const button = document.createElement("button");
+    button.style.padding = "4px 6px";
+    button.style.border = "2px solid transparent";
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, 40, 40),
+    });
+
+    const fit = fitInControlBar(anchor, button);
+
+    // The 40 px outer box already includes 12 px horizontal and 8 px vertical
+    // padding plus 4 px of borders on each axis.
+    expect(button.style.getPropertyValue("min-width")).toBe("24px");
+    expect(button.style.getPropertyValue("min-height")).toBe("28px");
+
+    fit.dispose();
+    expect(button.style.getPropertyValue("min-width")).toBe("");
+    expect(button.style.getPropertyValue("min-height")).toBe("");
+  });
+
+  it("keeps outer minima for a border-box control of any aspect ratio", () => {
+    const { bar, anchor } = mountAnchor("display: flex");
+    anchor.style.boxSizing = "border-box";
+    anchor.style.padding = "4px 6px";
+    anchor.style.border = "2px solid transparent";
+    const button = document.createElement("button");
+    button.style.boxSizing = "border-box";
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(0, 0, 40, 20),
+    });
+
+    fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("min-width")).toBe("40px");
+    expect(button.style.getPropertyValue("min-height")).toBe("20px");
+  });
+
   it("matches the clone's position to an absolutely positioned anchor", () => {
     document.body.innerHTML = `
       <div class="bar" style="position: relative">
