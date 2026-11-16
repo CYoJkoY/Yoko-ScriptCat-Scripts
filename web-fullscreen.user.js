@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Web Fullscreen Button
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.0
+// @version      1.0.1
 // @description  给只有全屏按钮的视频播放器补一个网页全屏按钮，并把它动态插在全屏按钮前面；网页全屏只铺满浏览器视口，不进入系统全屏。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/web-fullscreen.user.js
@@ -10,6 +10,7 @@
 // @match        https://*/*
 // @run-at       document-idle
 // @grant        none
+// @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22Web%20Fullscreen%20Button%22%3E%20%3Cdefs%3E%20%3ClinearGradient%20id%3D%22bg%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%2264%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2316233d%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%230a1020%22%2F%3E%20%3C%2FlinearGradient%3E%20%3C%2Fdefs%3E%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22url(%23bg)%22%2F%3E%20%3Crect%20x%3D%220.75%22%20y%3D%220.75%22%20width%3D%2262.5%22%20height%3D%2262.5%22%20rx%3D%2213.25%22%20fill%3D%22none%22%20stroke%3D%22%232b3d63%22%20stroke-width%3D%221.5%22%2F%3E%20%3Crect%20x%3D%228%22%20y%3D%2213%22%20width%3D%2248%22%20height%3D%2238%22%20rx%3D%226%22%20fill%3D%22none%22%20stroke%3D%22%2338bdf8%22%20stroke-width%3D%222.5%22%2F%3E%20%3Cpath%20d%3D%22M8%2022H56%22%20stroke%3D%22%2338bdf8%22%20stroke-width%3D%222.5%22%2F%3E%20%3Ccircle%20cx%3D%2213.5%22%20cy%3D%2217.5%22%20r%3D%221.5%22%20fill%3D%22%237dd3fc%22%2F%3E%20%3Ccircle%20cx%3D%2218.5%22%20cy%3D%2217.5%22%20r%3D%221.5%22%20fill%3D%22%237dd3fc%22%2F%3E%20%3Ccircle%20cx%3D%2223.5%22%20cy%3D%2217.5%22%20r%3D%221.5%22%20fill%3D%22%237dd3fc%22%2F%3E%20%3Cpath%20d%3D%22M19%2028H16v3M45%2028h3v3M19%2045h-3v-3M45%2045h3v-3%22%20fill%3D%22none%22%20stroke%3D%22%23f8fafc%22%20stroke-width%3D%222.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%20%3Cpath%20d%3D%22M29%2029.5l9%206.5-9%206.5z%22%20fill%3D%22%2338bdf8%22%2F%3E%20%3C%2Fsvg%3E
 // @license      MIT
 // ==/UserScript==
 
@@ -799,6 +800,538 @@
     button.style.bottom = `${Math.round(bottom)}px`;
   }
 
+  // scripts/web-fullscreen/src/ui/layout.ts
+  var FALLBACK_GAP_EM = 0.35;
+  var DEFAULT_FONT_SIZE_PX = 16;
+  var MIN_SHIFT_PX = 0.5;
+  var MIN_TRANSFORM_SCALE = 0.05;
+  var MAX_LOCAL_SHIFT_RATIO = 1 / MIN_TRANSFORM_SCALE;
+  var MIN_APPLIED_SHIFT_PX = 5e-3;
+  var LAYOUT_EPSILON_PX = 0.5;
+  var POSITION_OFFSET_PROPERTIES = ["top", "right", "bottom", "left"];
+  var NO_TRANSLATE_VALUES = /* @__PURE__ */ new Set([
+    "",
+    "none",
+    "initial",
+    "inherit",
+    "unset",
+    "revert",
+    "revert-layer"
+  ]);
+  var FLEX_OR_GRID_DISPLAYS = /* @__PURE__ */ new Set([
+    "flex",
+    "inline-flex",
+    "grid",
+    "inline-grid"
+  ]);
+  var IDENTITY_AXES = { a: 1, b: 0, c: 0, d: 1 };
+  function formatPx(value) {
+    return `${Math.round(value * 100) / 100}px`;
+  }
+  function readPx(style, property) {
+    if (style === null) return null;
+    const raw = style.getPropertyValue(property).trim();
+    if (raw.length === 0) return null;
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  function computedStyleOf(element) {
+    return element.ownerDocument.defaultView?.getComputedStyle(element) ?? null;
+  }
+  function layoutBoxOf(element) {
+    return {
+      left: element.offsetLeft,
+      top: element.offsetTop,
+      width: element.offsetWidth,
+      height: element.offsetHeight
+    };
+  }
+  function offsetBoxOf(element) {
+    const view = element.ownerDocument.defaultView;
+    if (view === null || !(element instanceof view.HTMLElement)) return null;
+    return layoutBoxOf(element);
+  }
+  function relativeRectOf(element, origin) {
+    const rect = element.getBoundingClientRect();
+    return {
+      left: rect.left - origin.left,
+      top: rect.top - origin.top,
+      width: rect.width,
+      height: rect.height
+    };
+  }
+  function isSameLayoutBox(left, right) {
+    return Math.abs(left.left - right.left) < LAYOUT_EPSILON_PX && Math.abs(left.top - right.top) < LAYOUT_EPSILON_PX && Math.abs(left.width - right.width) < LAYOUT_EPSILON_PX && Math.abs(left.height - right.height) < LAYOUT_EPSILON_PX;
+  }
+  function snapshotFit(anchor, button) {
+    const anchorRect = anchor.getBoundingClientRect();
+    const siblings = [];
+    for (let sibling = button.previousElementSibling; sibling !== null; sibling = sibling.previousElementSibling) {
+      if (!isStyledElement(sibling)) continue;
+      siblings.push({
+        element: sibling,
+        offset: offsetBoxOf(sibling),
+        rect: relativeRectOf(sibling, anchorRect)
+      });
+    }
+    return {
+      anchorOffset: layoutBoxOf(anchor),
+      buttonRect: relativeRectOf(button, anchorRect),
+      siblings
+    };
+  }
+  function isSameSiblingSnapshot(left, right) {
+    if (left.element !== right.element) return false;
+    if (!isSameLayoutBox(left.rect, right.rect)) return false;
+    if (left.offset === null || right.offset === null) {
+      return left.offset === right.offset;
+    }
+    return isSameLayoutBox(left.offset, right.offset);
+  }
+  function isSameFitSnapshot(left, right) {
+    if (!isSameLayoutBox(left.anchorOffset, right.anchorOffset)) return false;
+    if (!isSameLayoutBox(left.buttonRect, right.buttonRect)) return false;
+    if (left.siblings.length !== right.siblings.length) return false;
+    for (let index = 0; index < left.siblings.length; index += 1) {
+      const prevSibling = left.siblings[index];
+      const nextSibling = right.siblings[index];
+      if (prevSibling === void 0 || nextSibling === void 0) return false;
+      if (!isSameSiblingSnapshot(prevSibling, nextSibling)) return false;
+    }
+    return true;
+  }
+  function isRtl(style) {
+    if (style === null) return false;
+    return style.getPropertyValue("direction").trim().toLowerCase() === "rtl";
+  }
+  function isStyledElement(element) {
+    if (element === null) return false;
+    const view = element.ownerDocument.defaultView;
+    if (view === null) return false;
+    return element instanceof view.HTMLElement || element instanceof view.SVGElement;
+  }
+  function captureStyle(snapshots, element, property) {
+    if (snapshots.some(
+      (snapshot) => snapshot.element === element && snapshot.property === property
+    )) {
+      return;
+    }
+    snapshots.push({
+      element,
+      property,
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property)
+    });
+  }
+  function restoreStyles2(snapshots) {
+    for (let index = snapshots.length - 1; index >= 0; index -= 1) {
+      const snapshot = snapshots[index];
+      if (snapshot === void 0) continue;
+      if (snapshot.value.length === 0) {
+        snapshot.element.style.removeProperty(snapshot.property);
+        continue;
+      }
+      snapshot.element.style.setProperty(
+        snapshot.property,
+        snapshot.value,
+        snapshot.priority
+      );
+    }
+  }
+  function rebaseSiteChangedProperties(snapshots, ownedStyles) {
+    for (let index = 0; index < snapshots.length; index += 1) {
+      const snapshot = snapshots[index];
+      if (snapshot === void 0) continue;
+      const owned = ownedStyles.get(snapshot.element);
+      if (owned === void 0) continue;
+      if ((snapshot.element.getAttribute("style") ?? "") === owned.attribute) {
+        continue;
+      }
+      const ownedValue = owned.values.get(snapshot.property);
+      if (ownedValue === void 0) continue;
+      const currentValue = snapshot.element.style.getPropertyValue(
+        snapshot.property
+      );
+      const currentPriority = snapshot.element.style.getPropertyPriority(
+        snapshot.property
+      );
+      if (currentValue === ownedValue.value && currentPriority === ownedValue.priority) {
+        continue;
+      }
+      snapshots[index] = {
+        ...snapshot,
+        value: currentValue,
+        priority: currentPriority
+      };
+    }
+  }
+  function fallbackGapPx(anchorStyle) {
+    const fontSize = readPx(anchorStyle, "font-size") ?? DEFAULT_FONT_SIZE_PX;
+    if (!(fontSize > 0)) return DEFAULT_FONT_SIZE_PX * FALLBACK_GAP_EM;
+    return fontSize * FALLBACK_GAP_EM;
+  }
+  function resolveSpacePx(parentStyle, anchorStyle) {
+    const gap = readPx(parentStyle, "column-gap") ?? readPx(parentStyle, "gap");
+    if (gap !== null && gap > 0) return gap;
+    return fallbackGapPx(anchorStyle);
+  }
+  function isPositiveMargin(raw) {
+    const value = raw.trim();
+    if (value.length === 0) return false;
+    if (value.toLowerCase() === "auto") return true;
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed > 0 : true;
+  }
+  function hasPositiveMargin(style, side) {
+    if (style === null) return false;
+    return isPositiveMargin(style.getPropertyValue(side.logical)) || isPositiveMargin(style.getPropertyValue(side.physical));
+  }
+  function resolveMainAxis(parentStyle) {
+    if (parentStyle === null) return { orientation: "inline", reversed: false };
+    const display = parentStyle.getPropertyValue("display").trim().toLowerCase();
+    if (display === "flex" || display === "inline-flex") {
+      const direction = parentStyle.getPropertyValue("flex-direction").trim().toLowerCase();
+      return {
+        orientation: direction.startsWith("column") ? "block" : "inline",
+        reversed: direction.endsWith("-reverse")
+      };
+    }
+    if (display === "grid" || display === "inline-grid") {
+      const block = parentStyle.getPropertyValue("grid-auto-flow").trim().toLowerCase().split(/\s+/u).includes("column");
+      return { orientation: block ? "block" : "inline", reversed: false };
+    }
+    return { orientation: "inline", reversed: false };
+  }
+  function marginSidesFor(orientation, style) {
+    if (orientation === "block") {
+      return {
+        start: { logical: "margin-block-start", physical: "margin-top" },
+        end: { logical: "margin-block-end", physical: "margin-bottom" }
+      };
+    }
+    const rtl = isRtl(style);
+    return {
+      start: {
+        logical: "margin-inline-start",
+        physical: rtl ? "margin-right" : "margin-left"
+      },
+      end: {
+        logical: "margin-inline-end",
+        physical: rtl ? "margin-left" : "margin-right"
+      }
+    };
+  }
+  function resolveMainAxisGap(parentStyle, orientation) {
+    return orientation === "block" ? readPx(parentStyle, "row-gap") ?? readPx(parentStyle, "gap") : readPx(parentStyle, "column-gap") ?? readPx(parentStyle, "gap");
+  }
+  function reserveFlexSpace(button, parentStyle, anchorStyle, snapshots) {
+    captureStyle(snapshots, button, "flex-grow");
+    captureStyle(snapshots, button, "flex-shrink");
+    captureStyle(snapshots, button, "flex-basis");
+    button.style.setProperty("flex-grow", "0");
+    button.style.setProperty("flex-shrink", "0");
+    button.style.setProperty("flex-basis", "auto");
+    const axis = resolveMainAxis(parentStyle);
+    const gap = resolveMainAxisGap(parentStyle, axis.orientation);
+    if (gap !== null && gap > 0) return;
+    const buttonStyle = computedStyleOf(button);
+    const space = formatPx(fallbackGapPx(anchorStyle));
+    const buttonSides = marginSidesFor(axis.orientation, buttonStyle);
+    const anchorSides = marginSidesFor(axis.orientation, anchorStyle);
+    const precedingButtonSide = axis.reversed ? buttonSides.end : buttonSides.start;
+    const anchorFacingButtonSide = axis.reversed ? buttonSides.start : buttonSides.end;
+    const buttonFacingAnchorSide = axis.reversed ? anchorSides.end : anchorSides.start;
+    if (!hasPositiveMargin(buttonStyle, precedingButtonSide)) {
+      captureStyle(snapshots, button, precedingButtonSide.logical);
+      button.style.setProperty(precedingButtonSide.logical, space);
+    }
+    const hasAnchorGap = hasPositiveMargin(anchorStyle, buttonFacingAnchorSide) || hasPositiveMargin(buttonStyle, anchorFacingButtonSide);
+    if (!hasAnchorGap) {
+      captureStyle(snapshots, button, anchorFacingButtonSide.logical);
+      button.style.setProperty(anchorFacingButtonSide.logical, space);
+    }
+  }
+  function splitComponentValues(value) {
+    const parts = [];
+    let current = "";
+    let depth = 0;
+    for (const character of value) {
+      if (character === "(") depth += 1;
+      else if (character === ")") depth = Math.max(0, depth - 1);
+      if (/\s/u.test(character) && depth === 0) {
+        if (current.length > 0) {
+          parts.push(current);
+          current = "";
+        }
+        continue;
+      }
+      current += character;
+    }
+    if (current.length > 0) parts.push(current);
+    return parts;
+  }
+  function composeShiftedComponent(base, deltaPx) {
+    if (Math.abs(deltaPx) < MIN_APPLIED_SHIFT_PX) return base;
+    const operator = deltaPx < 0 ? "-" : "+";
+    return `calc(${base} ${operator} ${formatPx(Math.abs(deltaPx))})`;
+  }
+  function composeShiftedTranslate(style, shift) {
+    if (Math.abs(shift.x) < MIN_APPLIED_SHIFT_PX && Math.abs(shift.y) < MIN_APPLIED_SHIFT_PX) {
+      return null;
+    }
+    const raw = style?.getPropertyValue("translate").trim() ?? "";
+    const parts = NO_TRANSLATE_VALUES.has(raw.toLowerCase()) ? [] : splitComponentValues(raw);
+    if (parts.length === 0) {
+      if (Math.abs(shift.y) < MIN_APPLIED_SHIFT_PX) {
+        return `${formatPx(shift.x)} 0`;
+      }
+      return `${formatPx(shift.x)} ${formatPx(shift.y)}`;
+    }
+    const x = parts[0] === "0" ? "0px" : parts[0] ?? "0px";
+    const y = parts[1] ?? "0";
+    const z = parts[2];
+    const shifted = `${composeShiftedComponent(x, shift.x)} ${composeShiftedComponent(y, shift.y)}`;
+    return z === void 0 ? shifted : `${shifted} ${z}`;
+  }
+  function angleRadiansOf(raw) {
+    const match = /^(-?(?:\d+\.?\d*|\.\d+))(deg|grad|rad|turn)?$/iu.exec(raw.trim());
+    if (match === null) return null;
+    const value = Number.parseFloat(match[1] ?? "");
+    if (!Number.isFinite(value)) return null;
+    switch ((match[2] ?? "deg").toLowerCase()) {
+      case "grad":
+        return value * Math.PI / 200;
+      case "rad":
+        return value;
+      case "turn":
+        return value * Math.PI * 2;
+      case "deg":
+        return value * Math.PI / 180;
+      default:
+        return null;
+    }
+  }
+  function transformPropertyAxesOf(style) {
+    const raw = style?.getPropertyValue("transform").trim() ?? "";
+    if (raw.length === 0 || raw.toLowerCase() === "none") return IDENTITY_AXES;
+    const matrix = /^matrix(3d)?\(([^)]*)\)$/iu.exec(raw);
+    if (matrix !== null) {
+      const parts = (matrix[2] ?? "").split(",").map((part) => Number.parseFloat(part));
+      const threeD = matrix[1] !== void 0;
+      const a = parts[0];
+      const b = parts[1];
+      const c = parts[threeD ? 4 : 2];
+      const d = parts[threeD ? 5 : 3];
+      if (a === void 0 || b === void 0 || c === void 0 || d === void 0) {
+        return IDENTITY_AXES;
+      }
+      const finite = Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(c) && Number.isFinite(d);
+      return finite ? { a, b, c, d } : IDENTITY_AXES;
+    }
+    const scale = /^scale\(([^)]*)\)$/iu.exec(raw);
+    if (scale !== null) {
+      const [rawX, rawY] = (scale[1] ?? "").split(",");
+      const a = Number.parseFloat(rawX ?? "");
+      const d = rawY === void 0 ? a : Number.parseFloat(rawY);
+      return Number.isFinite(a) && Number.isFinite(d) ? { a, b: 0, c: 0, d } : IDENTITY_AXES;
+    }
+    const scaleX = /^scaleX\(([^)]*)\)$/iu.exec(raw);
+    if (scaleX !== null) {
+      const a = Number.parseFloat(scaleX[1] ?? "");
+      return Number.isFinite(a) ? { a, b: 0, c: 0, d: 1 } : IDENTITY_AXES;
+    }
+    const rotate = /^rotate(?:Z)?\(([^)]*)\)$/iu.exec(raw);
+    if (rotate === null) return IDENTITY_AXES;
+    const angle = angleRadiansOf(rotate[1] ?? "");
+    if (angle === null) return IDENTITY_AXES;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    return { a: cosine, b: sine, c: -sine, d: cosine };
+  }
+  function multiplyAxes(left, right) {
+    return {
+      a: left.a * right.a + left.c * right.b,
+      b: left.b * right.a + left.d * right.b,
+      c: left.a * right.c + left.c * right.d,
+      d: left.b * right.c + left.d * right.d
+    };
+  }
+  function individualRotateAxesOf(style) {
+    const raw = style?.getPropertyValue("rotate").trim() ?? "";
+    if (raw.length === 0 || raw.toLowerCase() === "none") return IDENTITY_AXES;
+    const parts = splitComponentValues(raw);
+    const angleRaw = parts.length === 1 ? parts[0] : parts.length === 2 && parts[0]?.toLowerCase() === "z" ? parts[1] : null;
+    const angle = angleRaw === void 0 || angleRaw === null ? null : angleRadiansOf(angleRaw);
+    if (angle === null) return IDENTITY_AXES;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    return { a: cosine, b: sine, c: -sine, d: cosine };
+  }
+  function individualScaleAxesOf(style) {
+    const raw = style?.getPropertyValue("scale").trim() ?? "";
+    if (raw.length === 0 || raw.toLowerCase() === "none") return IDENTITY_AXES;
+    const parts = splitComponentValues(raw);
+    const x = Number.parseFloat(parts[0] ?? "");
+    const y = parts[1] === void 0 ? x : Number.parseFloat(parts[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return IDENTITY_AXES;
+    return { a: x, b: 0, c: 0, d: y };
+  }
+  function transformAxesOf(style) {
+    const rotate = individualRotateAxesOf(style);
+    const scale = individualScaleAxesOf(style);
+    const transform = transformPropertyAxesOf(style);
+    return multiplyAxes(transform, multiplyAxes(scale, rotate));
+  }
+  function combinedTransformAxesOf(element) {
+    let axes = transformAxesOf(computedStyleOf(element));
+    for (let ancestor = element.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
+      axes = multiplyAxes(transformAxesOf(computedStyleOf(ancestor)), axes);
+    }
+    return axes;
+  }
+  function localShiftFor(element, screenShiftPx) {
+    const axes = combinedTransformAxesOf(element);
+    const det = axes.a * axes.d - axes.b * axes.c;
+    if (Math.abs(det) < MIN_TRANSFORM_SCALE * MIN_TRANSFORM_SCALE) return null;
+    const x = -screenShiftPx * axes.d / det;
+    const y = screenShiftPx * axes.b / det;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const limit = Math.abs(screenShiftPx) * MAX_LOCAL_SHIFT_RATIO;
+    if (Math.abs(x) > limit || Math.abs(y) > limit) return null;
+    return { x, y };
+  }
+  function copyBoxSizing(anchorStyle, button, snapshots) {
+    const value = anchorStyle.getPropertyValue("box-sizing").trim();
+    if (value.length === 0) return;
+    captureStyle(snapshots, button, "box-sizing");
+    button.style.setProperty("box-sizing", value);
+  }
+  function copyAnchorOffsets(anchorStyle, button, snapshots) {
+    const buttonStyle = computedStyleOf(button);
+    if (buttonStyle === null) return;
+    for (const property of POSITION_OFFSET_PROPERTIES) {
+      const value = anchorStyle.getPropertyValue(property).trim();
+      if (value.length === 0) continue;
+      if (buttonStyle.getPropertyValue(property).trim() === value) continue;
+      captureStyle(snapshots, button, property);
+      button.style.setProperty(property, value);
+    }
+  }
+  function shiftAbsoluteCluster(anchor, button, parentStyle, anchorStyle, snapshots) {
+    const buttonStyle = computedStyleOf(button);
+    if (buttonStyle === null) return;
+    const anchorPosition = anchorStyle.getPropertyValue("position").trim();
+    if (anchorPosition.length > 0 && buttonStyle.getPropertyValue("position").trim() !== anchorPosition) {
+      captureStyle(snapshots, button, "position");
+      button.style.setProperty("position", anchorPosition);
+    }
+    copyAnchorOffsets(anchorStyle, button, snapshots);
+    const anchorRect = anchor.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    if (anchorRect.width <= 0 || anchorRect.height <= 0 || buttonRect.width <= 0 || buttonRect.height <= 0) {
+      return;
+    }
+    const spacePx = resolveSpacePx(parentStyle, anchorStyle);
+    const shiftPx = buttonRect.right - (anchorRect.left - spacePx);
+    let shiftedLeft = buttonRect.left;
+    if (shiftPx > MIN_SHIFT_PX) {
+      const shift = localShiftFor(button, shiftPx);
+      const translate = shift === null ? null : composeShiftedTranslate(buttonStyle, shift);
+      if (translate !== null) {
+        captureStyle(snapshots, button, "translate");
+        button.style.setProperty("translate", translate);
+        shiftedLeft -= shiftPx;
+      }
+    }
+    const allowedRight = shiftedLeft - spacePx;
+    const siblings = [];
+    let deltaPx = 0;
+    for (let sibling = button.previousElementSibling; sibling !== null; sibling = sibling.previousElementSibling) {
+      if (!isStyledElement(sibling)) continue;
+      const rect = sibling.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (rect.bottom <= anchorRect.top || rect.top >= anchorRect.bottom) continue;
+      siblings.push(sibling);
+      deltaPx = Math.max(deltaPx, rect.right - allowedRight);
+    }
+    if (deltaPx <= MIN_SHIFT_PX) return;
+    for (const sibling of siblings) {
+      const siblingStyle = computedStyleOf(sibling);
+      const shift = localShiftFor(sibling, deltaPx);
+      const translate = shift === null ? null : composeShiftedTranslate(siblingStyle, shift);
+      if (translate === null) continue;
+      captureStyle(snapshots, sibling, "translate");
+      sibling.style.setProperty("translate", translate);
+    }
+  }
+  function applyControlBarFit(anchor, button, snapshots) {
+    const parent = anchor.parentElement;
+    if (parent === null || parent !== button.parentElement) return;
+    const anchorStyle = computedStyleOf(anchor);
+    if (anchorStyle === null) return;
+    const parentStyle = computedStyleOf(parent);
+    copyBoxSizing(anchorStyle, button, snapshots);
+    const position = anchorStyle.getPropertyValue("position").trim();
+    const absolute = position === "absolute" || position === "fixed";
+    if (absolute && !isRtl(anchorStyle) && !isRtl(parentStyle)) {
+      shiftAbsoluteCluster(anchor, button, parentStyle, anchorStyle, snapshots);
+    } else if (parentStyle !== null && FLEX_OR_GRID_DISPLAYS.has(
+      parentStyle.getPropertyValue("display").trim().toLowerCase()
+    )) {
+      reserveFlexSpace(button, parentStyle, anchorStyle, snapshots);
+    }
+  }
+  function fitInControlBar(anchor, button) {
+    let snapshots = [];
+    let ownedStyles = /* @__PURE__ */ new Map();
+    let fitSnapshot = null;
+    const apply = () => {
+      snapshots = [];
+      applyControlBarFit(anchor, button, snapshots);
+      ownedStyles = /* @__PURE__ */ new Map();
+      for (const snapshot of snapshots) {
+        const existing = ownedStyles.get(snapshot.element);
+        const values = existing?.values ?? /* @__PURE__ */ new Map();
+        values.set(snapshot.property, {
+          value: snapshot.element.style.getPropertyValue(snapshot.property),
+          priority: snapshot.element.style.getPropertyPriority(
+            snapshot.property
+          )
+        });
+        ownedStyles.set(snapshot.element, {
+          attribute: snapshot.element.getAttribute("style") ?? "",
+          values
+        });
+      }
+      fitSnapshot = snapshotFit(anchor, button);
+    };
+    const dispose = () => {
+      rebaseSiteChangedProperties(snapshots, ownedStyles);
+      restoreStyles2(snapshots);
+      snapshots = [];
+      ownedStyles.clear();
+      fitSnapshot = null;
+    };
+    apply();
+    return {
+      sync() {
+        const next = snapshotFit(anchor, button);
+        if (fitSnapshot !== null && isSameFitSnapshot(fitSnapshot, next)) return;
+        dispose();
+        apply();
+      },
+      refit() {
+        dispose();
+        apply();
+      },
+      ownsStyleOf(element) {
+        const owned = ownedStyles.get(element);
+        return owned !== void 0 && (element.getAttribute("style") ?? "") === owned.attribute;
+      },
+      dispose
+    };
+  }
+
   // scripts/web-fullscreen/src/install.ts
   function setAttributeIfChanged(element, name, value) {
     if (element.getAttribute(name) !== value) element.setAttribute(name, value);
@@ -809,6 +1342,8 @@
     return rect.width >= MIN_VIDEO_WIDTH_PX && rect.height >= MIN_VIDEO_HEIGHT_PX;
   }
   function disposeButton(binding) {
+    binding.fit?.dispose();
+    binding.fit = null;
     binding.removeButton?.();
     binding.removeButton = null;
     binding.button?.remove();
@@ -824,6 +1359,9 @@
     const bindings = /* @__PURE__ */ new Map();
     const knownVideos = /* @__PURE__ */ new Set();
     const schedule = createDebounced(() => sync(), {
+      delayMs: SCAN_DEBOUNCE_MS
+    });
+    const scheduleFit = createDebounced(() => refitControlBars(), {
       delayMs: SCAN_DEBOUNCE_MS
     });
     let resizeObserver = null;
@@ -850,7 +1388,12 @@
     function observeRoot(root) {
       if (observedRoots.has(root)) return;
       observedRoots.add(root);
-      observer.observe(root, { childList: true, subtree: true });
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class", "style", "hidden"]
+      });
     }
     function toggleBinding(binding) {
       if (binding.match.mode === "skip") return;
@@ -888,10 +1431,13 @@
       const match = binding.match;
       if (match.mode === "skip") return false;
       if (match.mode === "custom") {
+        const anchor = match.fullscreenButton;
+        if (anchor === null) return false;
         const button2 = createFullscreenButton(match);
         if (!insertBeforeFullscreen(match, button2)) return false;
         binding.button = button2;
         binding.floating = false;
+        binding.fit = fitInControlBar(anchor, button2);
         binding.removeButton = attachHandlers(button2, binding);
         return true;
       }
@@ -900,6 +1446,7 @@
       doc.body.append(button);
       binding.button = button;
       binding.floating = true;
+      binding.fit = null;
       binding.removeButton = attachHandlers(button, binding);
       positionFloatingButton(button, binding.video, frameWindow);
       return true;
@@ -908,7 +1455,7 @@
       if (binding.button === null) return true;
       if (binding.match.mode !== match.mode) return true;
       if (match.mode !== "custom") return !binding.button.isConnected;
-      return !binding.button.isConnected || binding.button.nextElementSibling !== match.fullscreenButton;
+      return !binding.button.isConnected || binding.button.nextElementSibling !== match.fullscreenButton || binding.match.fullscreenButton !== match.fullscreenButton;
     }
     function refreshBinding(binding) {
       const match = findPlayerMatch(binding.video);
@@ -940,6 +1487,12 @@
         positionFloatingButton(binding.button, binding.video, frameWindow);
       }
     }
+    function syncControlBars() {
+      for (const binding of bindings.values()) binding.fit?.sync();
+    }
+    function refitControlBars() {
+      for (const binding of bindings.values()) binding.fit?.refit();
+    }
     function removeBinding(binding) {
       if (controller.isActiveFor(binding.video)) controller.exit();
       resizeObserver?.unobserve(binding.video);
@@ -964,11 +1517,13 @@
             match: findPlayerMatch(video),
             button: null,
             floating: false,
-            removeButton: null
+            removeButton: null,
+            fit: null
           };
           bindings.set(video, binding);
         }
         refreshBinding(binding);
+        binding.fit?.sync();
         updateButtonState(binding);
       }
       syncFloatingPositions();
@@ -977,17 +1532,45 @@
       for (const binding of bindings.values()) updateButtonState(binding);
       syncFloatingPositions();
     });
+    const affectsControlBar = (target, attributeName) => {
+      for (const binding of bindings.values()) {
+        const fit = binding.fit;
+        const button = binding.button;
+        if (fit === null || button === null) continue;
+        if (target === button || button.contains(target)) continue;
+        if (attributeName === "style" && fit.ownsStyleOf(target)) continue;
+        const anchor = binding.match.fullscreenButton;
+        if (anchor === null) continue;
+        if (target === anchor || target.contains(anchor)) return true;
+        const bar = button.parentElement;
+        if (bar !== null && bar.contains(target)) return true;
+      }
+      return false;
+    };
     const observer = new MutationObserver((records) => {
+      let childListChanged = false;
+      let layoutChanged = false;
       for (const record of records) {
+        if (record.type === "attributes") {
+          if (record.target instanceof Element && affectsControlBar(record.target, record.attributeName)) {
+            layoutChanged = true;
+          }
+          continue;
+        }
+        childListChanged = true;
+        if (record.target instanceof Element && affectsControlBar(record.target, null)) {
+          layoutChanged = true;
+        }
         for (const node of record.addedNodes) {
           if (node instanceof Element) discover(node);
           else if (node instanceof DocumentFragment) discover(node);
         }
       }
-      schedule();
+      if (layoutChanged) scheduleFit();
+      if (childListChanged) schedule();
     });
     if (doc.documentElement !== null) {
-      observer.observe(doc.documentElement, { childList: true, subtree: true });
+      observeRoot(doc.documentElement);
     }
     discover(doc);
     sync();
@@ -1000,7 +1583,11 @@
       });
     };
     frameWindow.addEventListener("scroll", requestPositionSync, true);
-    frameWindow.addEventListener("resize", requestPositionSync);
+    const onResize = () => {
+      requestPositionSync();
+      syncControlBars();
+    };
+    frameWindow.addEventListener("resize", onResize);
     const removeFrameBridge = installFrameBridge(doc, {
       scrollLock,
       onParentExit: () => controller.exit()
@@ -1008,9 +1595,10 @@
     return () => {
       observer.disconnect();
       schedule.cancel();
+      scheduleFit.cancel();
       resizeObserver?.disconnect();
       frameWindow.removeEventListener("scroll", requestPositionSync, true);
-      frameWindow.removeEventListener("resize", requestPositionSync);
+      frameWindow.removeEventListener("resize", onResize);
       if (positionFrame !== 0) frameWindow.cancelAnimationFrame(positionFrame);
       unsubscribe();
       controller.exit();
