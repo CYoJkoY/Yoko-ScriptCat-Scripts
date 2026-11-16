@@ -56,6 +56,10 @@ interface LayoutBox {
 export interface ControlBarFit {
   /** Re-apply the fit when the anchor's layout box moved or resized. */
   sync(): void;
+  /** Re-apply the fit when surrounding controls changed without moving the anchor. */
+  refit(): void;
+  /** Whether this fit currently owns an inline style on the element. */
+  ownsStyleOf(element: Element): boolean;
   /** Restore every site-owned inline value. */
   dispose(): void;
 }
@@ -186,6 +190,27 @@ function hasPositiveMargin(
   );
 }
 
+function usesBlockMainAxis(parentStyle: CSSStyleDeclaration | null): boolean {
+  if (parentStyle === null) return false;
+  const display = parentStyle.getPropertyValue("display").trim().toLowerCase();
+  if (display === "flex" || display === "inline-flex") {
+    return parentStyle
+      .getPropertyValue("flex-direction")
+      .trim()
+      .toLowerCase()
+      .startsWith("column");
+  }
+  if (display === "grid" || display === "inline-grid") {
+    return parentStyle
+      .getPropertyValue("grid-auto-flow")
+      .trim()
+      .toLowerCase()
+      .split(/\s+/u)
+      .includes("column");
+  }
+  return false;
+}
+
 /**
  * Flex and grid bars already lay their children out in order. Keeping the
  * injected button at its natural width and adding a little breathing room
@@ -204,29 +229,36 @@ function reserveFlexSpace(
   button.style.setProperty("flex-shrink", "0");
   button.style.setProperty("flex-basis", "auto");
 
-  const gap = readPx(parentStyle, "column-gap") ?? readPx(parentStyle, "gap");
+  const blockAxis = usesBlockMainAxis(parentStyle);
+  const gap = blockAxis
+    ? readPx(parentStyle, "row-gap") ?? readPx(parentStyle, "gap")
+    : readPx(parentStyle, "column-gap") ?? readPx(parentStyle, "gap");
   if (gap !== null && gap > 0) return;
 
   const buttonStyle = computedStyleOf(button);
   const space = formatPx(fallbackGapPx(anchorStyle));
-  const hasLeftGap = hasPositiveMargin(
+  const startLogical = blockAxis ? "margin-block-start" : "margin-inline-start";
+  const startPhysical = blockAxis ? "margin-top" : "margin-left";
+  const endLogical = blockAxis ? "margin-block-end" : "margin-inline-end";
+  const endPhysical = blockAxis ? "margin-bottom" : "margin-right";
+  const hasStartGap = hasPositiveMargin(
     buttonStyle,
-    "margin-inline-start",
-    "margin-left",
+    startLogical,
+    startPhysical,
   );
-  if (!hasLeftGap) {
-    captureStyle(snapshots, button, "margin-inline-start");
-    button.style.setProperty("margin-inline-start", space);
+  if (!hasStartGap) {
+    captureStyle(snapshots, button, startLogical);
+    button.style.setProperty(startLogical, space);
   }
 
   // The clone can lose an ID- or data-* selector's margin, so inspect the
   // button's own end margin as well as the anchor's leading margin.
-  const hasRightGap =
-    hasPositiveMargin(anchorStyle, "margin-inline-start", "margin-left") ||
-    hasPositiveMargin(buttonStyle, "margin-inline-end", "margin-right");
-  if (!hasRightGap) {
-    captureStyle(snapshots, button, "margin-inline-end");
-    button.style.setProperty("margin-inline-end", space);
+  const hasEndGap =
+    hasPositiveMargin(anchorStyle, startLogical, startPhysical) ||
+    hasPositiveMargin(buttonStyle, endLogical, endPhysical);
+  if (!hasEndGap) {
+    captureStyle(snapshots, button, endLogical);
+    button.style.setProperty(endLogical, space);
   }
 }
 
@@ -366,6 +398,32 @@ function transformAxesOf(style: CSSStyleDeclaration | null): TransformAxes {
   return { a: cosine, b: sine, c: -sine, d: cosine };
 }
 
+function multiplyAxes(left: TransformAxes, right: TransformAxes): TransformAxes {
+  return {
+    a: left.a * right.a + left.c * right.b,
+    b: left.b * right.a + left.d * right.b,
+    c: left.a * right.c + left.c * right.d,
+    d: left.b * right.c + left.d * right.d,
+  };
+}
+
+/**
+ * A local translation is transformed by the element's own matrix and then by
+ * every ancestor's matrix. Fold both into one linear transform before undoing
+ * the measured screen-space shift.
+ */
+function combinedTransformAxesOf(element: StyledElement): TransformAxes {
+  let axes = transformAxesOf(computedStyleOf(element));
+  for (
+    let ancestor = element.parentElement;
+    ancestor !== null;
+    ancestor = ancestor.parentElement
+  ) {
+    axes = multiplyAxes(transformAxesOf(computedStyleOf(ancestor)), axes);
+  }
+  return axes;
+}
+
 /**
  * `translate` is applied before the element's own `transform`, so the local
  * delta is the screen-space shift pulled back through the inverse linear
@@ -373,10 +431,10 @@ function transformAxesOf(style: CSSStyleDeclaration | null): TransformAxes {
  * turning the requested horizontal shift into vertical movement.
  */
 function localShiftFor(
-  style: CSSStyleDeclaration | null,
+  element: StyledElement,
   screenShiftPx: number,
 ): LocalShift | null {
-  const axes = transformAxesOf(style);
+  const axes = combinedTransformAxesOf(element);
   const det = axes.a * axes.d - axes.b * axes.c;
   if (Math.abs(det) < MIN_TRANSFORM_SCALE * MIN_TRANSFORM_SCALE) return null;
 
@@ -462,7 +520,7 @@ function shiftAbsoluteCluster(
   const shiftPx = buttonRect.right - (anchorRect.left - spacePx);
   let shiftedLeft = buttonRect.left;
   if (shiftPx > MIN_SHIFT_PX) {
-    const shift = localShiftFor(buttonStyle, shiftPx);
+    const shift = localShiftFor(button, shiftPx);
     const translate =
       shift === null ? null : composeShiftedTranslate(buttonStyle, shift);
     if (translate !== null) {
@@ -492,7 +550,7 @@ function shiftAbsoluteCluster(
   if (deltaPx <= MIN_SHIFT_PX) return;
   for (const sibling of siblings) {
     const siblingStyle = computedStyleOf(sibling);
-    const shift = localShiftFor(siblingStyle, deltaPx);
+    const shift = localShiftFor(sibling, deltaPx);
     const translate =
       shift === null ? null : composeShiftedTranslate(siblingStyle, shift);
     if (translate === null) continue;
@@ -539,11 +597,19 @@ export function fitInControlBar(
   button: HTMLElement,
 ): ControlBarFit {
   let snapshots: StyleSnapshot[] = [];
+  let ownedStyleValues = new Map<Element, string>();
   let box: LayoutBox | null = null;
 
   const apply = (): void => {
     snapshots = [];
     applyControlBarFit(anchor, button, snapshots);
+    ownedStyleValues = new Map();
+    for (const snapshot of snapshots) {
+      ownedStyleValues.set(
+        snapshot.element,
+        snapshot.element.getAttribute("style") ?? "",
+      );
+    }
     // Measure after applying so a flex bar's own added margins do not look
     // like a layout change on the next check.
     box = layoutBoxOf(anchor);
@@ -552,6 +618,7 @@ export function fitInControlBar(
   const dispose = (): void => {
     restoreStyles(snapshots);
     snapshots = [];
+    ownedStyleValues.clear();
     box = null;
   };
 
@@ -563,6 +630,17 @@ export function fitInControlBar(
       if (box !== null && isSameLayoutBox(box, next)) return;
       dispose();
       apply();
+    },
+    refit(): void {
+      dispose();
+      apply();
+    },
+    ownsStyleOf(element: Element): boolean {
+      const value = ownedStyleValues.get(element);
+      return (
+        value !== undefined &&
+        (element.getAttribute("style") ?? "") === value
+      );
     },
     dispose,
   };

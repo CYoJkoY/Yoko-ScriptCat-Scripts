@@ -155,6 +155,36 @@ describe("control bar spacing", () => {
     expect(button.style.getPropertyValue("margin-inline-end")).toBe("");
   });
 
+  it("uses the row gap as the main-axis spacing of a flex column", () => {
+    const { bar, anchor } = mountAnchor(
+      "display: flex; flex-direction: column; row-gap: 12px",
+    );
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("margin-block-start")).toBe("");
+    expect(button.style.getPropertyValue("margin-block-end")).toBe("");
+    expect(button.style.getPropertyValue("margin-inline-start")).toBe("");
+    expect(button.style.getPropertyValue("margin-inline-end")).toBe("");
+  });
+
+  it("adds block margins when a flex column has no row gap", () => {
+    const { bar, anchor } = mountAnchor(
+      "display: flex; flex-direction: column; column-gap: 12px",
+    );
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+
+    fitInControlBar(anchor, button);
+
+    expect(button.style.getPropertyValue("margin-block-start")).toBe("5.6px");
+    expect(button.style.getPropertyValue("margin-block-end")).toBe("5.6px");
+    expect(button.style.getPropertyValue("margin-inline-start")).toBe("");
+    expect(button.style.getPropertyValue("margin-inline-end")).toBe("");
+  });
+
   it("fills only the sides the native leading margin does not cover", () => {
     const { bar, anchor } = mountAnchor("display: flex");
     anchor.style.marginLeft = "10px";
@@ -504,6 +534,43 @@ describe("control bar spacing", () => {
     fitInControlBar(anchor, button);
 
     // 41.2 screen px at scale(.5) needs an 82.4 px local translation.
+    expect(prev.style.getPropertyValue("translate")).toBe("-82.4px 0");
+  });
+
+  it("includes ancestor transforms when converting the shift", () => {
+    document.body.innerHTML = `
+      <div class="bar">
+        <button class="prev">prev</button>
+        <button class="anchor" aria-label="全屏">全屏</button>
+      </div>
+    `;
+    const bar = document.querySelector<HTMLElement>(".bar");
+    const prev = document.querySelector<HTMLButtonElement>(".prev");
+    const anchor = document.querySelector<HTMLButtonElement>(".anchor");
+    if (bar === null || prev === null || anchor === null) {
+      throw new Error("The transformed player fixture is incomplete");
+    }
+    bar.style.transform = "scale(0.5)";
+    anchor.style.position = "absolute";
+    const button = document.createElement("button");
+    bar.insertBefore(button, anchor);
+    Object.defineProperty(prev, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(490, 0, 40, 20),
+    });
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+    Object.defineProperty(button, "getBoundingClientRect", {
+      configurable: true,
+      value: (): DOMRect => new DOMRect(540, 0, 40, 20),
+    });
+
+    fitInControlBar(anchor, button);
+
+    // Both the button and the preceding control live inside the scaled bar.
+    expect(button.style.getPropertyValue("translate")).toBe("-91.2px 0");
     expect(prev.style.getPropertyValue("translate")).toBe("-82.4px 0");
   });
 
@@ -1003,6 +1070,67 @@ describe("installation", () => {
     await new Promise((resolve) => setTimeout(resolve, 260));
 
     expect(button.style.getPropertyValue("translate")).toBe("-51.2px 0");
+  });
+
+  it("refits when a preceding control becomes visible", async () => {
+    document.body.innerHTML = `
+      <div class="player" style="position: absolute; width: 640px; height: 360px">
+        <video style="width: 100%; height: 100%"></video>
+        <div class="player-controls" style="position: absolute; width: 640px; height: 360px">
+          <button class="prev is-hidden" style="position: absolute; right: 84px" aria-label="字幕">字幕</button>
+          <button id="native-fullscreen" style="position: absolute; right: 20px" aria-label="进入全屏">全屏</button>
+        </div>
+      </div>
+    `;
+    const video = document.querySelector<HTMLVideoElement>("video");
+    const player = document.querySelector<HTMLElement>(".player");
+    const controls = document.querySelector<HTMLElement>(".player-controls");
+    const prev = document.querySelector<HTMLElement>(".prev");
+    const anchor = document.querySelector<HTMLElement>("#native-fullscreen");
+    if (
+      video === null ||
+      player === null ||
+      controls === null ||
+      prev === null ||
+      anchor === null
+    ) {
+      throw new Error("The hidden control fixture is incomplete");
+    }
+    const rects = new Map<Element, DOMRect>([
+      [video, new DOMRect(0, 0, 640, 360)],
+      [player, new DOMRect(0, 0, 640, 360)],
+      [controls, new DOMRect(0, 0, 640, 360)],
+      [anchor, new DOMRect(560, 0, 40, 20)],
+    ]);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        const rect = rects.get(this);
+        if (rect !== undefined) return rect;
+        if (this === prev) {
+          return prev.classList.contains("is-hidden")
+            ? new DOMRect(0, 0, 0, 0)
+            : new DOMRect(520, 0, 40, 20);
+        }
+        if (this.hasAttribute(BUTTON_ATTRIBUTE)) {
+          return new DOMRect(560, 0, 40, 20);
+        }
+        return new DOMRect(0, 0, 0, 0);
+      },
+    );
+
+    const cleanup = installWebFullscreen(document);
+    cleanups.push(cleanup);
+    const button = player.querySelector<HTMLElement>(`[${BUTTON_ATTRIBUTE}]`);
+    if (button === null) throw new Error("The web fullscreen button was not inserted");
+    expect(button.style.getPropertyValue("translate")).toBe("-45.6px 0");
+    expect(prev.style.getPropertyValue("translate")).toBe("");
+
+    // Let the insertion-triggered scan settle before revealing the control.
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    prev.classList.remove("is-hidden");
+    await new Promise((resolve) => setTimeout(resolve, 260));
+
+    expect(prev.style.getPropertyValue("translate")).toBe("-51.2px 0");
   });
 
   it("recreates the control bar fit when the anchor is replaced", async () => {

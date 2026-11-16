@@ -71,7 +71,7 @@ export function installWebFullscreen(
   });
   // Class or style changes can move an absolute anchor without resizing the
   // video, so only the bar fit needs to re-run for those.
-  const scheduleFit = createDebounced(() => syncControlBars(), {
+  const scheduleFit = createDebounced(() => refitControlBars(), {
     delayMs: SCAN_DEBOUNCE_MS,
   });
 
@@ -222,6 +222,12 @@ export function installWebFullscreen(
     for (const binding of bindings.values()) binding.fit?.sync();
   }
 
+  // Visibility or size changes among the preceding controls do not move an
+  // absolute anchor, so their mutations need an unconditional refit.
+  function refitControlBars(): void {
+    for (const binding of bindings.values()) binding.fit?.refit();
+  }
+
   function removeBinding(binding: Binding): void {
     if (controller.isActiveFor(binding.video)) controller.exit();
     resizeObserver?.unobserve(binding.video);
@@ -265,15 +271,23 @@ export function installWebFullscreen(
     syncFloatingPositions();
   });
 
-  // Only class/style changes on the anchor or one of its ancestors can move a
-  // fitted control bar; other attributes (and our own button tweaks) are noise.
-  const affectsControlBar = (target: Element): boolean => {
+  // Changes in the fitted bar can move the anchor or reveal a preceding
+  // control. Ignore our own inline style writes so refitting cannot loop.
+  const affectsControlBar = (
+    target: Element,
+    attributeName: string | null,
+  ): boolean => {
     for (const binding of bindings.values()) {
-      if (binding.fit === null || binding.button === null) continue;
-      if (target === binding.button) continue;
+      const fit = binding.fit;
+      const button = binding.button;
+      if (fit === null || button === null) continue;
+      if (target === button || button.contains(target)) continue;
+      if (attributeName === "style" && fit.ownsStyleOf(target)) continue;
       const anchor = binding.match.fullscreenButton;
       if (anchor === null) continue;
       if (target === anchor || target.contains(anchor)) return true;
+      const bar = button.parentElement;
+      if (bar !== null && bar.contains(target)) return true;
     }
     return false;
   };
@@ -283,12 +297,21 @@ export function installWebFullscreen(
     let layoutChanged = false;
     for (const record of records) {
       if (record.type === "attributes") {
-        if (record.target instanceof Element && affectsControlBar(record.target)) {
+        if (
+          record.target instanceof Element &&
+          affectsControlBar(record.target, record.attributeName)
+        ) {
           layoutChanged = true;
         }
         continue;
       }
       childListChanged = true;
+      if (
+        record.target instanceof Element &&
+        affectsControlBar(record.target, null)
+      ) {
+        layoutChanged = true;
+      }
       for (const node of record.addedNodes) {
         if (node instanceof Element) discover(node);
         else if (node instanceof DocumentFragment) discover(node);
