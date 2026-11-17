@@ -262,6 +262,63 @@ describe("sent virtual file capsules", () => {
     expect(prompt.style.getPropertyValue("display")).toBe("");
   });
 
+  it("hides the file row contents while the original text is expanded", () => {
+    const turn = buildTurn(
+      buildMessage("还原成普通消息", [
+        { name: "a.txt", lines: 1, bytes: 10, content: "alpha" },
+      ]),
+    );
+    capsules.collapseInChatFileBlocks(turn);
+
+    const row = turn.nextElementSibling;
+    const toggle = document.querySelector<HTMLButtonElement>(
+      ".ai-turbo-chat-file-toggle",
+    );
+    if (!(row instanceof HTMLElement) || !toggle) {
+      throw new Error("Missing capsule row");
+    }
+
+    expect(row.classList.contains("is-expanded")).toBe(false);
+    toggle.click();
+    expect(row.classList.contains("is-expanded")).toBe(true);
+    expect(toggle.textContent).toBe("收起为文件");
+
+    const capsule = row.querySelector<HTMLElement>(".ai-turbo-chat-capsule");
+    expect(capsule?.style.getPropertyValue("display")).toBe("none");
+    expect(
+      document
+        .querySelector<HTMLElement>(".ai-turbo-chat-user-prompt")
+        ?.style.getPropertyValue("display"),
+    ).toBe("none");
+
+    capsules.sweep([turn]);
+    expect(row.classList.contains("is-expanded")).toBe(true);
+    expect(capsule?.style.getPropertyValue("display")).toBe("none");
+
+    toggle.click();
+    expect(row.classList.contains("is-expanded")).toBe(false);
+    expect(toggle.textContent).toBe("展开原文");
+    expect(capsule?.style.getPropertyValue("display")).toBe("");
+  });
+
+  it("drops the expanded state when the host re-renders the turn", () => {
+    const message = buildMessage("重绘后收起", [
+      { name: "a.txt", lines: 1, bytes: 10, content: "alpha" },
+    ]);
+    const turn = buildTurn(message);
+    capsules.collapseInChatFileBlocks(turn);
+    document.querySelector<HTMLButtonElement>(".ai-turbo-chat-file-toggle")?.click();
+
+    const fresh = document.createElement("p");
+    fresh.textContent = message;
+    turn.querySelector("p")?.replaceWith(fresh);
+    capsules.sweep([turn]);
+
+    const row = turn.nextElementSibling;
+    expect(row?.classList.contains("is-expanded")).toBe(false);
+    expect(fresh.style.getPropertyValue("display")).toBe("none");
+  });
+
   it("keeps an expanded message expanded while the host stays stable", () => {
     const turn = buildTurn(
       buildMessage("保持展开", [
@@ -282,6 +339,30 @@ describe("sent virtual file capsules", () => {
     expect(document.querySelectorAll(".ai-turbo-chat-file-row")).toHaveLength(1);
     expect(toggle.textContent).toBe("收起为文件");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("drops the expanded state when the host removes the prompt row", () => {
+    const message = buildMessage("重绘后收起", [
+      { name: "a.txt", lines: 1, bytes: 10, content: "alpha" },
+    ]);
+    const turn = buildTurn(message);
+    capsules.collapseInChatFileBlocks(turn);
+    document.querySelector<HTMLButtonElement>(".ai-turbo-chat-file-toggle")?.click();
+    document.querySelector(".ai-turbo-chat-user-prompt")?.remove();
+
+    capsules.sweep([turn]);
+
+    const row = turn.nextElementSibling;
+    const toggle = document.querySelector<HTMLButtonElement>(
+      ".ai-turbo-chat-file-toggle",
+    );
+    expect(row?.classList.contains("is-expanded")).toBe(false);
+    expect(toggle?.textContent).toBe("展开原文");
+    expect(
+      document
+        .querySelector<HTMLElement>(".ai-turbo-chat-user-prompt")
+        ?.style.getPropertyValue("display"),
+    ).toBe("");
   });
 
   it("closes the preview on Escape and on a backdrop click", () => {

@@ -64,6 +64,13 @@ export function createVirtualFileUtils(
 
   let activeVirtualFiles: VirtualFileItem[] = [];
   let trayIsDirty = false;
+  /**
+   * Composer text the user already declined to convert, or converted out of a
+   * file. Keyed by text rather than by node because the host re-creates the
+   * composer on every route change and sends, which would otherwise bring the
+   * same offer straight back.
+   */
+  let conversionDismissedText: string | null = null;
   let virtualFileTrayAnchor: HTMLElement | null = null;
   let virtualFileTrayResizeObserver: ResizeObserver | null = null;
   let virtualFileTrayPositionFrame = 0;
@@ -111,6 +118,24 @@ export function createVirtualFileUtils(
 
       if (ts - virtualFileTraySyncLastTs >= VF_TRAY_SYNC_INTERVAL) {
         virtualFileTraySyncLastTs = ts;
+
+        /*
+         * A route change can swap the composer while a prompt-only tray is
+         * still on screen, and nothing dispatches an input event for the new,
+         * empty node. The node check stays cheap on the common path: only a
+         * detached or unpainted composer triggers a fresh lookup. The tray is
+         * then dropped unless the new composer still asks for a conversion,
+         * so a detached editor cannot leave the tray behind.
+         */
+        if (activeVirtualFiles.length === 0 && !trayInputIsUsable()) {
+          const input = composer.getChatInput();
+          if (input === null || !shouldOfferComposerConversion(input)) {
+            removeVirtualFileTray();
+            return;
+          }
+          virtualFileTrayCachedInput = input;
+        }
+
         positionVirtualFileTray();
       }
 
@@ -129,7 +154,7 @@ export function createVirtualFileUtils(
   }
 
   function scheduleVirtualFileTrayPosition(): void {
-    if (!activeVirtualFiles.length) return;
+    if (virtualFileTrayAnchor === null) return;
     if (virtualFileTrayPositionFrame) return;
 
     virtualFileTrayPositionFrame = window.requestAnimationFrame(() => {
@@ -181,13 +206,9 @@ export function createVirtualFileUtils(
 
   function positionVirtualFileTray(): void {
     const tray = document.getElementById("ai-turbo-vf-tray");
-    if (!tray || !tray.isConnected || !activeVirtualFiles.length) return;
+    if (!tray || !tray.isConnected) return;
 
-    let input: HTMLElement | null = virtualFileTrayCachedInput;
-    if (!input || !input.isConnected || input.getClientRects().length === 0) {
-      input = composer.getChatInput();
-      virtualFileTrayCachedInput = input;
-    }
+    const input = resolveTrayInput();
 
     if (!input || !input.isConnected) {
       tray.classList.remove("is-positioned");
@@ -300,8 +321,44 @@ export function createVirtualFileUtils(
     ).replace(/\u00a0/g, " ");
   }
 
-  function composerTextIsConvertible(inputElement: HTMLElement | null): boolean {
-    return readComposerText(inputElement).trim().length >= VIRTUAL_FILE_THRESHOLD;
+  /**
+   * The composer the tray belongs to. The cached node wins while it is still
+   * painted: a host that re-renders the transcript can briefly mount a second
+   * editor, and the tray must not jump to it.
+   */
+  function resolveTrayInput(): HTMLElement | null {
+    const cached = virtualFileTrayCachedInput;
+    if (cached && trayInputIsUsable()) return cached;
+    const current = composer.getChatInput();
+    virtualFileTrayCachedInput = current;
+    return current;
+  }
+
+  function trayInputIsUsable(): boolean {
+    const cached = virtualFileTrayCachedInput;
+    if (!cached) return false;
+    return cached.isConnected && cached.getClientRects().length > 0;
+  }
+
+  function shouldOfferComposerConversion(input: HTMLElement | null): boolean {
+    const text = readComposerText(input).trim();
+    if (text.length < VIRTUAL_FILE_THRESHOLD) {
+      conversionDismissedText = null;
+      return false;
+    }
+    return text !== conversionDismissedText;
+  }
+
+  /** Drop the tray and its layout tracking; nothing is left on the page. */
+  function removeVirtualFileTray(): void {
+    const current = document.getElementById("ai-turbo-vf-tray");
+    if (current) {
+      withSelfMutation(() => current.remove());
+    }
+
+    stopVirtualFileTrayTracking();
+    trayIsDirty = false;
+    updateHudDashboard();
   }
 
   /**
@@ -317,8 +374,8 @@ export function createVirtualFileUtils(
     if (!input) return;
     if (!input.contains(target)) return;
 
-    const wanted =
-      activeVirtualFiles.length > 0 || composerTextIsConvertible(input);
+    const offerConversion = shouldOfferComposerConversion(input);
+    const wanted = activeVirtualFiles.length > 0 || offerConversion;
     const present =
       document.getElementById("ai-turbo-vf-tray") !== null;
     if (wanted === present) return;
@@ -385,6 +442,7 @@ export function createVirtualFileUtils(
     withSelfMutation(() => {
       composer.insertTextAtomic(input, next);
     });
+    conversionDismissedText = readComposerText(input).trim();
     removeVirtualFile(fileItem.id);
   }
 
@@ -399,16 +457,9 @@ export function createVirtualFileUtils(
       convertOnly &&
       (!state.virtualFileEnabled ||
         isEngineDormant() ||
-        !composerTextIsConvertible(input))
+        !shouldOfferComposerConversion(input))
     ) {
-      const currentTray = tray;
-      if (currentTray) {
-        withSelfMutation(() => currentTray.remove());
-      }
-
-      stopVirtualFileTrayTracking();
-      trayIsDirty = false;
-      updateHudDashboard();
+      removeVirtualFileTray();
       return;
     }
 
@@ -507,12 +558,7 @@ export function createVirtualFileUtils(
         ],
       );
 
-      const fileList = el("div", {
-        className: "ai-turbo-vf-list",
-      });
-
       tray.appendChild(header);
-      tray.appendChild(fileList);
 
       header
         .querySelector<HTMLButtonElement>(".ai-turbo-vf-convert-composer")
@@ -522,6 +568,29 @@ export function createVirtualFileUtils(
           moveComposerTextToFiles();
         });
 
+      if (convertOnly) {
+        const dismiss = el("button", {
+          type: "button",
+          className: "ai-turbo-vf-action ai-turbo-vf-dismiss-conversion",
+          title: "关闭转换提示",
+          "aria-label": "关闭转换提示",
+        }, [createUiIcon("close", 13)]);
+        dismiss.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          conversionDismissedText = readComposerText(
+            composer.getChatInput(),
+          ).trim();
+          renderVirtualFileTray();
+        });
+        header.querySelector(".ai-turbo-vf-header-actions")?.appendChild(dismiss);
+      }
+
+      const fileList = el("div", {
+        className: "ai-turbo-vf-list",
+      });
+      // A prompt-only tray owns no files, so it skips the empty list row.
+      if (!convertOnly) tray.appendChild(fileList);
       for (const item of activeVirtualFiles) {
         const sizeText = `${(item.size / 1024).toFixed(1)} KB`;
 
@@ -727,15 +796,13 @@ export function createVirtualFileUtils(
       (userText ? userText : "请查阅并分析以下文本内容：") +
       fileBlocks.join("\n");
 
-    activeVirtualFiles = [];
-    trayIsDirty = true;
-    renderVirtualFileTray();
-
     suspendObservers();
 
     withSelfMutation(() => {
       composer.insertTextAtomic(inputElement, finalPrompt);
     });
+    conversionDismissedText = readComposerText(inputElement).trim();
+    clearFiles();
 
     return true;
   }

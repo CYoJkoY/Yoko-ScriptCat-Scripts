@@ -229,6 +229,8 @@ export function createChatCapsuleUtils(
   interface CapsuleMount {
     row: HTMLElement;
     prompt: HTMLElement | null;
+    /** Row contents that only belong to the folded view. */
+    contents: HTMLElement[];
     hidden: HTMLElement[];
     fileCount: number;
     collapsed: boolean;
@@ -263,8 +265,17 @@ export function createChatCapsuleUtils(
   function isMountHealthy(mount: CapsuleMount): boolean {
     if (!mount.row.isConnected) return false;
     if (mount.expanded) {
+      const promptHidden =
+        mount.prompt === null ||
+        (mount.prompt.isConnected &&
+          mount.prompt.style.getPropertyValue("display") === "none");
       return (
         mount.row.classList.contains("is-expanded") &&
+        promptHidden &&
+        mount.contents.every(
+          (node) =>
+            node.isConnected && node.style.getPropertyValue("display") === "none",
+        ) &&
         mount.hidden.every(
           (node) =>
             node.isConnected &&
@@ -272,6 +283,11 @@ export function createChatCapsuleUtils(
             node.style.getPropertyValue("display") !== "none",
         )
       );
+    }
+    if (mount.prompt !== null && !mount.prompt.isConnected) return false;
+    for (const node of mount.contents) {
+      if (!node.isConnected) return false;
+      if (node.style.getPropertyValue("display") === "none") return false;
     }
     for (const node of mount.hidden) {
       if (!node.isConnected) return false;
@@ -310,6 +326,12 @@ export function createChatCapsuleUtils(
         }
         node.style.setProperty("display", "none", "important");
         node.style.setProperty("contain", "strict", "important");
+      }
+
+      for (const node of mount.contents) {
+        if (!node.isConnected) continue;
+        if (expanded) node.style.setProperty("display", "none", "important");
+        else node.style.removeProperty("display");
       }
 
       if (mount.prompt) {
@@ -448,17 +470,20 @@ export function createChatCapsuleUtils(
         "aria-label": "虚拟文件",
       });
       const stack = el("div", { className: "ai-turbo-chat-file-stack" });
+      const contents: HTMLElement[] = [];
 
       if (inlinePrompt && wholeTurnHidden) {
-        stack.appendChild(
-          el("div", { className: "ai-turbo-chat-user-prompt" }, [
-            parsed.prompt,
-          ]),
-        );
+        const rowPrompt = el("div", { className: "ai-turbo-chat-user-prompt" }, [
+          parsed.prompt,
+        ]);
+        stack.appendChild(rowPrompt);
+        contents.push(rowPrompt);
       }
 
       parsed.files.forEach((file, index) => {
-        stack.appendChild(createCapsule(turnElement, file, index));
+        const capsule = createCapsule(turnElement, file, index);
+        stack.appendChild(capsule);
+        contents.push(capsule);
       });
 
       const toggle = el("button", {
@@ -482,6 +507,7 @@ export function createChatCapsuleUtils(
       return {
         row,
         prompt: promptNode,
+        contents,
         hidden: containers,
         fileCount: parsed.files.length,
         collapsed: false,
