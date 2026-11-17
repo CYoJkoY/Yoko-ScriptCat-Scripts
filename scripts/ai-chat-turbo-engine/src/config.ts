@@ -245,6 +245,7 @@ export const BLOCK_TEXT_TAGS = new Set([
 
 export interface PlatformDefinition {
   readonly name: string;
+  readonly newChatShortcut: "native" | `/${string}`;
   /**
    * Hostname suffixes where this platform lives. The userscript header and
    * runtime detection both read this list, so a new site is declared once.
@@ -342,6 +343,7 @@ export interface SidebarPeekDefinition {
 export const PLATFORMS = {
   chatgpt: {
     name: "ChatGPT",
+    newChatShortcut: "native",
     hosts: ["chatgpt.com", "chat.openai.com"],
     shellTurnRoots: true,
     codeCardChrome: true,
@@ -470,6 +472,7 @@ export const PLATFORMS = {
   },
   gemini: {
     name: "Gemini",
+    newChatShortcut: "native",
     hosts: ["gemini.google.com"],
     nativeTurnRoots: true,
     quietMotion: true,
@@ -563,6 +566,7 @@ export const PLATFORMS = {
   },
   grok: {
     name: "Grok",
+    newChatShortcut: "/",
     hosts: ["grok.com"],
     hostPaths: { "x.com": "/i/grok" },
     sidebar: {
@@ -596,6 +600,7 @@ export const PLATFORMS = {
   },
   deepseek: {
     name: "DeepSeek",
+    newChatShortcut: "/",
     hosts: ["chat.deepseek.com"],
     sidebar: {
       selectors: [
@@ -679,6 +684,7 @@ export const PLATFORMS = {
   },
   copilot: {
     name: "Microsoft Copilot",
+    newChatShortcut: "/",
     hosts: ["copilot.com", "copilot.microsoft.com"],
     // The rail is a Fluent NavDrawer that the site widens itself. Its width
     // rule sits in the `application` cascade layer with !important, so the
@@ -744,6 +750,7 @@ export const PLATFORMS = {
   },
   perplexity: {
     name: "Perplexity",
+    newChatShortcut: "/",
     hosts: ["perplexity.ai", "www.perplexity.ai"],
     sidebar: {
       selectors: ["div.w-sideBarWidth"],
@@ -812,6 +819,7 @@ export const PLATFORMS = {
   },
   poe: {
     name: "Poe",
+    newChatShortcut: "/",
     hosts: ["poe.com"],
     sidebar: {
       selectors: ['aside[class*="SidebarLayout_sidebar"]'],
@@ -873,6 +881,7 @@ export const PLATFORMS = {
   },
   doubao: {
     name: "Doubao",
+    newChatShortcut: "/chat/",
     hosts: ["doubao.com", "www.doubao.com"],
     sidebar: {
       selectors: ["nav.panel-fvxXfj", "#chat-route-main nav"],
@@ -937,6 +946,7 @@ export const PLATFORMS = {
   },
   yuanbao: {
     name: "Tencent Yuanbao / 腾讯元宝",
+    newChatShortcut: "/chat/",
     hosts: ["yuanbao.tencent.com"],
     supportsToolMemory: true,
     sidebar: {
@@ -1004,6 +1014,7 @@ export const PLATFORMS = {
   },
   qwen: {
     name: "Qwen Chat",
+    newChatShortcut: "/",
     hosts: ["chat.qwen.ai"],
     sidebar: {
       selectors: ["#sidebar.sidebar"],
@@ -1089,6 +1100,7 @@ export const PLATFORMS = {
   },
   qianwen: {
     name: "Qianwen / 千问",
+    newChatShortcut: "/chat/",
     hosts: ["qianwen.com", "www.qianwen.com"],
     sidebar: {
       selectors: ["aside#new-nav-tab-wrapper"],
@@ -1159,6 +1171,7 @@ export const PLATFORMS = {
   },
   glm: {
     name: "ChatGLM / 智谱清言",
+    newChatShortcut: "/",
     hosts: ["chatglm.cn"],
     sidebar: {
       selectors: ["aside.el-aside.aside-container"],
@@ -1239,6 +1252,7 @@ export const PLATFORMS = {
   },
   zai: {
     name: "Z.ai (GLM)",
+    newChatShortcut: "/",
     hosts: ["chat.z.ai"],
     sidebar: {
       selectors: ["#sidebar"],

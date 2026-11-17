@@ -19,6 +19,7 @@ import { createToolPopupScope } from "./core/tool-scope";
 import { createComposerUtils } from "./core/composer";
 import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
 import { createHandoffUtils } from "./core/handoff";
+import { handleNewChatShortcut } from "./core/new-chat";
 import { createHudUtils, type HudUtils } from "./ui/hud";
 import { createChatCapsuleUtils } from "./ui/chat-capsules";
 import { closeTextPreview } from "./ui/text-preview";
@@ -815,7 +816,9 @@ export function initializeEngine(): void {
           event.preventDefault();
           event.stopPropagation();
           hud?.togglePanel();
+          return;
         }
+        handleNewChatShortcut(event, currentPlatform, window);
       },
       true,
     );
