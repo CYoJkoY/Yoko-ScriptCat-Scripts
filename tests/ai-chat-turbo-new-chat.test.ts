@@ -65,6 +65,22 @@ function addControl(attrs: Record<string, string>, text = ""): HTMLButtonElement
   return markRendered(button);
 }
 
+/**
+ * Sites built with plain elements expose the action through `role="button"` and
+ * an aria label only, so the control is not a `<button>` at all.
+ */
+function addRoleControl(
+  attrs: Record<string, string>,
+  text = "",
+): HTMLDivElement {
+  const control = document.createElement("div");
+  control.setAttribute("role", "button");
+  for (const [key, value] of Object.entries(attrs)) control.setAttribute(key, value);
+  control.textContent = text;
+  document.body.append(control);
+  return markRendered(control);
+}
+
 beforeEach(() => {
   document.body.replaceChildren();
 });
@@ -248,6 +264,69 @@ describe("handleNewChatShortcut", () => {
 
     expect(click).not.toHaveBeenCalled();
     expect(page.location.assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("reported hosts", () => {
+  it("clicks the Z.ai new chat control on zchat.z.ai", () => {
+    const control = addRoleControl({ "aria-label": "新对话" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage("https://zchat.z.ai/c/abc");
+
+    const event = press(page);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(page.location.assign).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the Z.ai blank route on both origins", () => {
+    document.body.replaceChildren();
+    const zchat = createPage("https://zchat.z.ai/c/abc");
+    expect(press(zchat).defaultPrevented).toBe(true);
+    expect(zchat.location.assign).toHaveBeenCalledWith("https://zchat.z.ai/");
+
+    const zai = createPage("https://chat.z.ai/c/abc");
+    expect(press(zai).defaultPrevented).toBe(true);
+    expect(zai.location.assign).toHaveBeenCalledWith("https://chat.z.ai/");
+  });
+
+  it("clicks Yuanbao's role-only new chat entry", () => {
+    const control = addRoleControl({ "aria-label": "新建对话" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage(
+      "https://yuanbao.tencent.com/chat/naQivTmsDa/0SA6GtG4MqG",
+    );
+
+    const event = press(page);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(page.location.assign).not.toHaveBeenCalled();
+  });
+
+  it("falls back to Yuanbao's blank conversation route", () => {
+    const page = createPage(
+      "https://yuanbao.tencent.com/chat/naQivTmsDa/0SA6GtG4MqG",
+    );
+
+    press(page);
+
+    expect(page.location.assign).toHaveBeenCalledWith(
+      "https://yuanbao.tencent.com/chat/",
+    );
+  });
+
+  it("falls back to DeepSeek's blank conversation route", () => {
+    const page = createPage(
+      "https://chat.deepseek.com/a/chat/s/9f1d6c6e-1b3f-4a51-8f2c-3d1f0a7b2c44",
+    );
+
+    press(page);
+
+    expect(page.location.assign).toHaveBeenCalledWith(
+      "https://chat.deepseek.com/",
+    );
   });
 });
 

@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.22.1**
+当前版本：**0.23.1**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -44,7 +44,7 @@
 | Qwen Chat | chat.qwen.ai |
 | 千问 | qianwen.com、www.qianwen.com |
 | ChatGLM / 智谱清言 | chatglm.cn |
-| Z.ai (GLM) | chat.z.ai |
+| Z.ai (GLM) | chat.z.ai、zchat.z.ai |
 
 平台识别失败时脚本直接退出，不会在未适配站点产生任何副作用。
 
@@ -55,7 +55,7 @@
 前置条件：Chrome / Edge / Firefox / Safari + 任一用户脚本管理器（Tampermonkey、Violentmonkey、Greasemonkey）。
 
 1. 安装用户脚本管理器（ScriptCat 推荐）。
-2. 点击安装入口直接安装（推荐，可自动更新）：[AI Chat Turbo Engine](https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/dist/ai-chat-turbo-engine.user.js)。
+2. 点击安装入口直接安装（推荐，可自动更新）：[AI Chat Turbo Engine](https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/ai-chat-turbo-engine.user.js)。
 3. 或在管理器中新建脚本、粘贴脚本完整内容后保存。
 4. 打开受支持的对话页面，右下角出现紧凑的 `Turbo` 负载仪表即表示生效。
 
@@ -505,6 +505,15 @@ pointerdown → mousedown → pointerup → mouseup → click
 ---
 
 ## 版本记录
+
+### 0.23.1
+
+**Z.ai 的新域名同样接管 `Ctrl + Shift + O`。**
+
+- **补上 `zchat.z.ai`。** Z.ai 把聊天界面同时挂在 `chat.z.ai` 与 `zchat.z.ai` 上，两边的 `#sidebar` 结构与空白对话路由完全一致，但注册表原先只声明了前者，`zchat.z.ai` 上脚本根本不注入，按键仍归浏览器。现在两个主机都在 `zai` 平台定义里，头部 `@match` 随之派生。
+- **安装入口改指 `release` 分支。** 文档里的安装链接原先指向 `main/dist/`，而 `dist/` 不进版本库，链接会 404；现在与 `@updateURL` / `@downloadURL` 一致指向 `release` 分支的构建产物。
+- **版本号前移。** `release` 分支已发布 0.23.0，同版本重发不会触发用户脚本管理器的更新检查，因此本次修复以 0.23.1 发布。
+- **测试覆盖。** 两个 Z.ai 主机都解析到同一平台、`zchat.z.ai` 会话页回退到 `/`、元宝只有 `role="button"` 的新对话入口被点击、元宝与 DeepSeek 的空白对话回退路径均有单元测试。
 
 ### 0.23.0
 

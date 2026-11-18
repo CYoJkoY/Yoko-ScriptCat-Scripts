@@ -54,6 +54,9 @@ describe("platform registry", () => {
     expect(findPlatformForLocation("chat.deepseek.com", "/")).toBe(
       PLATFORMS.deepseek,
     );
+    // Z.ai answers on both origins with the same chat app.
+    expect(findPlatformForLocation("zchat.z.ai", "/")).toBe(PLATFORMS.zai);
+    expect(findPlatformForLocation("chat.z.ai", "/")).toBe(PLATFORMS.zai);
   });
 
   it("refuses hosts the header does not cover", () => {

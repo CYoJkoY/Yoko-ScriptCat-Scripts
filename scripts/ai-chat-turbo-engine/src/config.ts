@@ -1253,7 +1253,9 @@ export const PLATFORMS = {
   zai: {
     name: "Z.ai (GLM)",
     newChatShortcut: "/",
-    hosts: ["chat.z.ai"],
+    // Z.ai serves the same chat app from both hosts: the sidebar markup and the
+    // route to a blank conversation are identical, only the origin differs.
+    hosts: ["chat.z.ai", "zchat.z.ai"],
     sidebar: {
       selectors: ["#sidebar"],
       triggers: ['button[aria-label="切换侧边栏"]'],
