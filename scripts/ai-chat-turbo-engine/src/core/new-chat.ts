@@ -28,7 +28,8 @@ const CONTROL_SELECTORS = [
 
 const CONTROL_SELECTOR = CONTROL_SELECTORS.join(",");
 
-const NEW_CHAT_SHORTCUT_CODE = "KeyO";
+/** Physical key the takeover locks and the handler claims. */
+export const NEW_CHAT_SHORTCUT_CODE = "KeyO";
 
 interface NewChatPage {
   readonly document: Document;

@@ -15,6 +15,11 @@ import type { CodeBlockUtils, ElementFactory } from "./code-blocks";
 import type { ReasoningUtils } from "../core/reasoning";
 import type { ToolMemoryUtils } from "../core/tool-memory";
 import type { HandoffUtils } from "../core/handoff";
+import type {
+  NewChatLockSnapshot,
+  NewChatLockStatus,
+  NewChatLockUtils,
+} from "../core/new-chat-lock";
 import { reportRecoverableError } from "../core/diagnostics";
 import {
   resetPersistedConfig,
@@ -63,6 +68,8 @@ interface HudRefs {
   backdrop: HTMLElement;
   pillRoot: HTMLElement;
   dockButton: HTMLButtonElement;
+  newChatLockButton: HTMLButtonElement;
+  newChatLockStatus: HTMLElement;
   pillCount: HTMLElement;
   pillLoadProgress: SVGElement;
   liveRegion: HTMLElement;
@@ -89,6 +96,7 @@ export interface HudDeps {
     "attachStatusNode" | "scheduleRestore" | "renderStatus"
   >;
   handoff: HandoffUtils;
+  newChatLock: Pick<NewChatLockUtils, "toggle" | "subscribe">;
   isEngineDormant: () => boolean;
   requestUpdate: () => void;
   requestFullTurnSync: () => void;
@@ -264,6 +272,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     reasoning,
     toolMemory,
     handoff,
+    newChatLock,
     isEngineDormant,
     requestUpdate,
     requestFullTurnSync,
@@ -278,6 +287,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
   let hudRootElement: HTMLElement | null = null;
   let hudShadowRoot: ShadowRoot | null = null;
   let hudStats: HudRefs | null = null;
+  let unsubscribeNewChatLock: (() => void) | null = null;
   let searchInput: HTMLInputElement | null = null;
   let searchResultsBox: HTMLElement | null = null;
   let searchDebounceTimer: number | null = null;
@@ -445,6 +455,37 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       updateHudDashboard();
     }
     announce("已恢复默认设置");
+  }
+
+  function newChatLockButtonLabel(status: NewChatLockStatus): string {
+    if (status === "active") return "退出快捷键接管";
+    if (status === "activating") return "正在接管…";
+    return "全屏接管 Ctrl+Shift+O";
+  }
+
+  function newChatLockHint(snapshot: NewChatLockSnapshot): string {
+    if (snapshot.status === "unsupported") {
+      return "当前浏览器不支持键盘锁，请在 Chrome 或 Edge 中使用。";
+    }
+    if (snapshot.status === "activating") return "正在申请全屏并接管快捷键…";
+    if (snapshot.status === "active") {
+      return "接管中：Ctrl+Shift+O 打开新对话。按 Esc 退出全屏并恢复浏览器快捷键。";
+    }
+    if (snapshot.status === "error") {
+      const reason = snapshot.error ?? "浏览器未允许键盘锁";
+      return `接管失败：${reason}。请重试。`;
+    }
+    return "浏览器把 Ctrl+Shift+O 用于收藏夹。接管会进入全屏并锁住该键，按 Esc 退出全屏即恢复。";
+  }
+
+  function renderNewChatLockStatus(snapshot: NewChatLockSnapshot): void {
+    if (!hudStats) return;
+    const button = hudStats.newChatLockButton;
+    button.disabled =
+      snapshot.status === "unsupported" || snapshot.status === "activating";
+    button.textContent = newChatLockButtonLabel(snapshot.status);
+    button.setAttribute("aria-pressed", String(snapshot.status === "active"));
+    hudStats.newChatLockStatus.textContent = newChatLockHint(snapshot);
   }
 
   function updateHudDashboard(): void {
@@ -1259,6 +1300,25 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       ...commonRows,
     ]);
 
+    const newChatLockButton = el(
+      "button",
+      { className: "action-btn", type: "button", "aria-pressed": "false" },
+      ["全屏接管 Ctrl+Shift+O"],
+    );
+    const newChatLockStatus = el(
+      "div",
+      { className: "handoff-status", role: "status", "aria-live": "polite" },
+      [],
+    );
+    newChatLockButton.addEventListener("click", () => {
+      void newChatLock.toggle();
+    });
+    const newChatLockSection = el("div", { className: "section" }, [
+      el("div", { className: "section-title" }, ["新对话快捷键"]),
+      newChatLockButton,
+      newChatLockStatus,
+    ]);
+
     keepValue = el("span", { id: "keep-val" }, [String(state.keepTurns)]);
     const stepDec = el(
       "button",
@@ -1480,6 +1540,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
         searchSection,
         handoffSection,
         commonSection,
+        newChatLockSection,
         advancedSettings,
         footerHint,
         liveRegion,
@@ -1516,12 +1577,16 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       backdrop,
       pillRoot: pill,
       dockButton: btnDock,
+      newChatLockButton,
+      newChatLockStatus,
       pillCount: pillCountValue,
       pillLoadProgress,
       liveRegion,
       signature: "",
     };
     syncControls();
+    unsubscribeNewChatLock?.();
+    unsubscribeNewChatLock = newChatLock.subscribe(renderNewChatLockStatus);
     bindThemeWatchers();
     applyPanelState(state.hudOpen);
     updateHudDashboard();
@@ -1540,6 +1605,8 @@ export function createHudUtils(deps: HudDeps): HudUtils {
   }
 
   function teardown(): void {
+    unsubscribeNewChatLock?.();
+    unsubscribeNewChatLock = null;
     if (searchDebounceTimer !== null) {
       window.clearTimeout(searchDebounceTimer);
       searchDebounceTimer = null;

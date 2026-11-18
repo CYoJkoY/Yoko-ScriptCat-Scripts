@@ -21,6 +21,7 @@ import {
 } from "../scripts/ai-chat-turbo-engine/src/ui/hud";
 import type { ElementFactory } from "../scripts/ai-chat-turbo-engine/src/ui/code-blocks";
 import type { PlatformDefinition } from "../scripts/ai-chat-turbo-engine/src/config";
+import type { NewChatLockSnapshot } from "../scripts/ai-chat-turbo-engine/src/core/new-chat-lock";
 
 function createTestElement<Tag extends keyof HTMLElementTagNameMap = "div">(
   tag: Tag,
@@ -92,6 +93,8 @@ interface HudFixture {
   saveConfig: ReturnType<typeof vi.fn>;
   flushTextIndex: ReturnType<typeof vi.fn>;
   requestCodeScanForTurn: ReturnType<typeof vi.fn>;
+  newChatLockToggle: ReturnType<typeof vi.fn>;
+  emitNewChatLock: (snapshot: NewChatLockSnapshot) => void;
 }
 
 const activeHuds: HudUtils[] = [];
@@ -112,6 +115,10 @@ function createHud(
     saveCurrentConfig(state);
     options.onSaved?.();
   });
+  const newChatLockToggle = vi.fn(async () => undefined);
+  const newChatLockListeners = new Set<
+    (snapshot: NewChatLockSnapshot) => void
+  >();
   const deps: HudDeps = {
     el,
     state,
@@ -138,6 +145,14 @@ function createHud(
       resumePendingHandoffPrompt: vi.fn(),
       prepareNewConversationFromYaml: vi.fn(),
       clearResumeTimer: vi.fn(),
+    },
+    newChatLock: {
+      toggle: newChatLockToggle,
+      subscribe: (listener) => {
+        newChatLockListeners.add(listener);
+        listener({ status: "inactive", error: null });
+        return () => newChatLockListeners.delete(listener);
+      },
     },
     isEngineDormant: () => false,
     requestUpdate: vi.fn(),
@@ -172,6 +187,10 @@ function createHud(
     saveConfig,
     flushTextIndex,
     requestCodeScanForTurn,
+    newChatLockToggle,
+    emitNewChatLock: (snapshot) => {
+      for (const listener of newChatLockListeners) listener(snapshot);
+    },
   };
 }
 
@@ -794,5 +813,40 @@ describe("HUD persisted config", () => {
     expect(state.hiddenCount).toBe(2);
     expect(state.foldedCodeCount).toBe(1);
     expect(state.indexedTurns).toHaveLength(1);
+  });
+});
+
+describe("new chat shortcut takeover", () => {
+  function lockButton(shadow: ShadowRoot): HTMLButtonElement {
+    const button = Array.from(shadow.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.includes("Ctrl+Shift+O") === true,
+    );
+    if (!(button instanceof HTMLButtonElement)) {
+      throw new Error("HUD is missing the shortcut takeover button");
+    }
+    return button;
+  }
+
+  it("toggles the takeover from the panel", () => {
+    const fixture = createHud();
+    const button = lockButton(fixture.shadow);
+
+    button.click();
+
+    expect(fixture.newChatLockToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("reflects the active and unsupported states", () => {
+    const fixture = createHud();
+    const button = lockButton(fixture.shadow);
+
+    fixture.emitNewChatLock({ status: "active", error: null });
+    expect(button.textContent).toBe("退出快捷键接管");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(button.disabled).toBe(false);
+
+    fixture.emitNewChatLock({ status: "unsupported", error: null });
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-pressed")).toBe("false");
   });
 });
