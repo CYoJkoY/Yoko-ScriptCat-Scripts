@@ -60,21 +60,32 @@ export function createNewChatLockUtils(
   options: NewChatLockOptions = {},
 ): NewChatLockUtils {
   const doc = options.doc ?? document;
-  const keyboard =
-    options.keyboard !== undefined
-      ? options.keyboard
-      : readKeyboardLockApi(doc.defaultView);
-  const fullscreenRoot = doc.documentElement;
-  const supported =
-    keyboard !== null &&
-    doc.fullscreenEnabled &&
-    typeof fullscreenRoot.requestFullscreen === "function" &&
+  /*
+   * The engine starts at `document-start`, where the document root may not
+   * exist yet and the fullscreen flag may still be unset. Both are resolved on
+   * every read instead of being latched once during construction.
+   */
+  let keyboardOverride: KeyboardLockApi | null | undefined = options.keyboard;
+  const keyboardApi = (): KeyboardLockApi | null => {
+    if (keyboardOverride === undefined) {
+      keyboardOverride = readKeyboardLockApi(doc.defaultView);
+    }
+    return keyboardOverride;
+  };
+  const fullscreenRoot = (): HTMLElement | null => {
+    const root = doc.documentElement;
+    if (root === null || typeof root.requestFullscreen !== "function") {
+      return null;
+    }
+    return root;
+  };
+  const isSupportedNow = (): boolean =>
+    keyboardApi() !== null &&
+    doc.fullscreenEnabled === true &&
+    fullscreenRoot() !== null &&
     typeof doc.exitFullscreen === "function";
 
-  let snapshot: NewChatLockSnapshot = {
-    status: supported ? "inactive" : "unsupported",
-    error: null,
-  };
+  let snapshot: NewChatLockSnapshot = { status: "inactive", error: null };
   let ownsFullscreen = false;
   let lockHeld = false;
   let activationPending = false;
@@ -82,12 +93,29 @@ export function createNewChatLockUtils(
   let activationId = 0;
   const listeners = new Set<(next: NewChatLockSnapshot) => void>();
 
+  const restingSnapshot = (): NewChatLockSnapshot => ({
+    status: isSupportedNow() ? "inactive" : "unsupported",
+    error: null,
+  });
+
+  const readSnapshot = (): NewChatLockSnapshot => {
+    if (
+      snapshot.status === "active" ||
+      snapshot.status === "activating" ||
+      snapshot.status === "error"
+    ) {
+      return snapshot;
+    }
+    return restingSnapshot();
+  };
+
   const emit = (next: NewChatLockSnapshot): void => {
     snapshot = next;
-    for (const listener of listeners) listener(snapshot);
+    for (const listener of listeners) listener(readSnapshot());
   };
 
   const unlockKeyboard = (): void => {
+    const keyboard = keyboardApi();
     if (keyboard === null) return;
     try {
       keyboard.unlock();
@@ -120,7 +148,7 @@ export function createNewChatLockUtils(
     activationId++;
     releaseLock();
     exitOwnedFullscreen();
-    emit({ status: supported ? "inactive" : "unsupported", error: null });
+    emit(restingSnapshot());
   };
 
   const onFullscreenChange = (): void => {
@@ -129,7 +157,7 @@ export function createNewChatLockUtils(
       activationId++;
       ownsFullscreen = false;
       releaseLock();
-      emit({ status: "inactive", error: null });
+      emit(restingSnapshot());
     }
   };
 
@@ -138,7 +166,7 @@ export function createNewChatLockUtils(
     releaseLock();
     ownsFullscreen = false;
     if (snapshot.status === "active" || snapshot.status === "activating") {
-      emit({ status: supported ? "inactive" : "unsupported", error: null });
+      emit(restingSnapshot());
     }
   };
 
@@ -151,7 +179,9 @@ export function createNewChatLockUtils(
       deactivate();
       return;
     }
-    if (!supported || keyboard === null) {
+    const keyboard = keyboardApi();
+    const root = fullscreenRoot();
+    if (keyboard === null || root === null || isSupportedNow() === false) {
       emit({ status: "unsupported", error: null });
       return;
     }
@@ -163,7 +193,7 @@ export function createNewChatLockUtils(
     emit({ status: "activating", error: null });
     let lockRequested = false;
     try {
-      if (enteredFullscreen) await fullscreenRoot.requestFullscreen();
+      if (enteredFullscreen) await root.requestFullscreen();
       ownsFullscreen = enteredFullscreen;
       if (cancelled()) {
         exitOwnedFullscreen();
@@ -208,10 +238,10 @@ export function createNewChatLockUtils(
     toggle,
     deactivate,
     dispose,
-    getSnapshot: () => snapshot,
+    getSnapshot: readSnapshot,
     subscribe(listener) {
       listeners.add(listener);
-      listener(snapshot);
+      listener(readSnapshot());
       return () => listeners.delete(listener);
     },
   };

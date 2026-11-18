@@ -124,6 +124,27 @@ describe("createNewChatLockUtils", () => {
     lock.dispose();
   });
 
+  it("re-reads support instead of latching it at construction", () => {
+    const fixture = createFullscreenFixture();
+    Object.defineProperty(document, "fullscreenEnabled", {
+      configurable: true,
+      value: false,
+    });
+    const lock = createNewChatLockUtils({
+      doc: document,
+      keyboard: fixture.keyboard,
+    });
+    expect(lock.getSnapshot().status).toBe("unsupported");
+
+    Object.defineProperty(document, "fullscreenEnabled", {
+      configurable: true,
+      value: true,
+    });
+
+    expect(lock.getSnapshot().status).toBe("inactive");
+    lock.dispose();
+  });
+
   it("restores inactive state if fullscreen entry fails", async () => {
     const fixture = createFullscreenFixture();
     fixture.requestFullscreen.mockRejectedValue(new Error("denied"));
