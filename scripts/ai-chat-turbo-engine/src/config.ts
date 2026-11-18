@@ -967,6 +967,14 @@ export const PLATFORMS = {
     newChatShortcut: "/chat/",
     hosts: ["yuanbao.tencent.com"],
     supportsToolMemory: true,
+    /*
+     * Yuanbao wraps its new chat control in a `div[role="button"]` and only
+     * names it through `aria-label`, so the shared `button[aria-label*=...]`
+     * heuristics miss it. The entry is mounted inside the rail only once the
+     * history list has loaded: a collapsed rail keeps the skeleton and no
+     * entry at all, so the shortcut falls back to the `/chat/` route then.
+     */
+    newChatControlSelectors: [".yb-new-chat-entry__item"],
     sidebar: {
       selectors: [".yb-nav__content-wrapper"],
       triggers: [

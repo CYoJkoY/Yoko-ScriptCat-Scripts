@@ -506,6 +506,15 @@ pointerdown → mousedown → pointerup → mouseup → click
 
 ## 版本记录
 
+### 0.23.4
+
+**元宝的新对话按钮改由平台选择器命中。**
+
+- **根因。** 元宝把「新建对话」渲染成 `div[role="button"]`，只靠 `aria-label` 命名，而共享选择器里的 `button[aria-label*=...]` 一条都要求 `<button>` 标签，因此整站漏检；侧栏折叠时该入口甚至根本不在 DOM 里（ rail 只挂骨架屏），此时 `Ctrl + Shift + O` 只能依赖 URL 兜底。
+- **平台级选择器。** `yuanbao` 新增 `newChatControlSelectors: [".yb-new-chat-entry__item"]`，在共享查找之前优先匹配。入口与同排的「AI 创作」「技能」并列，靠类名区分不会误点。实测 CDP 真实点击该元素后，原会话消息被清空、输入框归零，与「新建对话」的预期一致。
+- **兜底仍保留。** 侧栏折叠、入口未渲染时仍走 `newChatShortcut: "/chat/"`；实测该路由会把浏览器送回原会话，因此入口命中才是可靠路径。
+- **测试覆盖。** 平台选择器命中并列的三个 role 按钮中正确的一个，以及未声明平台的其他主机不套用该选择器，均有单元测试。
+
 ### 0.23.3
 
 **DeepSeek 的新对话按钮改由图标识别。**

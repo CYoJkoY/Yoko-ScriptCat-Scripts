@@ -151,6 +151,33 @@ describe("findNewChatControl", () => {
 
     expect(findNewChatControl(document, { hostname: "zchat.z.ai" })).toBeNull();
   });
+
+  it("finds the yuanbao entry behind a role-only markup", () => {
+    document.body.innerHTML = [
+      '<div class="yb-recent-conv-list__split">最近</div>',
+      '<div class="yb-new-chat-entry__item" role="button" aria-label="新建对话" tabindex="0"></div>',
+      '<div class="yb-ai-creation-entry__item" role="button" aria-label="AI 创作" tabindex="0"></div>',
+    ].join("");
+    const entry = document.querySelector(".yb-new-chat-entry__item") as HTMLElement;
+    markRendered(entry);
+
+    const control = findNewChatControl(document, {
+      hostname: "yuanbao.tencent.com",
+    });
+    expect(control?.className).toBe("yb-new-chat-entry__item");
+  });
+
+  it("keeps the yuanbao entry out of reach on another host", () => {
+    document.body.innerHTML =
+      '<div class="yb-new-chat-entry__item" role="button"></div>';
+    markRendered(
+      document.querySelector(".yb-new-chat-entry__item") as HTMLElement,
+    );
+
+    expect(
+      findNewChatControl(document, { hostname: "zchat.z.ai" }),
+    ).toBeNull();
+  });
 });
 
 describe("handleNewChatShortcut", () => {
