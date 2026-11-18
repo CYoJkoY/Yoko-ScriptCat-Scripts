@@ -55,6 +55,10 @@ function errorMessage(error: unknown): string {
  * before the page sees it, so a capture listener alone cannot claim it. The
  * Keyboard Lock API is the only web-platform override; it captures the key
  * while the document is fullscreen and releases it on exit.
+ *
+ * `lock()` can resolve outside fullscreen, but the spec only routes a reserved
+ * key to the page while a fullscreen element is present, so the fullscreen
+ * request has to come first: a resolved lock without it silently does nothing.
  */
 export function createNewChatLockUtils(
   options: NewChatLockOptions = {},
