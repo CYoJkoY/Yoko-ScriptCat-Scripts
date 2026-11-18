@@ -9,6 +9,7 @@ import {
 import { isEngineDormant } from "./auth";
 import type { ComposerUtils } from "./composer";
 import { reportRecoverableError } from "./diagnostics";
+import { findNewChatControl } from "./new-chat";
 import type { SendInterceptUtils } from "./send";
 import { isObjectRecord } from "../storage/reasoning-memory";
 import { createReportedStorage } from "../storage/reported";
@@ -327,82 +328,6 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
     return null;
   }
 
-  function findNewChatControl(): HTMLElement | null {
-    const selectors = [
-      'button[data-testid*="new-chat" i]',
-      'button[data-testid*="new_chat" i]',
-      'button[data-testid*="new-conversation" i]',
-      '[role="button"][data-testid*="new-chat" i]',
-      'button[aria-label*="new chat" i]',
-      'button[aria-label*="new conversation" i]',
-      'button[aria-label*="start new chat" i]',
-      'a[aria-label*="new chat" i]',
-      'button[title*="new chat" i]',
-      'button[title*="new conversation" i]',
-      'button[aria-label*="新建对话"]',
-      'button[aria-label*="新对话"]',
-      'button[aria-label*="新建聊天"]',
-      'button[title*="新建对话"]',
-      'button[title*="新对话"]',
-      'a[aria-label*="新对话"]',
-    ];
-
-    for (const selector of selectors) {
-      let controls: Element[] = [];
-      try {
-        controls = Array.from(document.querySelectorAll(selector));
-      } catch (error: unknown) {
-        reportRecoverableError("query new chat control", error);
-      }
-      const found = controls.find(
-        (control): control is HTMLElement =>
-          control instanceof HTMLElement &&
-          control.isConnected &&
-          control.getAttribute("target") !== "_blank" &&
-          (control.offsetParent !== null ||
-            control.getClientRects().length > 0),
-      );
-      if (found) return found;
-    }
-
-    const exactLabels = new Set([
-      "new chat",
-      "new conversation",
-      "new thread",
-      "start new chat",
-      "新建对话",
-      "新对话",
-      "新建聊天",
-      "开始新对话",
-      "开启新对话",
-    ]);
-    const labeledControl = Array.from(
-      document.querySelectorAll("button, a, [role='button']"),
-    ).find((control): control is HTMLElement => {
-          if (
-            !(control instanceof HTMLElement) ||
-            !control.isConnected ||
-            control.getAttribute("target") === "_blank" ||
-            !(
-              control.offsetParent !== null ||
-              control.getClientRects().length > 0
-            )
-          ) {
-            return false;
-          }
-          const label = [
-            control.getAttribute("aria-label") || "",
-            control.getAttribute("title") || "",
-            control.innerText || control.textContent || "",
-          ]
-            .join(" ")
-            .trim()
-            .toLowerCase();
-          return exactLabels.has(label);
-        });
-    return labeledControl ?? null;
-  }
-
   function resumePendingHandoffPrompt(): void {
     if (isEngineDormant()) return;
     if (handoffResumeTimer !== null) {
@@ -636,7 +561,7 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
   function proceedOneClickHandoff(result: HandoffPackage): void {
     if (isEngineDormant()) return;
     const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
-    const newChatControl = findNewChatControl();
+    const newChatControl = findNewChatControl(document);
 
     if (!newChatControl) {
       copyHandoffFallback(
@@ -676,7 +601,7 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
     }
 
     const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
-    const newChatControl = findNewChatControl();
+    const newChatControl = findNewChatControl(document);
 
     if (!newChatControl) {
       navigator.clipboard

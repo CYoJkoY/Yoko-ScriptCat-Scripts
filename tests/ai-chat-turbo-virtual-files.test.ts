@@ -37,17 +37,19 @@ const LONG_TEXT = "虚拟文件往返测试。".repeat(200);
 interface VirtualFileFixture {
   files: VirtualFileUtils;
   textarea: HTMLTextAreaElement;
+  /** Replaces the mounted composer, the way a route change does. */
+  swapComposer: () => HTMLTextAreaElement;
 }
 
 function createFixture(): VirtualFileFixture {
   const container = document.createElement("div");
   container.className = "composer";
-  const textarea = document.createElement("textarea");
-  container.append(textarea);
+  let current = document.createElement("textarea");
+  container.append(current);
   document.body.append(container);
 
   const composer: ComposerUtils = {
-    getChatInput: () => textarea,
+    getChatInput: () => current,
     findSendControl: () => null,
     triggerSendButton: () => false,
     fallbackKeyboardSubmit: () => false,
@@ -70,7 +72,21 @@ function createFixture(): VirtualFileFixture {
     updateHudDashboard: vi.fn(),
     suspendObservers: vi.fn(),
   });
-  return { files, textarea };
+
+  const swapComposer = (): HTMLTextAreaElement => {
+    const next = document.createElement("textarea");
+    container.replaceChildren(next);
+    current = next;
+    return next;
+  };
+
+  return {
+    files,
+    get textarea() {
+      return current;
+    },
+    swapComposer,
+  };
 }
 
 function tray(): HTMLElement | null {
@@ -127,6 +143,126 @@ describe("virtual file tray conversion", () => {
     expect(fixture.files.activeFileCount()).toBe(0);
     expect(fixture.textarea.value).toBe(LONG_TEXT.trim());
     expect(document.querySelector(".ai-turbo-vf-pill")).toBeNull();
+  });
+
+  it("leaves no conversion prompt behind after returning a file to text", () => {
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    document
+      .querySelector<HTMLButtonElement>(".ai-turbo-vf-convert-composer")
+      ?.click();
+    document
+      .querySelector<HTMLButtonElement>(".ai-turbo-vf-action-convert")
+      ?.click();
+
+    expect(tray()).toBeNull();
+
+    // The host echoes the programmatic insertion with its own input event.
+    fixture.files.handleComposerInput(fixture.textarea);
+    expect(tray()).toBeNull();
+  });
+
+  it("offers conversion again once the restored text changes", () => {
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    document
+      .querySelector<HTMLButtonElement>(".ai-turbo-vf-convert-composer")
+      ?.click();
+    document
+      .querySelector<HTMLButtonElement>(".ai-turbo-vf-action-convert")
+      ?.click();
+    expect(tray()).toBeNull();
+
+    fixture.textarea.value = `${LONG_TEXT}继续写`;
+    fixture.files.handleComposerInput(fixture.textarea);
+
+    expect(tray()).not.toBeNull();
+    expect(tray()?.textContent).toContain("文本转文件");
+  });
+
+  it("keeps a dismissed conversion prompt closed until the text changes", () => {
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+
+    const dismiss = document.querySelector<HTMLButtonElement>(
+      ".ai-turbo-vf-dismiss-conversion",
+    );
+    expect(dismiss).not.toBeNull();
+    dismiss?.click();
+    expect(tray()).toBeNull();
+
+    fixture.files.handleComposerInput(fixture.textarea);
+    expect(tray()).toBeNull();
+
+    fixture.textarea.value = `${LONG_TEXT}再改一次`;
+    fixture.files.handleComposerInput(fixture.textarea);
+    expect(tray()).not.toBeNull();
+  });
+
+  it("clears the tray when the pending files are sent", () => {
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    document
+      .querySelector<HTMLButtonElement>(".ai-turbo-vf-convert-composer")
+      ?.click();
+    expect(tray()).not.toBeNull();
+
+    expect(fixture.files.fuseAndSubmit(fixture.textarea)).toBe(true);
+    expect(fixture.files.activeFileCount()).toBe(0);
+    expect(tray()).toBeNull();
+
+    fixture.files.handleComposerInput(fixture.textarea);
+    expect(tray()).toBeNull();
+  });
+
+  it("removes the whole tray when a conversion prompt is dismissed", () => {
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    expect(document.querySelector(".ai-turbo-vf-list")).toBeNull();
+
+    document
+      .querySelector<HTMLButtonElement>(".ai-turbo-vf-dismiss-conversion")
+      ?.click();
+
+    expect(tray()).toBeNull();
+    expect(fixture.files.isTrayDirty()).toBe(false);
+  });
+
+  it("positions a prompt-only tray instead of leaving it hidden", async () => {
+    // jsdom never lays out nodes, so the tray needs a composer with a box.
+    fixture.textarea.getBoundingClientRect = () =>
+      ({ top: 500, left: 40, width: 720, height: 120 }) as DOMRect;
+
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(tray()?.classList.contains("is-positioned")).toBe(true);
+    expect(document.querySelector(".ai-turbo-vf-list")).toBeNull();
+  });
+
+  it("drops a prompt-only tray when a route swap leaves an empty composer", async () => {
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    expect(tray()).not.toBeNull();
+
+    fixture.textarea.value = "";
+    await new Promise((resolve) => setTimeout(resolve, 160));
+
+    expect(tray()).toBeNull();
+  });
+
+  it("drops the tray when the host swaps in a fresh empty composer", async () => {
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    expect(tray()).not.toBeNull();
+
+    const next = fixture.swapComposer();
+    await new Promise((resolve) => setTimeout(resolve, 160));
+
+    expect(next.value).toBe("");
+    expect(tray()).toBeNull();
+    expect(fixture.files.isTrayDirty()).toBe(false);
   });
 
   it("removes the tray again when the composer text becomes short", () => {
