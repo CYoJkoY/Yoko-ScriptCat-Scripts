@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.21.0
-// @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆
+// @version      0.23.0
+// @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
-// @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/ai-chat-turbo-engine.user.js
-// @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/dist/ai-chat-turbo-engine.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
+// @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/ai-chat-turbo-engine.user.js
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @match        https://gemini.google.com/*
@@ -259,7 +259,7 @@
   var PLATFORMS = {
     chatgpt: {
       name: "ChatGPT",
-      newChatShortcut: "native",
+      newChatShortcut: "/",
       hosts: ["chatgpt.com", "chat.openai.com"],
       shellTurnRoots: true,
       codeCardChrome: true,
@@ -386,7 +386,7 @@
     },
     gemini: {
       name: "Gemini",
-      newChatShortcut: "native",
+      newChatShortcut: "/app",
       hosts: ["gemini.google.com"],
       nativeTurnRoots: true,
       quietMotion: true,
@@ -7228,6 +7228,7 @@ ${CODE_FENCE}
     'a[aria-label*="新对话"]'
   ];
   var CONTROL_SELECTOR = CONTROL_SELECTORS.join(",");
+  var NEW_CHAT_SHORTCUT_CODE = "KeyO";
   var EXACT_LABELS = /* @__PURE__ */ new Set([
     "new chat",
     "new conversation",
@@ -7243,16 +7244,6 @@ ${CODE_FENCE}
     "开启新对话",
     "新建会话"
   ]);
-  var MODIFIER_ALIASES = {
-    ctrl: "control",
-    control: "control",
-    shift: "shift",
-    alt: "alt",
-    option: "alt",
-    meta: "meta",
-    cmd: "meta",
-    command: "meta"
-  };
   function normalizeLabel(value) {
     return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
   }
@@ -7272,9 +7263,6 @@ ${CODE_FENCE}
     ];
     return labels.some((label) => EXACT_LABELS.has(normalizeLabel(label)));
   }
-  function isNewChatControl(control) {
-    return control.matches(CONTROL_SELECTOR) || hasNewChatLabel(control);
-  }
   function findNewChatControl(root) {
     for (const control of root.querySelectorAll(CONTROL_SELECTOR)) {
       if (control instanceof HTMLElement && isRendered(control)) return control;
@@ -7287,42 +7275,37 @@ ${CODE_FENCE}
     }
     return null;
   }
-  function advertisesNativeShortcut(root) {
-    for (const control of root.querySelectorAll("[aria-keyshortcuts]")) {
-      if (!(control instanceof HTMLElement)) continue;
-      if (!isNewChatControl(control)) continue;
-      const declared = control.getAttribute("aria-keyshortcuts") ?? "";
-      for (const shortcut of declared.split(/\s+/)) {
-        const parts = shortcut.split("+").map(normalizeLabel).map((part) => MODIFIER_ALIASES[part] ?? part).sort();
-        if (parts.join("+") === "control+o+shift") return true;
-      }
-    }
-    return false;
-  }
-  function newChatDestination(platform, page) {
-    if (platform.newChatShortcut === "native") return null;
-    const path = platform.hostPaths?.[page.location.hostname] ?? platform.newChatShortcut;
-    const destination = new URL(path, page.location.origin);
-    return destination.href === page.location.href ? null : destination.href;
-  }
-  function handleNewChatShortcut(event, platform, page) {
-    if (platform.newChatShortcut === "native") return;
-    if (event.defaultPrevented || event.isComposing) return;
-    if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
-    if (event.code !== "KeyO" && event.key.toLowerCase() !== "o") return;
-    if (advertisesNativeShortcut(page.document)) return;
-    const control = findNewChatControl(page.document);
-    const destination = newChatDestination(platform, page);
-    if (control !== null) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (!event.repeat) control.click();
+  function handleNewChatShortcut(event, page) {
+    if (event.defaultPrevented === true || event.isComposing === true) return;
+    if (event.ctrlKey === false || event.shiftKey === false) return;
+    if (event.altKey === true || event.metaKey === true) return;
+    if (event.code !== NEW_CHAT_SHORTCUT_CODE && event.key.toLowerCase() !== "o") {
       return;
     }
-    if (destination === null) return;
+    const { location: location2 } = page;
+    if (isAuthOrRedirectRoute(location2) === true) return;
+    const platform = findPlatformForLocation(location2.hostname, location2.pathname);
+    if (platform === null) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (!event.repeat) page.location.assign(destination);
+    if (event.repeat === true) return;
+    const control = findNewChatControl(page.document);
+    if (control !== null) {
+      control.click();
+      return;
+    }
+    const path = platform.hostPaths?.[location2.hostname] ?? platform.newChatShortcut;
+    const destination = new URL(path, location2.origin);
+    if (destination.href !== location2.href) location2.assign(destination.href);
+  }
+  function bindNewChatShortcut(target, page) {
+    const listener = (event) => {
+      handleNewChatShortcut(event, page);
+    };
+    target.addEventListener("keydown", listener, { capture: true, passive: false });
+    return () => {
+      target.removeEventListener("keydown", listener, { capture: true });
+    };
   }
 
   // scripts/ai-chat-turbo-engine/src/core/handoff.ts
@@ -7826,6 +7809,178 @@ ${contentText}`);
     };
   }
 
+  // scripts/ai-chat-turbo-engine/src/core/new-chat-lock.ts
+  function isKeyboardLockApi(value) {
+    if (typeof value !== "object" || value === null) return false;
+    if (!("lock" in value) || !("unlock" in value)) return false;
+    return typeof value.lock === "function" && typeof value.unlock === "function";
+  }
+  function readKeyboardLockApi(view) {
+    if (view === null) return null;
+    const candidate = view.navigator.keyboard;
+    return isKeyboardLockApi(candidate) ? candidate : null;
+  }
+  function errorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  function createNewChatLockUtils(options = {}) {
+    const doc = options.doc ?? document;
+    let keyboardOverride = options.keyboard;
+    const keyboardApi = () => {
+      if (keyboardOverride === void 0) {
+        keyboardOverride = readKeyboardLockApi(doc.defaultView);
+      }
+      return keyboardOverride;
+    };
+    const fullscreenRoot = () => {
+      const root = doc.documentElement;
+      if (root === null || typeof root.requestFullscreen !== "function") {
+        return null;
+      }
+      return root;
+    };
+    const isSupportedNow = () => keyboardApi() !== null && doc.fullscreenEnabled === true && fullscreenRoot() !== null && typeof doc.exitFullscreen === "function";
+    let snapshot = { status: "inactive", error: null };
+    let ownsFullscreen = false;
+    let lockHeld = false;
+    let activationPending = false;
+    let disposed = false;
+    let activationId = 0;
+    const listeners = /* @__PURE__ */ new Set();
+    const restingSnapshot = () => ({
+      status: isSupportedNow() ? "inactive" : "unsupported",
+      error: null
+    });
+    const readSnapshot = () => {
+      if (snapshot.status === "active" || snapshot.status === "activating" || snapshot.status === "error") {
+        return snapshot;
+      }
+      return restingSnapshot();
+    };
+    const emit = (next) => {
+      snapshot = next;
+      for (const listener of listeners) listener(readSnapshot());
+    };
+    const unlockKeyboard = () => {
+      const keyboard = keyboardApi();
+      if (keyboard === null) return;
+      try {
+        keyboard.unlock();
+      } catch (error) {
+        reportRecoverableError("release shortcut lock", error);
+      }
+    };
+    const releaseLock = () => {
+      if (!lockHeld) return;
+      lockHeld = false;
+      unlockKeyboard();
+    };
+    const exitOwnedFullscreen = () => {
+      if (!ownsFullscreen) return;
+      ownsFullscreen = false;
+      if (doc.fullscreenElement === null) return;
+      void doc.exitFullscreen().catch((error) => {
+        reportRecoverableError("exit shortcut fullscreen", error);
+      });
+    };
+    const deactivate = () => {
+      const hadState = snapshot.status === "active" || snapshot.status === "activating" || snapshot.status === "error";
+      if (!hadState && !ownsFullscreen) return;
+      activationId++;
+      releaseLock();
+      exitOwnedFullscreen();
+      emit(restingSnapshot());
+    };
+    const onFullscreenChange = () => {
+      if (doc.fullscreenElement !== null) return;
+      if (snapshot.status === "active" || snapshot.status === "activating") {
+        activationId++;
+        ownsFullscreen = false;
+        releaseLock();
+        emit(restingSnapshot());
+      }
+    };
+    const onPageHide = () => {
+      activationId++;
+      releaseLock();
+      ownsFullscreen = false;
+      if (snapshot.status === "active" || snapshot.status === "activating") {
+        emit(restingSnapshot());
+      }
+    };
+    doc.addEventListener("fullscreenchange", onFullscreenChange);
+    doc.defaultView?.addEventListener("pagehide", onPageHide);
+    const toggle = async () => {
+      if (disposed || activationPending || snapshot.status === "activating") return;
+      if (snapshot.status === "active") {
+        deactivate();
+        return;
+      }
+      const keyboard = keyboardApi();
+      const root = fullscreenRoot();
+      if (keyboard === null || root === null || isSupportedNow() === false) {
+        emit({ status: "unsupported", error: null });
+        return;
+      }
+      const attemptId = ++activationId;
+      const enteredFullscreen = doc.fullscreenElement === null;
+      const cancelled = () => attemptId !== activationId || disposed;
+      activationPending = true;
+      emit({ status: "activating", error: null });
+      let lockRequested = false;
+      try {
+        if (enteredFullscreen) await root.requestFullscreen();
+        ownsFullscreen = enteredFullscreen;
+        if (cancelled()) {
+          exitOwnedFullscreen();
+          return;
+        }
+        lockRequested = true;
+        await keyboard.lock([NEW_CHAT_SHORTCUT_CODE]);
+        lockHeld = true;
+        if (cancelled()) {
+          releaseLock();
+          exitOwnedFullscreen();
+          return;
+        }
+        if (doc.fullscreenElement === null) {
+          throw new Error("Fullscreen ended before the shortcut lock was active");
+        }
+        emit({ status: "active", error: null });
+      } catch (error) {
+        if (lockRequested) {
+          lockHeld = false;
+          unlockKeyboard();
+        }
+        if (cancelled()) return;
+        exitOwnedFullscreen();
+        emit({ status: "error", error: errorMessage(error) });
+      } finally {
+        activationPending = false;
+      }
+    };
+    const dispose = () => {
+      if (disposed) return;
+      deactivate();
+      releaseLock();
+      disposed = true;
+      doc.removeEventListener("fullscreenchange", onFullscreenChange);
+      doc.defaultView?.removeEventListener("pagehide", onPageHide);
+      listeners.clear();
+    };
+    return {
+      toggle,
+      deactivate,
+      dispose,
+      getSnapshot: readSnapshot,
+      subscribe(listener) {
+        listeners.add(listener);
+        listener(readSnapshot());
+        return () => listeners.delete(listener);
+      }
+    };
+  }
+
   // scripts/ai-chat-turbo-engine/src/ui/hud-styles.ts
   var HUD_STYLES = `
     * { box-sizing: border-box; }
@@ -8299,6 +8454,7 @@ ${contentText}`);
       reasoning,
       toolMemory,
       handoff,
+      newChatLock,
       isEngineDormant: isEngineDormant2,
       requestUpdate,
       requestFullTurnSync,
@@ -8312,6 +8468,7 @@ ${contentText}`);
     let hudRootElement = null;
     let hudShadowRoot = null;
     let hudStats = null;
+    let unsubscribeNewChatLock = null;
     let searchInput = null;
     let searchResultsBox = null;
     let searchDebounceTimer = null;
@@ -8452,6 +8609,34 @@ ${contentText}`);
         updateHudDashboard();
       }
       announce("已恢复默认设置");
+    }
+    function newChatLockButtonLabel(status) {
+      if (status === "active") return "退出快捷键接管";
+      if (status === "activating") return "正在接管…";
+      if (status === "unsupported") return "当前浏览器不支持接管";
+      return "全屏接管 Ctrl+Shift+O";
+    }
+    function newChatLockHint(snapshot) {
+      if (snapshot.status === "unsupported") {
+        return "当前浏览器不支持键盘锁，请在 Chrome 或 Edge 中使用。";
+      }
+      if (snapshot.status === "activating") return "正在申请全屏并接管快捷键…";
+      if (snapshot.status === "active") {
+        return "接管中：Ctrl+Shift+O 打开新对话。按 Esc 退出全屏并恢复浏览器快捷键。";
+      }
+      if (snapshot.status === "error") {
+        const reason = snapshot.error ?? "浏览器未允许键盘锁";
+        return `接管失败：${reason}。请重试。`;
+      }
+      return "浏览器把 Ctrl+Shift+O 用于收藏夹。接管会进入全屏并锁住该键，按 Esc 退出全屏即恢复。";
+    }
+    function renderNewChatLockStatus(snapshot) {
+      if (!hudStats) return;
+      const button = hudStats.newChatLockButton;
+      button.disabled = snapshot.status === "unsupported" || snapshot.status === "activating";
+      button.textContent = newChatLockButtonLabel(snapshot.status);
+      button.setAttribute("aria-pressed", String(snapshot.status === "active"));
+      hudStats.newChatLockStatus.textContent = newChatLockHint(snapshot);
     }
     function updateHudDashboard() {
       syncTheme();
@@ -9110,6 +9295,24 @@ ${contentText}`);
         ]),
         ...commonRows
       ]);
+      const newChatLockButton = el(
+        "button",
+        { className: "action-btn", type: "button", "aria-pressed": "false" },
+        ["全屏接管 Ctrl+Shift+O"]
+      );
+      const newChatLockStatus = el(
+        "div",
+        { className: "handoff-status", role: "status", "aria-live": "polite" },
+        []
+      );
+      newChatLockButton.addEventListener("click", () => {
+        void newChatLock.toggle();
+      });
+      const newChatLockSection = el("div", { className: "section" }, [
+        el("div", { className: "section-title" }, ["新对话快捷键"]),
+        newChatLockButton,
+        newChatLockStatus
+      ]);
       keepValue = el("span", { id: "keep-val" }, [String(state.keepTurns)]);
       const stepDec = el(
         "button",
@@ -9307,6 +9510,7 @@ ${contentText}`);
           searchSection,
           handoffSection,
           commonSection,
+          newChatLockSection,
           advancedSettings,
           footerHint,
           liveRegion
@@ -9340,12 +9544,16 @@ ${contentText}`);
         backdrop,
         pillRoot: pill,
         dockButton: btnDock,
+        newChatLockButton,
+        newChatLockStatus,
         pillCount: pillCountValue,
         pillLoadProgress,
         liveRegion,
         signature: ""
       };
       syncControls();
+      unsubscribeNewChatLock?.();
+      unsubscribeNewChatLock = newChatLock.subscribe(renderNewChatLockStatus);
       bindThemeWatchers();
       applyPanelState(state.hudOpen);
       updateHudDashboard();
@@ -9362,6 +9570,8 @@ ${contentText}`);
       }
     }
     function teardown() {
+      unsubscribeNewChatLock?.();
+      unsubscribeNewChatLock = null;
       if (searchDebounceTimer !== null) {
         window.clearTimeout(searchDebounceTimer);
         searchDebounceTimer = null;
@@ -11597,7 +11807,8 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
   function initializeEngine() {
     const VERSION = readUserscriptInfo(globalThis)?.script.version ?? "0.0.0";
     const detectedPlatform = detectPlatform();
-    if (!detectedPlatform) return;
+    if (detectedPlatform === null) return;
+    bindNewChatShortcut(window, window);
     const currentPlatform = detectedPlatform;
     const injectStyles = () => injectEngineStyles({
       geminiNativeRender: currentPlatform.nativeTurnRoots === true
@@ -11615,6 +11826,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       isUserTurn
     } = createTurnUtils(currentPlatform);
     const state = createEngineState();
+    const newChatLock = createNewChatLockUtils();
     const motionQuiet = createMotionQuiet({
       onQuietEnd: () => {
         if (isEngineDormant()) return;
@@ -11771,6 +11983,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       reasoning,
       toolMemory,
       handoff,
+      newChatLock,
       isEngineDormant,
       requestUpdate: () => requestUpdate(),
       requestFullTurnSync: () => {
@@ -12093,6 +12306,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       });
     }
     function teardownEngine() {
+      newChatLock.deactivate();
       reasoning.attachStatusNode(null);
       toolMemory.teardown();
       setEngineActive(false);
@@ -12192,9 +12406,7 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
             event.preventDefault();
             event.stopPropagation();
             hud?.togglePanel();
-            return;
           }
-          handleNewChatShortcut(event, currentPlatform, window);
         },
         true
       );
