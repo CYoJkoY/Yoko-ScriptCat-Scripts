@@ -460,6 +460,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
   function newChatLockButtonLabel(status: NewChatLockStatus): string {
     if (status === "active") return "退出快捷键接管";
     if (status === "activating") return "正在接管…";
+    if (status === "unsupported") return "当前浏览器不支持接管";
     return "全屏接管 Ctrl+Shift+O";
   }
 

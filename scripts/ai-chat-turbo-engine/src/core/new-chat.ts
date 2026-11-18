@@ -136,3 +136,23 @@ export function handleNewChatShortcut(
   const destination = new URL(path, location.origin);
   if (destination.href !== location.href) location.assign(destination.href);
 }
+
+/**
+ * Claim the combination during the capture phase for the whole page lifetime.
+ *
+ * The listener is registered once, before the engine boots, so it also covers
+ * login and redirect routes that never build the HUD; the returned unbinder
+ * exists for tests and for a future re-injection guard.
+ */
+export function bindNewChatShortcut(
+  target: Pick<Window, "addEventListener" | "removeEventListener">,
+  page: NewChatPage,
+): () => void {
+  const listener = (event: KeyboardEvent): void => {
+    handleNewChatShortcut(event, page);
+  };
+  target.addEventListener("keydown", listener, { capture: true, passive: false });
+  return () => {
+    target.removeEventListener("keydown", listener, { capture: true });
+  };
+}

@@ -16,9 +16,8 @@ export interface NewChatLockSnapshot {
 export interface NewChatLockUtils {
   toggle(): Promise<void>;
   deactivate(): void;
+  /** Test-only full teardown; production teardown calls `deactivate()`. */
   dispose(): void;
-  isActive(): boolean;
-  isSupported(): boolean;
   getSnapshot(): NewChatLockSnapshot;
   subscribe(listener: (snapshot: NewChatLockSnapshot) => void): () => void;
 }
@@ -209,8 +208,6 @@ export function createNewChatLockUtils(
     toggle,
     deactivate,
     dispose,
-    isActive: () => snapshot.status === "active",
-    isSupported: () => supported,
     getSnapshot: () => snapshot,
     subscribe(listener) {
       listeners.add(listener);

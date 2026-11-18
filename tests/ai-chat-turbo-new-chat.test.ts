@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  bindNewChatShortcut,
   findNewChatControl,
   handleNewChatShortcut,
 } from "../scripts/ai-chat-turbo-engine/src/core/new-chat";
@@ -247,5 +248,28 @@ describe("handleNewChatShortcut", () => {
 
     expect(click).not.toHaveBeenCalled();
     expect(page.location.assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("bindNewChatShortcut", () => {
+  it("registers one page-lifetime listener and stops on unbind", () => {
+    const control = addControl({ "aria-label": "New chat" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage("https://chatgpt.com/c/1");
+    const target = new EventTarget();
+
+    const unbind = bindNewChatShortcut(target, page);
+    const bound = shortcutEvent();
+    target.dispatchEvent(bound);
+
+    expect(bound.defaultPrevented).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+
+    unbind();
+    const afterUnbind = shortcutEvent();
+    target.dispatchEvent(afterUnbind);
+
+    expect(afterUnbind.defaultPrevented).toBe(false);
+    expect(click).toHaveBeenCalledTimes(1);
   });
 });

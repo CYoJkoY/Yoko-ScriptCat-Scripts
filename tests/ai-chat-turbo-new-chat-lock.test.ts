@@ -65,8 +65,7 @@ describe("createNewChatLockUtils", () => {
 
     expect(fixture.requestFullscreen).toHaveBeenCalledTimes(1);
     expect(fixture.keyboard.lock).toHaveBeenCalledWith(["KeyO"]);
-    expect(lock.isActive()).toBe(true);
-    expect(lock.isSupported()).toBe(true);
+    expect(lock.getSnapshot().status).toBe("active");
 
     lock.deactivate();
 
@@ -102,7 +101,7 @@ describe("createNewChatLockUtils", () => {
     window.dispatchEvent(new Event("pagehide"));
 
     expect(fixture.keyboard.unlock).toHaveBeenCalledTimes(1);
-    expect(lock.isActive()).toBe(false);
+    expect(lock.getSnapshot().status).toBe("inactive");
     lock.dispose();
   });
 
@@ -114,7 +113,6 @@ describe("createNewChatLockUtils", () => {
     const lock = createNewChatLockUtils({ doc: document, keyboard: null });
 
     expect(lock.getSnapshot().status).toBe("unsupported");
-    expect(lock.isSupported()).toBe(false);
     void lock.toggle();
     expect(lock.getSnapshot().status).toBe("unsupported");
     lock.dispose();
