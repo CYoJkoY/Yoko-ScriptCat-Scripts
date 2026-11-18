@@ -101,6 +101,7 @@ function createHud(
     platform?: PlatformDefinition;
     state?: EngineState;
     onSaved?: () => void;
+    newChatLock?: HudDeps["newChatLock"];
   } = {},
 ): HudFixture {
   const state = options.state ?? createEngineState();
@@ -138,6 +139,13 @@ function createHud(
       resumePendingHandoffPrompt: vi.fn(),
       prepareNewConversationFromYaml: vi.fn(),
       clearResumeTimer: vi.fn(),
+    },
+    newChatLock: options.newChatLock ?? {
+      toggle: vi.fn(async () => undefined),
+      subscribe: (listener) => {
+        listener({ status: "unsupported", error: null });
+        return () => undefined;
+      },
     },
     isEngineDormant: () => false,
     requestUpdate: vi.fn(),
@@ -277,6 +285,61 @@ describe("HUD panel structure", () => {
 
     const yuanbao = createHud({ platform: PLATFORMS.yuanbao });
     expect(yuanbao.shadow.getElementById("hud-tools")).not.toBeNull();
+  });
+
+  it("exposes shortcut takeover and reports unsupported browsers", () => {
+    const toggle = vi.fn(async () => undefined);
+    const { shadow } = createHud({
+      newChatLock: {
+        toggle,
+        subscribe: (listener) => {
+          listener({ status: "unsupported", error: null });
+          return () => undefined;
+        },
+      },
+    });
+    const button = shadow.querySelector<HTMLButtonElement>(
+      'button[aria-pressed="false"]',
+    );
+    const takeoverButton = Array.from(
+      shadow.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((candidate) => candidate.textContent === "接管 Ctrl+Shift+O");
+
+    expect(takeoverButton).toBeDefined();
+    expect(takeoverButton?.disabled).toBe(true);
+    expect(shadow.textContent).toContain("当前浏览器不支持键盘锁");
+    expect(button).not.toBe(takeoverButton);
+  });
+
+  it("invokes shortcut takeover and reflects the active state", () => {
+    const toggle = vi.fn(async () => undefined);
+    const listeners: Array<(snapshot: {
+      readonly status: "unsupported" | "inactive" | "activating" | "active" | "error";
+      readonly error: string | null;
+    }) => void> = [];
+    const { shadow } = createHud({
+      newChatLock: {
+        toggle,
+        subscribe: (subscriber) => {
+          listeners.push(subscriber);
+          subscriber({ status: "inactive", error: null });
+          return () => undefined;
+        },
+      },
+    });
+    const takeoverButton = Array.from(
+      shadow.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((candidate) => candidate.textContent === "接管 Ctrl+Shift+O");
+    const listener = listeners[0];
+    if (!takeoverButton || !listener) throw new Error("Missing takeover control");
+
+    takeoverButton.click();
+    listener({ status: "active", error: null });
+
+    expect(toggle).toHaveBeenCalledTimes(1);
+    expect(takeoverButton.textContent).toBe("退出快捷键接管");
+    expect(takeoverButton.getAttribute("aria-pressed")).toBe("true");
+    expect(shadow.textContent).toContain("按 Esc 退出全屏");
   });
 
   it("associates every switch with a unique id and visible label", () => {

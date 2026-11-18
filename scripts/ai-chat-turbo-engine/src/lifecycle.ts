@@ -20,6 +20,7 @@ import { createComposerUtils } from "./core/composer";
 import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
 import { createHandoffUtils } from "./core/handoff";
 import { handleNewChatShortcut } from "./core/new-chat";
+import { createNewChatLockUtils } from "./core/new-chat-lock";
 import { createHudUtils, type HudUtils } from "./ui/hud";
 import { createChatCapsuleUtils } from "./ui/chat-capsules";
 import { closeTextPreview } from "./ui/text-preview";
@@ -75,6 +76,7 @@ export function initializeEngine(): void {
   } = createTurnUtils(currentPlatform);
 
   const state: EngineState = createEngineState();
+  const newChatLock = createNewChatLockUtils();
   // Gemini slides its history sidebar by animating width; engine resyncs wait
   // for that motion to settle so they never compete with it.
   const motionQuiet = createMotionQuiet({
@@ -260,6 +262,7 @@ export function initializeEngine(): void {
     reasoning,
     toolMemory,
     handoff,
+    newChatLock,
     isEngineDormant,
     requestUpdate: () => requestUpdate(),
     requestFullTurnSync: () => {
@@ -690,6 +693,7 @@ export function initializeEngine(): void {
 
   /** Remove every engine artifact and inline style from the host page. */
   function teardownEngine(): void {
+    newChatLock.deactivate();
     reasoning.attachStatusNode(null);
     toolMemory.teardown();
     setEngineActive(false);
@@ -790,7 +794,7 @@ export function initializeEngine(): void {
       "keydown",
       (event) => {
         if (isEngineDormant()) return;
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !newChatLock.isActive()) {
           if (closeTextPreview()) {
             event.preventDefault();
             event.stopPropagation();
@@ -818,7 +822,12 @@ export function initializeEngine(): void {
           hud?.togglePanel();
           return;
         }
-        handleNewChatShortcut(event, currentPlatform, window);
+        handleNewChatShortcut(
+          event,
+          currentPlatform,
+          window,
+          newChatLock.isActive(),
+        );
       },
       true,
     );

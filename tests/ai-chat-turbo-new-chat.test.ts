@@ -115,6 +115,53 @@ describe("handleNewChatShortcut", () => {
     expect(page.location.assign).not.toHaveBeenCalled();
   });
 
+  it("opens the native site's new chat control while takeover is active", () => {
+    const control = addControl({
+      "aria-label": "New chat",
+      "aria-keyshortcuts": "Control+Shift+O",
+    });
+    const click = vi.spyOn(control, "click");
+    const page = createPage(PLATFORMS.chatgpt, "https://chatgpt.com/c/1");
+    const event = new KeyboardEvent("keydown", {
+      key: "o",
+      code: "KeyO",
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true,
+    });
+
+    handleNewChatShortcut(
+      event,
+      PLATFORMS.chatgpt,
+      page as unknown as Window,
+      true,
+    );
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the platform takeover path when a native site's control is absent", () => {
+    const page = createPage(PLATFORMS.gemini, "https://gemini.google.com/app/chat");
+    const event = new KeyboardEvent("keydown", {
+      key: "o",
+      code: "KeyO",
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true,
+    });
+
+    handleNewChatShortcut(
+      event,
+      PLATFORMS.gemini,
+      page as unknown as Window,
+      true,
+    );
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(page.location.assign).toHaveBeenCalledWith("https://gemini.google.com/app");
+  });
+
   it("clicks the site control once and stops the event", () => {
     const control = addControl({ "aria-label": "New chat" });
     const click = vi.spyOn(control, "click");

@@ -27,6 +27,12 @@ const CONTROL_SELECTORS = [
 
 const CONTROL_SELECTOR = CONTROL_SELECTORS.join(",");
 
+/**
+ * Physical key of the new chat shortcut. The keyboard takeover locks the same
+ * code, so both places must read it from here.
+ */
+export const NEW_CHAT_SHORTCUT_CODE = "KeyO";
+
 /** Labels that name the action and nothing else, for unlabelled markup. */
 const EXACT_LABELS = new Set([
   "new chat",
@@ -133,10 +139,16 @@ function advertisesNativeShortcut(root: Document): boolean {
 function newChatDestination(
   platform: PlatformDefinition,
   page: Window,
+  takeoverActive: boolean,
 ): string | null {
-  if (platform.newChatShortcut === "native") return null;
+  if (platform.newChatShortcut === "native" && !takeoverActive) return null;
+  const configuredPath =
+    platform.newChatShortcut === "native"
+      ? platform.newChatTakeoverPath
+      : platform.newChatShortcut;
+  if (configuredPath === undefined) return null;
   const path =
-    platform.hostPaths?.[page.location.hostname] ?? platform.newChatShortcut;
+    platform.hostPaths?.[page.location.hostname] ?? configuredPath;
   const destination = new URL(path, page.location.origin);
   return destination.href === page.location.href ? null : destination.href;
 }
@@ -155,16 +167,22 @@ export function handleNewChatShortcut(
   event: KeyboardEvent,
   platform: PlatformDefinition,
   page: Window,
+  takeoverActive = false,
 ): void {
-  if (platform.newChatShortcut === "native") return;
+  if (platform.newChatShortcut === "native" && !takeoverActive) return;
   if (event.defaultPrevented || event.isComposing) return;
   if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
-  if (event.code !== "KeyO" && event.key.toLowerCase() !== "o") return;
+  if (
+    event.code !== NEW_CHAT_SHORTCUT_CODE &&
+    event.key.toLowerCase() !== "o"
+  ) {
+    return;
+  }
 
-  if (advertisesNativeShortcut(page.document)) return;
+  if (!takeoverActive && advertisesNativeShortcut(page.document)) return;
 
   const control = findNewChatControl(page.document);
-  const destination = newChatDestination(platform, page);
+  const destination = newChatDestination(platform, page, takeoverActive);
   if (control !== null) {
     event.preventDefault();
     event.stopImmediatePropagation();
