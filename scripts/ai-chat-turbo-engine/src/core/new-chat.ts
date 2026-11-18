@@ -1,4 +1,5 @@
-import type { PlatformDefinition } from "../config";
+import { findPlatformForLocation } from "../config";
+import { isAuthOrRedirectRoute } from "./auth";
 
 /**
  * Selectors carried over from the handoff lookup, which already covered the
@@ -27,11 +28,12 @@ const CONTROL_SELECTORS = [
 
 const CONTROL_SELECTOR = CONTROL_SELECTORS.join(",");
 
-/**
- * Physical key of the new chat shortcut. The keyboard takeover locks the same
- * code, so both places must read it from here.
- */
-export const NEW_CHAT_SHORTCUT_CODE = "KeyO";
+const NEW_CHAT_SHORTCUT_CODE = "KeyO";
+
+interface NewChatPage {
+  readonly document: Document;
+  readonly location: Pick<Location, "hostname" | "pathname" | "origin" | "href" | "assign">;
+}
 
 /** Labels that name the action and nothing else, for unlabelled markup. */
 const EXACT_LABELS = new Set([
@@ -49,17 +51,6 @@ const EXACT_LABELS = new Set([
   "开启新对话",
   "新建会话",
 ]);
-
-const MODIFIER_ALIASES: Readonly<Record<string, string>> = {
-  ctrl: "control",
-  control: "control",
-  shift: "shift",
-  alt: "alt",
-  option: "alt",
-  meta: "meta",
-  cmd: "meta",
-  command: "meta",
-};
 
 function normalizeLabel(value: string | null | undefined): string {
   return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
@@ -88,10 +79,6 @@ function hasNewChatLabel(control: HTMLElement): boolean {
   return labels.some((label) => EXACT_LABELS.has(normalizeLabel(label)));
 }
 
-function isNewChatControl(control: HTMLElement): boolean {
-  return control.matches(CONTROL_SELECTOR) || hasNewChatLabel(control);
-}
-
 /**
  * The new chat control of the current page, or null when the site renders
  * none at this viewport. Hidden copies are skipped: ChatGPT keeps a
@@ -115,63 +102,13 @@ export function findNewChatControl(root: Document): HTMLElement | null {
   return null;
 }
 
-/**
- * A control that already declares our key combination. Clicking it from the
- * shortcut would run the site action twice, once natively and once from us.
- */
-function advertisesNativeShortcut(root: Document): boolean {
-  for (const control of root.querySelectorAll("[aria-keyshortcuts]")) {
-    if (!(control instanceof HTMLElement)) continue;
-    if (!isNewChatControl(control)) continue;
-    const declared = control.getAttribute("aria-keyshortcuts") ?? "";
-    for (const shortcut of declared.split(/\s+/)) {
-      const parts = shortcut
-        .split("+")
-        .map(normalizeLabel)
-        .map((part) => MODIFIER_ALIASES[part] ?? part)
-        .sort();
-      if (parts.join("+") === "control+o+shift") return true;
-    }
-  }
-  return false;
-}
-
-function newChatDestination(
-  platform: PlatformDefinition,
-  page: Window,
-  takeoverActive: boolean,
-): string | null {
-  if (platform.newChatShortcut === "native" && !takeoverActive) return null;
-  const configuredPath =
-    platform.newChatShortcut === "native"
-      ? platform.newChatTakeoverPath
-      : platform.newChatShortcut;
-  if (configuredPath === undefined) return null;
-  const path =
-    platform.hostPaths?.[page.location.hostname] ?? configuredPath;
-  const destination = new URL(path, page.location.origin);
-  return destination.href === page.location.href ? null : destination.href;
-}
-
-/**
- * Open a new conversation on Ctrl+Shift+O.
- *
- * Platforms that ship the same combination are skipped, and so are pages
- * whose own control declares the keys through `aria-keyshortcuts`. Otherwise
- * the site's new chat control is clicked, because that is the only path which
- * keeps the site's own routing and draft handling. Navigating to the
- * platform's blank conversation path is the fallback for views that render no
- * control, such as a collapsed rail with the history list closed.
- */
 export function handleNewChatShortcut(
   event: KeyboardEvent,
-  platform: PlatformDefinition,
-  page: Window,
-  takeoverActive = false,
+  page: NewChatPage,
 ): void {
-  if (platform.newChatShortcut === "native" && !takeoverActive) return;
-  if (event.defaultPrevented || event.isComposing) return;
-  if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
+  if (event.defaultPrevented === true || event.isComposing === true) return;
+  if (event.ctrlKey === false || event.shiftKey === false) return;
+  if (event.altKey === true || event.metaKey === true) return;
   if (
     event.code !== NEW_CHAT_SHORTCUT_CODE &&
     event.key.toLowerCase() !== "o"
@@ -179,19 +116,22 @@ export function handleNewChatShortcut(
     return;
   }
 
-  if (!takeoverActive && advertisesNativeShortcut(page.document)) return;
-
-  const control = findNewChatControl(page.document);
-  const destination = newChatDestination(platform, page, takeoverActive);
-  if (control !== null) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (!event.repeat) control.click();
-    return;
-  }
-  if (destination === null) return;
+  const { location } = page;
+  if (isAuthOrRedirectRoute(location) === true) return;
+  const platform = findPlatformForLocation(location.hostname, location.pathname);
+  if (platform === null) return;
 
   event.preventDefault();
   event.stopImmediatePropagation();
-  if (!event.repeat) page.location.assign(destination);
+  if (event.repeat === true) return;
+
+  const control = findNewChatControl(page.document);
+  if (control !== null) {
+    control.click();
+    return;
+  }
+
+  const path = platform.hostPaths?.[location.hostname] ?? platform.newChatShortcut;
+  const destination = new URL(path, location.origin);
+  if (destination.href !== location.href) location.assign(destination.href);
 }

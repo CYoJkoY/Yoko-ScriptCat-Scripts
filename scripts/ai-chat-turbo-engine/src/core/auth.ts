@@ -71,7 +71,9 @@ export function isEngineActive(): boolean {
   return engineActive;
 }
 
-export function isAuthOrRedirectRoute(locationLike?: Location): boolean {
+export function isAuthOrRedirectRoute(
+  locationLike?: Pick<Location, "hostname" | "pathname">,
+): boolean {
   const source = locationLike || window.location;
   if (!source) return false;
 

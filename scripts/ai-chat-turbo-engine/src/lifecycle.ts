@@ -20,7 +20,6 @@ import { createComposerUtils } from "./core/composer";
 import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
 import { createHandoffUtils } from "./core/handoff";
 import { handleNewChatShortcut } from "./core/new-chat";
-import { createNewChatLockUtils } from "./core/new-chat-lock";
 import { createHudUtils, type HudUtils } from "./ui/hud";
 import { createChatCapsuleUtils } from "./ui/chat-capsules";
 import { closeTextPreview } from "./ui/text-preview";
@@ -53,7 +52,12 @@ export function initializeEngine(): void {
   const VERSION = readUserscriptInfo(globalThis)?.script.version ?? "0.0.0";
 
   const detectedPlatform = detectPlatform();
-  if (!detectedPlatform) return;
+  if (detectedPlatform === null) return;
+  window.addEventListener(
+    "keydown",
+    (event) => handleNewChatShortcut(event, window),
+    { capture: true, passive: false },
+  );
   // Bind the narrowed platform once so closures keep the non-null type.
   const currentPlatform: PlatformDefinition = detectedPlatform;
   // Gemini keeps whole conversations mounted, so its native message blocks get
@@ -76,7 +80,6 @@ export function initializeEngine(): void {
   } = createTurnUtils(currentPlatform);
 
   const state: EngineState = createEngineState();
-  const newChatLock = createNewChatLockUtils();
   // Gemini slides its history sidebar by animating width; engine resyncs wait
   // for that motion to settle so they never compete with it.
   const motionQuiet = createMotionQuiet({
@@ -262,7 +265,6 @@ export function initializeEngine(): void {
     reasoning,
     toolMemory,
     handoff,
-    newChatLock,
     isEngineDormant,
     requestUpdate: () => requestUpdate(),
     requestFullTurnSync: () => {
@@ -693,7 +695,6 @@ export function initializeEngine(): void {
 
   /** Remove every engine artifact and inline style from the host page. */
   function teardownEngine(): void {
-    newChatLock.deactivate();
     reasoning.attachStatusNode(null);
     toolMemory.teardown();
     setEngineActive(false);
@@ -794,7 +795,7 @@ export function initializeEngine(): void {
       "keydown",
       (event) => {
         if (isEngineDormant()) return;
-        if (event.key === "Escape" && !newChatLock.isActive()) {
+        if (event.key === "Escape") {
           if (closeTextPreview()) {
             event.preventDefault();
             event.stopPropagation();
@@ -820,14 +821,7 @@ export function initializeEngine(): void {
           event.preventDefault();
           event.stopPropagation();
           hud?.togglePanel();
-          return;
         }
-        handleNewChatShortcut(
-          event,
-          currentPlatform,
-          window,
-          newChatLock.isActive(),
-        );
       },
       true,
     );
