@@ -129,7 +129,7 @@ export function createVirtualFileUtils(
          */
         if (activeVirtualFiles.length === 0 && !trayInputIsUsable()) {
           const input = composer.getChatInput();
-          if (input === null || !shouldOfferComposerConversion(input)) {
+          if (input === null || !refreshConversionOffer(input)) {
             removeVirtualFileTray();
             return;
           }
@@ -340,7 +340,14 @@ export function createVirtualFileUtils(
     return cached.isConnected && cached.getClientRects().length > 0;
   }
 
-  function shouldOfferComposerConversion(input: HTMLElement | null): boolean {
+  /**
+   * Read the composer and answer whether the conversion offer belongs on
+   * screen. Not pure: the dismissal only survives while the text still
+   * matches, so dropping below the threshold clears it here. Every caller
+   * already runs on an input, render, or frame tick where that reset is
+   * wanted, which keeps the suppression from leaking into the next long text.
+   */
+  function refreshConversionOffer(input: HTMLElement | null): boolean {
     const text = readComposerText(input).trim();
     if (text.length < VIRTUAL_FILE_THRESHOLD) {
       conversionDismissedText = null;
@@ -374,7 +381,7 @@ export function createVirtualFileUtils(
     if (!input) return;
     if (!input.contains(target)) return;
 
-    const offerConversion = shouldOfferComposerConversion(input);
+    const offerConversion = refreshConversionOffer(input);
     const wanted = activeVirtualFiles.length > 0 || offerConversion;
     const present =
       document.getElementById("ai-turbo-vf-tray") !== null;
@@ -457,7 +464,7 @@ export function createVirtualFileUtils(
       convertOnly &&
       (!state.virtualFileEnabled ||
         isEngineDormant() ||
-        !shouldOfferComposerConversion(input))
+        !refreshConversionOffer(input))
     ) {
       removeVirtualFileTray();
       return;
