@@ -561,7 +561,7 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
   function proceedOneClickHandoff(result: HandoffPackage): void {
     if (isEngineDormant()) return;
     const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
-    const newChatControl = findNewChatControl(document);
+    const newChatControl = findNewChatControl(document, location);
 
     if (!newChatControl) {
       copyHandoffFallback(
@@ -601,7 +601,7 @@ export function createHandoffUtils(deps: HandoffDeps): HandoffUtils {
     }
 
     const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
-    const newChatControl = findNewChatControl(document);
+    const newChatControl = findNewChatControl(document, location);
 
     if (!newChatControl) {
       navigator.clipboard

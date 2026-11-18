@@ -510,6 +510,16 @@ pointerdown → mousedown → pointerup → mouseup → click
 
 **抢在页面脚本之前注册 `keydown`，修复元宝上快捷键被吞掉的问题。**
 
+### 0.23.3
+
+**DeepSeek 的新对话按钮改由图标识别。**
+
+- **根因。** DeepSeek 把新对话按钮渲染成不带 `aria-label` / `title` / 文本的裸 `div[role="button"]`，同一工具栏排里还并排着搜索与历史两个按钮，三者的 class 完全相同。共享选择器与「精确文案」两遍查找在此站全部落空，`Ctrl + Shift + O` 只能退化成整页跳转，即使原按钮就在页面上。
+- **平台级选择器。** `PlatformDefinition` 新增可选字段 `newChatControlSelectors`，在共享查找之前优先匹配。DeepSeek 用它按图标特征定位：气泡加号图形的 `path` 数据以 `M8 0.599609` 开头，同排的搜索与历史图标均不匹配，因此不会误点。这与既有 `inputSelectors` / `sendButtonSelectors` 的平台专用风格一致。
+- **不打扰其他平台。** 未声明该字段的平台行为逐字节不变；`findNewChatControl` 只在拿到平台后追加一遍查找，且仅在声明了选择器时执行。一键交接复用同一函数，因此两个入口现在命中同一个按钮。
+- **站点改版备忘。** DeepSeek 旧的 `.ca6d4be1 .ds-button` 触发器及其容器已不在 DOM 中，侧栏探出的触发器列表随之失效；该问题不在本次改动范围内，需要单独核对。
+- **测试覆盖。** 三个同 class 并列的按钮中只命中加号图标、以及在其他主机上不套用平台选择器，均有单元测试。
+
 - **根因。** 腾讯元宝在页面脚本执行阶段就往 `window` 上注册了捕获态 `keydown` 拦截，命中后不再向同一目标上的后续监听派发。引擎的监听虽然也是捕获态，但注册得更晚，因此 `Ctrl + Shift + O` 到不了处理器：既不会点击「新建对话」，也不会被引擎取消。
 - **`@early-start`。** ScriptCat 支持 `@early-start`，配合 `@run-at document-start` 会在页面脚本之前求值脚本。引擎的快捷键监听本来就在 `initializeEngine()` 顶部同步注册（早于推迟到 `DOMContentLoaded` 的 boot），因此提前注入即可排到站点拦截器之前。
 - **不改运行期行为。** 面板挂载、DOM 扫描与观察器仍等 `DOMContentLoaded`；`@early-start` 只移动脚本求值时刻，其他管理器忽略该字段时保持 0.23.1 的行为。

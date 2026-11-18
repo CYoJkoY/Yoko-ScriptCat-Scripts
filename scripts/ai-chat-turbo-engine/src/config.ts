@@ -252,6 +252,13 @@ export interface PlatformDefinition {
    */
   readonly hosts: readonly string[];
   /**
+   * Platform-only selectors for the new chat button, tried before the shared
+   * label-based list. Needed when a site renders the button as a bare
+   * `div[role="button"]` with no accessible name, so the shared selectors
+   * would either miss it or press a sibling carrying the same classes.
+   */
+  readonly newChatControlSelectors?: readonly string[];
+  /**
    * Shared hosts that only serve one platform under a path prefix, such as
    * x.com/i/grok. Keys are hostname suffixes, values are required prefixes.
    */
@@ -602,6 +609,17 @@ export const PLATFORMS = {
     name: "DeepSeek",
     newChatShortcut: "/",
     hosts: ["chat.deepseek.com"],
+    /*
+     * DeepSeek renders the new chat button as a bare `div[role="button"]`
+     * with no aria-label, title or text, and the two buttons beside it in
+     * the same toolbar row carry the same classes with the search and the
+     * history icons. The icon is the only signal: the speech bubble with a
+     * plus sign starts at this path data, so the button is picked by icon
+     * rather than by name.
+     */
+    newChatControlSelectors: [
+      'div[role="button"][class*="ds-button--iconLabelPrimary"]:has(svg path[d^="M8 0.599609"])',
+    ],
     sidebar: {
       selectors: [
         "div.b8812f16.a2f3d50e",

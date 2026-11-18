@@ -117,6 +117,40 @@ describe("findNewChatControl", () => {
 
     expect(findNewChatControl(document)).toBeNull();
   });
+
+  it("prefers the platform icon selector over same-class siblings", () => {
+    // DeepSeek renders the new chat button with no accessible name, and the
+    // search and history buttons beside it share its classes.
+    const shared = 'class="ds-button ds-button--iconLabelPrimary" role="button"';
+    const icon = (d: string): string => `<svg viewBox="0 0 16 16"><path d="${d}"></path></svg>`;
+    document.body.innerHTML = [
+      `<div ${shared}>${icon("M9.67272 0.522841")}</div>`,
+      `<div ${shared}>${icon("M8 0.599609C3.91309")}</div>`,
+      `<div ${shared}>${icon("M11.748 6.7028")}</div>`,
+    ].join("");
+    for (const node of document.querySelectorAll("div[role='button']")) {
+      markRendered(node as HTMLElement);
+    }
+
+    const control = findNewChatControl(document, {
+      hostname: "chat.deepseek.com",
+    });
+    expect(control?.querySelector("path")?.getAttribute("d")).toBe(
+      "M8 0.599609C3.91309",
+    );
+  });
+
+  it("ignores platform selectors on a different host", () => {
+    const shared = 'class="ds-button ds-button--iconLabelPrimary" role="button"';
+    document.body.innerHTML = [
+      `<div ${shared}><svg viewBox="0 0 16 16"><path d="M8 0.599609C3.91309"></path></svg></div>`,
+    ].join("");
+    for (const node of document.querySelectorAll("div[role='button']")) {
+      markRendered(node as HTMLElement);
+    }
+
+    expect(findNewChatControl(document, { hostname: "zchat.z.ai" })).toBeNull();
+  });
 });
 
 describe("handleNewChatShortcut", () => {

@@ -1,10 +1,16 @@
-import { findPlatformForLocation } from "../config";
+import { findPlatformForLocation, type PlatformDefinition } from "../config";
 import { isAuthOrRedirectRoute } from "./auth";
 
 /**
  * Selectors carried over from the handoff lookup, which already covered the
  * platform-specific test ids and the aria labels that wrap "new chat" in a
  * longer sentence. The shortcut and the handoff must find the same control.
+ *
+ * Sites that ship no accessible name for their new chat button cannot be
+ * covered here: DeepSeek renders it as a bare `div[role="button"]` with no
+ * label, and its sibling buttons in the same row are search and history, so a
+ * class-only match would press the wrong one. Those sites declare their own
+ * selectors in the platform registry instead.
  */
 const CONTROL_SELECTORS = [
   "#sidebar-new-chat-button",
@@ -81,16 +87,36 @@ function hasNewChatLabel(control: HTMLElement): boolean {
 }
 
 /**
+ * Selectors declared by the current platform, or none when the site names its
+ * button accessibly. A site that only distinguishes its new chat button by
+ * icon has to declare that selector itself: the shared list cannot tell the
+ * button apart from the toolbar buttons sitting next to it.
+ */
+function platformControlSelectors(location: Pick<Location, "hostname">): readonly string[] {
+  const platform = findPlatformForLocation(location.hostname, "");
+  if (platform === null) return [];
+  return platform.newChatControlSelectors ?? [];
+}
+
+/**
  * The new chat control of the current page, or null when the site renders
  * none at this viewport. Hidden copies are skipped: ChatGPT keeps a
  * zero-sized duplicate for the collapsed rail and clicking it does nothing.
  */
-export function findNewChatControl(root: Document): HTMLElement | null {
+export function findNewChatControl(
+  root: Document,
+  location?: Pick<Location, "hostname">,
+): HTMLElement | null {
   /*
-   * Two passes so a marker selector always wins over plain button text: the
-   * first matches a handful of nodes, the second only walks the generic
-   * controls left over for an exact label.
+   * Three passes, most specific first: the platform's own selectors win over
+   * every shared heuristic, then the marker selectors, and only the leftover
+   * generic controls are walked for an exact label.
    */
+  for (const selector of platformControlSelectors(location ?? { hostname: "" })) {
+    for (const control of root.querySelectorAll(selector)) {
+      if (control instanceof HTMLElement && isRendered(control)) return control;
+    }
+  }
   for (const control of root.querySelectorAll(CONTROL_SELECTOR)) {
     if (control instanceof HTMLElement && isRendered(control)) return control;
   }
@@ -126,7 +152,7 @@ export function handleNewChatShortcut(
   event.stopImmediatePropagation();
   if (event.repeat === true) return;
 
-  const control = findNewChatControl(page.document);
+  const control = findNewChatControl(page.document, page.location);
   if (control !== null) {
     control.click();
     return;
