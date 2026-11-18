@@ -48,6 +48,11 @@ describe("parseUserscriptMeta", () => {
     expect(() => parseUserscriptMeta({ ...baseMeta, match: "https://example.com/*" })).toThrow(/match/);
     expect(() => parseUserscriptMeta({ ...baseMeta, noframes: "yes" })).toThrow(/noframes/);
     expect(() => parseUserscriptMeta({ ...baseMeta, earlyStart: "yes" })).toThrow(/earlyStart/);
+    // ScriptCat ignores @early-start unless @run-at is document-start, so the
+    // pairing is asserted instead of rendered and silently dropped.
+    expect(() =>
+      renderUserscriptHeader({ ...baseMeta, earlyStart: true, runAt: "document-idle" }),
+    ).toThrow(/earlyStart.*document-start/);
     expect(() => parseUserscriptMeta({ ...baseMeta, runAt: "document-ready" })).toThrow(/runAt/);
   });
 

@@ -164,6 +164,13 @@ export function assertUserscriptMeta(value: UserscriptMeta): UserscriptMeta {
   requireSingleLine("author", value.author);
   for (const match of value.match) requireSingleLine("match", match);
   for (const grant of value.grant ?? ["none"]) requireSingleLine("grant", grant);
+  // ScriptCat honors @early-start only alongside @run-at document-start; without
+  // this pairing the flag renders but never takes effect, which is invisible.
+  if (value.earlyStart === true && value.runAt !== "document-start") {
+    throw new Error(
+      'Userscript metadata field "earlyStart" requires runAt "document-start"',
+    );
+  }
   return value;
 }
 

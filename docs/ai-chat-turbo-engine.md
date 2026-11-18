@@ -513,7 +513,8 @@ pointerdown → mousedown → pointerup → mouseup → click
 - **根因。** 腾讯元宝在页面脚本执行阶段就往 `window` 上注册了捕获态 `keydown` 拦截，命中后不再向同一目标上的后续监听派发。引擎的监听虽然也是捕获态，但注册得更晚，因此 `Ctrl + Shift + O` 到不了处理器：既不会点击「新建对话」，也不会被引擎取消。
 - **`@early-start`。** ScriptCat 支持 `@early-start`，配合 `@run-at document-start` 会在页面脚本之前求值脚本。引擎的快捷键监听本来就在 `initializeEngine()` 顶部同步注册（早于推迟到 `DOMContentLoaded` 的 boot），因此提前注入即可排到站点拦截器之前。
 - **不改运行期行为。** 面板挂载、DOM 扫描与观察器仍等 `DOMContentLoaded`；`@early-start` 只移动脚本求值时刻，其他管理器忽略该字段时保持 0.23.1 的行为。
-- **测试覆盖。** 头部渲染顺序（`@run-at` → `@early-start` → `@grant`）、缺失或 `false` 时不输出该字段、非布尔值被拒绝均有单元测试。
+- **`@run-at` 必须配对。** ScriptCat 只在 `@run-at document-start` 时才认 `@early-start`；两者不配对时字段照样渲染却完全不生效，属于无声失败，因此元数据校验直接拒绝这种组合。
+- **测试覆盖。** 头部渲染顺序（`@run-at` → `@early-start` → `@grant`）、缺失或 `false` 时不输出该字段、非布尔值被拒绝、与 `document-start` 之外的 `@run-at` 配对时报错，均有单元测试。
 
 ### 0.23.1
 
