@@ -245,7 +245,7 @@ export const BLOCK_TEXT_TAGS = new Set([
 
 export interface PlatformDefinition {
   readonly name: string;
-  readonly newChatShortcut: "native" | `/${string}`;
+  readonly newChatShortcut: `/${string}`;
   /**
    * Hostname suffixes where this platform lives. The userscript header and
    * runtime detection both read this list, so a new site is declared once.
@@ -343,7 +343,7 @@ export interface SidebarPeekDefinition {
 export const PLATFORMS = {
   chatgpt: {
     name: "ChatGPT",
-    newChatShortcut: "native",
+    newChatShortcut: "/",
     hosts: ["chatgpt.com", "chat.openai.com"],
     shellTurnRoots: true,
     codeCardChrome: true,
@@ -472,7 +472,7 @@ export const PLATFORMS = {
   },
   gemini: {
     name: "Gemini",
-    newChatShortcut: "native",
+    newChatShortcut: "/app",
     hosts: ["gemini.google.com"],
     nativeTurnRoots: true,
     quietMotion: true,
