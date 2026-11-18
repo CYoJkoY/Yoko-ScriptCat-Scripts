@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.23.1**
+当前版本：**0.23.2**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -59,7 +59,7 @@
 3. 或在管理器中新建脚本、粘贴脚本完整内容后保存。
 4. 打开受支持的对话页面，右下角出现紧凑的 `Turbo` 负载仪表即表示生效。
 
-脚本以 `@run-at document-start` 注入，`@noframes`，`@grant none`。头部声明了 `@updateURL`（jsDelivr）与 `@downloadURL`（ghfast 代理），不依赖在部分网络下会超时的 `raw.githubusercontent.com`；从没有这两个字段的旧版本升级需重装一次，详见仓库 README。
+脚本以 `@run-at document-start` 注入，`@noframes`，`@grant none`。头部还声明了 ScriptCat 的 `@early-start`，让脚本排在页面自身脚本之前执行，抢在站点注册的键盘拦截器之前拿到 `keydown`；其他管理器会忽略这个字段，行为与之前一致。头部声明了 `@updateURL`（jsDelivr）与 `@downloadURL`（ghfast 代理），不依赖在部分网络下会超时的 `raw.githubusercontent.com`；从没有这两个字段的旧版本升级需重装一次，详见仓库 README。
 
 ---
 
@@ -505,6 +505,15 @@ pointerdown → mousedown → pointerup → mouseup → click
 ---
 
 ## 版本记录
+
+### 0.23.2
+
+**抢在页面脚本之前注册 `keydown`，修复元宝上快捷键被吞掉的问题。**
+
+- **根因。** 腾讯元宝在页面脚本执行阶段就往 `window` 上注册了捕获态 `keydown` 拦截，命中后不再向同一目标上的后续监听派发。引擎的监听虽然也是捕获态，但注册得更晚，因此 `Ctrl + Shift + O` 到不了处理器：既不会点击「新建对话」，也不会被引擎取消。
+- **`@early-start`。** ScriptCat 支持 `@early-start`，配合 `@run-at document-start` 会在页面脚本之前求值脚本。引擎的快捷键监听本来就在 `initializeEngine()` 顶部同步注册（早于推迟到 `DOMContentLoaded` 的 boot），因此提前注入即可排到站点拦截器之前。
+- **不改运行期行为。** 面板挂载、DOM 扫描与观察器仍等 `DOMContentLoaded`；`@early-start` 只移动脚本求值时刻，其他管理器忽略该字段时保持 0.23.1 的行为。
+- **测试覆盖。** 头部渲染顺序（`@run-at` → `@early-start` → `@grant`）、缺失或 `false` 时不输出该字段、非布尔值被拒绝均有单元测试。
 
 ### 0.23.1
 

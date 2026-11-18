@@ -10,6 +10,7 @@ const baseMeta: UserscriptMeta = {
   match: ["https://example.com/*"],
   grant: ["none"],
   runAt: "document-start",
+  earlyStart: true,
   noframes: true,
   license: "MIT",
 };
@@ -22,8 +23,11 @@ describe("renderUserscriptHeader", () => {
     expect(header.indexOf("@name")).toBeLessThan(header.indexOf("@namespace"));
     expect(header.indexOf("@updateURL")).toBeLessThan(header.indexOf("@match"));
     expect(header.indexOf("@match")).toBeLessThan(header.indexOf("@run-at"));
+    expect(header.indexOf("@run-at")).toBeLessThan(header.indexOf("@early-start"));
+    expect(header.indexOf("@early-start")).toBeLessThan(header.indexOf("@grant"));
     expect(header.indexOf("@grant")).toBeLessThan(header.indexOf("@noframes"));
     expect(header).toContain("// @grant        none\n");
+    expect(header).toContain("// @early-start\n");
   });
 
   it("rejects malformed or unsafe metadata", () => {
@@ -43,6 +47,13 @@ describe("parseUserscriptMeta", () => {
     expect(() => parseUserscriptMeta(null)).toThrow(/object/);
     expect(() => parseUserscriptMeta({ ...baseMeta, match: "https://example.com/*" })).toThrow(/match/);
     expect(() => parseUserscriptMeta({ ...baseMeta, noframes: "yes" })).toThrow(/noframes/);
+    expect(() => parseUserscriptMeta({ ...baseMeta, earlyStart: "yes" })).toThrow(/earlyStart/);
     expect(() => parseUserscriptMeta({ ...baseMeta, runAt: "document-ready" })).toThrow(/runAt/);
+  });
+
+  it("omits @early-start when the flag is absent or false", () => {
+    const { earlyStart: _earlyStart, ...withoutFlag } = baseMeta;
+    expect(renderUserscriptHeader(withoutFlag)).not.toContain("@early-start");
+    expect(renderUserscriptHeader({ ...withoutFlag, earlyStart: false })).not.toContain("@early-start");
   });
 });
