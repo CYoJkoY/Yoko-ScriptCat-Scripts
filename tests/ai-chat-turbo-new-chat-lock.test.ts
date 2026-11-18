@@ -51,6 +51,12 @@ function createFullscreenFixture(): FullscreenFixture {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // The fixtures override document globals; drop them so one case cannot
+  // leak a fake fullscreen state into the next.
+  Reflect.deleteProperty(document, "fullscreenEnabled");
+  Reflect.deleteProperty(document, "fullscreenElement");
+  Reflect.deleteProperty(document, "exitFullscreen");
+  Reflect.deleteProperty(document.documentElement, "requestFullscreen");
 });
 
 describe("createNewChatLockUtils", () => {
