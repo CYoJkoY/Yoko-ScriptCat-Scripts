@@ -4,8 +4,15 @@ import {
   bindNewChatShortcut,
   findNewChatControl,
   handleNewChatShortcut,
+  isTakeoverGesture,
   NEW_CHAT_CONTROL_WAIT_MS,
 } from "../scripts/ai-chat-turbo-engine/src/core/new-chat";
+import {
+  forgetTakeoverIntent,
+  consumeTakeoverIntent,
+  rememberTakeoverIntent,
+} from "../scripts/ai-chat-turbo-engine/src/core/takeover-intent";
+import { TAKEOVER_INTENT_STORAGE_KEY } from "../scripts/ai-chat-turbo-engine/src/config";
 
 interface FakePage {
   document: Document;
@@ -44,6 +51,10 @@ function installMemoryStorage(): void {
     },
   };
   Object.defineProperty(window, "localStorage", {
+    value: storage,
+    configurable: true,
+  });
+  Object.defineProperty(window, "sessionStorage", {
     value: storage,
     configurable: true,
   });
@@ -127,6 +138,7 @@ function addRoleControl(
 beforeEach(() => {
   installMemoryStorage();
   window.localStorage.clear();
+  forgetTakeoverIntent();
   document.body.replaceChildren();
 });
 
@@ -619,22 +631,25 @@ describe("bindNewChatShortcut", () => {
     unbind();
   });
 
-  it("reports the reserved-key fallback when the press stayed in the page", () => {
+  it("arms the deferred takeover when the press stayed in the page", () => {
     const control = addControl({ "aria-label": "新建对话" });
     const click = vi.spyOn(control, "click");
     const page = createPage(
       "https://yuanbao.tencent.com/chat/naQivTmsDa/0SA6GtG4MqG",
     );
     const target = new EventTarget();
-    const onReservedKeyFallback = vi.fn();
+    const armReservedKeyTakeover = vi.fn();
+    const rememberTakeoverIntent = vi.fn();
 
     const unbind = bindNewChatShortcut(target, page, {
-      onReservedKeyFallback,
+      armReservedKeyTakeover,
+      rememberTakeoverIntent,
     });
     target.dispatchEvent(shortcutRelease());
 
     expect(click).toHaveBeenCalledTimes(1);
-    expect(onReservedKeyFallback).toHaveBeenCalledTimes(1);
+    expect(armReservedKeyTakeover).toHaveBeenCalledTimes(1);
+    expect(rememberTakeoverIntent).toHaveBeenCalledTimes(1);
 
     unbind();
   });
@@ -643,15 +658,18 @@ describe("bindNewChatShortcut", () => {
     addControl({ "aria-label": "New chat" });
     const page = createPage();
     const target = new EventTarget();
-    const onReservedKeyFallback = vi.fn();
+    const armReservedKeyTakeover = vi.fn();
+    const rememberTakeoverIntent = vi.fn();
 
     const unbind = bindNewChatShortcut(target, page, {
-      onReservedKeyFallback,
+      armReservedKeyTakeover,
+      rememberTakeoverIntent,
     });
     target.dispatchEvent(shortcutEvent());
     target.dispatchEvent(shortcutRelease());
 
-    expect(onReservedKeyFallback).not.toHaveBeenCalled();
+    expect(armReservedKeyTakeover).not.toHaveBeenCalled();
+    expect(rememberTakeoverIntent).not.toHaveBeenCalled();
 
     unbind();
   });
@@ -661,15 +679,18 @@ describe("bindNewChatShortcut", () => {
     const click = vi.spyOn(control, "click");
     const page = createPage("https://chatgpt.com/c/1");
     const target = new EventTarget();
-    const onReservedKeyFallback = vi.fn();
+    const armReservedKeyTakeover = vi.fn();
+    const rememberTakeoverIntent = vi.fn();
 
     const unbind = bindNewChatShortcut(target, page, {
-      onReservedKeyFallback,
+      armReservedKeyTakeover,
+      rememberTakeoverIntent,
     });
     target.dispatchEvent(shortcutRelease({ ctrlKey: false, altKey: true }));
 
     expect(click).toHaveBeenCalledTimes(1);
-    expect(onReservedKeyFallback).not.toHaveBeenCalled();
+    expect(armReservedKeyTakeover).not.toHaveBeenCalled();
+    expect(rememberTakeoverIntent).not.toHaveBeenCalled();
 
     unbind();
   });
@@ -682,15 +703,18 @@ describe("bindNewChatShortcut", () => {
     (href) => {
       const page = createPage(href);
       const target = new EventTarget();
-      const onReservedKeyFallback = vi.fn();
+      const armReservedKeyTakeover = vi.fn();
+      const rememberTakeoverIntent = vi.fn();
 
       const unbind = bindNewChatShortcut(target, page, {
-        onReservedKeyFallback,
+        armReservedKeyTakeover,
+        rememberTakeoverIntent,
       });
       target.dispatchEvent(shortcutRelease());
 
       expect(page.location.assign).toHaveBeenCalledTimes(1);
-      expect(onReservedKeyFallback).not.toHaveBeenCalled();
+      expect(armReservedKeyTakeover).not.toHaveBeenCalled();
+      expect(rememberTakeoverIntent).toHaveBeenCalledTimes(1);
 
       unbind();
     },
@@ -709,5 +733,52 @@ describe("bindNewChatShortcut", () => {
     expect(click).not.toHaveBeenCalled();
 
     unbind();
+  });
+});
+
+describe("isTakeoverGesture", () => {
+  it("accepts a pointer press or an ordinary key press", () => {
+    expect(isTakeoverGesture(new PointerEvent("pointerdown"))).toBe(true);
+    expect(isTakeoverGesture(shortcutEvent())).toBe(true);
+    expect(isTakeoverGesture(new KeyboardEvent("keydown", { key: "a" }))).toBe(
+      true,
+    );
+  });
+
+  it("rejects the release, which carries no user activation", () => {
+    expect(isTakeoverGesture(shortcutRelease())).toBe(false);
+  });
+
+  it("rejects Escape so leaving the takeover fullscreen cannot re-enter it", () => {
+    expect(isTakeoverGesture(new KeyboardEvent("keydown", { key: "Escape" }))).toBe(
+      false,
+    );
+  });
+});
+
+describe("takeover intent", () => {
+  it("persists once and consumes it exactly one time", () => {
+    expect(rememberTakeoverIntent()).toBe(true);
+    expect(
+      window.sessionStorage.getItem(TAKEOVER_INTENT_STORAGE_KEY),
+    ).not.toBeNull();
+
+    expect(consumeTakeoverIntent()).toBe(true);
+    expect(consumeTakeoverIntent()).toBe(false);
+    expect(
+      window.sessionStorage.getItem(TAKEOVER_INTENT_STORAGE_KEY),
+    ).toBeNull();
+  });
+
+  it("rejects an intent older than one minute", () => {
+    window.sessionStorage.setItem(
+      TAKEOVER_INTENT_STORAGE_KEY,
+      JSON.stringify({ createdAt: Date.now() - 61_000 }),
+    );
+
+    expect(consumeTakeoverIntent()).toBe(false);
+    expect(
+      window.sessionStorage.getItem(TAKEOVER_INTENT_STORAGE_KEY),
+    ).toBeNull();
   });
 });

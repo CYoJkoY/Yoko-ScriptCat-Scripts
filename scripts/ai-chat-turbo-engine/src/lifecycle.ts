@@ -19,7 +19,16 @@ import { createToolPopupScope } from "./core/tool-scope";
 import { createComposerUtils } from "./core/composer";
 import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
 import { createHandoffUtils } from "./core/handoff";
-import { bindNewChatShortcut, type NewChatPage } from "./core/new-chat";
+import {
+  consumeTakeoverIntent,
+  rememberTakeoverIntent,
+  forgetTakeoverIntent,
+} from "./core/takeover-intent";
+import {
+  bindNewChatShortcut,
+  isTakeoverGesture,
+  type NewChatPage,
+} from "./core/new-chat";
 import { createNewChatLockUtils } from "./core/new-chat-lock";
 import { createHudUtils, type HudUtils } from "./ui/hud";
 import { createChatCapsuleUtils } from "./ui/chat-capsules";
@@ -63,18 +72,25 @@ export function initializeEngine(): void {
   // only needed if injection is ever repeated for the same window.
   //
   // A fallback press is the only press where the browser has already handled
-  // the key itself, so that is where the interrupted-site takeover is armed.
-  // The site keeps its own behaviour either way; the lock only decides whether
-  // the same press can keep the bookmark panel closed from then on.
+  // the key itself. That keyup carries no transient user activation, so the
+  // fullscreen request cannot happen there. Store the intent and arm the lock
+  // on the next real gesture instead; the site keeps its own behaviour either
+  // way, and the lock only decides whether later presses can stay in the page.
   const page: NewChatPage = {
     document,
     storage: window.localStorage,
     location: window.location,
   };
+  let takeoverArmed = false;
+  takeoverArmed = consumeTakeoverIntent();
   bindNewChatShortcut(window, page, {
-    onReservedKeyFallback: () => {
+    armReservedKeyTakeover: () => {
       if (state.newChatShortcutLock !== true) return;
-      void newChatLock.activate();
+      takeoverArmed = true;
+    },
+    rememberTakeoverIntent: () => {
+      if (state.newChatShortcutLock !== true) return;
+      rememberTakeoverIntent();
     },
   });
   // Gemini keeps whole conversations mounted, so its native message blocks get
@@ -83,6 +99,21 @@ export function initializeEngine(): void {
     injectEngineStyles({
       geminiNativeRender: currentPlatform.nativeTurnRoots === true,
     });
+
+  /**
+   * Claim the reserved key on the first gesture after a fallback press.
+   *
+   * Chromium requires transient user activation for `requestFullscreen()`, and
+   * a `keyup` event carries none. Pointer and key gestures both restore that
+   * activation; `Escape` is skipped so leaving the takeover fullscreen cannot
+   * immediately re-enter it.
+   */
+  const armReservedKeyTakeover = (event: Event): void => {
+    if (takeoverArmed === false || isTakeoverGesture(event) === false) return;
+    takeoverArmed = false;
+    if (state.newChatShortcutLock !== true) return;
+    void newChatLock.activate();
+  };
   const {
     clearRenderedCache,
     extractTurnText,
@@ -713,6 +744,8 @@ export function initializeEngine(): void {
   /** Remove every engine artifact and inline style from the host page. */
   function teardownEngine(): void {
     newChatLock.deactivate();
+    takeoverArmed = false;
+    forgetTakeoverIntent();
     reasoning.attachStatusNode(null);
     toolMemory.teardown();
     setEngineActive(false);
@@ -867,6 +900,8 @@ export function initializeEngine(): void {
     window.addEventListener("click", reasoning.handleReasoningClick, true);
     window.addEventListener("click", toolMemory.handleToolClick, true);
     window.addEventListener("click", reasoning.handleDehydratedClick, true);
+    window.addEventListener("pointerdown", armReservedKeyTakeover, true);
+    window.addEventListener("keydown", armReservedKeyTakeover, true);
   }
 
   function boot(): void {

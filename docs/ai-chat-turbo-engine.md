@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.23.7**
+当前版本：**0.23.8**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -402,7 +402,7 @@ pointerdown → mousedown → pointerup → mouseup → click
 
 由于「浏览器是否把按键交给页面」由浏览器构建决定，页面脚本无法在所有构建上覆盖 `Ctrl + Shift + O`。引擎因此提供等价入口 `Alt + Shift + O`：主流浏览器都没有保留它，按键一定到达页面，无需全屏接管即可使用。两套组合键不会混用（同时带 `Ctrl` 与 `Alt` 的组合一律忽略），`Alt + Shift + O` 只在 `Shift` 按下、`Ctrl` 与 `Meta` 均未按下时生效。
 
-自动接管（默认开启，面板「新对话快捷键」区可关闭）：当一次按键只能以 `keyup` 兜底、且该次按键确实被页面内的控件满足（如元宝：点击后原地重置会话、不发生文档跳转），引擎会立即申请全屏并 `navigator.keyboard.lock(["KeyO"])`，此后同一按键直接由页面处理，书签面板不再弹出。局限同样真实：Z.ai 与 DeepSeek 每次按键都会跳转或整页重载文档（新建对话本身就是换文档），接管会在按键中途被销毁，因此这两站**不会**自动武装，按键仍会跳转后由页面处理新对话。手动「全屏接管 Ctrl+Shift + O」按钮在任何站点都可用；按 `Esc` 退出全屏会立即解锁并恢复浏览器快捷键。浏览器不提供 Keyboard Lock（`navigator.keyboard` 缺失，如 Helium 158 / Edge 122）时接管按钮显示不支持，且不会闪一下全屏。焦点在浏览器地址栏等页面外区域时，浏览器照常处理；macOS 上脚本只响应 `Ctrl`。
+自动接管（默认开启，面板「新对话快捷键」区可关闭）：当一次按键只能以 `keyup` 兜底，引擎会先记住这次主组合键。页面内已经完成新对话（如元宝）时立即申请全屏并 `navigator.keyboard.lock(["KeyO"])`；Z.ai 与 DeepSeek 这类按键后替换文档的站点则在下一个文档启动时读取这条意图，并在下一次真实手势上接管，此后同一按键直接由页面处理，书签面板不再弹出。意图保存在当前标签页的 `sessionStorage`，一分钟内未消耗就作废，关闭标签页不会影响其他会话。手动「全屏接管 Ctrl+Shift + O」按钮在任何站点都可用；按 `Esc` 退出全屏会立即解锁并恢复浏览器快捷键。浏览器不提供 Keyboard Lock（`navigator.keyboard` 缺失，如 Helium 158 / Edge 122）时接管按钮显示不支持，且不会闪一下全屏。焦点在浏览器地址栏等页面外区域时，浏览器照常处理；macOS 上脚本只响应 `Ctrl`。
 
 面板以 `role="dialog"` + `aria-modal="true"` 暴露，打开时焦点进入检索框，关闭时回到打开前的元素（该元素已失效时回到悬浮仪表）；`Tab` / `Shift + Tab` 在面板内循环。悬浮仪表使用原生按钮的 `click` 处理鼠标与键盘激活，指针移动超过 4px 才进入拖拽，拖拽结束后抑制随后的点击；`pointercancel` 与窗口 / `visualViewport` 尺寸变化都会清理状态并重新夹紧位置。贴边后仪表仍是同一个按钮，`aria-label` 会说明当前是「贴边」还是「取消贴边」。
 
@@ -426,7 +426,7 @@ pointerdown → mousedown → pointerup → mouseup → click
 | `rememberTools` | boolean | true | 是否记住并在新话题中还原元宝工具选择 |
 | `hudTheme` | "auto" \| "light" \| "dark" | auto | 面板与悬浮仪表的界面主题；旧配置缺失或值非法时回退自动 |
 
-悬浮仪表位置存储在 `ai_turbo_pill_pos`，贴边方向存放在 `ai_turbo_hud_dock`（无此键表示自由悬浮）；推理强度记忆存放在 `ai_turbo_reasoning_memory`，Gemini 的 `/u/N` 路径按账号槽位分开，其他页面按主机名存放，并保留对旧主机名记录的读取回退；元宝的模型与模式存放在 `ai_turbo_yuanbao_selection`（`{ model?, mode?, ts? }`，按当前会话作用域存放，保留主机名读取回退，并从旧的 `ai_turbo_reasoning_memory` 记录迁移）；工具记忆存放在 `ai_turbo_tool_memory`，按当前会话作用域保存单个工具的 application id 与标签，并保留对 0.16.2 及更早主机名标签记录的读取回退；跨页交接暂存使用 `sessionStorage` 的 `ai_turbo_handoff_restore`。
+悬浮仪表位置存储在 `ai_turbo_pill_pos`，贴边方向存放在 `ai_turbo_hud_dock`（无此键表示自由悬浮）；推理强度记忆存放在 `ai_turbo_reasoning_memory`，Gemini 的 `/u/N` 路径按账号槽位分开，其他页面按主机名存放，并保留对旧主机名记录的读取回退；元宝的模型与模式存放在 `ai_turbo_yuanbao_selection`（`{ model?, mode?, ts? }`，按当前会话作用域存放，保留主机名读取回退，并从旧的 `ai_turbo_reasoning_memory` 记录迁移）；工具记忆存放在 `ai_turbo_tool_memory`，按当前会话作用域保存单个工具的 application id 与标签，并保留对 0.16.2 及更早主机名标签记录的读取回退；跨页交接暂存使用 `sessionStorage` 的 `ai_turbo_handoff_restore`；保留键接管意图暂存使用 `sessionStorage` 的 `ai_turbo_new_chat_takeover`。
 
 ---
 
@@ -510,6 +510,14 @@ pointerdown → mousedown → pointerup → mouseup → click
 ---
 
 ## 版本记录
+
+### 0.23.8
+
+**把保留键接管意图跨文档传递，让 Z.ai 与 DeepSeek 也能武装下一页。**
+
+- **问题。** Z.ai 与 DeepSeek 的新对话是替换文档：原先存在内存里的接管标志随旧文档销毁，下一页不知道这次 `Ctrl + Shift + O` 已经兜底命中，只能等用户再按一次。
+- **跨文档意图。** `keyup` 兜底命中主组合键时写入当前标签页 `sessionStorage`（`ai_turbo_new_chat_takeover`），下一文档启动后立即读取并清空；下一次指针或普通按键携带用户激活时再申请全屏接管。备选组合 `Alt + Shift + O` 不写意图，60 秒未消耗自动作废，引擎关闭与存储失败也不会阻塞新对话。
+- **测试覆盖。** 意图写入、一次性消费、过期丢弃、跨文档跳转路径触发写入、元宝原地完成时同时写入与武装、备选组合不触发，均有单元测试。
 
 ### 0.23.7
 

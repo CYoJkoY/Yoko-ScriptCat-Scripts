@@ -321,12 +321,14 @@ export function handleNewChatShortcut(
 
 export interface NewChatShortcutHooks {
   /**
-   * Runs when the press only arrived as `keyup`, meaning the browser consumed
-   * the `keydown` for its own shortcut, and the page satisfied the press
-   * itself. That is the one moment a Keyboard Lock takeover is worth asking
-   * for: the site keeps working, but so does the browser's bookmark panel.
+   * Arms a deferred Keyboard Lock takeover when the press only arrived as
+   * `keyup`, meaning the browser consumed the `keydown` for its own shortcut
+   * and the page satisfied the press itself. The `keyup` event carries no
+   * transient user activation, so the caller must not request fullscreen here;
+   * it only stores the intent and arms the lock on the next real gesture.
    */
-  onReservedKeyFallback?: () => void;
+  armReservedKeyTakeover?: () => void;
+  rememberTakeoverIntent?: () => void;
 }
 
 /**
@@ -349,7 +351,8 @@ export interface NewChatShortcutHooks {
  *
  * A fallback press means the browser already opened its own panel, so the
  * page cannot stop it after the fact. The hook above reports that case to the
- * caller, which decides whether a Keyboard Lock takeover is worth arming.
+ * caller, which stores the takeover intent for the next real gesture because
+ * a `keyup` event carries no transient user activation.
  */
 export function bindNewChatShortcut(
   target: Pick<Window, "addEventListener" | "removeEventListener">,
@@ -369,12 +372,17 @@ export function bindNewChatShortcut(
         if (keyDownWasSeen === false) {
           const satisfiedInPage = handleNewChatShortcut(event, page);
           // Only the reserved primary can be swallowed by the browser, so the
-          // takeover hook is not worth arming for the alternative.
+          // takeover intent is not worth arming for the alternative. A
+          // navigating site also satisfies the press, but its in-memory flag
+          // dies with the document; the persistent intent follows it.
+          if (classifyNewChatShortcut(event) === "primary") {
+            hooks.rememberTakeoverIntent?.();
+          }
           if (
             satisfiedInPage === true &&
             classifyNewChatShortcut(event) === "primary"
           ) {
-            hooks.onReservedKeyFallback?.();
+            hooks.armReservedKeyTakeover?.();
           }
         }
         return;
@@ -388,4 +396,18 @@ export function bindNewChatShortcut(
     target.removeEventListener("keydown", listener, { capture: true });
     target.removeEventListener("keyup", listener, { capture: true });
   };
+}
+
+/**
+ * Whether the event can carry the transient user activation that
+ * `requestFullscreen()` requires before the lock can be armed.
+ *
+ * A `keyup` never can, which is why a fallback press only stores the intent.
+ * Pointer and key presses can, except for `Escape`: it is the exit key of the
+ * fullscreen the takeover owns, so honouring it there would trap the user.
+ */
+export function isTakeoverGesture(event: Event): boolean {
+  if (event.type === "pointerdown") return true;
+  if (event.type !== "keydown") return false;
+  return !(event instanceof KeyboardEvent) || event.key !== "Escape";
 }

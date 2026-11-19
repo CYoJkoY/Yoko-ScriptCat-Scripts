@@ -82,6 +82,7 @@ export const VF_TOKEN_END = ":TURBO_VFILE_END]]";
 export const VF_REGEX =
   /\[\[TURBO_VFILE_START:([^|\r\n]+)\|(\d+)\|(\d+):TURBO_VFILE_END\]\]/;
 export const HANDOFF_STORAGE_KEY = "ai_turbo_handoff_restore";
+export const TAKEOVER_INTENT_STORAGE_KEY = "ai_turbo_new_chat_takeover";
 export const PLAIN_HANDOFF_START = "[META]";
 export const PLAIN_HANDOFF_END = "[END]";
 export const PLAIN_HANDOFF_SECTIONS = [
