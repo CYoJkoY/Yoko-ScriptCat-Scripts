@@ -699,7 +699,7 @@ describe("bindNewChatShortcut", () => {
     "https://zchat.z.ai/c/abc",
     "https://chat.deepseek.com/a/chat/s/9f1d6c6e-1b3f-4a51-8f2c-3d1f0a7b2c44",
   ])(
-    "does not report a fallback on a navigating host (%s)",
+    "arms the next-page takeover on a navigating host (%s)",
     (href) => {
       const page = createPage(href);
       const target = new EventTarget();
@@ -713,7 +713,7 @@ describe("bindNewChatShortcut", () => {
       target.dispatchEvent(shortcutRelease());
 
       expect(page.location.assign).toHaveBeenCalledTimes(1);
-      expect(armReservedKeyTakeover).not.toHaveBeenCalled();
+      expect(armReservedKeyTakeover).toHaveBeenCalledTimes(1);
       expect(rememberTakeoverIntent).toHaveBeenCalledTimes(1);
 
       unbind();

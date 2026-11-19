@@ -10,6 +10,7 @@ import {
 import {
   createEngineState,
   loadSavedConfig,
+  normalizeSidebarPeekDelay,
   resetPersistedConfig,
   saveCurrentConfig,
   type EngineState,
@@ -764,6 +765,30 @@ describe("HUD persisted config", () => {
     expect(state.hudTheme).toBe("auto");
     expect(state.keepTurns).toBe(12);
     expect(state.collapseCode).toBe(false);
+  });
+
+  it("clamps the sidebar peek delay into its configured bounds", () => {
+    expect(normalizeSidebarPeekDelay(-1)).toBe(0);
+    expect(normalizeSidebarPeekDelay("250.8")).toBe(251);
+    expect(normalizeSidebarPeekDelay(2500)).toBe(2000);
+    expect(normalizeSidebarPeekDelay("not-a-number")).toBe(180);
+  });
+
+  it("loads and saves a custom sidebar peek delay", () => {
+    window.localStorage.setItem(
+      STORAGE_KEY_CONFIG,
+      JSON.stringify({ sidebarPeekDelayMs: 3000 }),
+    );
+    const state = createEngineState();
+    loadSavedConfig(state);
+    expect(state.sidebarPeekDelayMs).toBe(2000);
+
+    state.sidebarPeekDelayMs = 300;
+    saveCurrentConfig(state);
+    const saved: unknown = JSON.parse(
+      window.localStorage.getItem(STORAGE_KEY_CONFIG) ?? "null",
+    );
+    expect(saved).toMatchObject({ sidebarPeekDelayMs: 300 });
   });
 
   it("ignores an invalid theme value and keeps auto", () => {

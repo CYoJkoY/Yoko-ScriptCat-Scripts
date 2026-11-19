@@ -139,6 +139,7 @@ export function initializeEngine(): void {
   const sidebarPeek = createSidebarPeek({
     sidebar: currentPlatform.sidebar ?? null,
     enabled: () => state.sidebarPeekEnabled,
+    showDelayMs: () => state.sidebarPeekDelayMs,
   });
   const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
   const navigationTracker = createNavigationTracker(window.location);

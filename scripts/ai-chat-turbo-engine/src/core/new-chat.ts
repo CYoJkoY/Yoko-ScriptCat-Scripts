@@ -322,10 +322,10 @@ export function handleNewChatShortcut(
 export interface NewChatShortcutHooks {
   /**
    * Arms a deferred Keyboard Lock takeover when the press only arrived as
-   * `keyup`, meaning the browser consumed the `keydown` for its own shortcut
-   * and the page satisfied the press itself. The `keyup` event carries no
-   * transient user activation, so the caller must not request fullscreen here;
-   * it only stores the intent and arms the lock on the next real gesture.
+   * `keyup`, meaning the browser consumed the `keydown` for its own shortcut.
+   * The `keyup` event carries no transient user activation, so the caller must
+   * not request fullscreen here; it only stores the intent and arms the lock on
+   * the next real gesture, including the document reached by this navigation.
    */
   armReservedKeyTakeover?: () => void;
   rememberTakeoverIntent?: () => void;
@@ -370,18 +370,14 @@ export function bindNewChatShortcut(
         const keyDownWasSeen = sawShortcutKeyDown;
         sawShortcutKeyDown = false;
         if (keyDownWasSeen === false) {
-          const satisfiedInPage = handleNewChatShortcut(event, page);
+          handleNewChatShortcut(event, page);
           // Only the reserved primary can be swallowed by the browser, so the
           // takeover intent is not worth arming for the alternative. A
-          // navigating site also satisfies the press, but its in-memory flag
-          // dies with the document; the persistent intent follows it.
-          if (classifyNewChatShortcut(event) === "primary") {
+          // navigating site starts the route during the keyup, which kills its
+          // in-memory lock flag; the persistent intent follows the new page.
+          const isPrimaryShortcut = classifyNewChatShortcut(event) === "primary";
+          if (isPrimaryShortcut === true) {
             hooks.rememberTakeoverIntent?.();
-          }
-          if (
-            satisfiedInPage === true &&
-            classifyNewChatShortcut(event) === "primary"
-          ) {
             hooks.armReservedKeyTakeover?.();
           }
         }

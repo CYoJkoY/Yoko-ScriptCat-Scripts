@@ -347,6 +347,10 @@ export function createComposerUtils(deps: ComposerDeps): ComposerUtils {
     const candidates = [
       "form[data-chatgpt-composer]",
       "[data-chatgpt-composer]",
+      "infinite-scroller > .input-area-container",
+      "infinite-scroller > .input-area",
+      "ms-autosize-textarea",
+      "ms-chunk-input-container",
       ".input-area-container",
       "form",
       ".input-area",

@@ -2,6 +2,9 @@ import {
   DEFAULT_MESSAGE_LIMIT,
   MESSAGE_LIMIT_MAX,
   MESSAGE_LIMIT_MIN,
+  SIDEBAR_PEEK_DELAY_MAX,
+  SIDEBAR_PEEK_DELAY_MIN,
+  SIDEBAR_PEEK_SHOW_DELAY_MS,
   STORAGE_KEY_CONFIG,
 } from "./config";
 import { reportRecoverableError } from "./core/diagnostics";
@@ -17,6 +20,7 @@ export interface PersistedEngineConfig {
   collapseCode: boolean;
   virtualFileEnabled: boolean;
   sidebarPeekEnabled: boolean;
+  sidebarPeekDelayMs: number;
   newChatShortcutLock: boolean;
   rememberReasoning: boolean;
   rememberTools: boolean;
@@ -30,6 +34,7 @@ const DEFAULT_PERSISTED_CONFIG: PersistedEngineConfig = {
   collapseCode: true,
   virtualFileEnabled: true,
   sidebarPeekEnabled: true,
+  sidebarPeekDelayMs: SIDEBAR_PEEK_SHOW_DELAY_MS,
   newChatShortcutLock: true,
   rememberReasoning: true,
   rememberTools: true,
@@ -55,6 +60,15 @@ export interface EngineState extends PersistedEngineConfig {
   hiddenCount: number;
   foldedCodeCount: number;
   indexedTurns: TurnRecord[];
+}
+
+export function normalizeSidebarPeekDelay(rawDelay: unknown): number {
+  const numericDelay = Number(rawDelay);
+  if (!Number.isFinite(numericDelay)) return SIDEBAR_PEEK_SHOW_DELAY_MS;
+  return Math.min(
+    SIDEBAR_PEEK_DELAY_MAX,
+    Math.max(SIDEBAR_PEEK_DELAY_MIN, Math.round(numericDelay)),
+  );
 }
 
 /** Persisted subset of the engine state; key order matches the legacy payload. */
@@ -112,6 +126,14 @@ export function loadSavedConfig(state: EngineState): void {
     if (typeof parsed.sidebarPeekEnabled === "boolean") {
       state.sidebarPeekEnabled = parsed.sidebarPeekEnabled;
     }
+    if (
+      typeof parsed.sidebarPeekDelayMs === "number" &&
+      Number.isFinite(parsed.sidebarPeekDelayMs)
+    ) {
+      state.sidebarPeekDelayMs = normalizeSidebarPeekDelay(
+        parsed.sidebarPeekDelayMs,
+      );
+    }
     if (typeof parsed.newChatShortcutLock === "boolean") {
       state.newChatShortcutLock = parsed.newChatShortcutLock;
     }
@@ -147,6 +169,7 @@ export function saveCurrentConfig(state: EngineState): void {
       collapseCode: state.collapseCode,
       virtualFileEnabled: state.virtualFileEnabled,
       sidebarPeekEnabled: state.sidebarPeekEnabled,
+      sidebarPeekDelayMs: state.sidebarPeekDelayMs,
       newChatShortcutLock: state.newChatShortcutLock,
       rememberReasoning: state.rememberReasoning,
       rememberTools: state.rememberTools,

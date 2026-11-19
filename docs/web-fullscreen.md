@@ -9,6 +9,19 @@
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`http://*/*`、`https://*/*`（含 iframe）
 
+## 核心特性
+
+- 为只有原生全屏入口的播放器自动注入「网页全屏」按钮，并保持位置、尺寸与原生控件一致。
+- 网页全屏仅把播放器铺满浏览器视口，不调用站点或系统全屏 API。
+- 支持动态控制栏、iframe、自定义控制栏与原生 `<video controls>` 浮动回退。
+- 进入前快照播放器样式，退出时完整还原，不留下持久样式或站点状态变更。
+
+## 安装
+
+1. 在 ScriptCat / Tampermonkey / Violentmonkey 中新建或导入 UserScript。
+2. 安装 `dist/web-fullscreen.user.js`。
+3. 打开任意包含视频播放器的页面；已有网页全屏、影院或宽屏入口的播放器不会被重复注入。
+
 ## 一、设计目标
 
 - 补缺不覆盖：页面已经有网页全屏、影院、宽屏入口时直接跳过，不重复注入。

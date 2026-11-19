@@ -12,14 +12,16 @@ import {
   SIDEBAR_PEEK_OPEN_ATTEMPTS,
   SIDEBAR_PEEK_OPEN_RETRY_MS,
   SIDEBAR_PEEK_SHIFT_VAR,
-  SIDEBAR_PEEK_SHOW_DELAY_MS,
   SIDEBAR_PEEK_TRANSITION_HOLD_MS,
   SIDEBAR_PEEK_WIDTH_VAR,
   createSidebarPeek,
   type SidebarPeek,
 } from "../scripts/ai-chat-turbo-engine/src/core/sidebar-peek";
 import { SIDEBAR_PEEK_CSS } from "../scripts/ai-chat-turbo-engine/src/ui/styles";
-import { PLATFORMS } from "../scripts/ai-chat-turbo-engine/src/config";
+import {
+  PLATFORMS,
+  SIDEBAR_PEEK_SHOW_DELAY_MS,
+} from "../scripts/ai-chat-turbo-engine/src/config";
 import engineMeta from "../scripts/ai-chat-turbo-engine/meta";
 
 const SIDEBAR = {
@@ -155,7 +157,9 @@ function stubHit(node: Element | null): () => void {
   };
 }
 
-function start(options: { isUserKey?: (event: Event) => boolean } = {}): SidebarPeek {
+function start(
+  options: { isUserKey?: (event: Event) => boolean; showDelayMs?: () => number } = {},
+): SidebarPeek {
   peek = createSidebarPeek({ sidebar: SIDEBAR, ...options });
   peek.bind(document);
   return peek;
@@ -191,6 +195,17 @@ describe("sidebar hover peek", () => {
     hoverButton();
     vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
     expect(rail().getAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBe("right");
+  });
+
+  it("uses the configured delay without re-reading a fixed value", () => {
+    start({ showDelayMs: () => 300 });
+
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(rail().hasAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBe(false);
+
+    vi.advanceTimersByTime(300 - SIDEBAR_PEEK_SHOW_DELAY_MS);
+    expect(rail().hasAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBe(true);
   });
 
   it("keeps the rail open while moving between its buttons", () => {
