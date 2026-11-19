@@ -479,7 +479,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       const reason = snapshot.error ?? "浏览器未允许键盘锁";
       return `接管失败：${reason}。请重试。`;
     }
-    return `浏览器把 Ctrl+Shift+O 用于收藏夹。按 ${NEW_CHAT_ALTERNATIVE_MODIFIERS} 无需接管即可打开新对话；自动接管已开启时，在页面内完成新对话后会自动全屏锁住 Ctrl+Shift+O，按 Esc 退出全屏即恢复浏览器快捷键。`;
+    return `浏览器把 Ctrl+Shift+O 用于收藏夹。按 ${NEW_CHAT_ALTERNATIVE_MODIFIERS} 无需接管即可打开新对话；自动接管已开启时，在页面内完成新对话后，下一次点击或按键会全屏锁住 Ctrl+Shift+O，按 Esc 退出全屏即恢复浏览器快捷键。`;
   }
 
   function renderNewChatLockStatus(snapshot: NewChatLockSnapshot): void {
