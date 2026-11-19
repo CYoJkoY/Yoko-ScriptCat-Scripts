@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.7
+// @version      0.23.8
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -124,6 +124,7 @@
   var VF_TOKEN_END = ":TURBO_VFILE_END]]";
   var VF_REGEX = /\[\[TURBO_VFILE_START:([^|\r\n]+)\|(\d+)\|(\d+):TURBO_VFILE_END\]\]/;
   var HANDOFF_STORAGE_KEY = "ai_turbo_handoff_restore";
+  var TAKEOVER_INTENT_STORAGE_KEY = "ai_turbo_new_chat_takeover";
   var PLAIN_HANDOFF_START = "[META]";
   var PLAIN_HANDOFF_END = "[END]";
   var PLAIN_HANDOFF_SECTIONS = [
@@ -7433,8 +7434,11 @@ ${CODE_FENCE}
           sawShortcutKeyDown = false;
           if (keyDownWasSeen === false) {
             const satisfiedInPage = handleNewChatShortcut(event, page);
+            if (classifyNewChatShortcut(event) === "primary") {
+              hooks.rememberTakeoverIntent?.();
+            }
             if (satisfiedInPage === true && classifyNewChatShortcut(event) === "primary") {
-              hooks.onReservedKeyFallback?.();
+              hooks.armReservedKeyTakeover?.();
             }
           }
           return;
@@ -7448,6 +7452,11 @@ ${CODE_FENCE}
       target.removeEventListener("keydown", listener, { capture: true });
       target.removeEventListener("keyup", listener, { capture: true });
     };
+  }
+  function isTakeoverGesture(event) {
+    if (event.type === "pointerdown") return true;
+    if (event.type !== "keydown") return false;
+    return !(event instanceof KeyboardEvent) || event.key !== "Escape";
   }
 
   // scripts/ai-chat-turbo-engine/src/core/handoff.ts
@@ -7949,6 +7958,30 @@ ${contentText}`);
       prepareNewConversationFromYaml,
       clearResumeTimer
     };
+  }
+
+  // scripts/ai-chat-turbo-engine/src/core/takeover-intent.ts
+  var TAKEOVER_INTENT_TTL_MS = 6e4;
+  function isTakeoverIntent(value) {
+    if (typeof value !== "object" || value === null) return false;
+    const createdAt = Reflect.get(value, "createdAt");
+    return typeof createdAt === "number" && Number.isFinite(createdAt);
+  }
+  var takeoverStore = createReportedStorage("sessionStorage", (failure) => {
+    reportRecoverableError("reserve shortcut takeover", failure.error);
+  });
+  function rememberTakeoverIntent() {
+    return takeoverStore.writeJson(TAKEOVER_INTENT_STORAGE_KEY, {
+      createdAt: Date.now()
+    });
+  }
+  function consumeTakeoverIntent() {
+    const raw = takeoverStore.readJson(TAKEOVER_INTENT_STORAGE_KEY, null);
+    takeoverStore.remove(TAKEOVER_INTENT_STORAGE_KEY);
+    return isTakeoverIntent(raw) === true && Date.now() - raw.createdAt < TAKEOVER_INTENT_TTL_MS;
+  }
+  function forgetTakeoverIntent() {
+    takeoverStore.remove(TAKEOVER_INTENT_STORAGE_KEY);
   }
 
   // scripts/ai-chat-turbo-engine/src/core/new-chat-lock.ts
@@ -8780,7 +8813,7 @@ ${contentText}`);
         const reason = snapshot.error ?? "浏览器未允许键盘锁";
         return `接管失败：${reason}。请重试。`;
       }
-      return `浏览器把 Ctrl+Shift+O 用于收藏夹。按 ${NEW_CHAT_ALTERNATIVE_MODIFIERS} 无需接管即可打开新对话；自动接管已开启时，在页面内完成新对话后会自动全屏锁住 Ctrl+Shift+O，按 Esc 退出全屏即恢复浏览器快捷键。`;
+      return `浏览器把 Ctrl+Shift+O 用于收藏夹。按 ${NEW_CHAT_ALTERNATIVE_MODIFIERS} 无需接管即可打开新对话；自动接管已开启时，在页面内完成新对话后，下一次点击或按键会全屏锁住 Ctrl+Shift+O，按 Esc 退出全屏即恢复浏览器快捷键。`;
     }
     function renderNewChatLockStatus(snapshot) {
       if (!hudStats) return;
@@ -11983,15 +12016,27 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       storage: window.localStorage,
       location: window.location
     };
+    let takeoverArmed = false;
+    takeoverArmed = consumeTakeoverIntent();
     bindNewChatShortcut(window, page, {
-      onReservedKeyFallback: () => {
+      armReservedKeyTakeover: () => {
         if (state.newChatShortcutLock !== true) return;
-        void newChatLock.activate();
+        takeoverArmed = true;
+      },
+      rememberTakeoverIntent: () => {
+        if (state.newChatShortcutLock !== true) return;
+        rememberTakeoverIntent();
       }
     });
     const injectStyles = () => injectEngineStyles({
       geminiNativeRender: currentPlatform.nativeTurnRoots === true
     });
+    const armReservedKeyTakeover = (event) => {
+      if (takeoverArmed === false || isTakeoverGesture(event) === false) return;
+      takeoverArmed = false;
+      if (state.newChatShortcutLock !== true) return;
+      void newChatLock.activate();
+    };
     const {
       clearRenderedCache,
       extractTurnText,
@@ -12484,6 +12529,8 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     }
     function teardownEngine() {
       newChatLock.deactivate();
+      takeoverArmed = false;
+      forgetTakeoverIntent();
       reasoning.attachStatusNode(null);
       toolMemory.teardown();
       setEngineActive(false);
@@ -12610,6 +12657,8 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       window.addEventListener("click", reasoning.handleReasoningClick, true);
       window.addEventListener("click", toolMemory.handleToolClick, true);
       window.addEventListener("click", reasoning.handleDehydratedClick, true);
+      window.addEventListener("pointerdown", armReservedKeyTakeover, true);
+      window.addEventListener("keydown", armReservedKeyTakeover, true);
     }
     function boot() {
       if (isEngineActive()) return;
