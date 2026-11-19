@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.23.5**
+当前版本：**0.23.6**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -398,7 +398,9 @@ pointerdown → mousedown → pointerup → mouseup → click
 | 已发送文件的「展开原文 / 收起为文件」 | 在文件胶囊与原始消息文本之间切换 |
 | 悬停折叠导航栏 | 指针停留 70ms 后侧栏原地展开到该站点的展开宽度（Gemini 248px、ChatGPT 340px 等）；移开、按 `Esc` 或在侧栏外按下指针即收回 |
 
-注：`Ctrl + Shift + O` 在 Chromium / Edge 中是浏览器保留的收藏夹（书签管理器）快捷键，`KeyO` 的 `keydown` 在页面脚本之前就被加速键管线消费。引擎因此同时监听 `keydown` 与 `keyup`：页面收到 `keydown` 时按常规路径处理，只收到 `keyup` 时由兜底路径接管，优先点击站点的新对话控件，控件未渲染时使用该站点的空白对话路径。面板「新对话快捷键」区仍提供「全屏接管 Ctrl+Shift + O」：进入全屏并申请 Keyboard Lock 后按键改由页面处理，按 `Esc` 退出全屏即恢复浏览器行为。焦点在浏览器地址栏等页面外区域时，浏览器照常处理；macOS 上脚本只响应 `Ctrl`。
+注：`Ctrl + Shift + O` 在 Chromium / Edge 中是浏览器保留的收藏夹（书签管理器）快捷键。真实系统按键实测（Edge 122 / Helium 158）：Chromium 会先询问渲染进程，`KeyO` 的 `keydown` **确实到达页面**，在捕获阶段 `preventDefault()` 即可让书签面板不弹出；个别构建会在页面看到之前消费掉 `keydown`，只留下 `keyup`。引擎因此同时监听两者：`keydown` 走常规路径，`keyup` 仅在没见到对应 `keydown` 时兜底，优先点击站点的新对话控件，控件未渲染时使用该站点的空白对话路径。
+
+自动接管（默认开启，面板「新对话快捷键」区可关闭）：当一次按键只能以 `keyup` 兜底、且该次按键确实被页面内的控件满足（如元宝：点击后原地重置会话、不发生文档跳转），引擎会立即申请全屏并 `navigator.keyboard.lock(["KeyO"])`，此后同一按键直接由页面处理，书签面板不再弹出。局限同样真实：Z.ai 与 DeepSeek 每次按键都会跳转或整页重载文档（新建对话本身就是换文档），接管会在按键中途被销毁，因此这两站**不会**自动武装，按键仍会跳转后由页面处理新对话。手动「全屏接管 Ctrl+Shift + O」按钮在任何站点都可用；按 `Esc` 退出全屏会立即解锁并恢复浏览器快捷键。浏览器不提供 Keyboard Lock（`navigator.keyboard` 缺失，如 Helium 158 / Edge 122）时接管按钮显示不支持，且不会闪一下全屏。焦点在浏览器地址栏等页面外区域时，浏览器照常处理；macOS 上脚本只响应 `Ctrl`。
 
 面板以 `role="dialog"` + `aria-modal="true"` 暴露，打开时焦点进入检索框，关闭时回到打开前的元素（该元素已失效时回到悬浮仪表）；`Tab` / `Shift + Tab` 在面板内循环。悬浮仪表使用原生按钮的 `click` 处理鼠标与键盘激活，指针移动超过 4px 才进入拖拽，拖拽结束后抑制随后的点击；`pointercancel` 与窗口 / `visualViewport` 尺寸变化都会清理状态并重新夹紧位置。贴边后仪表仍是同一个按钮，`aria-label` 会说明当前是「贴边」还是「取消贴边」。
 
@@ -417,6 +419,7 @@ pointerdown → mousedown → pointerup → mouseup → click
 | `pruneEnabled` | boolean | true | 是否启用视口脱水 |
 | `collapseCode` | boolean | true | 是否启用长代码折叠 |
 | `virtualFileEnabled` | boolean | true | 是否启用长文本伪文件 |
+| `newChatShortcutLock` | boolean | true | 页面内完成新对话后是否自动全屏接管 `Ctrl + Shift + O`；关闭后仅保留手动按钮 |
 | `rememberReasoning` | boolean | true | 是否记住并在新对话中还原推理强度 |
 | `rememberTools` | boolean | true | 是否记住并在新话题中还原元宝工具选择 |
 | `hudTheme` | "auto" \| "light" \| "dark" | auto | 面板与悬浮仪表的界面主题；旧配置缺失或值非法时回退自动 |
@@ -505,6 +508,17 @@ pointerdown → mousedown → pointerup → mouseup → click
 ---
 
 ## 版本记录
+
+### 0.23.6
+
+**`Ctrl + Shift + O` 兜底命中后自动全屏接管，把系统收藏夹快捷键真正让给页面。**
+
+- **更正 0.23.5 的按键测量。** 0.23.5 记录「`KeyO` 的 `keydown` 在页面脚本之前就被加速键管线消费」是错的。用真实系统按键在 Edge 122.0.2365.106 与 Helium 158 上复测：`keydown` **会到达页面**，在捕获阶段 `preventDefault()` 后书签管理器不打开、页面存活（对照组不调用 `preventDefault()` 则打开书签页并让原页面进入后台）。同时，`SendKeys` 注入的按键只有 `event.key` 有值、`event.code` 为空，因此匹配同时看 `code` 与 `key`。0.23.5 的 `keyup` 兜底仍有价值：它覆盖真正吞掉 `keydown` 的构建。
+- **自动接管。** `bindNewChatShortcut` 新增 `NewChatShortcutHooks.onReservedKeyFallback`；`handleNewChatShortcut` 改为返回 `boolean`——只有「按下了站点自己的控件」才返回 `true`，路由跳转与空白路由重载都返回 `false`（这两种情况下文档会被替换，任何页面内状态都留不住）。回调只在 `keyup` 兜底且返回 `true` 时触发，随后由 `lifecycle` 调用新增的 `newChatLock.activate()` 申请全屏并锁定 `KeyO`。此后同一组合键由页面处理，书签面板不再弹出，用户仍停留在原页面并在原地开启新会话。
+- **作用域与真实局限。** Z.ai 与 DeepSeek 的新对话本身就是切换文档：Z.ai / DeepSeek 每按一次都会 `assign` 到空白路由，已在空白路由时则清草稿后整页 `reload`。文档被替换时接管随之销毁，重新武装也会立刻失效，所以这两站**不自动武装**，兜底仍保证「新对话会打开」，但书签面板仍可能闪出。这是浏览器保留键的硬边界，不做虚假承诺。元宝在会话内原地重置，属于接管真正生效的场景。
+- **持久化开关。** 配置新增 `newChatShortcutLock`（默认 `true`），面板「新对话快捷键」区新增「自动接管 Ctrl+Shift+O」开关，关闭后立即 `deactivate()` 并只保留手动按钮；开关状态即时写入 `localStorage`，旧配置缺少该字段时按默认开启处理。原有「全屏接管 Ctrl+Shift+O」按钮语义不变。
+- **Esc 逃生口。** 接管期间按 `Esc` 由浏览器退出全屏，`fullscreenchange` 触发解锁并恢复浏览器快捷键；`pagehide` 同样释放，原有 Esc 处理（关闭弹层 / 收起侧栏）不受影响。`navigator.keyboard` 缺失（Helium 158、Edge 122）时状态直接为 `unsupported`，在 `requestFullscreen()` 之前返回，不会闪出全屏。
+- **测试覆盖。** 兜底命中且页面内完成时触发回调、见到 `keydown` 时不触发、Z.ai / DeepSeek 的跳转路径不触发、`handleNewChatShortcut` 的返回值、`activate()` 幂等、无 Keyboard Lock 时不调用 `requestFullscreen()`、HUD 开关写入配置并在关闭时解锁，均有单元测试。
 
 ### 0.23.5
 

@@ -196,40 +196,47 @@ export function findNewChatControl(
   return null;
 }
 
+/**
+ * Claim the combination and open a new conversation.
+ *
+ * Returns `true` only when the press was satisfied inside this page by
+ * pressing the site's own control. A route jump returns `false`: the document
+ * is about to be replaced, and anything this page owns is torn down with it.
+ */
 export function handleNewChatShortcut(
   event: KeyboardEvent,
   page: NewChatPage,
-): void {
-  if (event.defaultPrevented === true || event.isComposing === true) return;
-  if (event.ctrlKey === false || event.shiftKey === false) return;
-  if (event.altKey === true || event.metaKey === true) return;
+): boolean {
+  if (event.defaultPrevented === true || event.isComposing === true) return false;
+  if (event.ctrlKey === false || event.shiftKey === false) return false;
+  if (event.altKey === true || event.metaKey === true) return false;
   if (
     event.code !== NEW_CHAT_SHORTCUT_CODE &&
     event.key.toLowerCase() !== "o"
   ) {
-    return;
+    return false;
   }
 
   const { location } = page;
-  if (isAuthOrRedirectRoute(location) === true) return;
+  if (isAuthOrRedirectRoute(location) === true) return false;
   const platform = findPlatformForLocation(location.hostname, location.pathname);
-  if (platform === null) return;
+  if (platform === null) return false;
 
   event.preventDefault();
   event.stopImmediatePropagation();
-  if (event.repeat === true) return;
+  if (event.repeat === true) return false;
 
   const control = findNewChatControl(page.document, page.location);
   if (control !== null) {
     control.click();
-    return;
+    return true;
   }
 
   const path = platform.hostPaths?.[location.hostname] ?? platform.newChatShortcut;
   const destination = new URL(path, location.origin);
   if (destination.href !== location.href) {
     location.assign(destination.href);
-    return;
+    return false;
   }
   /*
    * Already on the blank route, which is itself the new conversation on the
@@ -237,9 +244,20 @@ export function handleNewChatShortcut(
    * navigation, so the route is re-entered after the site's stored draft is
    * dropped; without that the shortcut appears to do nothing at all.
    */
-  if (platform.blankRouteReset !== true) return;
+  if (platform.blankRouteReset !== true) return false;
   clearPlatformDraft(page, platform);
   location.reload();
+  return false;
+}
+
+export interface NewChatShortcutHooks {
+  /**
+   * Runs when the press only arrived as `keyup`, meaning the browser consumed
+   * the `keydown` for its own shortcut, and the page satisfied the press
+   * itself. That is the one moment a Keyboard Lock takeover is worth asking
+   * for: the site keeps working, but so does the browser's bookmark panel.
+   */
+  onReservedKeyFallback?: () => void;
 }
 
 /**
@@ -249,18 +267,25 @@ export function handleNewChatShortcut(
  * login and redirect routes that never build the HUD; the returned unbinder
  * exists for tests and for a future re-injection guard.
  *
- * Chromium reserves Ctrl+Shift+O for its bookmark manager and consumes the
- * `KeyO` keydown in its accelerator pipeline, so the page never sees it: the
- * measured event stream is a Control keydown, a Shift keydown, then a `KeyO`
- * keyup. `keydown` therefore stays the primary path for every site that
- * receives it, and `keyup` is the fallback for the reserved ones, claimed only
- * when no matching keydown was observed. The keyup handler also guards
- * against a false trigger when the letter is released while the modifiers are
- * pressed separately, in either order.
+ * Chromium reserves Ctrl+Shift+O for its bookmark manager, but it asks the
+ * renderer first: measured with a real OS keystroke on Edge 122 and Helium 158,
+ * the `KeyO` keydown does reach the page, and `preventDefault()` on it in the
+ * capture phase keeps the bookmark manager closed. That same measurement shows
+ * the event can arrive with an empty `code`, so both `code` and `key` are
+ * matched. `keydown` is therefore the primary path, and `keyup` is the fallback
+ * for builds that consume the keydown before the page sees it, claimed only
+ * when no matching keydown was observed. The keyup handler also guards against
+ * a false trigger when the letter is released while the modifiers are pressed
+ * separately, in either order.
+ *
+ * A fallback press means the browser already opened its own panel, so the
+ * page cannot stop it after the fact. The hook above reports that case to the
+ * caller, which decides whether a Keyboard Lock takeover is worth arming.
  */
 export function bindNewChatShortcut(
   target: Pick<Window, "addEventListener" | "removeEventListener">,
   page: NewChatPage,
+  hooks: NewChatShortcutHooks = {},
 ): () => void {
   let sawShortcutKeyDown = false;
   const listener = (event: KeyboardEvent): void => {
@@ -273,7 +298,8 @@ export function bindNewChatShortcut(
         const keyDownWasSeen = sawShortcutKeyDown;
         sawShortcutKeyDown = false;
         if (keyDownWasSeen === false) {
-          handleNewChatShortcut(event, page);
+          const satisfiedInPage = handleNewChatShortcut(event, page);
+          if (satisfiedInPage === true) hooks.onReservedKeyFallback?.();
         }
         return;
       }

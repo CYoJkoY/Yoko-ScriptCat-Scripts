@@ -96,7 +96,7 @@ export interface HudDeps {
     "attachStatusNode" | "scheduleRestore" | "renderStatus"
   >;
   handoff: HandoffUtils;
-  newChatLock: Pick<NewChatLockUtils, "toggle" | "subscribe">;
+  newChatLock: Pick<NewChatLockUtils, "toggle" | "deactivate" | "subscribe">;
   isEngineDormant: () => boolean;
   requestUpdate: () => void;
   requestFullTurnSync: () => void;
@@ -365,6 +365,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
   let chkCollapse: HTMLInputElement | null = null;
   let chkVirtualFile: HTMLInputElement | null = null;
   let chkSidebarPeek: HTMLInputElement | null = null;
+  let chkNewChatLock: HTMLInputElement | null = null;
   let chkReasoning: HTMLInputElement | null = null;
   let chkTools: HTMLInputElement | null = null;
 
@@ -425,6 +426,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     if (chkCollapse) chkCollapse.checked = state.collapseCode;
     if (chkVirtualFile) chkVirtualFile.checked = state.virtualFileEnabled;
     if (chkSidebarPeek) chkSidebarPeek.checked = state.sidebarPeekEnabled;
+    if (chkNewChatLock) chkNewChatLock.checked = state.newChatShortcutLock;
     if (chkReasoning) chkReasoning.checked = state.rememberReasoning;
     if (chkTools) chkTools.checked = state.rememberTools;
   }
@@ -476,7 +478,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       const reason = snapshot.error ?? "浏览器未允许键盘锁";
       return `接管失败：${reason}。请重试。`;
     }
-    return "浏览器把 Ctrl+Shift+O 用于收藏夹。接管会进入全屏并锁住该键，按 Esc 退出全屏即恢复。";
+    return "浏览器把 Ctrl+Shift+O 用于收藏夹。自动接管已开启时，在页面内完成新对话后会自动全屏锁住该键；按 Esc 退出全屏即恢复浏览器快捷键。";
   }
 
   function renderNewChatLockStatus(snapshot: NewChatLockSnapshot): void {
@@ -1187,6 +1189,10 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       id: "hud-sidebar-peek",
       type: "checkbox",
     });
+    chkNewChatLock = el("input", {
+      id: "hud-new-chat-lock",
+      type: "checkbox",
+    });
     chkReasoning = el("input", { id: "hud-reasoning", type: "checkbox" });
 
     const switchRow = (
@@ -1206,6 +1212,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     chkCollapse.checked = state.collapseCode;
     chkVirtualFile.checked = state.virtualFileEnabled;
     chkSidebarPeek.checked = state.sidebarPeekEnabled;
+    chkNewChatLock.checked = state.newChatShortcutLock;
     chkReasoning.checked = state.rememberReasoning;
 
     chkPrune.addEventListener("change", () => {
@@ -1248,6 +1255,16 @@ export function createHudUtils(deps: HudDeps): HudUtils {
       announce(
         "悬停展开侧栏" +
           (state.sidebarPeekEnabled ? "已开启" : "已关闭") +
+          "，设置已保存",
+      );
+    });
+    chkNewChatLock.addEventListener("change", () => {
+      state.newChatShortcutLock = chkNewChatLock?.checked ?? true;
+      saveConfig();
+      if (!state.newChatShortcutLock) newChatLock.deactivate();
+      announce(
+        "自动接管 Ctrl+Shift+O" +
+          (state.newChatShortcutLock ? "已开启" : "已关闭") +
           "，设置已保存",
       );
     });
@@ -1316,6 +1333,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     });
     const newChatLockSection = el("div", { className: "section" }, [
       el("div", { className: "section-title" }, ["新对话快捷键"]),
+      switchRow("hud-new-chat-lock", "自动接管 Ctrl+Shift+O", chkNewChatLock),
       newChatLockButton,
       newChatLockStatus,
     ]);
@@ -1637,6 +1655,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     chkCollapse = null;
     chkVirtualFile = null;
     chkSidebarPeek = null;
+    chkNewChatLock = null;
     chkReasoning = null;
     chkTools = null;
     focusBeforeOpen = null;

@@ -94,6 +94,7 @@ interface HudFixture {
   flushTextIndex: ReturnType<typeof vi.fn>;
   requestCodeScanForTurn: ReturnType<typeof vi.fn>;
   newChatLockToggle: ReturnType<typeof vi.fn>;
+  newChatLockDeactivate: ReturnType<typeof vi.fn>;
   emitNewChatLock: (snapshot: NewChatLockSnapshot) => void;
 }
 
@@ -116,6 +117,7 @@ function createHud(
     options.onSaved?.();
   });
   const newChatLockToggle = vi.fn(async () => undefined);
+  const newChatLockDeactivate = vi.fn();
   const newChatLockListeners = new Set<
     (snapshot: NewChatLockSnapshot) => void
   >();
@@ -148,6 +150,7 @@ function createHud(
     },
     newChatLock: {
       toggle: newChatLockToggle,
+      deactivate: newChatLockDeactivate,
       subscribe: (listener) => {
         newChatLockListeners.add(listener);
         listener({ status: "inactive", error: null });
@@ -188,6 +191,7 @@ function createHud(
     flushTextIndex,
     requestCodeScanForTurn,
     newChatLockToggle,
+    newChatLockDeactivate,
     emitNewChatLock: (snapshot) => {
       for (const listener of newChatLockListeners) listener(snapshot);
     },
@@ -834,6 +838,26 @@ describe("new chat shortcut takeover", () => {
     button.click();
 
     expect(fixture.newChatLockToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists the automatic takeover switch and releases the lock", () => {
+    const fixture = createHud();
+    const checkbox = shadowInput(fixture.shadow, "hud-new-chat-lock");
+    expect(checkbox.checked).toBe(true);
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change"));
+
+    expect(fixture.state.newChatShortcutLock).toBe(false);
+    expect(fixture.saveConfig).toHaveBeenCalledTimes(1);
+    expect(fixture.newChatLockDeactivate).toHaveBeenCalledTimes(1);
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+
+    expect(fixture.state.newChatShortcutLock).toBe(true);
+    expect(fixture.saveConfig).toHaveBeenCalledTimes(2);
+    expect(fixture.newChatLockDeactivate).toHaveBeenCalledTimes(1);
   });
 
   it("reflects the active and unsupported states", () => {

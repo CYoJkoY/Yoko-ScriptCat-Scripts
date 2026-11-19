@@ -81,6 +81,34 @@ describe("createNewChatLockUtils", () => {
     lock.dispose();
   });
 
+  it("arms once and ignores a second automatic activation", async () => {
+    const fixture = createFullscreenFixture();
+    const lock = createNewChatLockUtils({
+      doc: document,
+      keyboard: fixture.keyboard,
+    });
+
+    await lock.activate();
+    await lock.activate();
+
+    expect(fixture.requestFullscreen).toHaveBeenCalledTimes(1);
+    expect(fixture.keyboard.lock).toHaveBeenCalledTimes(1);
+    expect(lock.getSnapshot().status).toBe("active");
+    lock.dispose();
+  });
+
+  it("never enters fullscreen when the browser has no keyboard lock", async () => {
+    const fixture = createFullscreenFixture();
+    const lock = createNewChatLockUtils({ doc: document, keyboard: null });
+
+    await lock.activate();
+
+    expect(fixture.requestFullscreen).not.toHaveBeenCalled();
+    expect(fixture.exitFullscreen).not.toHaveBeenCalled();
+    expect(lock.getSnapshot().status).toBe("unsupported");
+    lock.dispose();
+  });
+
   it("releases the lock when fullscreen exits outside the controller", async () => {
     const fixture = createFullscreenFixture();
     const lock = createNewChatLockUtils({

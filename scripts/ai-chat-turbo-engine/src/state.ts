@@ -17,6 +17,7 @@ export interface PersistedEngineConfig {
   collapseCode: boolean;
   virtualFileEnabled: boolean;
   sidebarPeekEnabled: boolean;
+  newChatShortcutLock: boolean;
   rememberReasoning: boolean;
   rememberTools: boolean;
   hudTheme: HudTheme;
@@ -29,6 +30,7 @@ const DEFAULT_PERSISTED_CONFIG: PersistedEngineConfig = {
   collapseCode: true,
   virtualFileEnabled: true,
   sidebarPeekEnabled: true,
+  newChatShortcutLock: true,
   rememberReasoning: true,
   rememberTools: true,
   hudTheme: "auto",
@@ -110,6 +112,9 @@ export function loadSavedConfig(state: EngineState): void {
     if (typeof parsed.sidebarPeekEnabled === "boolean") {
       state.sidebarPeekEnabled = parsed.sidebarPeekEnabled;
     }
+    if (typeof parsed.newChatShortcutLock === "boolean") {
+      state.newChatShortcutLock = parsed.newChatShortcutLock;
+    }
     if (typeof parsed.rememberReasoning === "boolean") {
       state.rememberReasoning = parsed.rememberReasoning;
     }
@@ -142,6 +147,7 @@ export function saveCurrentConfig(state: EngineState): void {
       collapseCode: state.collapseCode,
       virtualFileEnabled: state.virtualFileEnabled,
       sidebarPeekEnabled: state.sidebarPeekEnabled,
+      newChatShortcutLock: state.newChatShortcutLock,
       rememberReasoning: state.rememberReasoning,
       rememberTools: state.rememberTools,
       hudTheme: state.hudTheme,
