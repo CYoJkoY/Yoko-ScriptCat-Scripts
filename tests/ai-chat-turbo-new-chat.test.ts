@@ -4,6 +4,7 @@ import {
   bindNewChatShortcut,
   findNewChatControl,
   handleNewChatShortcut,
+  NEW_CHAT_CONTROL_WAIT_MS,
 } from "../scripts/ai-chat-turbo-engine/src/core/new-chat";
 
 interface FakePage {
@@ -366,6 +367,45 @@ describe("handleNewChatShortcut", () => {
       .toBe(false);
   });
 
+  it("opens a new chat with the alternative combination", () => {
+    const control = addControl({ "aria-label": "New chat" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage();
+    const event = shortcutEvent({ ctrlKey: false, altKey: true });
+
+    expect(handleNewChatShortcut(event, page)).toBe(true);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(page.location.assign).not.toHaveBeenCalled();
+  });
+
+  it("routes the alternative combination where no control renders", () => {
+    const page = createPage("https://zchat.z.ai/c/abc");
+    const event = shortcutEvent({ ctrlKey: false, altKey: true });
+
+    handleNewChatShortcut(event, page);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(page.location.assign).toHaveBeenCalledWith("https://zchat.z.ai/");
+  });
+
+  it("keeps combinations that add Meta or both Ctrl and Alt out", () => {
+    addControl({ "aria-label": "New chat" });
+    const page = createPage();
+
+    const withMeta = press(page, {
+      ctrlKey: false,
+      altKey: true,
+      metaKey: true,
+    });
+    const withBoth = press(page, { ctrlKey: true, altKey: true });
+
+    expect(withMeta.defaultPrevented).toBe(false);
+    expect(withBoth.defaultPrevented).toBe(false);
+    expect(page.location.assign).not.toHaveBeenCalled();
+  });
+
   it("leaves an already handled event untouched", () => {
     const control = addControl({ "aria-label": "New chat" });
     const click = vi.spyOn(control, "click");
@@ -418,16 +458,42 @@ describe("reported hosts", () => {
     expect(page.location.assign).not.toHaveBeenCalled();
   });
 
-  it("falls back to Yuanbao's blank conversation route", () => {
-    const page = createPage(
-      "https://yuanbao.tencent.com/chat/naQivTmsDa/0SA6GtG4MqG",
-    );
+  it("waits for Yuanbao's entry before falling back to its blank route", () => {
+    vi.useFakeTimers();
+    try {
+      const page = createPage(
+        "https://yuanbao.tencent.com/chat/naQivTmsDa/0SA6GtG4MqG",
+      );
 
-    press(page);
+      press(page);
+      expect(page.location.assign).not.toHaveBeenCalled();
 
-    expect(page.location.assign).toHaveBeenCalledWith(
-      "https://yuanbao.tencent.com/chat/",
-    );
+      vi.advanceTimersByTime(NEW_CHAT_CONTROL_WAIT_MS);
+      expect(page.location.assign).toHaveBeenCalledWith(
+        "https://yuanbao.tencent.com/chat/",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clicks Yuanbao's entry when it mounts inside the wait window", () => {
+    vi.useFakeTimers();
+    try {
+      const page = createPage(
+        "https://yuanbao.tencent.com/chat/naQivTmsDa/0SA6GtG4MqG",
+      );
+
+      press(page);
+      const control = addRoleControl({ "aria-label": "新建对话" });
+      const click = vi.spyOn(control, "click");
+      vi.advanceTimersByTime(NEW_CHAT_CONTROL_WAIT_MS);
+
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(page.location.assign).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("falls back to DeepSeek's blank conversation route", () => {
@@ -585,6 +651,24 @@ describe("bindNewChatShortcut", () => {
     target.dispatchEvent(shortcutEvent());
     target.dispatchEvent(shortcutRelease());
 
+    expect(onReservedKeyFallback).not.toHaveBeenCalled();
+
+    unbind();
+  });
+
+  it("does not arm the takeover for the unreserved alternative", () => {
+    const control = addControl({ "aria-label": "New chat" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage("https://chatgpt.com/c/1");
+    const target = new EventTarget();
+    const onReservedKeyFallback = vi.fn();
+
+    const unbind = bindNewChatShortcut(target, page, {
+      onReservedKeyFallback,
+    });
+    target.dispatchEvent(shortcutRelease({ ctrlKey: false, altKey: true }));
+
+    expect(click).toHaveBeenCalledTimes(1);
     expect(onReservedKeyFallback).not.toHaveBeenCalled();
 
     unbind();

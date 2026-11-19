@@ -44,6 +44,22 @@ const CONTROL_SELECTOR = CONTROL_SELECTORS.join(",");
 /** Physical key the takeover locks and the handler claims. */
 export const NEW_CHAT_SHORTCUT_CODE = "KeyO";
 
+/**
+ * Chromium reserves Ctrl+Shift+O for its bookmark manager and, on some
+ * builds, consumes the keydown before the page sees it. Alt+Shift+O is not
+ * reserved by any mainstream browser, so it always reaches the page and the
+ * engine can claim it without a fullscreen Keyboard Lock.
+ */
+export const NEW_CHAT_ALTERNATIVE_MODIFIERS = "Alt+Shift+O";
+
+/**
+ * Yuanbao mounts its new-chat entry only after the history list loads, so a
+ * shortcut pressed on a freshly rendered collapsed rail finds no control.
+ * Its `/chat/` fallback redirects to the most recent conversation, so the
+ * engine waits briefly for the site to mount the entry first.
+ */
+export const NEW_CHAT_CONTROL_WAIT_MS = 600;
+
 export interface NewChatPage {
   readonly document: Document;
   readonly storage?: Pick<Storage, "removeItem">;
@@ -196,6 +212,57 @@ export function findNewChatControl(
   return null;
 }
 
+/** Which of the two accepted combinations the event carries, if any. */
+type NewChatShortcutKind = "primary" | "alternative";
+
+/**
+ * Classify the event against the two combinations the engine claims.
+ *
+ * `Ctrl+Shift+O` is the primary. `Alt+Shift+O` is the alternative for the
+ * builds that consume the primary before the renderer sees it: no mainstream
+ * browser reserves it, so it always reaches the page. A combination that adds
+ * both `Ctrl` and `Alt`, or `Meta`, belongs to neither and is left alone.
+ */
+function classifyNewChatShortcut(
+  event: KeyboardEvent,
+): NewChatShortcutKind | null {
+  if (event.shiftKey === false || event.metaKey === true) return null;
+  if (
+    event.code !== NEW_CHAT_SHORTCUT_CODE &&
+    event.key.toLowerCase() !== "o"
+  ) {
+    return null;
+  }
+  if (event.ctrlKey === true && event.altKey === false) return "primary";
+  if (event.altKey === true && event.ctrlKey === false) return "alternative";
+  return null;
+}
+
+/**
+ * Send the document to the platform's blank conversation route, or re-enter
+ * the current blank route after dropping the site's stored draft.
+ *
+ * This is the fallback for sites that render no new chat control at all.
+ * `blankRouteReset` covers the sites whose blank route is itself the new
+ * conversation and whose composer survives a plain navigation, so the route
+ * is re-entered after the draft is dropped.
+ */
+function openNewChatRoute(
+  page: NewChatPage,
+  platform: PlatformDefinition,
+): void {
+  const { location } = page;
+  const path = platform.hostPaths?.[location.hostname] ?? platform.newChatShortcut;
+  const destination = new URL(path, location.origin);
+  if (destination.href !== location.href) {
+    location.assign(destination.href);
+    return;
+  }
+  if (platform.blankRouteReset !== true) return;
+  clearPlatformDraft(page, platform);
+  location.reload();
+}
+
 /**
  * Claim the combination and open a new conversation.
  *
@@ -208,14 +275,7 @@ export function handleNewChatShortcut(
   page: NewChatPage,
 ): boolean {
   if (event.defaultPrevented === true || event.isComposing === true) return false;
-  if (event.ctrlKey === false || event.shiftKey === false) return false;
-  if (event.altKey === true || event.metaKey === true) return false;
-  if (
-    event.code !== NEW_CHAT_SHORTCUT_CODE &&
-    event.key.toLowerCase() !== "o"
-  ) {
-    return false;
-  }
+  if (classifyNewChatShortcut(event) === null) return false;
 
   const { location } = page;
   if (isAuthOrRedirectRoute(location) === true) return false;
@@ -232,21 +292,30 @@ export function handleNewChatShortcut(
     return true;
   }
 
-  const path = platform.hostPaths?.[location.hostname] ?? platform.newChatShortcut;
-  const destination = new URL(path, location.origin);
-  if (destination.href !== location.href) {
-    location.assign(destination.href);
+  /*
+   * Yuanbao mounts its entry only after the history list loads, and its
+   * `/chat/` fallback redirects to the most recent conversation, so wait once
+   * for the site to render the control before falling back. Sites without
+   * declared selectors render no control at all, so their route path runs
+   * immediately.
+   */
+  if (platform.newChatControlSelectors === undefined) {
+    openNewChatRoute(page, platform);
     return false;
   }
-  /*
-   * Already on the blank route, which is itself the new conversation on the
-   * sites that declare `blankRouteReset`. Their composer survives a plain
-   * navigation, so the route is re-entered after the site's stored draft is
-   * dropped; without that the shortcut appears to do nothing at all.
-   */
-  if (platform.blankRouteReset !== true) return false;
-  clearPlatformDraft(page, platform);
-  location.reload();
+
+  const pressedHref = location.href;
+  const view = page.document.defaultView ?? window;
+  view.setTimeout(() => {
+    // A navigation of its own means the press was already satisfied.
+    if (page.location.href !== pressedHref) return;
+    const lateControl = findNewChatControl(page.document, page.location);
+    if (lateControl !== null) {
+      lateControl.click();
+      return;
+    }
+    openNewChatRoute(page, platform);
+  }, NEW_CHAT_CONTROL_WAIT_MS);
   return false;
 }
 
@@ -299,7 +368,14 @@ export function bindNewChatShortcut(
         sawShortcutKeyDown = false;
         if (keyDownWasSeen === false) {
           const satisfiedInPage = handleNewChatShortcut(event, page);
-          if (satisfiedInPage === true) hooks.onReservedKeyFallback?.();
+          // Only the reserved primary can be swallowed by the browser, so the
+          // takeover hook is not worth arming for the alternative.
+          if (
+            satisfiedInPage === true &&
+            classifyNewChatShortcut(event) === "primary"
+          ) {
+            hooks.onReservedKeyFallback?.();
+          }
         }
         return;
       }
