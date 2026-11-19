@@ -194,6 +194,18 @@ export function createVirtualFileUtils(
     };
 
     observeNode(input);
+    /**
+     * Gemini inserts its attachment preview above the editor without changing
+     * the editor's own box, so the tray needs the sibling that lifts the
+     * composer container, not only the editor and its ancestors.
+     */
+    let sibling: Element | null = input.previousElementSibling;
+    let siblingDepth = 0;
+    while (sibling && siblingDepth < COMPOSER_VISUAL_MAX_DEPTH) {
+      observeNode(sibling);
+      sibling = sibling.previousElementSibling;
+      siblingDepth++;
+    }
     let node: HTMLElement | null = anchor;
     let depth = 0;
     while (node && depth < COMPOSER_VISUAL_MAX_DEPTH) {
@@ -236,12 +248,27 @@ export function createVirtualFileUtils(
 
     const bounds = composer.getComposerVisualBounds(input, anchor);
 
+    /**
+     * Gemini paints uploaded previews beside the editor inside its own
+     * container, so the editor's top edge stays put while the whole input
+     * area grows upward. The editor rect alone would then leave the tray over
+     * the previews; the container rect is the lift the user actually sees.
+     * On plain composers the container only wraps the editor, so this is the
+     * same edge and keeps multi-line growth working unchanged.
+     */
+    const container = composer.getInputContainer(input);
+    const containerRect = container?.getBoundingClientRect();
+    const visualTopCandidate = containerRect
+      ? Math.min(bounds.top, containerRect.top)
+      : bounds.top;
+
     const viewportPadding = 18;
     const verticalGap = 16;
 
     let visualTop =
-      Number.isFinite(bounds.top) && bounds.top <= inputRect.top + 1
-        ? bounds.top
+      Number.isFinite(visualTopCandidate) &&
+      visualTopCandidate <= inputRect.top + 1
+        ? visualTopCandidate
         : inputRect.top;
 
     visualTop = Math.min(visualTop, inputRect.top);

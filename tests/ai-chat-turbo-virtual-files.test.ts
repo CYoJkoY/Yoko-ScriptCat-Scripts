@@ -55,7 +55,10 @@ function createFixture(): VirtualFileFixture {
     fallbackKeyboardSubmit: () => false,
     isSendLikeButton: () => false,
     getInputContainer: () => container,
-    getComposerVisualBounds: () => ({ top: 0, left: 0, right: 0, width: 0 }),
+    getComposerVisualBounds: () => {
+      const rect = current.getBoundingClientRect();
+      return { top: rect.top, left: rect.left, right: rect.right, width: rect.width };
+    },
     insertTextAtomic: (input, text) => {
       if (input instanceof HTMLTextAreaElement) input.value = text;
     },
@@ -239,6 +242,23 @@ describe("virtual file tray conversion", () => {
 
     expect(tray()?.classList.contains("is-positioned")).toBe(true);
     expect(document.querySelector(".ai-turbo-vf-list")).toBeNull();
+  });
+
+  it("avoids native attachment previews when the composer lifts upward", async () => {
+    fixture.textarea.getBoundingClientRect = () =>
+      ({ top: 500, left: 40, width: 720, height: 120 }) as DOMRect;
+
+    const composer = fixture.textarea.closest(".composer");
+    if (!(composer instanceof HTMLElement)) throw new Error("missing composer");
+    composer.getBoundingClientRect = () =>
+      ({ top: 360, left: 40, width: 720, height: 260 }) as DOMRect;
+
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(tray()?.style.bottom).toBe("424px");
+    expect(tray()?.style.maxHeight).toBe("326px");
   });
 
   it("drops a prompt-only tray when a route swap leaves an empty composer", async () => {

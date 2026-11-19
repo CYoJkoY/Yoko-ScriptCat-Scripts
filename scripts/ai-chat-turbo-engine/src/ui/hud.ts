@@ -6,6 +6,8 @@ import {
   LOAD_WARNING_RATIO,
   MESSAGE_LIMIT_MAX,
   MESSAGE_LIMIT_MIN,
+  SIDEBAR_PEEK_DELAY_MAX,
+  SIDEBAR_PEEK_DELAY_MIN,
   SEARCH_LIMIT,
   SEARCH_PREVIEW_LIMIT,
   STORAGE_KEY_DOCK,
@@ -24,6 +26,7 @@ import type {
 import { reportRecoverableError } from "../core/diagnostics";
 import {
   resetPersistedConfig,
+  normalizeSidebarPeekDelay,
   type EngineState,
   type HudTheme,
 } from "../state";
@@ -360,6 +363,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
 
   let keepValue: HTMLElement | null = null;
   let messageLimitInput: HTMLInputElement | null = null;
+  let sidebarPeekDelayInput: HTMLInputElement | null = null;
   let themeSelect: HTMLSelectElement | null = null;
   let advancedSettings: HTMLDetailsElement | null = null;
   let chkPrune: HTMLInputElement | null = null;
@@ -421,6 +425,9 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     if (keepValue) keepValue.textContent = String(state.keepTurns);
     if (messageLimitInput) {
       messageLimitInput.value = String(state.messageLimit);
+    }
+    if (sidebarPeekDelayInput) {
+      sidebarPeekDelayInput.value = String(state.sidebarPeekDelayMs);
     }
     if (themeSelect) themeSelect.value = state.hudTheme;
     if (chkPrune) chkPrune.checked = state.pruneEnabled;
@@ -1416,6 +1423,41 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     });
     messageLimitInput = limitInput;
 
+    const sidebarPeekDelayField = el("input", {
+      className: "limit-input",
+      id: "sidebar-peek-delay",
+      type: "number",
+      min: String(SIDEBAR_PEEK_DELAY_MIN),
+      max: String(SIDEBAR_PEEK_DELAY_MAX),
+      step: "1",
+      value: String(state.sidebarPeekDelayMs),
+      title:
+        "悬停展开侧栏延迟，范围 " +
+        String(SIDEBAR_PEEK_DELAY_MIN) +
+        " 至 " +
+        String(SIDEBAR_PEEK_DELAY_MAX) +
+        " 毫秒",
+      "aria-label": "悬停展开侧栏延迟",
+    });
+    sidebarPeekDelayField.value = String(state.sidebarPeekDelayMs);
+    sidebarPeekDelayField.addEventListener("change", () => {
+      const rawValue = sidebarPeekDelayField.value.trim();
+      if (rawValue === "") {
+        sidebarPeekDelayField.value = String(state.sidebarPeekDelayMs);
+        return;
+      }
+      state.sidebarPeekDelayMs = normalizeSidebarPeekDelay(rawValue);
+      sidebarPeekDelayField.value = String(state.sidebarPeekDelayMs);
+      saveConfig();
+      deps.syncSidebarPeek();
+      announce(
+        "悬停展开侧栏延迟：" +
+          String(state.sidebarPeekDelayMs) +
+          " 毫秒，设置已保存",
+      );
+    });
+    sidebarPeekDelayInput = sidebarPeekDelayField;
+
     themeSelect = el("select", {
       className: "theme-select",
       id: "hud-theme",
@@ -1462,6 +1504,13 @@ export function createHudUtils(deps: HudDeps): HudUtils {
         el("div", { className: "limit-control" }, [
           limitInput,
           el("span", { className: "limit-unit" }, ["条"]),
+        ]),
+      ]),
+      el("div", { className: "control-row" }, [
+        el("label", { for: "sidebar-peek-delay" }, ["侧栏探出延迟"]),
+        el("div", { className: "limit-control" }, [
+          sidebarPeekDelayField,
+          el("span", { className: "limit-unit" }, ["毫秒"]),
         ]),
       ]),
       el("div", { className: "control-row" }, [
@@ -1650,6 +1699,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     searchResultsBox = null;
     keepValue = null;
     messageLimitInput = null;
+    sidebarPeekDelayInput = null;
     themeSelect = null;
     advancedSettings = null;
     chkPrune = null;

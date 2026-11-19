@@ -1,4 +1,6 @@
-import type { SidebarPeekDefinition } from "../config";
+import {
+  type SidebarPeekDefinition,
+} from "../config";
 
 /** Marks the native rail that is currently peeking; the value is the side. */
 export const SIDEBAR_PEEK_ATTRIBUTE = "data-ai-turbo-sidebar-peek";
@@ -11,8 +13,8 @@ export const SIDEBAR_PEEK_WIDTH_VAR = "--ai-turbo-sidebar-peek-width";
  * row, so the chat column keeps its position instead of reflowing.
  */
 export const SIDEBAR_PEEK_SHIFT_VAR = "--ai-turbo-sidebar-peek-shift";
-/** Pointer must rest this long before the rail opens. */
-export const SIDEBAR_PEEK_SHOW_DELAY_MS = 70;
+import { SIDEBAR_PEEK_SHOW_DELAY_MS } from "../config";
+
 /** Grace period that keeps the rail open while the pointer crosses a gap. */
 export const SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
 /**
@@ -208,7 +210,7 @@ export interface SidebarPeekOptions {
    * to dismiss popovers, and those scripted events must not steer the peek.
    */
   readonly isUserKey?: (event: Event) => boolean;
-  readonly showDelayMs?: number;
+  readonly showDelayMs?: () => number;
   readonly hideDelayMs?: number;
 }
 
@@ -234,8 +236,8 @@ export interface SidebarPeek {
  */
 export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   const definition = options.sidebar;
-  const showDelayMs = options.showDelayMs ?? SIDEBAR_PEEK_SHOW_DELAY_MS;
   const hideDelayMs = options.hideDelayMs ?? SIDEBAR_PEEK_HIDE_DELAY_MS;
+  const showDelayMs = options.showDelayMs ?? (() => SIDEBAR_PEEK_SHOW_DELAY_MS);
   const isUserKey = options.isUserKey ?? ((event: Event) => event.isTrusted);
   const peekWidth = definition?.peekWidth ?? DEFAULT_PEEK_WIDTH;
   const collapsedMaxWidth =
@@ -1725,7 +1727,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
       // The site may have opened the rail during the intent delay.
       if (!isCollapsed(target)) return;
       applyPeek(target);
-    }, showDelayMs);
+    }, showDelayMs());
   }
 
   function scheduleHide(rail: HTMLElement): void {
