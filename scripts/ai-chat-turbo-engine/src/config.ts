@@ -252,10 +252,29 @@ export interface PlatformDefinition {
    */
   readonly hosts: readonly string[];
   /**
+   * Platform-only selectors for the new chat button, tried before the shared
+   * label-based list. Needed when a site renders the button as a bare
+   * `div[role="button"]` with no accessible name, so the shared selectors
+   * would either miss it or press a sibling carrying the same classes.
+   */
+  readonly newChatControlSelectors?: readonly string[];
+  /**
    * Shared hosts that only serve one platform under a path prefix, such as
    * x.com/i/grok. Keys are hostname suffixes, values are required prefixes.
    */
   readonly hostPaths?: Readonly<Record<string, string>>;
+  /**
+   * Set when the blank route doubles as the composer, so a draft typed on it
+   * survives a reload. Z.ai restores the textarea from its own storage key
+   * and DeepSeek keeps the draft in memory across the same-URL navigation,
+   * so both need the blank route re-entered rather than only claimed.
+   */
+  readonly blankRouteReset?: boolean;
+  /**
+   * Storage keys holding the site's own composer draft, dropped before the
+   * blank route is re-entered. Empty on sites that keep the draft in memory.
+   */
+  readonly draftStorageKeys?: readonly string[];
   /** The site renders turns as custom elements that own their own frames. */
   readonly nativeTurnRoots?: boolean;
   /**
@@ -345,6 +364,14 @@ export const PLATFORMS = {
     name: "ChatGPT",
     newChatShortcut: "/",
     hosts: ["chatgpt.com", "chat.openai.com"],
+    /*
+     * ChatGPT's sidebar id for the new chat button, declared here rather than
+     * in the shared list because an element id is one site's own convention:
+     * Z.ai reuses this exact id for its Home button, so a shared match would
+     * navigate home instead of opening a conversation there. Keep it scoped
+     * to this host so it can be dropped the day ChatGPT stops shipping it.
+     */
+    newChatControlSelectors: ["#sidebar-new-chat-button"],
     shellTurnRoots: true,
     codeCardChrome: true,
     sidebar: {
@@ -602,6 +629,15 @@ export const PLATFORMS = {
     name: "DeepSeek",
     newChatShortcut: "/",
     hosts: ["chat.deepseek.com"],
+    /*
+     * DeepSeek renders the new chat button as a bare div with no role,
+     * aria-label, title or text at all, so no shared heuristic and no label
+     * pass can name it. A trusted `click()` on it does open a blank
+     * conversation, but a synthetic click, a synthetic pointer sequence and
+     * a synthetic keypress were each measured to do nothing, so the route
+     * reset below is the only path the engine can drive itself.
+     */
+    blankRouteReset: true,
     sidebar: {
       selectors: [
         "div.b8812f16.a2f3d50e",
@@ -949,6 +985,24 @@ export const PLATFORMS = {
     newChatShortcut: "/chat/",
     hosts: ["yuanbao.tencent.com"],
     supportsToolMemory: true,
+    /*
+     * Yuanbao wraps its new chat control in a `div[role="button"]` and only
+     * names it through `aria-label`, so the shared `button[aria-label*=...]`
+     * heuristics miss it. The entry is mounted inside the rail only once the
+     * history list has loaded: a collapsed rail keeps the skeleton and no
+     * entry at all, so the shortcut falls back to the `/chat/` route then.
+     *
+     * The fallback route is not a blank conversation: `/chat/`, `/chat/new`
+     * and `/chat?projectId=` each redirect to the most recent conversation,
+     * so a route reset would silently reopen it. The site's own control is
+     * therefore the only reliable path, and it does work from a script: a
+     * plain `.click()` on this element resets the conversation in the store
+     * and pushes the blank route, verified end to end with a real keyboard
+     * from inside a loaded conversation. The control looks inert on a tab
+     * that is already blank, because there is nothing left to reset, which
+     * is what made earlier probing read it as dead.
+     */
+    newChatControlSelectors: [".yb-new-chat-entry__item"],
     sidebar: {
       selectors: [".yb-nav__content-wrapper"],
       triggers: [
@@ -1253,7 +1307,18 @@ export const PLATFORMS = {
   zai: {
     name: "Z.ai (GLM)",
     newChatShortcut: "/",
-    hosts: ["chat.z.ai"],
+    // Z.ai serves the same chat app from both hosts: the sidebar markup and the
+    // route to a blank conversation are identical, only the origin differs.
+    hosts: ["chat.z.ai", "zchat.z.ai"],
+    /*
+     * The landing route is the new conversation and the composer on it, and
+     * the draft lives in `chat-input-` rather than in the textarea: a reload
+     * alone restores the typed text, so the key has to go first. The site
+     * renders no new chat control at all, which leaves this reset as the only
+     * route to a blank conversation.
+     */
+    blankRouteReset: true,
+    draftStorageKeys: ["chat-input-", "chat-input"],
     sidebar: {
       selectors: ["#sidebar"],
       triggers: ['button[aria-label="切换侧边栏"]'],

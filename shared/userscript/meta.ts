@@ -12,6 +12,7 @@ export interface UserscriptMeta {
   readonly match: readonly string[];
   readonly grant?: readonly UserscriptGrant[];
   readonly runAt?: "document-start" | "document-end" | "document-idle";
+  readonly earlyStart?: boolean;
   readonly noframes?: boolean;
   readonly icon?: string;
   readonly license?: string;
@@ -101,6 +102,10 @@ export function parseUserscriptMeta(value: unknown): UserscriptMeta {
   }
   const runAt = readRunAt(value);
   const grant = readGrants(value);
+  const earlyStart = value["earlyStart"];
+  if (earlyStart !== undefined && typeof earlyStart !== "boolean") {
+    throw new Error('Userscript metadata field "earlyStart" must be a boolean');
+  }
   const noframes = value["noframes"];
   if (noframes !== undefined && typeof noframes !== "boolean") {
     throw new Error('Userscript metadata field "noframes" must be a boolean');
@@ -120,6 +125,7 @@ export function parseUserscriptMeta(value: unknown): UserscriptMeta {
     match: readStringList(value, "match"),
     ...(grant === undefined ? {} : { grant }),
     ...(runAt === undefined ? {} : { runAt }),
+    ...(earlyStart === undefined ? {} : { earlyStart }),
     ...(noframes === undefined ? {} : { noframes }),
     ...(icon === undefined ? {} : { icon }),
     ...(license === undefined ? {} : { license }),
@@ -158,6 +164,13 @@ export function assertUserscriptMeta(value: UserscriptMeta): UserscriptMeta {
   requireSingleLine("author", value.author);
   for (const match of value.match) requireSingleLine("match", match);
   for (const grant of value.grant ?? ["none"]) requireSingleLine("grant", grant);
+  // ScriptCat honors @early-start only alongside @run-at document-start; without
+  // this pairing the flag renders but never takes effect, which is invisible.
+  if (value.earlyStart === true && value.runAt !== "document-start") {
+    throw new Error(
+      'Userscript metadata field "earlyStart" requires runAt "document-start"',
+    );
+  }
   return value;
 }
 
@@ -176,6 +189,7 @@ export function renderUserscriptHeader(meta: UserscriptMeta): string {
     renderLine("downloadURL", meta.downloadURL),
     ...meta.match.map((entry) => renderLine("match", entry)),
     renderLine("run-at", meta.runAt),
+    meta.earlyStart === true ? "// @early-start" : null,
     ...(meta.grant ?? ["none"]).map((entry) => renderLine("grant", entry)),
     meta.noframes === true ? "// @noframes" : null,
     renderLine("icon", meta.icon),
