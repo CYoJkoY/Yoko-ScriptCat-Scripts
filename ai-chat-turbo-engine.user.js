@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.8
+// @version      0.23.9
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -59,6 +59,9 @@
   var DEFAULT_MESSAGE_LIMIT = 60;
   var MESSAGE_LIMIT_MIN = 10;
   var MESSAGE_LIMIT_MAX = 999;
+  var SIDEBAR_PEEK_DELAY_MIN = 0;
+  var SIDEBAR_PEEK_DELAY_MAX = 2e3;
+  var SIDEBAR_PEEK_SHOW_DELAY_MS = 180;
   var LOAD_WARNING_RATIO = 0.7;
   var LOAD_RING_RADIUS = 16.2;
   var LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
@@ -1924,7 +1927,6 @@ ${CODE_FENCE}
   var SIDEBAR_PEEK_HOLD_ATTRIBUTE = "data-ai-turbo-sidebar-peek-hold";
   var SIDEBAR_PEEK_WIDTH_VAR = "--ai-turbo-sidebar-peek-width";
   var SIDEBAR_PEEK_SHIFT_VAR = "--ai-turbo-sidebar-peek-shift";
-  var SIDEBAR_PEEK_SHOW_DELAY_MS = 70;
   var SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
   var SIDEBAR_PEEK_LANE_PX = 28;
   var SIDEBAR_PEEK_PROXIMITY_PX = 10;
@@ -1968,8 +1970,8 @@ ${CODE_FENCE}
   var MOTION_ATTRIBUTES = ["class", "data-collapsed", "data-state", "aria-expanded"];
   function createSidebarPeek(options) {
     const definition = options.sidebar;
-    const showDelayMs = options.showDelayMs ?? SIDEBAR_PEEK_SHOW_DELAY_MS;
     const hideDelayMs = options.hideDelayMs ?? SIDEBAR_PEEK_HIDE_DELAY_MS;
+    const showDelayMs = options.showDelayMs ?? (() => SIDEBAR_PEEK_SHOW_DELAY_MS);
     const isUserKey = options.isUserKey ?? ((event) => event.isTrusted);
     const peekWidth = definition?.peekWidth ?? DEFAULT_PEEK_WIDTH;
     const collapsedMaxWidth = definition?.collapsedMaxWidth ?? DEFAULT_COLLAPSED_MAX_WIDTH;
@@ -2947,7 +2949,7 @@ ${CODE_FENCE}
         if (target === null || !target.isConnected) return;
         if (!isCollapsed(target)) return;
         applyPeek(target);
-      }, showDelayMs);
+      }, showDelayMs());
     }
     function scheduleHide(rail) {
       if (pendingRail === rail) cancelShow();
@@ -3572,6 +3574,7 @@ ${CODE_FENCE}
     collapseCode: true,
     virtualFileEnabled: true,
     sidebarPeekEnabled: true,
+    sidebarPeekDelayMs: SIDEBAR_PEEK_SHOW_DELAY_MS,
     newChatShortcutLock: true,
     rememberReasoning: true,
     rememberTools: true,
@@ -3581,6 +3584,14 @@ ${CODE_FENCE}
     const scope = failure.operation === "write" || failure.operation === "remove" ? "save engine config" : "load saved engine config";
     reportRecoverableError(scope, failure.error);
   });
+  function normalizeSidebarPeekDelay(rawDelay) {
+    const numericDelay = Number(rawDelay);
+    if (!Number.isFinite(numericDelay)) return SIDEBAR_PEEK_SHOW_DELAY_MS;
+    return Math.min(
+      SIDEBAR_PEEK_DELAY_MAX,
+      Math.max(SIDEBAR_PEEK_DELAY_MIN, Math.round(numericDelay))
+    );
+  }
   function createEngineState() {
     return {
       ...DEFAULT_PERSISTED_CONFIG,
@@ -3626,6 +3637,11 @@ ${CODE_FENCE}
       if (typeof parsed.sidebarPeekEnabled === "boolean") {
         state.sidebarPeekEnabled = parsed.sidebarPeekEnabled;
       }
+      if (typeof parsed.sidebarPeekDelayMs === "number" && Number.isFinite(parsed.sidebarPeekDelayMs)) {
+        state.sidebarPeekDelayMs = normalizeSidebarPeekDelay(
+          parsed.sidebarPeekDelayMs
+        );
+      }
       if (typeof parsed.newChatShortcutLock === "boolean") {
         state.newChatShortcutLock = parsed.newChatShortcutLock;
       }
@@ -3654,6 +3670,7 @@ ${CODE_FENCE}
         collapseCode: state.collapseCode,
         virtualFileEnabled: state.virtualFileEnabled,
         sidebarPeekEnabled: state.sidebarPeekEnabled,
+        sidebarPeekDelayMs: state.sidebarPeekDelayMs,
         newChatShortcutLock: state.newChatShortcutLock,
         rememberReasoning: state.rememberReasoning,
         rememberTools: state.rememberTools,
@@ -6973,6 +6990,10 @@ ${CODE_FENCE}
       const candidates = [
         "form[data-chatgpt-composer]",
         "[data-chatgpt-composer]",
+        "infinite-scroller > .input-area-container",
+        "infinite-scroller > .input-area",
+        "ms-autosize-textarea",
+        "ms-chunk-input-container",
         ".input-area-container",
         "form",
         ".input-area",
@@ -7433,11 +7454,10 @@ ${CODE_FENCE}
           const keyDownWasSeen = sawShortcutKeyDown;
           sawShortcutKeyDown = false;
           if (keyDownWasSeen === false) {
-            const satisfiedInPage = handleNewChatShortcut(event, page);
-            if (classifyNewChatShortcut(event) === "primary") {
+            handleNewChatShortcut(event, page);
+            const isPrimaryShortcut = classifyNewChatShortcut(event) === "primary";
+            if (isPrimaryShortcut === true) {
               hooks.rememberTakeoverIntent?.();
-            }
-            if (satisfiedInPage === true && classifyNewChatShortcut(event) === "primary") {
               hooks.armReservedKeyTakeover?.();
             }
           }
@@ -8706,6 +8726,7 @@ ${contentText}`);
     }
     let keepValue = null;
     let messageLimitInput = null;
+    let sidebarPeekDelayInput = null;
     let themeSelect = null;
     let advancedSettings = null;
     let chkPrune = null;
@@ -8760,6 +8781,9 @@ ${contentText}`);
       if (keepValue) keepValue.textContent = String(state.keepTurns);
       if (messageLimitInput) {
         messageLimitInput.value = String(state.messageLimit);
+      }
+      if (sidebarPeekDelayInput) {
+        sidebarPeekDelayInput.value = String(state.sidebarPeekDelayMs);
       }
       if (themeSelect) themeSelect.value = state.hudTheme;
       if (chkPrune) chkPrune.checked = state.pruneEnabled;
@@ -9579,6 +9603,33 @@ ${contentText}`);
         );
       });
       messageLimitInput = limitInput;
+      const sidebarPeekDelayField = el("input", {
+        className: "limit-input",
+        id: "sidebar-peek-delay",
+        type: "number",
+        min: String(SIDEBAR_PEEK_DELAY_MIN),
+        max: String(SIDEBAR_PEEK_DELAY_MAX),
+        step: "1",
+        value: String(state.sidebarPeekDelayMs),
+        title: "悬停展开侧栏延迟，范围 " + String(SIDEBAR_PEEK_DELAY_MIN) + " 至 " + String(SIDEBAR_PEEK_DELAY_MAX) + " 毫秒",
+        "aria-label": "悬停展开侧栏延迟"
+      });
+      sidebarPeekDelayField.value = String(state.sidebarPeekDelayMs);
+      sidebarPeekDelayField.addEventListener("change", () => {
+        const rawValue = sidebarPeekDelayField.value.trim();
+        if (rawValue === "") {
+          sidebarPeekDelayField.value = String(state.sidebarPeekDelayMs);
+          return;
+        }
+        state.sidebarPeekDelayMs = normalizeSidebarPeekDelay(rawValue);
+        sidebarPeekDelayField.value = String(state.sidebarPeekDelayMs);
+        saveConfig();
+        deps.syncSidebarPeek();
+        announce(
+          "悬停展开侧栏延迟：" + String(state.sidebarPeekDelayMs) + " 毫秒，设置已保存"
+        );
+      });
+      sidebarPeekDelayInput = sidebarPeekDelayField;
       themeSelect = el("select", {
         className: "theme-select",
         id: "hud-theme",
@@ -9618,6 +9669,13 @@ ${contentText}`);
           el("div", { className: "limit-control" }, [
             limitInput,
             el("span", { className: "limit-unit" }, ["条"])
+          ])
+        ]),
+        el("div", { className: "control-row" }, [
+          el("label", { for: "sidebar-peek-delay" }, ["侧栏探出延迟"]),
+          el("div", { className: "limit-control" }, [
+            sidebarPeekDelayField,
+            el("span", { className: "limit-unit" }, ["毫秒"])
           ])
         ]),
         el("div", { className: "control-row" }, [
@@ -9794,6 +9852,7 @@ ${contentText}`);
       searchResultsBox = null;
       keepValue = null;
       messageLimitInput = null;
+      sidebarPeekDelayInput = null;
       themeSelect = null;
       advancedSettings = null;
       chkPrune = null;
@@ -10488,6 +10547,13 @@ ${contentText}`);
         }
       };
       observeNode(input);
+      let sibling = input.previousElementSibling;
+      let siblingDepth = 0;
+      while (sibling && siblingDepth < COMPOSER_VISUAL_MAX_DEPTH) {
+        observeNode(sibling);
+        sibling = sibling.previousElementSibling;
+        siblingDepth++;
+      }
       let node = anchor;
       let depth = 0;
       while (node && depth < COMPOSER_VISUAL_MAX_DEPTH) {
@@ -10522,9 +10588,12 @@ ${contentText}`);
         return;
       }
       const bounds = composer.getComposerVisualBounds(input, anchor);
+      const container = composer.getInputContainer(input);
+      const containerRect = container?.getBoundingClientRect();
+      const visualTopCandidate = containerRect ? Math.min(bounds.top, containerRect.top) : bounds.top;
       const viewportPadding = 18;
       const verticalGap = 16;
-      let visualTop = Number.isFinite(bounds.top) && bounds.top <= inputRect.top + 1 ? bounds.top : inputRect.top;
+      let visualTop = Number.isFinite(visualTopCandidate) && visualTopCandidate <= inputRect.top + 1 ? visualTopCandidate : inputRect.top;
       visualTop = Math.min(visualTop, inputRect.top);
       const minVisibleTop = viewportPadding + verticalGap + 60;
       visualTop = Math.max(minVisibleTop, Math.max(0, visualTop));
@@ -12058,7 +12127,8 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     });
     const sidebarPeek = createSidebarPeek({
       sidebar: currentPlatform.sidebar ?? null,
-      enabled: () => state.sidebarPeekEnabled
+      enabled: () => state.sidebarPeekEnabled,
+      showDelayMs: () => state.sidebarPeekDelayMs
     });
     const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
     const navigationTracker = createNavigationTracker(window.location);
