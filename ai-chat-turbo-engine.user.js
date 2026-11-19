@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.5
+// @version      0.23.6
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -3571,6 +3571,7 @@ ${CODE_FENCE}
     collapseCode: true,
     virtualFileEnabled: true,
     sidebarPeekEnabled: true,
+    newChatShortcutLock: true,
     rememberReasoning: true,
     rememberTools: true,
     hudTheme: "auto"
@@ -3624,6 +3625,9 @@ ${CODE_FENCE}
       if (typeof parsed.sidebarPeekEnabled === "boolean") {
         state.sidebarPeekEnabled = parsed.sidebarPeekEnabled;
       }
+      if (typeof parsed.newChatShortcutLock === "boolean") {
+        state.newChatShortcutLock = parsed.newChatShortcutLock;
+      }
       if (typeof parsed.rememberReasoning === "boolean") {
         state.rememberReasoning = parsed.rememberReasoning;
       }
@@ -3649,6 +3653,7 @@ ${CODE_FENCE}
         collapseCode: state.collapseCode,
         virtualFileEnabled: state.virtualFileEnabled,
         sidebarPeekEnabled: state.sidebarPeekEnabled,
+        newChatShortcutLock: state.newChatShortcutLock,
         rememberReasoning: state.rememberReasoning,
         rememberTools: state.rememberTools,
         hudTheme: state.hudTheme
@@ -7362,35 +7367,36 @@ ${CODE_FENCE}
     return null;
   }
   function handleNewChatShortcut(event, page) {
-    if (event.defaultPrevented === true || event.isComposing === true) return;
-    if (event.ctrlKey === false || event.shiftKey === false) return;
-    if (event.altKey === true || event.metaKey === true) return;
+    if (event.defaultPrevented === true || event.isComposing === true) return false;
+    if (event.ctrlKey === false || event.shiftKey === false) return false;
+    if (event.altKey === true || event.metaKey === true) return false;
     if (event.code !== NEW_CHAT_SHORTCUT_CODE && event.key.toLowerCase() !== "o") {
-      return;
+      return false;
     }
     const { location: location2 } = page;
-    if (isAuthOrRedirectRoute(location2) === true) return;
+    if (isAuthOrRedirectRoute(location2) === true) return false;
     const platform = findPlatformForLocation(location2.hostname, location2.pathname);
-    if (platform === null) return;
+    if (platform === null) return false;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (event.repeat === true) return;
+    if (event.repeat === true) return false;
     const control = findNewChatControl(page.document, page.location);
     if (control !== null) {
       control.click();
-      return;
+      return true;
     }
     const path = platform.hostPaths?.[location2.hostname] ?? platform.newChatShortcut;
     const destination = new URL(path, location2.origin);
     if (destination.href !== location2.href) {
       location2.assign(destination.href);
-      return;
+      return false;
     }
-    if (platform.blankRouteReset !== true) return;
+    if (platform.blankRouteReset !== true) return false;
     clearPlatformDraft(page, platform);
     location2.reload();
+    return false;
   }
-  function bindNewChatShortcut(target, page) {
+  function bindNewChatShortcut(target, page, hooks = {}) {
     let sawShortcutKeyDown = false;
     const listener = (event) => {
       const isShortcutKey = event.code === NEW_CHAT_SHORTCUT_CODE || event.key.toLowerCase() === "o";
@@ -7401,7 +7407,8 @@ ${CODE_FENCE}
           const keyDownWasSeen = sawShortcutKeyDown;
           sawShortcutKeyDown = false;
           if (keyDownWasSeen === false) {
-            handleNewChatShortcut(event, page);
+            const satisfiedInPage = handleNewChatShortcut(event, page);
+            if (satisfiedInPage === true) hooks.onReservedKeyFallback?.();
           }
           return;
         }
@@ -8018,16 +8025,15 @@ ${contentText}`);
     };
     doc.addEventListener("fullscreenchange", onFullscreenChange);
     doc.defaultView?.addEventListener("pagehide", onPageHide);
-    const toggle = async () => {
+    const activate = async () => {
       if (disposed || activationPending || snapshot.status === "activating") return;
-      if (snapshot.status === "active") {
-        deactivate();
-        return;
-      }
+      if (snapshot.status === "active") return;
       const keyboard = keyboardApi();
       const root = fullscreenRoot();
       if (keyboard === null || root === null || isSupportedNow() === false) {
-        emit({ status: "unsupported", error: null });
+        if (snapshot.status !== "unsupported") {
+          emit({ status: "unsupported", error: null });
+        }
         return;
       }
       const attemptId = ++activationId;
@@ -8067,6 +8073,14 @@ ${contentText}`);
         activationPending = false;
       }
     };
+    const toggle = async () => {
+      if (disposed || activationPending || snapshot.status === "activating") return;
+      if (snapshot.status === "active") {
+        deactivate();
+        return;
+      }
+      await activate();
+    };
     const dispose = () => {
       if (disposed) return;
       deactivate();
@@ -8077,6 +8091,7 @@ ${contentText}`);
       listeners.clear();
     };
     return {
+      activate,
       toggle,
       deactivate,
       dispose,
@@ -8637,6 +8652,7 @@ ${contentText}`);
     let chkCollapse = null;
     let chkVirtualFile = null;
     let chkSidebarPeek = null;
+    let chkNewChatLock = null;
     let chkReasoning = null;
     let chkTools = null;
     function announce(message) {
@@ -8690,6 +8706,7 @@ ${contentText}`);
       if (chkCollapse) chkCollapse.checked = state.collapseCode;
       if (chkVirtualFile) chkVirtualFile.checked = state.virtualFileEnabled;
       if (chkSidebarPeek) chkSidebarPeek.checked = state.sidebarPeekEnabled;
+      if (chkNewChatLock) chkNewChatLock.checked = state.newChatShortcutLock;
       if (chkReasoning) chkReasoning.checked = state.rememberReasoning;
       if (chkTools) chkTools.checked = state.rememberTools;
     }
@@ -8736,7 +8753,7 @@ ${contentText}`);
         const reason = snapshot.error ?? "浏览器未允许键盘锁";
         return `接管失败：${reason}。请重试。`;
       }
-      return "浏览器把 Ctrl+Shift+O 用于收藏夹。接管会进入全屏并锁住该键，按 Esc 退出全屏即恢复。";
+      return "浏览器把 Ctrl+Shift+O 用于收藏夹。自动接管已开启时，在页面内完成新对话后会自动全屏锁住该键；按 Esc 退出全屏即恢复浏览器快捷键。";
     }
     function renderNewChatLockStatus(snapshot) {
       if (!hudStats) return;
@@ -9313,6 +9330,10 @@ ${contentText}`);
         id: "hud-sidebar-peek",
         type: "checkbox"
       });
+      chkNewChatLock = el("input", {
+        id: "hud-new-chat-lock",
+        type: "checkbox"
+      });
       chkReasoning = el("input", { id: "hud-reasoning", type: "checkbox" });
       const switchRow = (id, labelText, input) => el("div", { className: "control-row" }, [
         el("label", { for: id, className: "control-label" }, [labelText]),
@@ -9325,6 +9346,7 @@ ${contentText}`);
       chkCollapse.checked = state.collapseCode;
       chkVirtualFile.checked = state.virtualFileEnabled;
       chkSidebarPeek.checked = state.sidebarPeekEnabled;
+      chkNewChatLock.checked = state.newChatShortcutLock;
       chkReasoning.checked = state.rememberReasoning;
       chkPrune.addEventListener("change", () => {
         state.pruneEnabled = chkPrune?.checked ?? true;
@@ -9359,6 +9381,14 @@ ${contentText}`);
         deps.syncSidebarPeek();
         announce(
           "悬停展开侧栏" + (state.sidebarPeekEnabled ? "已开启" : "已关闭") + "，设置已保存"
+        );
+      });
+      chkNewChatLock.addEventListener("change", () => {
+        state.newChatShortcutLock = chkNewChatLock?.checked ?? true;
+        saveConfig();
+        if (!state.newChatShortcutLock) newChatLock.deactivate();
+        announce(
+          "自动接管 Ctrl+Shift+O" + (state.newChatShortcutLock ? "已开启" : "已关闭") + "，设置已保存"
         );
       });
       chkReasoning.addEventListener("change", () => {
@@ -9418,6 +9448,7 @@ ${contentText}`);
       });
       const newChatLockSection = el("div", { className: "section" }, [
         el("div", { className: "section-title" }, ["新对话快捷键"]),
+        switchRow("hud-new-chat-lock", "自动接管 Ctrl+Shift+O", chkNewChatLock),
         newChatLockButton,
         newChatLockStatus
       ]);
@@ -9709,6 +9740,7 @@ ${contentText}`);
       chkCollapse = null;
       chkVirtualFile = null;
       chkSidebarPeek = null;
+      chkNewChatLock = null;
       chkReasoning = null;
       chkTools = null;
       focusBeforeOpen = null;
@@ -11916,13 +11948,20 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     const VERSION = readUserscriptInfo(globalThis)?.script.version ?? "0.0.0";
     const detectedPlatform = detectPlatform();
     if (detectedPlatform === null) return;
+    const currentPlatform = detectedPlatform;
+    const state = createEngineState();
+    const newChatLock = createNewChatLockUtils();
     const page = {
       document,
       storage: window.localStorage,
       location: window.location
     };
-    bindNewChatShortcut(window, page);
-    const currentPlatform = detectedPlatform;
+    bindNewChatShortcut(window, page, {
+      onReservedKeyFallback: () => {
+        if (state.newChatShortcutLock !== true) return;
+        void newChatLock.activate();
+      }
+    });
     const injectStyles = () => injectEngineStyles({
       geminiNativeRender: currentPlatform.nativeTurnRoots === true
     });
@@ -11938,8 +11977,6 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
       isGeminiThoughtElement,
       isUserTurn
     } = createTurnUtils(currentPlatform);
-    const state = createEngineState();
-    const newChatLock = createNewChatLockUtils();
     const motionQuiet = createMotionQuiet({
       onQuietEnd: () => {
         if (isEngineDormant()) return;
