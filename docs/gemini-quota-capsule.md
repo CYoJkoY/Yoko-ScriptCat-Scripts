@@ -7,6 +7,19 @@
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://gemini.google.com/*`、`https://bard.google.com/*`
 
+## 核心特性
+
+- 以官方响应为准展示 5 小时窗口与 7 天周窗口的真实用量，并在右下角显示实时倒计时。
+- 采用分层同步与解析策略，优先静默读取当前页或官方请求，必要时依次回退到结构化请求、页面文本与同源 iframe。
+- 严格区分剩余/已用比例与 5H/7D 两个额度池，解析结果带置信度并做防串窗校验。
+- 提供可拖拽胶囊界面，数据仅保存在本地 `localStorage`。
+
+## 安装
+
+1. 在 ScriptCat / Tampermonkey / Violentmonkey 中新建或导入 UserScript。
+2. 安装 `dist/gemini-quota-capsule.user.js`，或使用仓库 README 中的 CDN 安装地址。
+3. 打开 Gemini Web 页面；若从旧版本升级，按版本历史说明重新安装一次。
+
 ## 一、设计目标
 
 - 用量与重置时间全部来自官方响应，不在客户端做本地累计或线性外推。
