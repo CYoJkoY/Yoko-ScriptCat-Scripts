@@ -20,6 +20,11 @@ import { createComposerUtils } from "./core/composer";
 import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
 import { createHandoffUtils } from "./core/handoff";
 import {
+  consumeTakeoverIntent,
+  rememberTakeoverIntent,
+  forgetTakeoverIntent,
+} from "./core/takeover-intent";
+import {
   bindNewChatShortcut,
   isTakeoverGesture,
   type NewChatPage,
@@ -77,10 +82,15 @@ export function initializeEngine(): void {
     location: window.location,
   };
   let takeoverArmed = false;
+  takeoverArmed = consumeTakeoverIntent();
   bindNewChatShortcut(window, page, {
     armReservedKeyTakeover: () => {
       if (state.newChatShortcutLock !== true) return;
       takeoverArmed = true;
+    },
+    rememberTakeoverIntent: () => {
+      if (state.newChatShortcutLock !== true) return;
+      rememberTakeoverIntent();
     },
   });
   // Gemini keeps whole conversations mounted, so its native message blocks get
@@ -735,6 +745,7 @@ export function initializeEngine(): void {
   function teardownEngine(): void {
     newChatLock.deactivate();
     takeoverArmed = false;
+    forgetTakeoverIntent();
     reasoning.attachStatusNode(null);
     toolMemory.teardown();
     setEngineActive(false);
