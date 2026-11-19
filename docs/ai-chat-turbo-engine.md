@@ -398,7 +398,7 @@ pointerdown → mousedown → pointerup → mouseup → click
 | 已发送文件的「展开原文 / 收起为文件」 | 在文件胶囊与原始消息文本之间切换 |
 | 悬停折叠导航栏 | 指针停留 70ms 后侧栏原地展开到该站点的展开宽度（Gemini 248px、ChatGPT 340px 等）；移开、按 `Esc` 或在侧栏外按下指针即收回 |
 
-注：`Ctrl + Shift + O` 在 Chromium / Edge 中是浏览器保留的收藏夹（书签管理器）快捷键，页面脚本通常收不到该事件。面板「新对话快捷键」区提供「全屏接管 Ctrl+Shift + O」：进入全屏并申请 Keyboard Lock 后，组合键改由页面处理，按 `Esc` 退出全屏即恢复浏览器行为。浏览器仍把按键交给页面时（例如非保留实现或接管已生效），引擎沿用捕获阶段处理，优先点击站点的新对话控件，控件未渲染时使用该站点的空白对话路径。焦点在浏览器地址栏等页面外区域时，浏览器照常处理；macOS 上脚本只响应 `Ctrl`。
+注：`Ctrl + Shift + O` 在 Chromium / Edge 中是浏览器保留的收藏夹（书签管理器）快捷键，`KeyO` 的 `keydown` 在页面脚本之前就被加速键管线消费。引擎因此同时监听 `keydown` 与 `keyup`：页面收到 `keydown` 时按常规路径处理，只收到 `keyup` 时由兜底路径接管，优先点击站点的新对话控件，控件未渲染时使用该站点的空白对话路径。面板「新对话快捷键」区仍提供「全屏接管 Ctrl+Shift + O」：进入全屏并申请 Keyboard Lock 后按键改由页面处理，按 `Esc` 退出全屏即恢复浏览器行为。焦点在浏览器地址栏等页面外区域时，浏览器照常处理；macOS 上脚本只响应 `Ctrl`。
 
 面板以 `role="dialog"` + `aria-modal="true"` 暴露，打开时焦点进入检索框，关闭时回到打开前的元素（该元素已失效时回到悬浮仪表）；`Tab` / `Shift + Tab` 在面板内循环。悬浮仪表使用原生按钮的 `click` 处理鼠标与键盘激活，指针移动超过 4px 才进入拖拽，拖拽结束后抑制随后的点击；`pointercancel` 与窗口 / `visualViewport` 尺寸变化都会清理状态并重新夹紧位置。贴边后仪表仍是同一个按钮，`aria-label` 会说明当前是「贴边」还是「取消贴边」。
 
@@ -505,6 +505,20 @@ pointerdown → mousedown → pointerup → mouseup → click
 ---
 
 ## 版本记录
+
+### 0.23.5
+
+**`Ctrl + Shift + O` 改由 `keyup` 兜底；新对话控件改为按平台声明，不再共享 ChatGPT 的旧 id。**
+
+- **根因。** Chromium 把 `Ctrl + Shift + O` 预留给书签管理器，按键在浏览器加速键管线里就被消费，页面只能收到 `keyup`：实测事件序列是 `keydown Control` → `keydown Shift` → `keyup KeyO` → `keyup Shift` → `keyup Control`，`KeyO` 的 `keydown` 从未到达页面。引擎此前只注册 `keydown`，因此在 Z.ai、DeepSeek、元宝三站都不可能触发。
+- **`keyup` 兜底。** `bindNewChatShortcut` 同时注册 `keydown` 与 `keyup`（均为捕获态）。`keydown` 仍是正常站点的主路径；`keyup` 仅在「没见到过对应的 `keydown`」时才派发动作，因此正常站点不会双触发，用户先按 `O` 再补按 `Ctrl + Shift` 时也不会误触。
+- **保留键覆盖的真实边界。** `keyup` 阶段调用 `preventDefault()` 撤销不了浏览器已经执行的加速键动作（在 `example.com` 上单独复核），所以兜底路径保证的是「新对话一定会打开」，不是「书签面板一定不弹」。要压掉浏览器自己的面板仍需面板里的「全屏接管」按钮：实测 `navigator.keyboard.lock(["KeyO"])` 在非全屏下也会正常 resolve，但单独持锁**不能**把 `KeyO` 的 `keydown` 送回页面，只有先 `requestFullscreen()` 再上锁才让组合键改由页面处理。
+- **Z.ai 误点主页的根因。** 共享选择器里曾有一条 `#sidebar-new-chat-button`，那是 ChatGPT 侧栏新对话按钮的旧 id；Z.ai 复用了同一个 id，挂的却是「主页」按钮，于是快捷键在 Z.ai 上会打开主页而不是新对话。元素 id 属于单个站点的私有约定，该选择器已从共享列表移出，改为只在 `chatgpt` 平台声明。ChatGPT 现行版本已不再渲染这个 id，真正的新对话按钮由 `aria-label="新聊天"` 的精确文案匹配命中，因此移除共享条目不影响 ChatGPT；`new-chat.test.ts` 里另有一条「复用 id 的宿主不套用该选择器」的隔离用例。
+- **Z.ai 草稿清理。** Z.ai 把输入框内容写进 `chat-input-`，只删这个键无效——站点随后会从 textarea 恢复并回写。现在先用 `HTMLTextAreaElement.prototype` 的原生 `value` setter 清空输入框并派发 `input`，让站点自己的处理器把空值落盘，再删存储键；实测清空后刷新，输入框与存储键都是空的。DeepSeek 的草稿只存在框架状态里，浏览器级别的整页重载能清掉、页面内 `location.reload()` 不能，因此清除必须发生在重载之前，靠原生 setter 让站点自己落一个空值。
+- **空白路由重入。** DeepSeek 与 Z.ai 的空白路由本身就是新对话，但草稿会跨越同一 URL 的重载存活，因此这两站在已在空白路由时清草稿后 `location.reload()`，否则快捷键看起来毫无反应。元宝与其余平台行为不变。
+- **元宝入口确实可用。** 元宝的「新建对话」是 `div[role="button"]` 渲染的平台控件，在已打开的会话里用脚本点击**确实**生效：站点自己的处理器把会话状态重置回空，并 `pushState("/chat/naQivTmsDa")`，实测消息数 8 → 0，输入框归零，截图是干净的空白会话。真实的 `Ctrl + Shift + O` 键盘端到端同样通过（命中计数 +1、控件文案「新建对话」、8 → 0、无书签面板）。此前「控件点了没反应」的判断是在一个**已经空白**的标签页上测的，没有可重置的对象，属于测量假象。元宝因此继续走平台选择器，而不是路由兜底。
+- **元宝输入框与路由兜底。** 元宝输入框是 Quill 富文本编辑器，在全新文档上能收到完整组合键（`isComposing: false`），页面内没有额外的事件拦截；它自己的「新建对话」点击不清空草稿，这是站点行为，脚本不代为清理。`/chat/`、`/chat/new`、`/chat?projectId=` 都会跳回最近一个会话，所以路由兜底对元宝有害，只在侧栏折叠、入口未渲染时保留。
+- **测试覆盖。** 保留键场景下 `keyup` 触发、`keydown` 与 `keyup` 同时到达不双触发、先按 `O` 后补修饰键不触发、原生 setter 清空输入框后才删存储键、输入框本为空时不派发 `input`、复用 id 的宿主不套用 ChatGPT 专属选择器、DeepSeek 与 Z.ai 在空白路由上重入，均有单元测试。
 
 ### 0.23.4
 

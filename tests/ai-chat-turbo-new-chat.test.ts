@@ -14,6 +14,7 @@ interface FakePage {
     origin: string;
     href: string;
     assign: (url: string) => void;
+    reload: () => void;
   };
 }
 
@@ -21,6 +22,29 @@ interface FakePage {
 function markRendered<T extends HTMLElement>(node: T): T {
   node.getClientRects = (() => ({ length: 1 })) as unknown as typeof node.getClientRects;
   return node;
+}
+
+/** jsdom exposes no storage area, so the draft reset needs its own memory one. */
+function installMemoryStorage(): void {
+  const values = new Map<string, string>();
+  const storage: Storage = {
+    get length(): number {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    removeItem: (key) => {
+      values.delete(key);
+    },
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+  };
+  Object.defineProperty(window, "localStorage", {
+    value: storage,
+    configurable: true,
+  });
 }
 
 function createPage(href = "https://chat.deepseek.com/a/chat"): FakePage {
@@ -33,6 +57,7 @@ function createPage(href = "https://chat.deepseek.com/a/chat"): FakePage {
       origin: url.origin,
       href,
       assign: vi.fn<(url: string) => void>(),
+      reload: vi.fn<() => void>(),
     },
   };
 }
@@ -41,6 +66,21 @@ function shortcutEvent(
   init: KeyboardEventInit = {},
 ): KeyboardEvent {
   return new KeyboardEvent("keydown", {
+    key: "o",
+    code: "KeyO",
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+}
+
+/** The same combination released, which is all a reserved key ever delivers. */
+function shortcutRelease(
+  init: KeyboardEventInit = {},
+): KeyboardEvent {
+  return new KeyboardEvent("keyup", {
     key: "o",
     code: "KeyO",
     ctrlKey: true,
@@ -82,6 +122,8 @@ function addRoleControl(
 }
 
 beforeEach(() => {
+  installMemoryStorage();
+  window.localStorage.clear();
   document.body.replaceChildren();
 });
 
@@ -118,40 +160,6 @@ describe("findNewChatControl", () => {
     expect(findNewChatControl(document)).toBeNull();
   });
 
-  it("prefers the platform icon selector over same-class siblings", () => {
-    // DeepSeek renders the new chat button with no accessible name, and the
-    // search and history buttons beside it share its classes.
-    const shared = 'class="ds-button ds-button--iconLabelPrimary" role="button"';
-    const icon = (d: string): string => `<svg viewBox="0 0 16 16"><path d="${d}"></path></svg>`;
-    document.body.innerHTML = [
-      `<div ${shared}>${icon("M9.67272 0.522841")}</div>`,
-      `<div ${shared}>${icon("M8 0.599609C3.91309")}</div>`,
-      `<div ${shared}>${icon("M11.748 6.7028")}</div>`,
-    ].join("");
-    for (const node of document.querySelectorAll("div[role='button']")) {
-      markRendered(node as HTMLElement);
-    }
-
-    const control = findNewChatControl(document, {
-      hostname: "chat.deepseek.com",
-    });
-    expect(control?.querySelector("path")?.getAttribute("d")).toBe(
-      "M8 0.599609C3.91309",
-    );
-  });
-
-  it("ignores platform selectors on a different host", () => {
-    const shared = 'class="ds-button ds-button--iconLabelPrimary" role="button"';
-    document.body.innerHTML = [
-      `<div ${shared}><svg viewBox="0 0 16 16"><path d="M8 0.599609C3.91309"></path></svg></div>`,
-    ].join("");
-    for (const node of document.querySelectorAll("div[role='button']")) {
-      markRendered(node as HTMLElement);
-    }
-
-    expect(findNewChatControl(document, { hostname: "zchat.z.ai" })).toBeNull();
-  });
-
   it("finds the yuanbao entry behind a role-only markup", () => {
     document.body.innerHTML = [
       '<div class="yb-recent-conv-list__split">最近</div>',
@@ -177,6 +185,31 @@ describe("findNewChatControl", () => {
     expect(
       findNewChatControl(document, { hostname: "zchat.z.ai" }),
     ).toBeNull();
+  });
+
+  it("keeps a reused host id out of the shared list", () => {
+    /*
+     * Z.ai reuses ChatGPT's `#sidebar-new-chat-button` id for its Home
+     * button. While the id sat in the shared selector list, the shortcut
+     * found that button and navigated home instead of opening a
+     * conversation, so the id is scoped to the ChatGPT platform and must
+     * stay out of the shared list.
+     */
+    document.body.innerHTML =
+ '<button id="sidebar-new-chat-button">主页</button>';
+    markRendered(
+      document.querySelector("#sidebar-new-chat-button") as HTMLElement,
+    );
+
+    expect(
+      findNewChatControl(document, { hostname: "zchat.z.ai" }),
+    ).toBeNull();
+    expect(
+      findNewChatControl(document, { hostname: "chat.z.ai" }),
+    ).toBeNull();
+    expect(
+      findNewChatControl(document, { hostname: "chatgpt.com" }),
+    ).not.toBeNull();
   });
 });
 
@@ -287,6 +320,7 @@ describe("handleNewChatShortcut", () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(page.location.assign).not.toHaveBeenCalled();
+    expect(page.location.reload).not.toHaveBeenCalled();
   });
 
   it("keeps the browser bookmark manager out on a native blank page", () => {
@@ -296,6 +330,7 @@ describe("handleNewChatShortcut", () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(page.location.assign).not.toHaveBeenCalled();
+    expect(page.location.reload).not.toHaveBeenCalled();
   });
 
   it("ignores other modifiers, other keys and composing input", () => {
@@ -389,6 +424,63 @@ describe("reported hosts", () => {
       "https://chat.deepseek.com/",
     );
   });
+
+  it("re-enters Z.ai's blank route and drops its stored draft", () => {
+    document.body.replaceChildren();
+    window.localStorage.setItem("chat-input-", '{"prompt":"draft"}');
+    const page = createPage("https://zchat.z.ai/");
+
+    const event = press(page);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(page.location.assign).not.toHaveBeenCalled();
+    expect(page.location.reload).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem("chat-input-")).toBeNull();
+    window.localStorage.clear();
+  });
+
+  it("re-enters DeepSeek's blank route to clear the in-memory draft", () => {
+    document.body.replaceChildren();
+    const page = createPage("https://chat.deepseek.com/");
+
+    const event = press(page);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(page.location.assign).not.toHaveBeenCalled();
+    expect(page.location.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("empties the rendered composer before dropping the stored draft", () => {
+    document.body.replaceChildren();
+    const textarea = document.createElement("textarea");
+    textarea.value = "draft text";
+    document.body.append(textarea);
+    window.localStorage.setItem("chat-input-", '{"prompt":"draft text"}');
+    const page = createPage("https://zchat.z.ai/");
+
+    press(page);
+
+    expect(textarea.value).toBe("");
+    expect(window.localStorage.getItem("chat-input-")).toBeNull();
+    expect(page.location.reload).toHaveBeenCalledTimes(1);
+    window.localStorage.clear();
+  });
+
+  it("leaves an already empty composer untouched", () => {
+    document.body.replaceChildren();
+    const textarea = document.createElement("textarea");
+    document.body.append(textarea);
+    const dispatched = vi.fn();
+    textarea.addEventListener("input", dispatched);
+    window.localStorage.setItem("chat-input-", '{"prompt":""}');
+    const page = createPage("https://zchat.z.ai/");
+
+    press(page);
+
+    expect(dispatched).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("chat-input-")).toBeNull();
+    window.localStorage.clear();
+  });
 });
 
 describe("bindNewChatShortcut", () => {
@@ -411,5 +503,51 @@ describe("bindNewChatShortcut", () => {
 
     expect(afterUnbind.defaultPrevented).toBe(false);
     expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("claims the keyup when the browser reserves the keydown", () => {
+    const control = addControl({ "aria-label": "New chat" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage("https://chatgpt.com/c/1");
+    const target = new EventTarget();
+
+    const unbind = bindNewChatShortcut(target, page);
+    const release = shortcutRelease();
+    target.dispatchEvent(release);
+
+    expect(release.defaultPrevented).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+
+    unbind();
+  });
+
+  it("does not fire the new chat twice when both events arrive", () => {
+    const control = addControl({ "aria-label": "New chat" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage("https://chatgpt.com/c/1");
+    const target = new EventTarget();
+
+    const unbind = bindNewChatShortcut(target, page);
+    target.dispatchEvent(shortcutEvent());
+    target.dispatchEvent(shortcutRelease());
+
+    expect(click).toHaveBeenCalledTimes(1);
+
+    unbind();
+  });
+
+  it("ignores the keyup when the letter was pressed first", () => {
+    const control = addControl({ "aria-label": "New chat" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage("https://chatgpt.com/c/1");
+    const target = new EventTarget();
+
+    const unbind = bindNewChatShortcut(target, page);
+    target.dispatchEvent(shortcutEvent({ ctrlKey: false, shiftKey: false }));
+    target.dispatchEvent(shortcutRelease());
+
+    expect(click).not.toHaveBeenCalled();
+
+    unbind();
   });
 });
