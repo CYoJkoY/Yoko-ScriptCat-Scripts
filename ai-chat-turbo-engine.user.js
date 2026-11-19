@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.0
+// @version      0.23.5
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -25,7 +25,9 @@
 // @match        https://www.qianwen.com/*
 // @match        https://chatglm.cn/*
 // @match        https://chat.z.ai/*
+// @match        https://zchat.z.ai/*
 // @run-at       document-start
+// @early-start
 // @grant        none
 // @noframes
 // @icon         data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64"><rect width="24" height="24" rx="6" fill="%2309090b"/><path d="M13 2L3 14h8l-1 8 11-12h-8l1-8z" fill="%2310b981"/></svg>
@@ -261,6 +263,14 @@
       name: "ChatGPT",
       newChatShortcut: "/",
       hosts: ["chatgpt.com", "chat.openai.com"],
+      /*
+       * ChatGPT's sidebar id for the new chat button, declared here rather than
+       * in the shared list because an element id is one site's own convention:
+       * Z.ai reuses this exact id for its Home button, so a shared match would
+       * navigate home instead of opening a conversation there. Keep it scoped
+       * to this host so it can be dropped the day ChatGPT stops shipping it.
+       */
+      newChatControlSelectors: ["#sidebar-new-chat-button"],
       shellTurnRoots: true,
       codeCardChrome: true,
       sidebar: {
@@ -514,6 +524,15 @@
       name: "DeepSeek",
       newChatShortcut: "/",
       hosts: ["chat.deepseek.com"],
+      /*
+       * DeepSeek renders the new chat button as a bare div with no role,
+       * aria-label, title or text at all, so no shared heuristic and no label
+       * pass can name it. A trusted `click()` on it does open a blank
+       * conversation, but a synthetic click, a synthetic pointer sequence and
+       * a synthetic keypress were each measured to do nothing, so the route
+       * reset below is the only path the engine can drive itself.
+       */
+      blankRouteReset: true,
       sidebar: {
         selectors: [
           "div.b8812f16.a2f3d50e",
@@ -855,6 +874,24 @@
       newChatShortcut: "/chat/",
       hosts: ["yuanbao.tencent.com"],
       supportsToolMemory: true,
+      /*
+       * Yuanbao wraps its new chat control in a `div[role="button"]` and only
+       * names it through `aria-label`, so the shared `button[aria-label*=...]`
+       * heuristics miss it. The entry is mounted inside the rail only once the
+       * history list has loaded: a collapsed rail keeps the skeleton and no
+       * entry at all, so the shortcut falls back to the `/chat/` route then.
+       *
+       * The fallback route is not a blank conversation: `/chat/`, `/chat/new`
+       * and `/chat?projectId=` each redirect to the most recent conversation,
+       * so a route reset would silently reopen it. The site's own control is
+       * therefore the only reliable path, and it does work from a script: a
+       * plain `.click()` on this element resets the conversation in the store
+       * and pushes the blank route, verified end to end with a real keyboard
+       * from inside a loaded conversation. The control looks inert on a tab
+       * that is already blank, because there is nothing left to reset, which
+       * is what made earlier probing read it as dead.
+       */
+      newChatControlSelectors: [".yb-new-chat-entry__item"],
       sidebar: {
         selectors: [".yb-nav__content-wrapper"],
         triggers: [
@@ -1157,7 +1194,18 @@
     zai: {
       name: "Z.ai (GLM)",
       newChatShortcut: "/",
-      hosts: ["chat.z.ai"],
+      // Z.ai serves the same chat app from both hosts: the sidebar markup and the
+      // route to a blank conversation are identical, only the origin differs.
+      hosts: ["chat.z.ai", "zchat.z.ai"],
+      /*
+       * The landing route is the new conversation and the composer on it, and
+       * the draft lives in `chat-input-` rather than in the textarea: a reload
+       * alone restores the typed text, so the key has to go first. The site
+       * renders no new chat control at all, which leaves this reset as the only
+       * route to a blank conversation.
+       */
+      blankRouteReset: true,
+      draftStorageKeys: ["chat-input-", "chat-input"],
       sidebar: {
         selectors: ["#sidebar"],
         triggers: ['button[aria-label="切换侧边栏"]'],
@@ -7209,7 +7257,6 @@ ${CODE_FENCE}
 
   // scripts/ai-chat-turbo-engine/src/core/new-chat.ts
   var CONTROL_SELECTORS = [
-    "#sidebar-new-chat-button",
     'button[data-testid*="new-chat" i]',
     'button[data-testid*="new_chat" i]',
     'button[data-testid*="new-conversation" i]',
@@ -7263,7 +7310,46 @@ ${CODE_FENCE}
     ];
     return labels.some((label) => EXACT_LABELS.has(normalizeLabel(label)));
   }
-  function findNewChatControl(root) {
+  function platformControlSelectors(location2) {
+    const platform = findPlatformForLocation(location2.hostname, "");
+    if (platform === null) return [];
+    return platform.newChatControlSelectors ?? [];
+  }
+  function clearPlatformDraft(page, platform) {
+    resetVisibleComposer(page.document);
+    const keys = platform.draftStorageKeys ?? [];
+    for (const key of keys) {
+      try {
+        page.storage?.removeItem(key);
+      } catch (error) {
+        reportRecoverableError("clear site draft before new chat", error);
+      }
+    }
+  }
+  function resetVisibleComposer(document2) {
+    const textareas = document2.querySelectorAll("textarea");
+    for (const textarea of textareas) {
+      if (!(textarea instanceof HTMLTextAreaElement)) continue;
+      if (textarea.value === "") continue;
+      try {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          "value"
+        )?.set;
+        if (typeof setter !== "function") continue;
+        setter.call(textarea, "");
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (error) {
+        reportRecoverableError("clear composer before new chat", error);
+      }
+    }
+  }
+  function findNewChatControl(root, location2) {
+    for (const selector of platformControlSelectors(location2 ?? { hostname: "" })) {
+      for (const control of root.querySelectorAll(selector)) {
+        if (control instanceof HTMLElement && isRendered(control)) return control;
+      }
+    }
     for (const control of root.querySelectorAll(CONTROL_SELECTOR)) {
       if (control instanceof HTMLElement && isRendered(control)) return control;
     }
@@ -7289,22 +7375,44 @@ ${CODE_FENCE}
     event.preventDefault();
     event.stopImmediatePropagation();
     if (event.repeat === true) return;
-    const control = findNewChatControl(page.document);
+    const control = findNewChatControl(page.document, page.location);
     if (control !== null) {
       control.click();
       return;
     }
     const path = platform.hostPaths?.[location2.hostname] ?? platform.newChatShortcut;
     const destination = new URL(path, location2.origin);
-    if (destination.href !== location2.href) location2.assign(destination.href);
+    if (destination.href !== location2.href) {
+      location2.assign(destination.href);
+      return;
+    }
+    if (platform.blankRouteReset !== true) return;
+    clearPlatformDraft(page, platform);
+    location2.reload();
   }
   function bindNewChatShortcut(target, page) {
+    let sawShortcutKeyDown = false;
     const listener = (event) => {
-      handleNewChatShortcut(event, page);
+      const isShortcutKey = event.code === NEW_CHAT_SHORTCUT_CODE || event.key.toLowerCase() === "o";
+      if (isShortcutKey === true) {
+        if (event.type === "keydown") {
+          sawShortcutKeyDown = true;
+        } else {
+          const keyDownWasSeen = sawShortcutKeyDown;
+          sawShortcutKeyDown = false;
+          if (keyDownWasSeen === false) {
+            handleNewChatShortcut(event, page);
+          }
+          return;
+        }
+      }
+      if (event.type === "keydown") handleNewChatShortcut(event, page);
     };
     target.addEventListener("keydown", listener, { capture: true, passive: false });
+    target.addEventListener("keyup", listener, { capture: true, passive: false });
     return () => {
       target.removeEventListener("keydown", listener, { capture: true });
+      target.removeEventListener("keyup", listener, { capture: true });
     };
   }
 
@@ -7730,7 +7838,7 @@ ${contentText}`);
     function proceedOneClickHandoff(result) {
       if (isEngineDormant()) return;
       const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
-      const newChatControl = findNewChatControl(document);
+      const newChatControl = findNewChatControl(document, location);
       if (!newChatControl) {
         copyHandoffFallback(
           restoreText,
@@ -7763,7 +7871,7 @@ ${contentText}`);
         return;
       }
       const restoreText = buildHandoffRestorePrompt(result.text, result.kind);
-      const newChatControl = findNewChatControl(document);
+      const newChatControl = findNewChatControl(document, location);
       if (!newChatControl) {
         navigator.clipboard.writeText(restoreText).then(() => {
           setHandoffStatus("未识别新对话入口；完整恢复指令已复制。");
@@ -11808,7 +11916,12 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     const VERSION = readUserscriptInfo(globalThis)?.script.version ?? "0.0.0";
     const detectedPlatform = detectPlatform();
     if (detectedPlatform === null) return;
-    bindNewChatShortcut(window, window);
+    const page = {
+      document,
+      storage: window.localStorage,
+      location: window.location
+    };
+    bindNewChatShortcut(window, page);
     const currentPlatform = detectedPlatform;
     const injectStyles = () => injectEngineStyles({
       geminiNativeRender: currentPlatform.nativeTurnRoots === true
