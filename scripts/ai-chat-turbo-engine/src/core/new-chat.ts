@@ -44,8 +44,9 @@ const CONTROL_SELECTOR = CONTROL_SELECTORS.join(",");
 /** Physical key the takeover locks and the handler claims. */
 export const NEW_CHAT_SHORTCUT_CODE = "KeyO";
 
-interface NewChatPage {
+export interface NewChatPage {
   readonly document: Document;
+  readonly storage?: Pick<Storage, "removeItem">;
   readonly location: Pick<
     Location,
     "hostname" | "pathname" | "origin" | "href" | "assign" | "reload"
@@ -124,12 +125,15 @@ function platformControlSelectors(location: Pick<Location, "hostname">): readonl
  * composer is therefore emptied first, through the native `value` setter, so
  * the site's own handler sees an empty value and persists the empty draft.
  */
-function clearPlatformDraft(platform: PlatformDefinition): void {
-  resetVisibleComposer();
+function clearPlatformDraft(
+  page: NewChatPage,
+  platform: PlatformDefinition,
+): void {
+  resetVisibleComposer(page.document);
   const keys = platform.draftStorageKeys ?? [];
   for (const key of keys) {
     try {
-      window.localStorage.removeItem(key);
+      page.storage?.removeItem(key);
     } catch (error: unknown) {
       reportRecoverableError("clear site draft before new chat", error);
     }
@@ -142,7 +146,7 @@ function clearPlatformDraft(platform: PlatformDefinition): void {
  * swapped behind its back. A site with no textarea, or a framework that keeps
  * the text elsewhere, simply has nothing to clear.
  */
-function resetVisibleComposer(): void {
+function resetVisibleComposer(document: Document): void {
   const textareas = document.querySelectorAll("textarea");
   for (const textarea of textareas) {
     if (!(textarea instanceof HTMLTextAreaElement)) continue;
@@ -234,7 +238,7 @@ export function handleNewChatShortcut(
    * dropped; without that the shortcut appears to do nothing at all.
    */
   if (platform.blankRouteReset !== true) return;
-  clearPlatformDraft(platform);
+  clearPlatformDraft(page, platform);
   location.reload();
 }
 

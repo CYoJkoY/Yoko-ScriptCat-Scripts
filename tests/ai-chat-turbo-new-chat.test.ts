@@ -8,6 +8,7 @@ import {
 
 interface FakePage {
   document: Document;
+  storage: Pick<Storage, "removeItem">;
   location: {
     hostname: string;
     pathname: string;
@@ -51,6 +52,7 @@ function createPage(href = "https://chat.deepseek.com/a/chat"): FakePage {
   const url = new URL(href);
   return {
     document,
+    storage: window.localStorage,
     location: {
       hostname: url.hostname,
       pathname: url.pathname,

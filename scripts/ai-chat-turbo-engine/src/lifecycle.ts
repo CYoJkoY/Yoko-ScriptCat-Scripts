@@ -19,7 +19,7 @@ import { createToolPopupScope } from "./core/tool-scope";
 import { createComposerUtils } from "./core/composer";
 import { createSendInterceptUtils, type SendInterceptUtils } from "./core/send";
 import { createHandoffUtils } from "./core/handoff";
-import { bindNewChatShortcut } from "./core/new-chat";
+import { bindNewChatShortcut, type NewChatPage } from "./core/new-chat";
 import { createNewChatLockUtils } from "./core/new-chat-lock";
 import { createHudUtils, type HudUtils } from "./ui/hud";
 import { createChatCapsuleUtils } from "./ui/chat-capsules";
@@ -57,7 +57,12 @@ export function initializeEngine(): void {
   // Page-lifetime listener: registered once at document-start, before boot, and
   // intentionally never removed so login routes stay covered. The unbinder is
   // only needed if injection is ever repeated for the same window.
-  bindNewChatShortcut(window, window);
+  const page: NewChatPage = {
+    document,
+    storage: window.localStorage,
+    location: window.location,
+  };
+  bindNewChatShortcut(window, page);
   // Bind the narrowed platform once so closures keep the non-null type.
   const currentPlatform: PlatformDefinition = detectedPlatform;
   // Gemini keeps whole conversations mounted, so its native message blocks get
