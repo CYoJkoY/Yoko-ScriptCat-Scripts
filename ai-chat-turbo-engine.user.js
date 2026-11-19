@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.6
+// @version      0.23.7
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -7281,6 +7281,8 @@ ${CODE_FENCE}
   ];
   var CONTROL_SELECTOR = CONTROL_SELECTORS.join(",");
   var NEW_CHAT_SHORTCUT_CODE = "KeyO";
+  var NEW_CHAT_ALTERNATIVE_MODIFIERS = "Alt+Shift+O";
+  var NEW_CHAT_CONTROL_WAIT_MS = 600;
   var EXACT_LABELS = /* @__PURE__ */ new Set([
     "new chat",
     "new conversation",
@@ -7366,13 +7368,30 @@ ${CODE_FENCE}
     }
     return null;
   }
+  function classifyNewChatShortcut(event) {
+    if (event.shiftKey === false || event.metaKey === true) return null;
+    if (event.code !== NEW_CHAT_SHORTCUT_CODE && event.key.toLowerCase() !== "o") {
+      return null;
+    }
+    if (event.ctrlKey === true && event.altKey === false) return "primary";
+    if (event.altKey === true && event.ctrlKey === false) return "alternative";
+    return null;
+  }
+  function openNewChatRoute(page, platform) {
+    const { location: location2 } = page;
+    const path = platform.hostPaths?.[location2.hostname] ?? platform.newChatShortcut;
+    const destination = new URL(path, location2.origin);
+    if (destination.href !== location2.href) {
+      location2.assign(destination.href);
+      return;
+    }
+    if (platform.blankRouteReset !== true) return;
+    clearPlatformDraft(page, platform);
+    location2.reload();
+  }
   function handleNewChatShortcut(event, page) {
     if (event.defaultPrevented === true || event.isComposing === true) return false;
-    if (event.ctrlKey === false || event.shiftKey === false) return false;
-    if (event.altKey === true || event.metaKey === true) return false;
-    if (event.code !== NEW_CHAT_SHORTCUT_CODE && event.key.toLowerCase() !== "o") {
-      return false;
-    }
+    if (classifyNewChatShortcut(event) === null) return false;
     const { location: location2 } = page;
     if (isAuthOrRedirectRoute(location2) === true) return false;
     const platform = findPlatformForLocation(location2.hostname, location2.pathname);
@@ -7385,15 +7404,21 @@ ${CODE_FENCE}
       control.click();
       return true;
     }
-    const path = platform.hostPaths?.[location2.hostname] ?? platform.newChatShortcut;
-    const destination = new URL(path, location2.origin);
-    if (destination.href !== location2.href) {
-      location2.assign(destination.href);
+    if (platform.newChatControlSelectors === void 0) {
+      openNewChatRoute(page, platform);
       return false;
     }
-    if (platform.blankRouteReset !== true) return false;
-    clearPlatformDraft(page, platform);
-    location2.reload();
+    const pressedHref = location2.href;
+    const view = page.document.defaultView ?? window;
+    view.setTimeout(() => {
+      if (page.location.href !== pressedHref) return;
+      const lateControl = findNewChatControl(page.document, page.location);
+      if (lateControl !== null) {
+        lateControl.click();
+        return;
+      }
+      openNewChatRoute(page, platform);
+    }, NEW_CHAT_CONTROL_WAIT_MS);
     return false;
   }
   function bindNewChatShortcut(target, page, hooks = {}) {
@@ -7408,7 +7433,9 @@ ${CODE_FENCE}
           sawShortcutKeyDown = false;
           if (keyDownWasSeen === false) {
             const satisfiedInPage = handleNewChatShortcut(event, page);
-            if (satisfiedInPage === true) hooks.onReservedKeyFallback?.();
+            if (satisfiedInPage === true && classifyNewChatShortcut(event) === "primary") {
+              hooks.onReservedKeyFallback?.();
+            }
           }
           return;
         }
@@ -8753,7 +8780,7 @@ ${contentText}`);
         const reason = snapshot.error ?? "浏览器未允许键盘锁";
         return `接管失败：${reason}。请重试。`;
       }
-      return "浏览器把 Ctrl+Shift+O 用于收藏夹。自动接管已开启时，在页面内完成新对话后会自动全屏锁住该键；按 Esc 退出全屏即恢复浏览器快捷键。";
+      return `浏览器把 Ctrl+Shift+O 用于收藏夹。按 ${NEW_CHAT_ALTERNATIVE_MODIFIERS} 无需接管即可打开新对话；自动接管已开启时，在页面内完成新对话后会自动全屏锁住 Ctrl+Shift+O，按 Esc 退出全屏即恢复浏览器快捷键。`;
     }
     function renderNewChatLockStatus(snapshot) {
       if (!hudStats) return;
