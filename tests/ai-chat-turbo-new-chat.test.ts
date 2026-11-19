@@ -216,6 +216,21 @@ describe("findNewChatControl", () => {
 });
 
 describe("handleNewChatShortcut", () => {
+  it("reports whether the press was satisfied inside the page", () => {
+    const control = addControl({ "aria-label": "New chat" });
+
+    expect(handleNewChatShortcut(shortcutEvent(), createPage())).toBe(true);
+
+    control.remove();
+    document.body.replaceChildren();
+    expect(
+      handleNewChatShortcut(
+        shortcutEvent(),
+        createPage("https://chat.deepseek.com/a/chat"),
+      ),
+    ).toBe(false);
+  });
+
   it("takes over the combination on platforms that also bind it", () => {
     const control = addControl({
       "aria-label": "New chat",
@@ -537,6 +552,65 @@ describe("bindNewChatShortcut", () => {
 
     unbind();
   });
+
+  it("reports the reserved-key fallback when the press stayed in the page", () => {
+    const control = addControl({ "aria-label": "新建对话" });
+    const click = vi.spyOn(control, "click");
+    const page = createPage(
+      "https://yuanbao.tencent.com/chat/naQivTmsDa/0SA6GtG4MqG",
+    );
+    const target = new EventTarget();
+    const onReservedKeyFallback = vi.fn();
+
+    const unbind = bindNewChatShortcut(target, page, {
+      onReservedKeyFallback,
+    });
+    target.dispatchEvent(shortcutRelease());
+
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(onReservedKeyFallback).toHaveBeenCalledTimes(1);
+
+    unbind();
+  });
+
+  it("stays quiet when a keydown already opened the conversation", () => {
+    addControl({ "aria-label": "New chat" });
+    const page = createPage();
+    const target = new EventTarget();
+    const onReservedKeyFallback = vi.fn();
+
+    const unbind = bindNewChatShortcut(target, page, {
+      onReservedKeyFallback,
+    });
+    target.dispatchEvent(shortcutEvent());
+    target.dispatchEvent(shortcutRelease());
+
+    expect(onReservedKeyFallback).not.toHaveBeenCalled();
+
+    unbind();
+  });
+
+  it.each([
+    "https://zchat.z.ai/c/abc",
+    "https://chat.deepseek.com/a/chat/s/9f1d6c6e-1b3f-4a51-8f2c-3d1f0a7b2c44",
+  ])(
+    "does not report a fallback on a navigating host (%s)",
+    (href) => {
+      const page = createPage(href);
+      const target = new EventTarget();
+      const onReservedKeyFallback = vi.fn();
+
+      const unbind = bindNewChatShortcut(target, page, {
+        onReservedKeyFallback,
+      });
+      target.dispatchEvent(shortcutRelease());
+
+      expect(page.location.assign).toHaveBeenCalledTimes(1);
+      expect(onReservedKeyFallback).not.toHaveBeenCalled();
+
+      unbind();
+    },
+  );
 
   it("ignores the keyup when the letter was pressed first", () => {
     const control = addControl({ "aria-label": "New chat" });

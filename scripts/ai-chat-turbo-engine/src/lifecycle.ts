@@ -54,17 +54,29 @@ export function initializeEngine(): void {
 
   const detectedPlatform = detectPlatform();
   if (detectedPlatform === null) return;
+  // Bind the narrowed platform once so closures keep the non-null type.
+  const currentPlatform: PlatformDefinition = detectedPlatform;
+  const state: EngineState = createEngineState();
+  const newChatLock = createNewChatLockUtils();
   // Page-lifetime listener: registered once at document-start, before boot, and
   // intentionally never removed so login routes stay covered. The unbinder is
   // only needed if injection is ever repeated for the same window.
+  //
+  // A fallback press is the only press where the browser has already handled
+  // the key itself, so that is where the interrupted-site takeover is armed.
+  // The site keeps its own behaviour either way; the lock only decides whether
+  // the same press can keep the bookmark panel closed from then on.
   const page: NewChatPage = {
     document,
     storage: window.localStorage,
     location: window.location,
   };
-  bindNewChatShortcut(window, page);
-  // Bind the narrowed platform once so closures keep the non-null type.
-  const currentPlatform: PlatformDefinition = detectedPlatform;
+  bindNewChatShortcut(window, page, {
+    onReservedKeyFallback: () => {
+      if (state.newChatShortcutLock !== true) return;
+      void newChatLock.activate();
+    },
+  });
   // Gemini keeps whole conversations mounted, so its native message blocks get
   // CSS render isolation on top of the shared engine stylesheet.
   const injectStyles = (): void =>
@@ -84,8 +96,6 @@ export function initializeEngine(): void {
     isUserTurn,
   } = createTurnUtils(currentPlatform);
 
-  const state: EngineState = createEngineState();
-  const newChatLock = createNewChatLockUtils();
   // Gemini slides its history sidebar by animating width; engine resyncs wait
   // for that motion to settle so they never compete with it.
   const motionQuiet = createMotionQuiet({

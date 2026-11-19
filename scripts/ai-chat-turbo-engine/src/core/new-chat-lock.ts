@@ -14,6 +14,8 @@ export interface NewChatLockSnapshot {
 }
 
 export interface NewChatLockUtils {
+  /** Arm the lock; already-armed or unsupported states stay untouched. */
+  activate(): Promise<void>;
   toggle(): Promise<void>;
   deactivate(): void;
   /** Test-only full teardown; production teardown calls `deactivate()`. */
@@ -177,16 +179,15 @@ export function createNewChatLockUtils(
   doc.addEventListener("fullscreenchange", onFullscreenChange);
   doc.defaultView?.addEventListener("pagehide", onPageHide);
 
-  const toggle = async (): Promise<void> => {
+  const activate = async (): Promise<void> => {
     if (disposed || activationPending || snapshot.status === "activating") return;
-    if (snapshot.status === "active") {
-      deactivate();
-      return;
-    }
+    if (snapshot.status === "active") return;
     const keyboard = keyboardApi();
     const root = fullscreenRoot();
     if (keyboard === null || root === null || isSupportedNow() === false) {
-      emit({ status: "unsupported", error: null });
+      if (snapshot.status !== "unsupported") {
+        emit({ status: "unsupported", error: null });
+      }
       return;
     }
 
@@ -228,6 +229,15 @@ export function createNewChatLockUtils(
     }
   };
 
+  const toggle = async (): Promise<void> => {
+    if (disposed || activationPending || snapshot.status === "activating") return;
+    if (snapshot.status === "active") {
+      deactivate();
+      return;
+    }
+    await activate();
+  };
+
   const dispose = (): void => {
     if (disposed) return;
     deactivate();
@@ -239,6 +249,7 @@ export function createNewChatLockUtils(
   };
 
   return {
+    activate,
     toggle,
     deactivate,
     dispose,
