@@ -224,6 +224,50 @@ describe("search suggestion contrast contract", () => {
   });
 });
 
+describe("HeyBox search page dark-theme contract", () => {
+  it("removes promo/footer blocks and raises the dark search logo contrast", () => {
+    const hidden = themeRules.find((rule) =>
+      rule.selector === ":root.heybox-up-theme #page-bbs-search :is(.bbs-search-download.download, footer.hb-footer)"
+    );
+    expect(hidden?.style.getPropertyValue("display")).toBe("none");
+    const logoImage = themeRules.find((rule) =>
+      rule.selector === DARK_GATE + " #page-bbs-search > .logo img"
+    );
+    expect(logoImage?.style.getPropertyValue("filter")).toBe("brightness(0) invert(1)");
+  });
+
+  it("recolors game, user and hashtag results and adapts mall cards", () => {
+    const resultText = themeRules.find((rule) =>
+      rule.selector.includes(".search-result__hashtag")
+      && rule.selector.includes(".user-line__username")
+      && rule.selector.includes(".game-rank__game-card")
+      && rule.selector.includes(".line-1")
+    );
+    expect(resultText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
+    expect(resultText?.style.getPropertyPriority("color")).toBe("important");
+    const noticeText = themeRules.find((rule) =>
+      rule.selector === DARK_GATE + " #page-bbs-list .search-result__middle"
+    );
+    expect(noticeText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
+    const productSurface = themeRules.find((rule) =>
+      rule.selector.includes(".search-result__list--mall .mall-sku-card__content")
+    );
+    expect(productSurface?.style.getPropertyValue("background-color")).toBe("var(--heybox-up-surface)");
+    expect(productSurface?.style.getPropertyValue("border-color")).toBe("var(--heybox-up-border)");
+    const productPrice = themeRules.find((rule) =>
+      rule.selector.includes(".search-result__list--mall")
+      && rule.selector.includes(".mall-sku-card__yuan path")
+    );
+    expect(productPrice?.style.getPropertyValue("color")).toBe("var(--heybox-up-accent)");
+    expect(productPrice?.style.getPropertyValue("fill")).toBe("var(--heybox-up-accent)");
+    const discount = themeRules.find((rule) =>
+      rule.selector.includes(".search-result__list--mall .mall-sku-card__discount")
+    );
+    expect(discount?.style.getPropertyValue("background-color")).toBe("var(--heybox-up-accent)");
+    expect(discount?.style.getPropertyValue("color")).toBe("var(--heybox-up-on-accent)");
+  });
+});
+
 describe("HeyBox redundant rail and article-page layout contract", () => {
   it("hides promotional rails while allowing topic and editor content to expand", () => {
     const rail = themeRules.find((rule) =>
