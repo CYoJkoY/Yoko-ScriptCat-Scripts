@@ -224,6 +224,41 @@ describe("search suggestion contrast contract", () => {
   });
 });
 
+describe("HeyBox search page dark-theme contract", () => {
+  it("removes the search footer and raises logo contrast only in dark mode", () => {
+    const footer = themeRules.find((rule) =>
+      rule.selector === DARK_GATE + " #page-bbs-search :is(footer, [class*=\"footer\"])"
+    );
+    expect(footer?.style.getPropertyValue("display")).toBe("none");
+    const logo = themeRules.find((rule) =>
+      rule.selector === DARK_GATE + " #page-bbs-search :is(.logo, [class*=\"logo\"])"
+    );
+    expect(logo?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
+    const logoImage = themeRules.find((rule) =>
+      rule.selector === DARK_GATE + " #page-bbs-search :is(.logo, [class*=\"logo\"]) img"
+    );
+    expect(logoImage?.style.getPropertyValue("filter")).toBe("brightness(0) invert(1)");
+  });
+
+  it("recolors all result categories and darkens product cards", () => {
+    const resultText = themeRules.find((rule) =>
+      rule.selector === DARK_GATE + " #page-bbs-list :is(\n    [class*=\"search-result__game\"], [class*=\"search-result__user\"],\n    [class*=\"search-result__topic\"], [class*=\"search-result__goods\"],\n    [class*=\"search-result__product\"], .search-result__middle\n  )"
+    );
+    expect(resultText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
+    const productSurface = themeRules.find((rule) =>
+      rule.selector.includes(".search-result__middle.goods")
+      && rule.selector.includes(".search-result__middle.product")
+    );
+    expect(productSurface?.style.getPropertyValue("background-color")).toBe("var(--heybox-up-surface)");
+    expect(productSurface?.style.getPropertyValue("border-color")).toBe("var(--heybox-up-border)");
+    const productPrice = themeRules.find((rule) =>
+      rule.selector.includes(".search-result__middle.goods")
+      && rule.selector.includes("[class*=\"price\"]")
+    );
+    expect(productPrice?.style.getPropertyValue("color")).toBe("var(--heybox-up-accent)");
+  });
+});
+
 describe("HeyBox redundant rail and article-page layout contract", () => {
   it("hides promotional rails while allowing topic and editor content to expand", () => {
     const rail = themeRules.find((rule) =>

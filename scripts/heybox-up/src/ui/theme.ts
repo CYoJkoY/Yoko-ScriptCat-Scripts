@@ -239,6 +239,41 @@ export const THEME_CSS = `
     background-color: var(--heybox-up-bg) !important;
     color: var(--heybox-up-text);
   }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search :is(footer, [class*="footer"]) {
+    display: none !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search :is(.logo, [class*="logo"]) {
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search :is(.logo, [class*="logo"]) img {
+    filter: brightness(0) invert(1);
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search :is(.logo, [class*="logo"]) :is(span, p, div) {
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(
+    [class*="search-result__game"], [class*="search-result__user"],
+    [class*="search-result__topic"], [class*="search-result__goods"],
+    [class*="search-result__product"], .search-result__middle
+  ) {
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list [class*="search-result__"] :is([class*="name"], [class*="title"], [class*="desc"], [class*="intro"], [class*="summary"], [class*="label"], [class*="count"], [class*="price"], [class*="meta"], [class*="type"]) {
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(
+    [class*="search-result__goods"], [class*="search-result__product"],
+    .search-result__middle.goods, .search-result__middle.product
+  ) {
+    background-color: var(--heybox-up-surface) !important;
+    border-color: var(--heybox-up-border) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(
+    [class*="search-result__goods"], [class*="search-result__product"],
+    .search-result__middle.goods, .search-result__middle.product
+  ) [class*="price"] {
+    color: var(--heybox-up-accent) !important;
+  }
   /* Search page: page and list paint fixed white bands above and below the results. */
   :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list::before,
   :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list::after {
