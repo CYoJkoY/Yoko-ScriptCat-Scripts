@@ -249,6 +249,16 @@ describe("HeyBox search page dark-theme contract", () => {
       rule.selector === DARK_GATE + " #page-bbs-list .search-result__middle"
     );
     expect(noticeText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
+    const gamePriceText = themeRules.find((rule) =>
+      rule.selector.includes("#page-bbs-list .search-result__game .price-box :is(.price-content-box, .current-price)")
+    );
+    expect(gamePriceText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
+    expect(gamePriceText?.style.getPropertyPriority("color")).toBe("important");
+    const mallProductName = themeRules.find((rule) =>
+      rule.selector.includes("#page-bbs-list .search-result__list--mall .mall-sku-card__name")
+    );
+    expect(mallProductName?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
+    expect(mallProductName?.style.getPropertyPriority("color")).toBe("important");
     const productSurface = themeRules.find((rule) =>
       rule.selector.includes(".search-result__list--mall .mall-sku-card__content")
     );
