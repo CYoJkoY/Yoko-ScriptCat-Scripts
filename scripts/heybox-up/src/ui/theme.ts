@@ -239,40 +239,41 @@ export const THEME_CSS = `
     background-color: var(--heybox-up-bg) !important;
     color: var(--heybox-up-text);
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search :is(footer, [class*="footer"]) {
+  :root.heybox-up-theme #page-bbs-search :is(.bbs-search-download.download, footer.hb-footer) {
     display: none !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search :is(.logo, [class*="logo"]) {
-    color: var(--heybox-up-text) !important;
-  }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search :is(.logo, [class*="logo"]) img {
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search > .logo img {
     filter: brightness(0) invert(1);
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-search :is(.logo, [class*="logo"]) :is(span, p, div) {
-    color: var(--heybox-up-text) !important;
-  }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(
-    [class*="search-result__game"], [class*="search-result__user"],
-    [class*="search-result__topic"], [class*="search-result__goods"],
-    [class*="search-result__product"], .search-result__middle
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list :is(
+    .search-result__game, .search-result__user, .search-result__hashtag,
+    .game-rank__game-card, .game-info, .user-line__username,
+    .user-line__content-line-2, .result-hashtag__name, .result-hashtag__desc,
+    .line-1, .line-2, .mall-sku-card__name, .mall-sku-card__tag,
+    .mall-sku-card__original-price
   ) {
     color: var(--heybox-up-text) !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list [class*="search-result__"] :is([class*="name"], [class*="title"], [class*="desc"], [class*="intro"], [class*="summary"], [class*="label"], [class*="count"], [class*="price"], [class*="meta"], [class*="type"]) {
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__middle {
     color: var(--heybox-up-text) !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(
-    [class*="search-result__goods"], [class*="search-result__product"],
-    .search-result__middle.goods, .search-result__middle.product
-  ) {
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list .price-box {
+    background-color: var(--heybox-up-raised) !important;
+    border-color: var(--heybox-up-border) !important;
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list--mall .mall-sku-card__content {
     background-color: var(--heybox-up-surface) !important;
     border-color: var(--heybox-up-border) !important;
+    color: var(--heybox-up-text) !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(
-    [class*="search-result__goods"], [class*="search-result__product"],
-    .search-result__middle.goods, .search-result__middle.product
-  ) [class*="price"] {
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list--mall :is(.mall-sku-card__current-price, .mall-sku-card__yuan path) {
     color: var(--heybox-up-accent) !important;
+    fill: var(--heybox-up-accent) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list--mall .mall-sku-card__discount {
+    background-color: var(--heybox-up-accent) !important;
+    color: var(--heybox-up-on-accent) !important;
   }
   /* Search page: page and list paint fixed white bands above and below the results. */
   :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list::before,
