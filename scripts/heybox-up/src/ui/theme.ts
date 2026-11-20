@@ -249,15 +249,19 @@ export const THEME_CSS = `
     .search-result__game, .search-result__user, .search-result__hashtag,
     .game-rank__game-card, .game-info, .user-line__username,
     .user-line__content-line-2, .result-hashtag__name, .result-hashtag__desc,
-    .line-1, .line-2, .mall-sku-card__name, .mall-sku-card__tag,
+    .line-1, .line-2, .mall-sku-card__tag,
     .mall-sku-card__original-price
   ) {
+    color: var(--heybox-up-text) !important;
+  }
+  :root.heybox-up-theme #page-bbs-list .search-result__game .price-box :is(.price-content-box, .current-price),
+  :root.heybox-up-theme #page-bbs-list .search-result__list--mall .mall-sku-card__name {
     color: var(--heybox-up-text) !important;
   }
   :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__middle {
     color: var(--heybox-up-text) !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list .price-box {
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__game .price-box {
     background-color: var(--heybox-up-raised) !important;
     border-color: var(--heybox-up-border) !important;
     color: var(--heybox-up-text) !important;
