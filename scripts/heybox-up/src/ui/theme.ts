@@ -254,8 +254,8 @@ export const THEME_CSS = `
   ) {
     color: var(--heybox-up-text) !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__game .price-box :is(.price-content-box, .current-price),
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list--mall .mall-sku-card__name {
+  :root.heybox-up-theme #page-bbs-list .search-result__game .price-box :is(.price-content-box, .current-price),
+  :root.heybox-up-theme #page-bbs-list .search-result__list--mall .mall-sku-card__name {
     color: var(--heybox-up-text) !important;
   }
   :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__middle {

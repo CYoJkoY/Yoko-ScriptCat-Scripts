@@ -224,7 +224,7 @@ describe("search suggestion contrast contract", () => {
   });
 });
 
-describe("HeyBox search page dark-theme contract", () => {
+describe("HeyBox search page theme contract", () => {
   it("removes promo/footer blocks and raises the dark search logo contrast", () => {
     const hidden = themeRules.find((rule) =>
       rule.selector === ":root.heybox-up-theme #page-bbs-search :is(.bbs-search-download.download, footer.hb-footer)"
@@ -251,14 +251,11 @@ describe("HeyBox search page dark-theme contract", () => {
     expect(noticeText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
     const gamePriceText = themeRules.find((rule) =>
       rule.selector.includes("#page-bbs-list .search-result__game .price-box :is(.price-content-box, .current-price)")
+      && rule.selector.includes("#page-bbs-list .search-result__list--mall .mall-sku-card__name")
     );
     expect(gamePriceText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
     expect(gamePriceText?.style.getPropertyPriority("color")).toBe("important");
-    const mallProductName = themeRules.find((rule) =>
-      rule.selector.includes("#page-bbs-list .search-result__list--mall .mall-sku-card__name")
-    );
-    expect(mallProductName?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
-    expect(mallProductName?.style.getPropertyPriority("color")).toBe("important");
+    expect(gamePriceText?.selector).not.toContain(DARK_GATE);
     const productSurface = themeRules.find((rule) =>
       rule.selector.includes(".search-result__list--mall .mall-sku-card__content")
     );
