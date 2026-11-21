@@ -277,22 +277,77 @@ describe("style contract", () => {
     return found;
   }
 
-  it("darkens app chrome without changing document colours", () => {
+  // Selector lists are merged into one rule, so a plain `includes` check can
+  // match a longer selector that merely starts with the one under test.
+  function ruleWithSelector(selector: string): RuleRecord {
+    const found = rules.find((rule) =>
+      rule.selector
+        .split(",")
+        .map((part) => part.trim())
+        .includes(selector),
+    );
+    if (found === undefined) throw new Error("Missing CSS selector: " + selector);
+    return found;
+  }
+
+  it("darkens only app chrome without filters or document surface rules", () => {
     const root = ruleFor(DARK_GATE);
     expect(root.style.getPropertyValue("filter")).toBe("");
     expect(root.style.getPropertyValue("background-color")).toBe("rgb(32, 33, 36)");
+
+    const toolbar = ruleWithSelector(`${DARK_GATE} #docs-toolbar-wrapper`);
+    expect(toolbar.style.getPropertyValue("background-color")).toBe("rgb(32, 33, 36)");
+    expect(toolbar.style.getPropertyValue("color")).toBe("rgb(232, 234, 237)");
+
+    const formulaBar = ruleWithSelector(`${DARK_GATE} #formula-bar`);
+    expect(formulaBar.style.getPropertyValue("background-color")).toBe("rgb(41, 42, 45)");
+
+    // Google paints the toolbar from Material 3 tokens, so the dark palette is
+    // re-declared on the chrome subtree instead of every widget individually.
+    const tokenHost = rules.find(
+      (rule) => rule.style.getPropertyValue("--gm3-sys-color-surface") !== "",
+    );
+    expect(tokenHost).toBeDefined();
+    expect(tokenHost?.selector).toContain(`${DARK_GATE} #docs-chrome`);
+
+    const sheetTab = ruleWithSelector(`${DARK_GATE} .docs-sheet-tab`);
+    expect(sheetTab.style.getPropertyValue("background-color")).toBe("rgb(45, 47, 49)");
+
+    // Google paints this divider with a white background rather than a border.
+    const separator = ruleFor(`${DARK_GATE} #docs-chrome .formula-bar-separator`);
+    expect(separator.style.getPropertyValue("background-color")).toBe("rgb(95, 99, 104)");
 
     const button = ruleFor(`${DARK_GATE} button.${BUTTON_CLASS}`);
     expect(button.style.getPropertyValue("filter")).toBe("");
     expect(button.style.getPropertyValue("color")).toBe("rgb(232, 234, 237)");
   });
 
-  it("does not restyle grid media or palette surfaces", () => {
-    for (const tag of ["img", "video", "picture"]) {
-      expect(buildThemeCss()).not.toContain(`${DARK_GATE} ${tag}`);
+  it("does not apply filters or surface rules to the editor canvas or swatches", () => {
+    const css = buildThemeCss();
+    expect(css).not.toContain("#docs-editor");
+    expect(css).not.toContain(".grid-container");
+    expect(css).not.toContain(".cell-input");
+
+    // Issue #240 bans inverting the sheet, its media or its swatches. Glyph
+    // boxes are UI, so a filter is allowed only when the selector targets one.
+    const filtered = rules.filter((rule) => rule.style.getPropertyValue("filter") !== "");
+    expect(filtered.length).toBeGreaterThan(0);
+    for (const rule of filtered) {
+      for (const selector of rule.selector.split(",").map((part) => part.trim())) {
+        expect(selector).toContain(".docs-icon-img");
+      }
     }
-    expect(buildThemeCss()).not.toContain("goog-palette");
-    expect(buildThemeCss()).not.toContain(".cell-input");
+
+    const forbiddenElement = /(?:^|[\s>+~])(?:img|video|picture|canvas)(?=$|[\s.:#[>+~])/;
+    for (const rule of rules) {
+      for (const selector of rule.selector.split(",").map((part) => part.trim())) {
+        expect(selector).not.toMatch(forbiddenElement);
+      }
+    }
+
+    const palette = ruleFor(`${DARK_GATE} .goog-palette`);
+    expect(palette.style.length).toBe(1);
+    expect(palette.style.getPropertyValue("background-color")).toBe("rgb(32, 33, 36)");
   });
 
   it("pins the fallback button to the viewport", () => {
