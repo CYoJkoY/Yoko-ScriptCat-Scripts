@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   HUD_ID,
   PLATFORMS,
+  SIDEBAR_PEEK_HIDE_DELAY_MS,
   STORAGE_KEY_CONFIG,
   STORAGE_KEY_DOCK,
   STORAGE_KEY_POS,
@@ -11,6 +12,7 @@ import {
   createEngineState,
   loadSavedConfig,
   normalizeSidebarPeekDelay,
+  normalizeSidebarPeekHideDelay,
   resetPersistedConfig,
   saveCurrentConfig,
   type EngineState,
@@ -772,6 +774,8 @@ describe("HUD persisted config", () => {
     expect(normalizeSidebarPeekDelay("250.8")).toBe(251);
     expect(normalizeSidebarPeekDelay(2500)).toBe(2000);
     expect(normalizeSidebarPeekDelay("not-a-number")).toBe(180);
+    expect(normalizeSidebarPeekHideDelay("not-a-number")).toBe(160);
+    expect(normalizeSidebarPeekHideDelay(2500)).toBe(2000);
   });
 
   it("loads and saves a custom sidebar peek delay", () => {
@@ -789,6 +793,28 @@ describe("HUD persisted config", () => {
       window.localStorage.getItem(STORAGE_KEY_CONFIG) ?? "null",
     );
     expect(saved).toMatchObject({ sidebarPeekDelayMs: 300 });
+  });
+
+  it("loads and saves a custom sidebar peek hide delay", () => {
+    window.localStorage.setItem(
+      STORAGE_KEY_CONFIG,
+      JSON.stringify({ sidebarPeekHideDelayMs: 5000 }),
+    );
+    const state = createEngineState();
+    loadSavedConfig(state);
+    expect(state.sidebarPeekHideDelayMs).toBe(2000);
+
+    state.sidebarPeekHideDelayMs = 640;
+    saveCurrentConfig(state);
+    const saved: unknown = JSON.parse(
+      window.localStorage.getItem(STORAGE_KEY_CONFIG) ?? "null",
+    );
+    expect(saved).toMatchObject({ sidebarPeekHideDelayMs: 640 });
+  });
+
+  it("defaults the sidebar peek hide delay to the released grace", () => {
+    const state = createEngineState();
+    expect(state.sidebarPeekHideDelayMs).toBe(SIDEBAR_PEEK_HIDE_DELAY_MS);
   });
 
   it("ignores an invalid theme value and keeps auto", () => {

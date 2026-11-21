@@ -8,6 +8,7 @@ export const MESSAGE_LIMIT_MAX = 999;
 export const SIDEBAR_PEEK_DELAY_MIN = 0;
 export const SIDEBAR_PEEK_DELAY_MAX = 2000;
 export const SIDEBAR_PEEK_SHOW_DELAY_MS = 180;
+export const SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
 export const LOAD_WARNING_RATIO = 0.7;
 export const LOAD_RING_RADIUS = 16.2;
 export const LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;

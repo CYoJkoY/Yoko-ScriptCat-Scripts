@@ -27,6 +27,7 @@ import { reportRecoverableError } from "../core/diagnostics";
 import {
   resetPersistedConfig,
   normalizeSidebarPeekDelay,
+  normalizeSidebarPeekHideDelay,
   type EngineState,
   type HudTheme,
 } from "../state";
@@ -364,6 +365,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
   let keepValue: HTMLElement | null = null;
   let messageLimitInput: HTMLInputElement | null = null;
   let sidebarPeekDelayInput: HTMLInputElement | null = null;
+  let sidebarPeekHideDelayInput: HTMLInputElement | null = null;
   let themeSelect: HTMLSelectElement | null = null;
   let advancedSettings: HTMLDetailsElement | null = null;
   let chkPrune: HTMLInputElement | null = null;
@@ -428,6 +430,9 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     }
     if (sidebarPeekDelayInput) {
       sidebarPeekDelayInput.value = String(state.sidebarPeekDelayMs);
+    }
+    if (sidebarPeekHideDelayInput) {
+      sidebarPeekHideDelayInput.value = String(state.sidebarPeekHideDelayMs);
     }
     if (themeSelect) themeSelect.value = state.hudTheme;
     if (chkPrune) chkPrune.checked = state.pruneEnabled;
@@ -1458,6 +1463,40 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     });
     sidebarPeekDelayInput = sidebarPeekDelayField;
 
+    const sidebarPeekHideDelayField = el("input", {
+      className: "limit-input",
+      id: "sidebar-peek-hide-delay",
+      type: "number",
+      min: String(SIDEBAR_PEEK_DELAY_MIN),
+      max: String(SIDEBAR_PEEK_DELAY_MAX),
+      step: "1",
+      value: String(state.sidebarPeekHideDelayMs),
+      title:
+        "鼠标移出侧栏后延迟关闭，范围 " +
+        String(SIDEBAR_PEEK_DELAY_MIN) +
+        " 至 " +
+        String(SIDEBAR_PEEK_DELAY_MAX) +
+        " 毫秒",
+      "aria-label": "鼠标移出侧栏后关闭延迟",
+    });
+    sidebarPeekHideDelayField.value = String(state.sidebarPeekHideDelayMs);
+    sidebarPeekHideDelayField.addEventListener("change", () => {
+      const rawValue = sidebarPeekHideDelayField.value.trim();
+      if (rawValue === "") {
+        sidebarPeekHideDelayField.value = String(state.sidebarPeekHideDelayMs);
+        return;
+      }
+      state.sidebarPeekHideDelayMs = normalizeSidebarPeekHideDelay(rawValue);
+      sidebarPeekHideDelayField.value = String(state.sidebarPeekHideDelayMs);
+      saveConfig();
+      announce(
+        "移出侧栏后关闭延迟：" +
+          String(state.sidebarPeekHideDelayMs) +
+          " 毫秒，设置已保存",
+      );
+    });
+    sidebarPeekHideDelayInput = sidebarPeekHideDelayField;
+
     themeSelect = el("select", {
       className: "theme-select",
       id: "hud-theme",
@@ -1510,6 +1549,15 @@ export function createHudUtils(deps: HudDeps): HudUtils {
         el("label", { for: "sidebar-peek-delay" }, ["侧栏探出延迟"]),
         el("div", { className: "limit-control" }, [
           sidebarPeekDelayField,
+          el("span", { className: "limit-unit" }, ["毫秒"]),
+        ]),
+      ]),
+      el("div", { className: "control-row" }, [
+        el("label", { for: "sidebar-peek-hide-delay" }, [
+          "移出后关闭延迟",
+        ]),
+        el("div", { className: "limit-control" }, [
+          sidebarPeekHideDelayField,
           el("span", { className: "limit-unit" }, ["毫秒"]),
         ]),
       ]),
@@ -1700,6 +1748,7 @@ export function createHudUtils(deps: HudDeps): HudUtils {
     keepValue = null;
     messageLimitInput = null;
     sidebarPeekDelayInput = null;
+    sidebarPeekHideDelayInput = null;
     themeSelect = null;
     advancedSettings = null;
     chkPrune = null;

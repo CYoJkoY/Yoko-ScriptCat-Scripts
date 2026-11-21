@@ -158,7 +158,11 @@ function stubHit(node: Element | null): () => void {
 }
 
 function start(
-  options: { isUserKey?: (event: Event) => boolean; showDelayMs?: () => number } = {},
+  options: {
+    isUserKey?: (event: Event) => boolean;
+    showDelayMs?: () => number;
+    hideDelayMs?: () => number;
+  } = {},
 ): SidebarPeek {
   peek = createSidebarPeek({ sidebar: SIDEBAR, ...options });
   peek.bind(document);
@@ -238,6 +242,25 @@ describe("sidebar hover peek", () => {
     expect(rail().style.getPropertyValue(SIDEBAR_PEEK_WIDTH_VAR)).toBe("");
     expect(rail().style.getPropertyValue(SIDEBAR_PEEK_SHIFT_VAR)).toBe("");
     expect(instance.isPeeking()).toBe(false);
+  });
+
+  it("holds the rail open for the configured leave grace period", () => {
+    start({ hideDelayMs: () => 600 });
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+
+    const button = document.getElementById("new-chat");
+    if (!button) throw new Error("missing button");
+    dispatchPointer("pointerout", button);
+
+    vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS);
+    expect(rail().hasAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBe(true);
+
+    vi.advanceTimersByTime(600 - SIDEBAR_PEEK_HIDE_DELAY_MS - 1);
+    expect(rail().hasAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBe(true);
+
+    vi.advanceTimersByTime(1);
+    expect(rail().hasAttribute(SIDEBAR_PEEK_ATTRIBUTE)).toBe(false);
   });
 
   it("peeks when hovering a toggle button outside the rail", () => {

@@ -140,6 +140,7 @@ export function initializeEngine(): void {
     sidebar: currentPlatform.sidebar ?? null,
     enabled: () => state.sidebarPeekEnabled,
     showDelayMs: () => state.sidebarPeekDelayMs,
+    hideDelayMs: () => state.sidebarPeekHideDelayMs,
   });
   const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
   const navigationTracker = createNavigationTracker(window.location);
