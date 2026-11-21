@@ -11,6 +11,7 @@ const SURFACE_DARK = "#202124";
 const SURFACE_RAISED_DARK = "#292a2d";
 const SURFACE_TAB_DARK = "#2d2f31";
 const SURFACE_TAB_ACTIVE_DARK = "#3c4043";
+const SURFACE_CONTAINER_HIGHEST_DARK = "#303134";
 
 const TEXT_DARK = "#e8eaed";
 const TEXT_ACCENT_DARK = "#8ab4f8";
@@ -91,7 +92,7 @@ const DARK_TOKENS: readonly string[] = Object.freeze([
   `--gm3-sys-color-surface-container-low: ${SURFACE_DARK}`,
   `--gm3-sys-color-surface-container: ${SURFACE_DARK}`,
   `--gm3-sys-color-surface-container-high: ${SURFACE_RAISED_DARK}`,
-  "--gm3-sys-color-surface-container-highest: #303134",
+  `--gm3-sys-color-surface-container-highest: ${SURFACE_CONTAINER_HIGHEST_DARK}`,
   `--gm3-sys-color-on-surface: ${TEXT_DARK}`,
   "--gm3-sys-color-on-surface-variant: #c4c7c5",
   `--gm3-sys-color-outline: ${BORDER_DARK}`,
@@ -141,14 +142,13 @@ export function buildThemeCss(): string {
     "",
     darkRule([...TOOLBAR_CONTROLS, ...TOOLBAR_LABELS], [`color: ${TEXT_DARK}`]),
     "",
-    // Google paints hover and toggle states with light overlays that would turn
-    // into bright blocks on a dark toolbar.
+    // Google paints hover states with a light overlay that would turn into a
+    // bright block on a dark toolbar. Checked toggles keep Google's tonal pill,
+    // so their glyph is left uninverted below for contrast.
     darkRule(
       [
         ".goog-toolbar-button-hover",
         ".goog-toolbar-menu-button-hover",
-        ".goog-toolbar-button-checked",
-        ".goog-toolbar-toggle-button.goog-toolbar-button-checked",
       ],
       [`background-color: ${HOVER_OVERLAY_DARK}`],
     ),
@@ -217,6 +217,12 @@ export function buildThemeCss(): string {
     // dark surfaces above would hide them. Inverting only these icon boxes (never
     // the sheet, its media or the colour swatches) restores them in light grey.
     darkRule(CHROME_ICONS, ["filter: invert(1)"]),
+    "",
+    // A checked toggle keeps Google's light tonal pill, so its glyph stays dark
+    // instead of being inverted into a washed-out light grey.
+    darkRule(["#docs-chrome .goog-toolbar-button-checked .docs-icon-img"], [
+      "filter: none",
+    ]),
     "",
     "/* Toggle button: a compact icon button sized for Google's toolbar row. */",
     `${button} {`,
