@@ -1,4 +1,6 @@
 import {
+  SIDEBAR_PEEK_HIDE_DELAY_MS,
+  SIDEBAR_PEEK_SHOW_DELAY_MS,
   type SidebarPeekDefinition,
 } from "../config";
 
@@ -13,10 +15,12 @@ export const SIDEBAR_PEEK_WIDTH_VAR = "--ai-turbo-sidebar-peek-width";
  * row, so the chat column keeps its position instead of reflowing.
  */
 export const SIDEBAR_PEEK_SHIFT_VAR = "--ai-turbo-sidebar-peek-shift";
-import { SIDEBAR_PEEK_SHOW_DELAY_MS } from "../config";
 
-/** Grace period that keeps the rail open while the pointer crosses a gap. */
-export const SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
+/**
+ * Grace period that keeps the rail open while the pointer crosses a gap.
+ * Re-exported so callers and tests keep importing it from this module.
+ */
+export { SIDEBAR_PEEK_HIDE_DELAY_MS };
 /**
  * Width of the activation lane along the rail's edge. A collapsed rail is
  * often invisible, slid out of the document, or narrower than the pointer's
@@ -211,7 +215,8 @@ export interface SidebarPeekOptions {
    */
   readonly isUserKey?: (event: Event) => boolean;
   readonly showDelayMs?: () => number;
-  readonly hideDelayMs?: number;
+  /** Live preference read; a leave can be held open for a chosen grace. */
+  readonly hideDelayMs?: () => number;
 }
 
 export interface SidebarPeek {
@@ -236,7 +241,8 @@ export interface SidebarPeek {
  */
 export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
   const definition = options.sidebar;
-  const hideDelayMs = options.hideDelayMs ?? SIDEBAR_PEEK_HIDE_DELAY_MS;
+  const hideDelayMs =
+    options.hideDelayMs ?? (() => SIDEBAR_PEEK_HIDE_DELAY_MS);
   const showDelayMs = options.showDelayMs ?? (() => SIDEBAR_PEEK_SHOW_DELAY_MS);
   const isUserKey = options.isUserKey ?? ((event: Event) => event.isTrusted);
   const peekWidth = definition?.peekWidth ?? DEFAULT_PEEK_WIDTH;
@@ -1749,7 +1755,7 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
         return;
       }
       releaseActive();
-    }, hideDelayMs);
+    }, hideDelayMs());
   }
 
   /**

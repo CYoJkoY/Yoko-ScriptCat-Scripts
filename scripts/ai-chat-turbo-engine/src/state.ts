@@ -4,6 +4,7 @@ import {
   MESSAGE_LIMIT_MIN,
   SIDEBAR_PEEK_DELAY_MAX,
   SIDEBAR_PEEK_DELAY_MIN,
+  SIDEBAR_PEEK_HIDE_DELAY_MS,
   SIDEBAR_PEEK_SHOW_DELAY_MS,
   STORAGE_KEY_CONFIG,
 } from "./config";
@@ -21,6 +22,7 @@ export interface PersistedEngineConfig {
   virtualFileEnabled: boolean;
   sidebarPeekEnabled: boolean;
   sidebarPeekDelayMs: number;
+  sidebarPeekHideDelayMs: number;
   newChatShortcutLock: boolean;
   rememberReasoning: boolean;
   rememberTools: boolean;
@@ -35,6 +37,7 @@ const DEFAULT_PERSISTED_CONFIG: PersistedEngineConfig = {
   virtualFileEnabled: true,
   sidebarPeekEnabled: true,
   sidebarPeekDelayMs: SIDEBAR_PEEK_SHOW_DELAY_MS,
+  sidebarPeekHideDelayMs: SIDEBAR_PEEK_HIDE_DELAY_MS,
   newChatShortcutLock: true,
   rememberReasoning: true,
   rememberTools: true,
@@ -62,13 +65,21 @@ export interface EngineState extends PersistedEngineConfig {
   indexedTurns: TurnRecord[];
 }
 
-export function normalizeSidebarPeekDelay(rawDelay: unknown): number {
+function clampSidebarPeekDelay(rawDelay: unknown, fallback: number): number {
   const numericDelay = Number(rawDelay);
-  if (!Number.isFinite(numericDelay)) return SIDEBAR_PEEK_SHOW_DELAY_MS;
+  if (!Number.isFinite(numericDelay)) return fallback;
   return Math.min(
     SIDEBAR_PEEK_DELAY_MAX,
     Math.max(SIDEBAR_PEEK_DELAY_MIN, Math.round(numericDelay)),
   );
+}
+
+export function normalizeSidebarPeekDelay(rawDelay: unknown): number {
+  return clampSidebarPeekDelay(rawDelay, SIDEBAR_PEEK_SHOW_DELAY_MS);
+}
+
+export function normalizeSidebarPeekHideDelay(rawDelay: unknown): number {
+  return clampSidebarPeekDelay(rawDelay, SIDEBAR_PEEK_HIDE_DELAY_MS);
 }
 
 /** Persisted subset of the engine state; key order matches the legacy payload. */
@@ -134,6 +145,14 @@ export function loadSavedConfig(state: EngineState): void {
         parsed.sidebarPeekDelayMs,
       );
     }
+    if (
+      typeof parsed.sidebarPeekHideDelayMs === "number" &&
+      Number.isFinite(parsed.sidebarPeekHideDelayMs)
+    ) {
+      state.sidebarPeekHideDelayMs = normalizeSidebarPeekHideDelay(
+        parsed.sidebarPeekHideDelayMs,
+      );
+    }
     if (typeof parsed.newChatShortcutLock === "boolean") {
       state.newChatShortcutLock = parsed.newChatShortcutLock;
     }
@@ -170,6 +189,7 @@ export function saveCurrentConfig(state: EngineState): void {
       virtualFileEnabled: state.virtualFileEnabled,
       sidebarPeekEnabled: state.sidebarPeekEnabled,
       sidebarPeekDelayMs: state.sidebarPeekDelayMs,
+      sidebarPeekHideDelayMs: state.sidebarPeekHideDelayMs,
       newChatShortcutLock: state.newChatShortcutLock,
       rememberReasoning: state.rememberReasoning,
       rememberTools: state.rememberTools,
