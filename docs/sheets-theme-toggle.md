@@ -7,9 +7,10 @@
 - 适用页面：`https://docs.google.com/spreadsheets/d/*`（含多账号的 `/spreadsheets/u/<n>/d/*`，仅顶层文档，`@noframes`）
 
 ## 安装
-1. 在 ScriptCat / Tampermonkey / Violentmonkey 中新建或导入 UserScript。
-2. 安装 `dist/sheets-theme-toggle.user.js`。
-3. 打开 Google 表格的编辑页面；右侧工具栏会出现主题切换按钮。
+1. 安装用户脚本管理器（ScriptCat 推荐）。
+2. 点击安装入口直接安装（推荐，可自动更新）：[Google Sheets Theme Toggle](https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js)。
+3. 或在管理器中新建脚本、粘贴脚本完整内容后保存。
+4. 打开 Google 表格的编辑页面；右侧工具栏会出现主题切换按钮。
 
 ## 核心特性
 - 在编辑器右侧工具栏（`#docs-side-toolbar`）注入一个 28×28 的圆形图标按钮：浅色时显示月亮，深色时显示太阳，图标始终表示"点击后的下一个主题"。

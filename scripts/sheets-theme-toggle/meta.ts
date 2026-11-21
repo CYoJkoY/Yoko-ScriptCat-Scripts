@@ -6,8 +6,10 @@ const meta = {
   version: "1.0.0",
   description: "在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色用 CSS 反色铺满整个编辑器，浅色还原 Google 原色，偏好持久化并跟随系统。",
   author: "Yoko",
-  updateURL: "https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@main/dist/sheets-theme-toggle.user.js",
-  downloadURL: "https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/main/dist/sheets-theme-toggle.user.js",
+  // `dist/` never reaches `main`; CI publishes the built bundles at the root of
+  // the `release` branch, so both update links must point there.
+  updateURL: "https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js",
+  downloadURL: "https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js",
   match: ["https://docs.google.com/spreadsheets/*"],
   runAt: "document-start",
   grant: ["GM_getValue", "GM_setValue"],
