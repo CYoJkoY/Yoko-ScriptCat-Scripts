@@ -64,6 +64,7 @@ afterEach(() => {
   document.body.innerHTML = "";
   document.documentElement.removeAttribute(THEME_ATTRIBUTE);
   document.documentElement.removeAttribute("data-yoko-sheets-theme-ready");
+  Reflect.deleteProperty(document, "readyState");
   removeThemeStyle(document);
   installMemoryStorage();
   vi.unstubAllGlobals();
@@ -354,7 +355,7 @@ describe("mount", () => {
   it("appends the button to the side toolbar and re-inserts it after a re-render", async () => {
     mountChrome();
     const button = createThemeButton(document, THEME_MODE.LIGHT);
-    const mount = createThemeMount({ doc: document, button, isChromeReady: () => true });
+    const mount = createThemeMount({ doc: document, button, isParseComplete: () => true });
     try {
       mount.ensureMounted();
       const toolbar = document.getElementById("docs-side-toolbar");
@@ -371,7 +372,7 @@ describe("mount", () => {
   it("falls back to the main toolbar when the side toolbar is missing", () => {
     document.body.innerHTML = `<div id="docs-toolbar"></div>`;
     const button = createThemeButton(document, THEME_MODE.LIGHT);
-    const mount = createThemeMount({ doc: document, button, isChromeReady: () => true });
+    const mount = createThemeMount({ doc: document, button, isParseComplete: () => true });
     try {
       mount.ensureMounted();
       expect(button.parentElement).toBe(document.getElementById("docs-toolbar"));
@@ -383,7 +384,7 @@ describe("mount", () => {
   it("pins a floating button to the body when the toolbar never renders", () => {
     document.body.append(document.createElement("div"));
     const button = createThemeButton(document, THEME_MODE.LIGHT);
-    const mount = createThemeMount({ doc: document, button, isChromeReady: () => true });
+    const mount = createThemeMount({ doc: document, button, isParseComplete: () => true });
     try {
       mount.ensureMounted();
       expect(button.parentElement).toBe(document.body);
@@ -396,7 +397,7 @@ describe("mount", () => {
   it("waits for the chrome before showing the fallback", () => {
     document.body.append(document.createElement("div"));
     const button = createThemeButton(document, THEME_MODE.LIGHT);
-    const mount = createThemeMount({ doc: document, button, isChromeReady: () => false });
+    const mount = createThemeMount({ doc: document, button, isParseComplete: () => false });
     try {
       mount.ensureMounted();
       expect(button.isConnected).toBe(false);
@@ -504,6 +505,24 @@ describe("installSheetsTheme", () => {
       expect(document.getElementById(BUTTON_ID)).not.toBeNull();
     } finally {
       second.dispose();
+    }
+  });
+
+  it("mounts once parsing finishes when the document is still loading", () => {
+    stubMatchMedia(false);
+    Object.defineProperty(document, "readyState", { value: "loading", configurable: true });
+    const controller = installSheetsTheme({ doc: document, scope: globalThis });
+    try {
+      // Nothing may be pinned to the body before the parse completes.
+      expect(document.getElementById(BUTTON_ID)).toBeNull();
+      Object.defineProperty(document, "readyState", { value: "complete", configurable: true });
+      mountChrome();
+      document.dispatchEvent(new Event("DOMContentLoaded"));
+      expect(document.getElementById(BUTTON_ID)?.parentElement).toBe(
+        document.getElementById("docs-side-toolbar"),
+      );
+    } finally {
+      controller.dispose();
     }
   });
 });

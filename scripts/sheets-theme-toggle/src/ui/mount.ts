@@ -9,7 +9,7 @@ export interface ThemeMountOptions {
   readonly doc: Document;
   readonly button: HTMLButtonElement;
   /** False while the page is still parsing, which keeps the fallback off screen. */
-  readonly isChromeReady: () => boolean;
+  readonly isParseComplete: () => boolean;
 }
 
 function findToolbar(doc: Document): HTMLElement | null {
@@ -27,7 +27,7 @@ function findToolbar(doc: Document): HTMLElement | null {
  * otherwise starve the remount forever.
  */
 export function createThemeMount(options: ThemeMountOptions): ThemeMount {
-  const { doc, button, isChromeReady } = options;
+  const { doc, button, isParseComplete } = options;
   const view = doc.defaultView;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let observer: MutationObserver | null = null;
@@ -40,7 +40,7 @@ export function createThemeMount(options: ThemeMountOptions): ThemeMount {
       return;
     }
     if (button.isConnected) return;
-    if (!isChromeReady() || doc.body === null) return;
+    if (!isParseComplete() || doc.body === null) return;
     button.setAttribute(FLOATING_ATTRIBUTE, "");
     doc.body.append(button);
   };

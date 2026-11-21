@@ -55,20 +55,23 @@ export function installSheetsTheme(options: SheetsThemeOptions = {}): SheetsThem
   const mount = createThemeMount({
     doc,
     button,
-    isChromeReady: () => doc.readyState !== "loading",
+    isParseComplete: () => doc.readyState !== "loading",
   });
   mount.ensureMounted();
 
-  const onLoad = (): void => mount.ensureMounted();
-  const listensForLoad = doc.readyState !== "complete";
-  if (listensForLoad) doc.addEventListener("load", onLoad, { once: true });
+  // `load` fires at the window, not at the document; DOMContentLoaded is the
+  // event that moves `readyState` past "loading", which is what the mount waits
+  // for before it may pin the fallback button.
+  const onParseDone = (): void => mount.ensureMounted();
+  const waitsForParse = doc.readyState === "loading";
+  if (waitsForParse) doc.addEventListener("DOMContentLoaded", onParseDone, { once: true });
 
   return {
     mode: () => mode,
     setMode: (next) => paint(next, true),
     dispose: () => {
       button.removeEventListener("click", onClick);
-      if (listensForLoad) doc.removeEventListener("load", onLoad);
+      if (waitsForParse) doc.removeEventListener("DOMContentLoaded", onParseDone);
       unsubscribe();
       mount.dispose();
       button.remove();

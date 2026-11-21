@@ -9,7 +9,7 @@ import { installSheetsTheme } from "./install";
  * but has no editor to theme, so only document routes install.
  */
 function bootstrap(): void {
-  const root = document.documentElement;
+  const root: Element | null = document.documentElement;
   if (root === null) return;
   if (root.hasAttribute(SCRIPT_MARKER_ATTRIBUTE)) return;
   if (!isSheetEditorPath(window.location.pathname)) return;
@@ -17,8 +17,9 @@ function bootstrap(): void {
   installSheetsTheme();
 }
 
-if (document.documentElement !== null) {
-  bootstrap();
-} else {
+const root: Element | null = document.documentElement;
+if (root === null) {
   document.addEventListener("DOMContentLoaded", bootstrap, { once: true });
+} else {
+  bootstrap();
 }
