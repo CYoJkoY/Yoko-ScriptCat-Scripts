@@ -256,6 +256,14 @@ describe("HeyBox search page theme contract", () => {
     expect(gamePriceText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
     expect(gamePriceText?.style.getPropertyPriority("color")).toBe("important");
     expect(gamePriceText?.selector).not.toContain(DARK_GATE);
+    const gamePriceSymbol = themeRules.find((rule) =>
+      rule.selector.includes(
+        "#page-bbs-list .search-result__game .price-box .price-content-box .crash-svg path"
+      )
+    );
+    // CSSOM normalises the keyword, so the stored value is lowercased.
+    expect(gamePriceSymbol?.style.getPropertyValue("fill")).toBe("currentcolor");
+    expect(gamePriceSymbol?.style.getPropertyPriority("fill")).toBe("important");
     const productSurface = themeRules.find((rule) =>
       rule.selector.includes(".search-result__list--mall .mall-sku-card__content")
     );

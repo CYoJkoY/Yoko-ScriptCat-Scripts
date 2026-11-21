@@ -19,6 +19,7 @@ import { watchNativeComments } from "./ui/native-comments";
 import { applyNavMotionPreference, releaseNav, watchTopNav } from "./ui/navigation";
 import { watchCommentRail } from "./ui/rail";
 import { createPostNavigationController, watchPostPager, watchReader } from "./ui/reader";
+import { watchSearchCancelNotice } from "./ui/search-notice";
 import { THEME_MEDIA, applyTheme, currentThemeMode, readThemeMode, releaseTheme, watchTheme } from "./ui/theme";
 
 // Preferences are applied before the DOM is observed so the first paint already
@@ -68,6 +69,7 @@ function boot(): void {
   watchNativeComments();
   watchCommunitySearch();
   watchDesktopShell();
+  watchSearchCancelNotice();
   startPageSyncObserver();
 }
 

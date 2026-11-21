@@ -258,6 +258,10 @@ export const THEME_CSS = `
   :root.heybox-up-theme #page-bbs-list .search-result__list--mall .mall-sku-card__name {
     color: var(--heybox-up-text) !important;
   }
+  /* 价格标签的 ¥ 是站点写死 fill="#14191E" 的内联 SVG，深色下会消失在卡片底上。 */
+  :root.heybox-up-theme #page-bbs-list .search-result__game .price-box .price-content-box .crash-svg path {
+    fill: currentColor !important;
+  }
   :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__middle {
     color: var(--heybox-up-text) !important;
   }
