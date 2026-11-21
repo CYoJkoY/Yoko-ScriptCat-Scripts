@@ -9,12 +9,12 @@ describe("HeyBox Up publishing metadata", () => {
   it("points generated metadata to the versioned release artifact", () => {
     const header = renderUserscriptHeader(meta);
 
-    expect(meta.version).toBe("0.12.18");
+    expect(meta.version).toBe("0.12.19");
     expect(meta.updateURL).toBe(
       "https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/heybox-up.user.js",
     );
     expect(meta.downloadURL).toBe(publishedDownloadUrl);
-    expect(header).toContain("// @version      0.12.18");
+    expect(header).toContain("// @version      0.12.19");
     expect(header).toContain(`// @downloadURL  ${publishedDownloadUrl}`);
   });
 });
