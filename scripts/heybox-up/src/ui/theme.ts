@@ -249,13 +249,22 @@ export const THEME_CSS = `
     .search-result__game, .search-result__user, .search-result__hashtag,
     .game-rank__game-card, .game-info, .user-line__username,
     .user-line__content-line-2, .result-hashtag__name, .result-hashtag__desc,
-    .line-1, .line-2, .mall-sku-card__tag,
-    .mall-sku-card__original-price
+    .line-1, .line-2
   ) {
     color: var(--heybox-up-text) !important;
   }
+  /* The same sku card appears in two containers: the mall tab renders one
+     search-result__list--mall class, the combined tab keeps .search-result__list.
+     Match either so no mall card escapes the theme. */
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(.search-result__list, .search-result__list--mall) .mall-sku-card__tag {
+    color: var(--heybox-up-text-2) !important;
+    box-shadow: 0 0 0 .5px var(--heybox-up-border) !important;
+  }
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(.search-result__list, .search-result__list--mall) .mall-sku-card__original-price {
+    color: var(--heybox-up-muted) !important;
+  }
   :root.heybox-up-theme #page-bbs-list .search-result__game .price-box :is(.price-content-box, .current-price),
-  :root.heybox-up-theme #page-bbs-list .search-result__list--mall .mall-sku-card__name {
+  :root.heybox-up-theme #page-bbs-list :is(.search-result__list, .search-result__list--mall) .mall-sku-card__name {
     color: var(--heybox-up-text) !important;
   }
   /* 价格标签的 ¥ 是站点写死 fill="#14191E" 的内联 SVG，深色下会消失在卡片底上。 */
@@ -270,16 +279,16 @@ export const THEME_CSS = `
     border-color: var(--heybox-up-border) !important;
     color: var(--heybox-up-text) !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list--mall .mall-sku-card__content {
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(.search-result__list, .search-result__list--mall) .mall-sku-card__content {
     background-color: var(--heybox-up-surface) !important;
     border-color: var(--heybox-up-border) !important;
     color: var(--heybox-up-text) !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list--mall :is(.mall-sku-card__current-price, .mall-sku-card__yuan path) {
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(.search-result__list, .search-result__list--mall) :is(.mall-sku-card__current-price, .mall-sku-card__yuan path) {
     color: var(--heybox-up-accent) !important;
     fill: var(--heybox-up-accent) !important;
   }
-  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list .search-result__list--mall .mall-sku-card__discount {
+  :root.heybox-up-theme[data-heybox-up-dark="true"] #page-bbs-list :is(.search-result__list, .search-result__list--mall) .mall-sku-card__discount {
     background-color: var(--heybox-up-accent) !important;
     color: var(--heybox-up-on-accent) !important;
   }

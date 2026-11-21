@@ -4,6 +4,8 @@ import { NAV_CSS } from "../scripts/heybox-up/src/ui/navigation";
 
 const HOVER_MEDIA = "(hover: hover) and (pointer: fine)";
 const DARK_GATE = ':root.heybox-up-theme[data-heybox-up-dark="true"]';
+// Mall sku cards live in the mall tab container and in the combined tab list.
+const MALL_LIST = ":is(.search-result__list, .search-result__list--mall)";
 
 interface RuleRecord {
   selector: string;
@@ -251,7 +253,7 @@ describe("HeyBox search page theme contract", () => {
     expect(noticeText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
     const gamePriceText = themeRules.find((rule) =>
       rule.selector.includes("#page-bbs-list .search-result__game .price-box :is(.price-content-box, .current-price)")
-      && rule.selector.includes("#page-bbs-list .search-result__list--mall .mall-sku-card__name")
+      && rule.selector.includes("#page-bbs-list " + MALL_LIST + " .mall-sku-card__name")
     );
     expect(gamePriceText?.style.getPropertyValue("color")).toBe("var(--heybox-up-text)");
     expect(gamePriceText?.style.getPropertyPriority("color")).toBe("important");
@@ -265,21 +267,43 @@ describe("HeyBox search page theme contract", () => {
     expect(gamePriceSymbol?.style.getPropertyValue("fill")).toBe("currentcolor");
     expect(gamePriceSymbol?.style.getPropertyPriority("fill")).toBe("important");
     const productSurface = themeRules.find((rule) =>
-      rule.selector.includes(".search-result__list--mall .mall-sku-card__content")
+      rule.selector.includes(MALL_LIST + " .mall-sku-card__content")
     );
     expect(productSurface?.style.getPropertyValue("background-color")).toBe("var(--heybox-up-surface)");
     expect(productSurface?.style.getPropertyValue("border-color")).toBe("var(--heybox-up-border)");
     const productPrice = themeRules.find((rule) =>
-      rule.selector.includes(".search-result__list--mall")
+      rule.selector.includes("#page-bbs-list " + MALL_LIST)
       && rule.selector.includes(".mall-sku-card__yuan path")
     );
     expect(productPrice?.style.getPropertyValue("color")).toBe("var(--heybox-up-accent)");
     expect(productPrice?.style.getPropertyValue("fill")).toBe("var(--heybox-up-accent)");
     const discount = themeRules.find((rule) =>
-      rule.selector.includes(".search-result__list--mall .mall-sku-card__discount")
+      rule.selector.includes(MALL_LIST + " .mall-sku-card__discount")
     );
     expect(discount?.style.getPropertyValue("background-color")).toBe("var(--heybox-up-accent)");
     expect(discount?.style.getPropertyValue("color")).toBe("var(--heybox-up-on-accent)");
+  });
+
+  it("recolors mall chips through both list containers", () => {
+    // The mall tab carries a single `search-result__list--mall` class while the
+    // combined tab keeps `.search-result__list`; chips must match both.
+    const broadResultText = themeRules.find((rule) =>
+      rule.selector.startsWith(DARK_GATE + " #page-bbs-list .search-result__list :is(")
+    );
+    expect(broadResultText).toBeDefined();
+    expect(broadResultText?.selector).not.toContain(".mall-sku-card__tag");
+    expect(broadResultText?.selector).not.toContain(".mall-sku-card__original-price");
+    const tag = themeRules.find((rule) =>
+      rule.selector === DARK_GATE + " #page-bbs-list " + MALL_LIST + " .mall-sku-card__tag"
+    );
+    expect(tag?.style.getPropertyValue("color")).toBe("var(--heybox-up-text-2)");
+    expect(tag?.style.getPropertyPriority("color")).toBe("important");
+    expect(tag?.style.getPropertyValue("box-shadow")).toContain("var(--heybox-up-border)");
+    const originalPrice = themeRules.find((rule) =>
+      rule.selector === DARK_GATE + " #page-bbs-list " + MALL_LIST + " .mall-sku-card__original-price"
+    );
+    expect(originalPrice?.style.getPropertyValue("color")).toBe("var(--heybox-up-muted)");
+    expect(originalPrice?.style.getPropertyPriority("color")).toBe("important");
   });
 });
 
