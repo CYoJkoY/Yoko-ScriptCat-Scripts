@@ -6,45 +6,223 @@ import {
   THEME_MODE,
 } from "../config";
 
-/**
- * The grid of a Google spreadsheet is painted into a single `<canvas>`, so no
- * surface override can reach it: inverting the painted result is the only way
- * to darken the document area. Photographs and video inside the page are
- * inverted a second time so they keep their real colours.
- */
-const KEEP_ORIGINAL_COLOURS_TAGS: readonly string[] = Object.freeze([
-  "img",
-  "video",
-  "picture",
-]);
+/** Google's own dark surfaces, so the chrome matches the rest of Google's UI. */
+const SURFACE_DARK = "#202124";
+const SURFACE_RAISED_DARK = "#292a2d";
+const SURFACE_TAB_DARK = "#2d2f31";
+const SURFACE_TAB_ACTIVE_DARK = "#3c4043";
+const SURFACE_CONTAINER_HIGHEST_DARK = "#303134";
 
-const INVERT_DECLARATION = "filter: invert(1) hue-rotate(180deg);";
+const TEXT_DARK = "#e8eaed";
+const TEXT_ACCENT_DARK = "#8ab4f8";
+const TEXT_MUTED_DARK = "#9aa0a6";
+const BORDER_DARK = "#5f6368";
+
+/** The colour Google paints its toolbar glyphs with in the light theme. */
+const ICON_LIGHT = "#444746";
+const HOVER_OVERLAY_LIGHT = "rgba(68, 71, 70, 0.08)";
+const ACTIVE_OVERLAY_LIGHT = "rgba(68, 71, 70, 0.16)";
+const HOVER_OVERLAY_DARK = "rgba(255, 255, 255, 0.08)";
+const ACTIVE_OVERLAY_DARK = "rgba(255, 255, 255, 0.16)";
 
 function darkGate(): string {
   return `html[${THEME_ATTRIBUTE}="${THEME_MODE.DARK}"]`;
 }
 
 /**
- * The button is inverted a second time while the dark theme is active, which
- * cancels the page-wide inversion for that one node. Its own colours therefore
- * render exactly as authored, and the dark variants below stay readable.
+ * Build one rule from a gate and a set of selectors it must prefix, so the
+ * generated CSS keeps a single colour per surface instead of repeating it.
  */
+function darkRule(selectors: readonly string[], declarations: readonly string[]): string {
+  const gate = darkGate();
+  return [
+    selectors.map((selector) => `${gate} ${selector}`).join(",\n") + " {",
+    ...declarations.map((declaration) => `  ${declaration};`),
+    "}",
+  ].join("\n");
+}
+
+/**
+ * Text and background colours for the top shell. The sheet itself is painted
+ * into a canvas, so it is deliberately absent: darkening it would recolour the
+ * author's cells, images and charts.
+ */
+const CHROME_SURFACES: readonly string[] = Object.freeze([
+  "#docs-chrome",
+  "#docs-header",
+  "#docs-titlebar-container",
+  "#docs-bars",
+  "#docs-toolbar",
+  "#docs-toolbar-wrapper",
+  "#docs-additional-bars",
+  "#docs-menubar",
+  "#formula-bar-name-box-wrapper",
+  "table#grid-bottom-bar",
+]);
+
+/** Toolbar glyphs are `content: url(...)` images, so only a filter recolours them. */
+const CHROME_ICONS: readonly string[] = Object.freeze([
+  "#docs-chrome .docs-icon-img",
+  "#docs-chrome .docs-icon-img-container",
+  "#formula-bar .docs-icon-img",
+  "#formula-bar .docs-icon-img-container",
+  "#grid-bottom-bar .docs-icon-img",
+  "#grid-bottom-bar .docs-icon-img-container",
+  ".goog-menu .docs-icon-img",
+  ".goog-menu .docs-icon-img-container",
+]);
+
+/**
+ * Google paints most of the chrome from Material 3 custom properties: toolbar
+ * buttons, comboboxes and inputs all take their background from
+ * `--gm3-sys-color-surface*` and their glyph colour from `--gm3-sys-color-on-surface*`.
+ * Re-declaring those properties on the chrome subtree makes Google's own rules
+ * resolve to dark values, which beats writing a more specific selector for every
+ * widget. If Google ever renames a property, the explicit rules below still hold.
+ */
+const CHROME_TOKEN_HOSTS: readonly string[] = Object.freeze([
+  "#docs-chrome",
+  "#grid-bottom-bar",
+  ".goog-menu",
+]);
+
+const DARK_TOKENS: readonly string[] = Object.freeze([
+  `--gm3-sys-color-surface: ${SURFACE_DARK}`,
+  `--gm3-sys-color-surface-container-lowest: ${SURFACE_DARK}`,
+  `--gm3-sys-color-surface-container-low: ${SURFACE_DARK}`,
+  `--gm3-sys-color-surface-container: ${SURFACE_DARK}`,
+  `--gm3-sys-color-surface-container-high: ${SURFACE_RAISED_DARK}`,
+  `--gm3-sys-color-surface-container-highest: ${SURFACE_CONTAINER_HIGHEST_DARK}`,
+  `--gm3-sys-color-on-surface: ${TEXT_DARK}`,
+  "--gm3-sys-color-on-surface-variant: #c4c7c5",
+  `--gm3-sys-color-outline: ${BORDER_DARK}`,
+  "--gm3-sys-color-outline-variant: #444746",
+]);
+
+const TOOLBAR_CONTROLS: readonly string[] = Object.freeze([
+  ".menu-button.goog-control",
+  ".goog-control",
+  ".goog-toolbar-button",
+  ".goog-toolbar-menu-button",
+  ".goog-toolbar-toggle-button",
+]);
+
+const TOOLBAR_LABELS: readonly string[] = Object.freeze([
+  ".docs-title-input",
+  ".docs-title-input-label",
+  ".docs-title-input-label-inner",
+  ".docs-title-untitled",
+]);
+
 export function buildThemeCss(): string {
   const gate = darkGate();
   const button = `button.${BUTTON_CLASS}`;
   const floating = `${button}[${FLOATING_ATTRIBUTE}]`;
-  const keepOriginal = KEEP_ORIGINAL_COLOURS_TAGS.map((tag) => `${gate} ${tag}`).join(",\n");
 
   return [
-    "/* Dark theme: invert the painted page, then restore media colours. */",
+    "/* Dark theme restyles the editor chrome only; the sheet keeps its pixels. */",
     `${gate} {`,
-    "  background-color: #ffffff;",
-    `  ${INVERT_DECLARATION}`,
+    `  background-color: ${SURFACE_DARK};`,
     "}",
     "",
-    `${keepOriginal} {`,
-    `  ${INVERT_DECLARATION}`,
-    "}",
+    darkRule(CHROME_TOKEN_HOSTS, DARK_TOKENS),
+    "",
+    darkRule(CHROME_SURFACES, [
+      `background-color: ${SURFACE_DARK}`,
+      `color: ${TEXT_DARK}`,
+      `border-color: ${BORDER_DARK}`,
+    ]),
+    "",
+    // The name box and the formula input do not inherit colour from the bar.
+    darkRule(["#formula-bar", "#t-name-box", "#t-formula-bar-input"], [
+      `background-color: ${SURFACE_RAISED_DARK}`,
+      `color: ${TEXT_DARK}`,
+      `border-color: ${BORDER_DARK}`,
+    ]),
+    "",
+    darkRule([...TOOLBAR_CONTROLS, ...TOOLBAR_LABELS], [`color: ${TEXT_DARK}`]),
+    "",
+    // Google paints hover states with a light overlay that would turn into a
+    // bright block on a dark toolbar. Checked toggles keep Google's tonal pill,
+    // so their glyph is left uninverted below for contrast.
+    darkRule(
+      [
+        ".goog-toolbar-button-hover",
+        ".goog-toolbar-menu-button-hover",
+      ],
+      [`background-color: ${HOVER_OVERLAY_DARK}`],
+    ),
+    "",
+    darkRule(
+      [".goog-toolbar-button-active", ".goog-toolbar-menu-button-active"],
+      [`background-color: ${ACTIVE_OVERLAY_DARK}`],
+    ),
+    "",
+    darkRule(
+      [
+        ".goog-toolbar-button .goog-toolbar-button-inner-box",
+        ".goog-toolbar-menu-button .goog-toolbar-menu-button-inner-box",
+      ],
+      ["background-color: transparent"],
+    ),
+    "",
+    darkRule([".goog-toolbar-separator"], [`border-color: ${BORDER_DARK}`]),
+    "",
+    darkRule([".docs-sheet-tab"], [
+      `background-color: ${SURFACE_TAB_DARK}`,
+      `color: ${TEXT_DARK}`,
+    ]),
+    "",
+    darkRule([".docs-sheet-tab.docs-sheet-active-tab"], [
+      `background-color: ${SURFACE_TAB_ACTIVE_DARK}`,
+    ]),
+    "",
+    darkRule([".docs-sheet-tab-name"], [`color: ${TEXT_DARK}`]),
+    "",
+    darkRule([".docs-sheet-tab.docs-sheet-active-tab .docs-sheet-tab-name"], [
+      `color: ${TEXT_ACCENT_DARK}`,
+    ]),
+    "",
+    // Menus render in their own layer above the page, so they need the same
+    // treatment; the palette popup keeps its swatch colours and only its frame
+    // is darkened.
+    darkRule([".goog-menu", ".goog-menu.goog-menu-vertical"], [
+      `background-color: ${SURFACE_RAISED_DARK}`,
+      `color: ${TEXT_DARK}`,
+      `border-color: ${BORDER_DARK}`,
+    ]),
+    "",
+    darkRule([".goog-menuitem", ".goog-menuitem-content"], [`color: ${TEXT_DARK}`]),
+    "",
+    darkRule([".goog-menuitem-highlight"], [
+      `background-color: ${SURFACE_TAB_ACTIVE_DARK}`,
+    ]),
+    "",
+    darkRule([".goog-menuitem-disabled .goog-menuitem-content"], [
+      `color: ${TEXT_MUTED_DARK}`,
+    ]),
+    "",
+    darkRule([".goog-menuseparator"], [`border-color: ${BORDER_DARK}`]),
+    "",
+    // The formula bar's divider is a 1px white strip, not a border.
+    darkRule(["#docs-chrome .formula-bar-separator"], [
+      `background-color: ${BORDER_DARK}`,
+    ]),
+    "",
+    darkRule([".goog-palette"], [`background-color: ${SURFACE_DARK}`]),
+    "",
+    darkRule([".docs-sheet-comment-indicator-text"], [`color: ${TEXT_DARK}`]),
+    "",
+    // Toolbar glyphs are dark images rather than `currentColor` masks, so the
+    // dark surfaces above would hide them. Inverting only these icon boxes (never
+    // the sheet, its media or the colour swatches) restores them in light grey.
+    darkRule(CHROME_ICONS, ["filter: invert(1)"]),
+    "",
+    // A checked toggle keeps Google's light tonal pill, so its glyph stays dark
+    // instead of being inverted into a washed-out light grey.
+    darkRule(["#docs-chrome .goog-toolbar-button-checked .docs-icon-img"], [
+      "filter: none",
+    ]),
     "",
     "/* Toggle button: a compact icon button sized for Google's toolbar row. */",
     `${button} {`,
@@ -59,7 +237,7 @@ export function buildThemeCss(): string {
     "  border: 0;",
     "  border-radius: 50%;",
     "  background: transparent;",
-    "  color: #5f6368;",
+    `  color: ${ICON_LIGHT};`,
     "  font: inherit;",
     "  line-height: 1;",
     "  vertical-align: middle;",
@@ -67,11 +245,11 @@ export function buildThemeCss(): string {
     "}",
     "",
     `${button}:hover {`,
-    "  background-color: rgba(60, 64, 67, 0.08);",
+    `  background-color: ${HOVER_OVERLAY_LIGHT};`,
     "}",
     "",
     `${button}:active {`,
-    "  background-color: rgba(60, 64, 67, 0.16);",
+    `  background-color: ${ACTIVE_OVERLAY_LIGHT};`,
     "}",
     "",
     `${button}:focus-visible {`,
@@ -87,16 +265,15 @@ export function buildThemeCss(): string {
     "}",
     "",
     `${gate} ${button} {`,
-    `  ${INVERT_DECLARATION}`,
-    "  color: #e8eaed;",
+    `  color: ${TEXT_DARK};`,
     "}",
     "",
     `${gate} ${button}:hover {`,
-    "  background-color: rgba(232, 234, 237, 0.12);",
+    `  background-color: ${HOVER_OVERLAY_DARK};`,
     "}",
     "",
     `${gate} ${button}:active {`,
-    "  background-color: rgba(232, 234, 237, 0.2);",
+    `  background-color: ${ACTIVE_OVERLAY_DARK};`,
     "}",
     "",
     "/* Fallback: the editor chrome never rendered, so pin the button to the view. */",
@@ -110,7 +287,7 @@ export function buildThemeCss(): string {
     "}",
     "",
     `${gate} ${floating} {`,
-    "  background-color: #202124;",
+    `  background-color: ${SURFACE_DARK};`,
     "}",
     "",
   ].join("\n");
