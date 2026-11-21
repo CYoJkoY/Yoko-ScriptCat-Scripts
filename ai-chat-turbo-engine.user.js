@@ -62,6 +62,7 @@
   var SIDEBAR_PEEK_DELAY_MIN = 0;
   var SIDEBAR_PEEK_DELAY_MAX = 2e3;
   var SIDEBAR_PEEK_SHOW_DELAY_MS = 180;
+  var SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
   var LOAD_WARNING_RATIO = 0.7;
   var LOAD_RING_RADIUS = 16.2;
   var LOAD_RING_CIRCUMFERENCE = 2 * Math.PI * LOAD_RING_RADIUS;
@@ -1927,7 +1928,6 @@ ${CODE_FENCE}
   var SIDEBAR_PEEK_HOLD_ATTRIBUTE = "data-ai-turbo-sidebar-peek-hold";
   var SIDEBAR_PEEK_WIDTH_VAR = "--ai-turbo-sidebar-peek-width";
   var SIDEBAR_PEEK_SHIFT_VAR = "--ai-turbo-sidebar-peek-shift";
-  var SIDEBAR_PEEK_HIDE_DELAY_MS = 160;
   var SIDEBAR_PEEK_LANE_PX = 28;
   var SIDEBAR_PEEK_PROXIMITY_PX = 10;
   var SIDEBAR_PEEK_POPOVER_HOLD_MS = 3e4;
@@ -1970,7 +1970,7 @@ ${CODE_FENCE}
   var MOTION_ATTRIBUTES = ["class", "data-collapsed", "data-state", "aria-expanded"];
   function createSidebarPeek(options) {
     const definition = options.sidebar;
-    const hideDelayMs = options.hideDelayMs ?? SIDEBAR_PEEK_HIDE_DELAY_MS;
+    const hideDelayMs = options.hideDelayMs ?? (() => SIDEBAR_PEEK_HIDE_DELAY_MS);
     const showDelayMs = options.showDelayMs ?? (() => SIDEBAR_PEEK_SHOW_DELAY_MS);
     const isUserKey = options.isUserKey ?? ((event) => event.isTrusted);
     const peekWidth = definition?.peekWidth ?? DEFAULT_PEEK_WIDTH;
@@ -2964,7 +2964,7 @@ ${CODE_FENCE}
           return;
         }
         releaseActive();
-      }, hideDelayMs);
+      }, hideDelayMs());
     }
     function popoverUnderPointer() {
       const doc = boundDocument;
@@ -3575,6 +3575,7 @@ ${CODE_FENCE}
     virtualFileEnabled: true,
     sidebarPeekEnabled: true,
     sidebarPeekDelayMs: SIDEBAR_PEEK_SHOW_DELAY_MS,
+    sidebarPeekHideDelayMs: SIDEBAR_PEEK_HIDE_DELAY_MS,
     newChatShortcutLock: true,
     rememberReasoning: true,
     rememberTools: true,
@@ -3584,13 +3585,19 @@ ${CODE_FENCE}
     const scope = failure.operation === "write" || failure.operation === "remove" ? "save engine config" : "load saved engine config";
     reportRecoverableError(scope, failure.error);
   });
-  function normalizeSidebarPeekDelay(rawDelay) {
+  function clampSidebarPeekDelay(rawDelay, fallback) {
     const numericDelay = Number(rawDelay);
-    if (!Number.isFinite(numericDelay)) return SIDEBAR_PEEK_SHOW_DELAY_MS;
+    if (!Number.isFinite(numericDelay)) return fallback;
     return Math.min(
       SIDEBAR_PEEK_DELAY_MAX,
       Math.max(SIDEBAR_PEEK_DELAY_MIN, Math.round(numericDelay))
     );
+  }
+  function normalizeSidebarPeekDelay(rawDelay) {
+    return clampSidebarPeekDelay(rawDelay, SIDEBAR_PEEK_SHOW_DELAY_MS);
+  }
+  function normalizeSidebarPeekHideDelay(rawDelay) {
+    return clampSidebarPeekDelay(rawDelay, SIDEBAR_PEEK_HIDE_DELAY_MS);
   }
   function createEngineState() {
     return {
@@ -3642,6 +3649,11 @@ ${CODE_FENCE}
           parsed.sidebarPeekDelayMs
         );
       }
+      if (typeof parsed.sidebarPeekHideDelayMs === "number" && Number.isFinite(parsed.sidebarPeekHideDelayMs)) {
+        state.sidebarPeekHideDelayMs = normalizeSidebarPeekHideDelay(
+          parsed.sidebarPeekHideDelayMs
+        );
+      }
       if (typeof parsed.newChatShortcutLock === "boolean") {
         state.newChatShortcutLock = parsed.newChatShortcutLock;
       }
@@ -3671,6 +3683,7 @@ ${CODE_FENCE}
         virtualFileEnabled: state.virtualFileEnabled,
         sidebarPeekEnabled: state.sidebarPeekEnabled,
         sidebarPeekDelayMs: state.sidebarPeekDelayMs,
+        sidebarPeekHideDelayMs: state.sidebarPeekHideDelayMs,
         newChatShortcutLock: state.newChatShortcutLock,
         rememberReasoning: state.rememberReasoning,
         rememberTools: state.rememberTools,
@@ -8727,6 +8740,7 @@ ${contentText}`);
     let keepValue = null;
     let messageLimitInput = null;
     let sidebarPeekDelayInput = null;
+    let sidebarPeekHideDelayInput = null;
     let themeSelect = null;
     let advancedSettings = null;
     let chkPrune = null;
@@ -8784,6 +8798,9 @@ ${contentText}`);
       }
       if (sidebarPeekDelayInput) {
         sidebarPeekDelayInput.value = String(state.sidebarPeekDelayMs);
+      }
+      if (sidebarPeekHideDelayInput) {
+        sidebarPeekHideDelayInput.value = String(state.sidebarPeekHideDelayMs);
       }
       if (themeSelect) themeSelect.value = state.hudTheme;
       if (chkPrune) chkPrune.checked = state.pruneEnabled;
@@ -9630,6 +9647,32 @@ ${contentText}`);
         );
       });
       sidebarPeekDelayInput = sidebarPeekDelayField;
+      const sidebarPeekHideDelayField = el("input", {
+        className: "limit-input",
+        id: "sidebar-peek-hide-delay",
+        type: "number",
+        min: String(SIDEBAR_PEEK_DELAY_MIN),
+        max: String(SIDEBAR_PEEK_DELAY_MAX),
+        step: "1",
+        value: String(state.sidebarPeekHideDelayMs),
+        title: "鼠标移出侧栏后延迟关闭，范围 " + String(SIDEBAR_PEEK_DELAY_MIN) + " 至 " + String(SIDEBAR_PEEK_DELAY_MAX) + " 毫秒",
+        "aria-label": "鼠标移出侧栏后关闭延迟"
+      });
+      sidebarPeekHideDelayField.value = String(state.sidebarPeekHideDelayMs);
+      sidebarPeekHideDelayField.addEventListener("change", () => {
+        const rawValue = sidebarPeekHideDelayField.value.trim();
+        if (rawValue === "") {
+          sidebarPeekHideDelayField.value = String(state.sidebarPeekHideDelayMs);
+          return;
+        }
+        state.sidebarPeekHideDelayMs = normalizeSidebarPeekHideDelay(rawValue);
+        sidebarPeekHideDelayField.value = String(state.sidebarPeekHideDelayMs);
+        saveConfig();
+        announce(
+          "移出侧栏后关闭延迟：" + String(state.sidebarPeekHideDelayMs) + " 毫秒，设置已保存"
+        );
+      });
+      sidebarPeekHideDelayInput = sidebarPeekHideDelayField;
       themeSelect = el("select", {
         className: "theme-select",
         id: "hud-theme",
@@ -9675,6 +9718,15 @@ ${contentText}`);
           el("label", { for: "sidebar-peek-delay" }, ["侧栏探出延迟"]),
           el("div", { className: "limit-control" }, [
             sidebarPeekDelayField,
+            el("span", { className: "limit-unit" }, ["毫秒"])
+          ])
+        ]),
+        el("div", { className: "control-row" }, [
+          el("label", { for: "sidebar-peek-hide-delay" }, [
+            "移出后关闭延迟"
+          ]),
+          el("div", { className: "limit-control" }, [
+            sidebarPeekHideDelayField,
             el("span", { className: "limit-unit" }, ["毫秒"])
           ])
         ]),
@@ -9853,6 +9905,7 @@ ${contentText}`);
       keepValue = null;
       messageLimitInput = null;
       sidebarPeekDelayInput = null;
+      sidebarPeekHideDelayInput = null;
       themeSelect = null;
       advancedSettings = null;
       chkPrune = null;
@@ -12128,7 +12181,8 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
     const sidebarPeek = createSidebarPeek({
       sidebar: currentPlatform.sidebar ?? null,
       enabled: () => state.sidebarPeekEnabled,
-      showDelayMs: () => state.sidebarPeekDelayMs
+      showDelayMs: () => state.sidebarPeekDelayMs,
+      hideDelayMs: () => state.sidebarPeekHideDelayMs
     });
     const turnTextIndex = createTurnTextIndex({ extract: extractTurnText });
     const navigationTracker = createNavigationTracker(window.location);
