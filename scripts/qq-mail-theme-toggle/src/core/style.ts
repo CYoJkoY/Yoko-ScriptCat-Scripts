@@ -3,8 +3,9 @@ import { BUTTON_CLASS, STYLE_ID, THEME_ATTRIBUTE, THEME_MODE } from "../config";
 /**
  * QQ Mail paints its whole interface from a design-token palette defined on
  * `<body class="page-color-theme">`. The dark theme therefore does not invert
- * anything: it only swaps the token values, so the reading pane — including
- * every photo, logo and video an email carries — keeps its authored colours.
+ * anything: it only swaps the token values. Email bodies carry their own
+ * hard-coded colours, so they are recoloured element by element by
+ * `core/emailDark.ts` while photos, logos and videos keep their pixels.
  */
 type Token = readonly [name: string, value: string];
 type Declaration = readonly [property: string, value: string];
@@ -54,52 +55,6 @@ const DARK_TOKENS: readonly Token[] = Object.freeze([
   ["--bg_switch_grabber", "#E8ECF1"],
   ["--bg_invoiceCard_unselected_hover", "#20262E"],
   ["--shadow_1", "0 2px 3px 0 rgba(0, 0, 0, 0.35)"],
-]);
-
-/** The reading pane keeps the untouched light palette so emails look normal. */
-const LIGHT_TOKENS: readonly Token[] = Object.freeze([
-  ["--base_white_100", "#FFFFFF"],
-  ["--base_white_090", "rgba(255, 255, 255, 0.9)"],
-  ["--base_white_080", "rgba(255, 255, 255, 0.8)"],
-  ["--base_white_070", "rgba(255, 255, 255, 0.7)"],
-  ["--base_white_060", "rgba(255, 255, 255, 0.6)"],
-  ["--base_white_050", "rgba(255, 255, 255, 0.5)"],
-  ["--base_white_040", "rgba(255, 255, 255, 0.4)"],
-  ["--base_white_030", "rgba(255, 255, 255, 0.3)"],
-  ["--base_white_025", "rgba(255, 255, 255, 0.25)"],
-  ["--base_white_020", "rgba(255, 255, 255, 0.2)"],
-  ["--base_white_015", "rgba(255, 255, 255, 0.15)"],
-  ["--base_white_010", "rgba(255, 255, 255, 0.1)"],
-  ["--base_white_007", "rgba(255, 255, 255, 0.07)"],
-  ["--base_white_005", "rgba(255, 255, 255, 0.05)"],
-  ["--base_white_003", "rgba(255, 255, 255, 0.03)"],
-  ["--base_gray_100", "#13181D"],
-  ["--base_gray_090", "rgba(21, 26, 33, 0.9)"],
-  ["--base_gray_080", "rgba(22, 30, 38, 0.8)"],
-  ["--base_gray_070", "rgba(23, 33, 43, 0.7)"],
-  ["--base_gray_060", "rgba(24, 36, 48, 0.6)"],
-  ["--base_gray_050", "rgba(25, 38, 54, 0.5)"],
-  ["--base_gray_040", "rgba(25, 41, 59, 0.4)"],
-  ["--base_gray_030", "rgba(24, 43, 64, 0.3)"],
-  ["--base_gray_025", "rgba(24, 44, 66, 0.25)"],
-  ["--base_gray_020", "rgba(23, 45, 69, 0.2)"],
-  ["--base_gray_015", "rgba(23, 46, 71, 0.15)"],
-  ["--base_gray_010", "rgba(22, 46, 74, 0.1)"],
-  ["--base_gray_007", "rgba(21, 46, 74, 0.07)"],
-  ["--base_gray_005", "rgba(20, 46, 77, 0.05)"],
-  ["--base_gray_003", "rgba(19, 46, 64, 0.03)"],
-  ["--base_black", "#000000"],
-  ["--bg_white_web", "#FFFFFF"],
-  ["--bg_white_web_alpha_090", "rgba(255, 255, 255, 0.9)"],
-  ["--bg_gray_web_0", "#E6EDF5"],
-  ["--bg_gray_web_1", "#F2F7FA"],
-  ["--bg_gray_web_2", "#F7FAFC"],
-  ["--bg_gray_web_3", "#FAFBFC"],
-  ["--bg_segmented_control_option_selected", "#FFFFFF"],
-  ["--bg_panel_blur_stroke", "#FFFFFF"],
-  ["--bg_switch_grabber", "#FFFFFF"],
-  ["--bg_invoiceCard_unselected_hover", "#F3F4F6"],
-  ["--shadow_1", "0 2px 3px 0 rgba(19, 24, 29, 0.12)"],
 ]);
 
 const ON_ACCENT = "#FFFFFF";
@@ -284,11 +239,12 @@ export function buildThemeCss(): string {
     "",
     ...rulesLines(gate, SHELL_RULES),
     ...rulesLines(gate, ON_ACCENT_RULES),
-    "/* Reading pane: untouched light palette so emails keep their real colours. */",
+    "/* Reading pane: a dark canvas. The inline colours inside an email are remapped",
+    "   one element at a time at runtime; media keep their own pixels. */",
     `${body} .mail-detail-content {`,
-    "  color-scheme: light;",
-    "  background-color: #FFFFFF !important;",
-    ...tokenLines(LIGHT_TOKENS),
+    "  color-scheme: dark;",
+    "  background-color: #1A2028 !important;",
+    "  color: #E8ECF1 !important;",
     "}",
     "",
     "/* Toggle button: a compact icon button pinned to the bottom-left corner. */",

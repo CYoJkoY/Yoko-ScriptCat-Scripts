@@ -10,6 +10,13 @@ import {
   THEME_MODE,
 } from "../scripts/qq-mail-theme-toggle/src/config";
 import { applyTheme, readAppliedTheme, releaseTheme } from "../scripts/qq-mail-theme-toggle/src/core/apply";
+import {
+  applyEmailDarkMode,
+  disableEmailDarkMode,
+  EMAIL_CONTENT_SELECTOR,
+  enableEmailDarkMode,
+  restoreEmailColors,
+} from "../scripts/qq-mail-theme-toggle/src/core/emailDark";
 import { createThemePreference } from "../scripts/qq-mail-theme-toggle/src/core/preference";
 import { buildThemeCss, ensureThemeStyle, removeThemeStyle } from "../scripts/qq-mail-theme-toggle/src/core/style";
 import {
@@ -26,6 +33,10 @@ import {
 } from "../scripts/qq-mail-theme-toggle/src/ui/button";
 
 const DARK_GATE = `html[${THEME_ATTRIBUTE}="${THEME_MODE.DARK}"]`;
+const DARK_CANVAS = "rgb(26, 32, 40)";
+const LIGHT_INK = "rgb(232, 236, 241)";
+const WHITE_PAPER = "rgb(255, 255, 255)";
+const DARK_INK = "rgb(29, 29, 31)";
 
 /**
  * jsdom ships no storage area unless Node is started with --localstorage-file,
@@ -55,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  disableEmailDarkMode();
   document.body.innerHTML = "";
   document.documentElement.removeAttribute(THEME_ATTRIBUTE);
   document.documentElement.removeAttribute(SCRIPT_MARKER_ATTRIBUTE);
@@ -267,13 +279,12 @@ describe("style contract", () => {
     expect(header).toContain("--color: var(--base_gray_080);");
   });
 
-  it("keeps the reading pane as an untouched light island", () => {
+  it("paints the reading pane as a dark canvas instead of a light island", () => {
     const detail = blockFor(css, ".mail-detail-content");
     expect(detail).toContain(DARK_GATE);
-    expect(detail).toContain("color-scheme: light;");
-    expect(detail).toContain("background-color: #FFFFFF !important;");
-    expect(detail).toContain("--base_white_100: #FFFFFF;");
-    expect(detail).toContain("--base_black: #000000;");
+    expect(detail).toContain("color-scheme: dark;");
+    expect(detail).toContain("background-color: #1A2028 !important;");
+    expect(detail).toContain("color: #E8ECF1 !important;");
   });
 
   it("never inverts or filters the page, so embedded images keep their colours", () => {
@@ -287,6 +298,126 @@ describe("style contract", () => {
     expect(document.querySelectorAll(`style#${STYLE_ID}`)).toHaveLength(1);
     removeThemeStyle(document);
     expect(document.getElementById(STYLE_ID)).toBeNull();
+  });
+});
+
+describe("email body recolouring", () => {
+  function mountEmail(markup: string): HTMLElement {
+    const host = document.createElement("div");
+    host.className = EMAIL_CONTENT_SELECTOR.replace(/^\./u, "");
+    host.innerHTML = markup;
+    document.body.append(host);
+    return host;
+  }
+
+  function mustQuery(root: ParentNode, selector: string): HTMLElement {
+    const found = root.querySelector<HTMLElement>(selector);
+    if (found === null) throw new Error(`Missing element: ${selector}`);
+    return found;
+  }
+
+  function rgbChannels(value: string): readonly [number, number, number] {
+    const body = /^rgba?\(([^)]+)\)$/u.exec(value);
+    if (body === null) throw new Error(`Not an rgb colour: ${value}`);
+    const parts = body[1].split(/[,\s/]+/u).filter((part) => part !== "");
+    return [Number(parts[0]), Number(parts[1]), Number(parts[2])];
+  }
+
+  it("turns white paper inside an email into the dark canvas", () => {
+    const host = mountEmail(
+      '<table style="background: rgb(255, 255, 255)"><tbody><tr><td>cell</td></tr></tbody></table>',
+    );
+    applyEmailDarkMode(document);
+    const table = mustQuery(host, "table");
+    expect(table.style.getPropertyValue("background-color")).toBe(DARK_CANVAS);
+    expect(table.style.getPropertyPriority("background-color")).toBe("important");
+  });
+
+  it("lifts the dark ink an email hard-codes in its inline styles", () => {
+    const host = mountEmail('<p style="color: #1d1d1f">正文</p>');
+    applyEmailDarkMode(document);
+    const paragraph = mustQuery(host, "p");
+    expect(paragraph.style.getPropertyValue("color")).toBe(LIGHT_INK);
+    expect(paragraph.style.getPropertyPriority("color")).toBe("important");
+  });
+
+  it("keeps saturated accents by lifting them instead of flattening them to grey", () => {
+    const host = mountEmail('<a style="color: #005a9c">链接</a>');
+    applyEmailDarkMode(document);
+    const link = mustQuery(host, "a");
+    const mapped = link.style.getPropertyValue("color");
+    expect(mapped).not.toBe("rgb(0, 90, 156)");
+    expect(mapped).not.toBe(LIGHT_INK);
+    const [red, green, blue] = rgbChannels(mapped);
+    expect(blue).toBeGreaterThan(green);
+    expect(green).toBeGreaterThan(red);
+  });
+
+  it("never touches media elements", () => {
+    const host = mountEmail(
+      '<p style="color: #1d1d1f"><img alt="logo" src="logo.png" style="width:20px;height:20px"></p>',
+    );
+    applyEmailDarkMode(document);
+    const image = mustQuery(host, "img");
+    expect(image.getAttribute("style")).toBe("width:20px;height:20px");
+    expect(image.style.getPropertyValue("color")).toBe("");
+    expect(image.style.getPropertyValue("filter")).toBe("");
+    expect(mustQuery(host, "p").style.getPropertyValue("color")).toBe(LIGHT_INK);
+  });
+
+  it("skips inline svg artwork while still recolouring its html siblings", () => {
+    const host = mountEmail(
+      '<div><svg viewBox="0 0 10 10" style="color: #1d1d1f"><text>icon</text></svg>' +
+        '<span style="color: #1d1d1f">caption</span></div>',
+    );
+    applyEmailDarkMode(document);
+    expect(mustQuery(host, "svg").getAttribute("style")).toBe("color: #1d1d1f");
+    expect(mustQuery(host, "text").getAttribute("style")).toBeNull();
+    expect(mustQuery(host, "span").style.getPropertyValue("color")).toBe(LIGHT_INK);
+  });
+
+  it("leaves text authored on top of a background image alone", () => {
+    const host = mountEmail(
+      '<div style="background-image: url(hero.png)"><span style="color: #1d1d1f">hero</span></div>',
+    );
+    applyEmailDarkMode(document);
+    expect(mustQuery(host, "span").style.getPropertyValue("color")).toBe(DARK_INK);
+  });
+
+  it("restores the exact authored colours when the dark theme goes away", () => {
+    const host = mountEmail(
+      '<table style="background: rgb(255, 255, 255); color: #1d1d1f"><tbody><tr><td>cell</td></tr></tbody></table>',
+    );
+    const table = mustQuery(host, "table");
+    applyEmailDarkMode(document);
+    expect(table.style.getPropertyValue("background-color")).toBe(DARK_CANVAS);
+    restoreEmailColors();
+    expect(table.style.getPropertyValue("background-color")).toBe(WHITE_PAPER);
+    expect(table.style.getPropertyValue("color")).toBe(DARK_INK);
+    expect(table.style.getPropertyPriority("background-color")).toBe("");
+  });
+
+  it("recolours an email body that renders after the dark theme was enabled", async () => {
+    const host = mountEmail('<div class="qmbox"></div>');
+    enableEmailDarkMode(document);
+    const table = document.createElement("table");
+    table.setAttribute("style", "background: rgb(255, 255, 255)");
+    mustQuery(host, ".qmbox").append(table);
+    await vi.waitFor(() => {
+      expect(table.style.getPropertyValue("background-color")).toBe(DARK_CANVAS);
+    });
+  });
+
+  it("stops recolouring after the dark theme is disabled", async () => {
+    const host = mountEmail('<div class="qmbox"></div>');
+    enableEmailDarkMode(document);
+    disableEmailDarkMode();
+    const table = document.createElement("table");
+    table.setAttribute("style", "background: rgb(255, 255, 255)");
+    mustQuery(host, ".qmbox").append(table);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(table.style.getPropertyValue("background-color")).toBe(WHITE_PAPER);
+    expect(table.getAttribute("style")).toBe("background: rgb(255, 255, 255)");
   });
 });
 
@@ -418,6 +549,26 @@ describe("installQqMailTheme", () => {
       expect(document.getElementById(BUTTON_ID)).not.toBeNull();
     } finally {
       second.dispose();
+    }
+  });
+
+  it("darkens an open email body and restores it when switched back to light", () => {
+    stubMatchMedia(true);
+    const host = document.createElement("div");
+    host.className = "mail-detail-content";
+    host.innerHTML =
+      '<table style="background: rgb(255, 255, 255); color: #1d1d1f"><tbody><tr><td>hi</td></tr></tbody></table>';
+    document.body.append(host);
+    const table = host.querySelector<HTMLElement>("table");
+    const controller = installQqMailTheme({ doc: document, scope: globalThis });
+    try {
+      expect(controller.mode()).toBe(THEME_MODE.DARK);
+      expect(table?.style.getPropertyValue("background-color")).toBe(DARK_CANVAS);
+      controller.setMode(THEME_MODE.LIGHT);
+      expect(table?.style.getPropertyValue("background-color")).toBe(WHITE_PAPER);
+      expect(table?.style.getPropertyValue("color")).toBe(DARK_INK);
+    } finally {
+      controller.dispose();
     }
   });
 });

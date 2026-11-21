@@ -1,5 +1,6 @@
-import { type ThemeMode } from "./config";
+import { THEME_MODE, type ThemeMode } from "./config";
 import { applyTheme, releaseTheme } from "./core/apply";
+import { disableEmailDarkMode, enableEmailDarkMode } from "./core/emailDark";
 import { createThemePreference } from "./core/preference";
 import { ensureThemeStyle, removeThemeStyle } from "./core/style";
 import { createSystemDarkQuery, resolveThemeMode, toggleThemeMode } from "./core/theme";
@@ -26,9 +27,23 @@ export function installQqMailTheme(options: QqMailThemeOptions = {}): QqMailThem
   applyTheme(doc, mode);
 
   const button = createThemeButton(doc, mode);
+  /**
+   * The shell only needs the root attribute, but an open email carries its own
+   * inline palette, so the reading pane follows the theme explicitly.
+   */
+  const paintEmailSurface = (next: ThemeMode): void => {
+    if (next === THEME_MODE.DARK) {
+      enableEmailDarkMode(doc);
+      return;
+    }
+    disableEmailDarkMode();
+  };
+  paintEmailSurface(mode);
+
   const paint = (next: ThemeMode, persist: boolean): void => {
     mode = next;
     applyTheme(doc, mode);
+    paintEmailSurface(mode);
     updateThemeButton(button, mode);
     if (persist) preference.write(mode);
   };
@@ -66,6 +81,7 @@ export function installQqMailTheme(options: QqMailThemeOptions = {}): QqMailThem
       unsubscribe();
       mountObserver.disconnect();
       button.remove();
+      disableEmailDarkMode();
       releaseTheme(doc);
       removeThemeStyle(doc);
     },

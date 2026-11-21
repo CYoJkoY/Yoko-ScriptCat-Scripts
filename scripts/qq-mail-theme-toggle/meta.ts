@@ -3,9 +3,9 @@ import type { UserscriptMeta } from "../../shared/userscript/meta";
 const meta = {
   name: "QQ Mail Theme Toggle",
   namespace: "https://cyojkoy.github.io/Payment/",
-  version: "1.1.0",
+  version: "1.2.0",
   description:
-    "在QQ邮箱网页版左下角添加深浅主题切换按钮；深色主题通过替换界面配色令牌生效，不做反色，邮件正文与其中的图片、视频始终保持原始配色，偏好持久化并可跟随系统主题。",
+    "在QQ邮箱网页版左下角添加深浅主题切换按钮；深色主题替换界面配色令牌，并逐个元素重映射邮件正文里写死的内联颜色，不使用滤镜或反色，邮件中的图片、视频保持原始像素，偏好持久化并可跟随系统主题。",
   author: "Yoko",
   // `dist/` never reaches `main`; CI publishes the built bundles at the root of
   // the `release` branch, so both update links must point there.
