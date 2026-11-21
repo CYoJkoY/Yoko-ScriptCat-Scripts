@@ -6,44 +6,32 @@ import {
   THEME_MODE,
 } from "../config";
 
-/**
- * The grid of a Google spreadsheet is painted into a single `<canvas>`, so no
- * surface override can reach it: inverting the painted result is the only way
- * to darken the document area. Photographs and video inside the page are
- * inverted a second time so they keep their real colours.
- */
-const KEEP_ORIGINAL_COLOURS_TAGS: readonly string[] = Object.freeze([
-  "img",
-  "video",
-  "picture",
-]);
-
-const INVERT_DECLARATION = "filter: invert(1) hue-rotate(180deg);";
+const SURFACE_DARK = "#202124";
 
 function darkGate(): string {
   return `html[${THEME_ATTRIBUTE}="${THEME_MODE.DARK}"]`;
 }
 
-/**
- * The button is inverted a second time while the dark theme is active, which
- * cancels the page-wide inversion for that one node. Its own colours therefore
- * render exactly as authored, and the dark variants below stay readable.
- */
 export function buildThemeCss(): string {
   const gate = darkGate();
   const button = `button.${BUTTON_CLASS}`;
   const floating = `${button}[${FLOATING_ATTRIBUTE}]`;
-  const keepOriginal = KEEP_ORIGINAL_COLOURS_TAGS.map((tag) => `${gate} ${tag}`).join(",\n");
+  const appSurfaces = [
+    "#docs-chrome",
+    "#docs-bars",
+    "#docs-toolbar-wrapper",
+    "#docs-editor",
+    ".grid-container",
+  ].join(",\n");
 
   return [
-    "/* Dark theme: invert the painted page, then restore media colours. */",
+    "/* Dark theme: restyle Google's editing chrome without changing document colours. */",
     `${gate} {`,
-    "  background-color: #ffffff;",
-    `  ${INVERT_DECLARATION}`,
+    `  background-color: ${SURFACE_DARK};`,
     "}",
     "",
-    `${keepOriginal} {`,
-    `  ${INVERT_DECLARATION}`,
+    `${appSurfaces} {`,
+    `  background-color: ${SURFACE_DARK};`,
     "}",
     "",
     "/* Toggle button: a compact icon button sized for Google's toolbar row. */",
@@ -87,12 +75,12 @@ export function buildThemeCss(): string {
     "}",
     "",
     `${gate} ${button} {`,
-    `  ${INVERT_DECLARATION}`,
+    "  background-color: transparent;",
     "  color: #e8eaed;",
     "}",
     "",
     `${gate} ${button}:hover {`,
-    "  background-color: rgba(232, 234, 237, 0.12);",
+    "  background-color: rgba(255, 255, 255, 0.1);",
     "}",
     "",
     `${gate} ${button}:active {`,

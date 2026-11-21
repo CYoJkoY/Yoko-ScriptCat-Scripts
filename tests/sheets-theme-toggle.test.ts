@@ -277,39 +277,22 @@ describe("style contract", () => {
     return found;
   }
 
-  it("gates every page-wide rule on the theme attribute", () => {
-    const pageRules = rules.filter((rule) => !rule.selector.includes(`.${BUTTON_CLASS}`));
-    expect(pageRules.length).toBeGreaterThan(0);
-    for (const rule of pageRules) {
-      expect(rule.selector, rule.selector).toContain(DARK_GATE);
-    }
-  });
-
-  it("scopes every ungated rule to the toggle button", () => {
-    for (const rule of rules.filter((rule) => !rule.selector.includes(THEME_ATTRIBUTE))) {
-      expect(rule.selector, rule.selector).toContain(`button.${BUTTON_CLASS}`);
-    }
-  });
-
-  it("inverts the root and double-inverts the button", () => {
+  it("darkens app chrome without changing document colours", () => {
     const root = ruleFor(DARK_GATE);
-    expect(root.style.getPropertyValue("filter")).toContain("invert(1)");
-    expect(root.style.getPropertyValue("filter")).toContain("hue-rotate(180deg)");
-    expect(root.style.getPropertyValue("background-color")).toBe("rgb(255, 255, 255)");
+    expect(root.style.getPropertyValue("filter")).toBe("");
+    expect(root.style.getPropertyValue("background-color")).toBe("rgb(32, 33, 36)");
 
     const button = ruleFor(`${DARK_GATE} button.${BUTTON_CLASS}`);
-    expect(button.style.getPropertyValue("filter")).toContain("invert(1)");
+    expect(button.style.getPropertyValue("filter")).toBe("");
     expect(button.style.getPropertyValue("color")).toBe("rgb(232, 234, 237)");
   });
 
-  it("keeps media elements and picture containers out of the inversion", () => {
-    const media = rules.find((rule) => rule.selector.includes("picture"));
-    expect(media).toBeDefined();
+  it("does not restyle grid media or palette surfaces", () => {
     for (const tag of ["img", "video", "picture"]) {
-      expect(media?.selector).toContain(tag);
+      expect(buildThemeCss()).not.toContain(`${DARK_GATE} ${tag}`);
     }
-    expect(media?.selector).toContain(DARK_GATE);
-    expect(media?.style.getPropertyValue("filter")).toContain("invert(1)");
+    expect(buildThemeCss()).not.toContain("goog-palette");
+    expect(buildThemeCss()).not.toContain(".cell-input");
   });
 
   it("pins the fallback button to the viewport", () => {
