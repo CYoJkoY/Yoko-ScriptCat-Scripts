@@ -8,6 +8,7 @@ My current collection of ScriptCat scripts is solely for quick searching and dev
 | --- | --- | --- |
 | AI Chat Turbo Engine | [ai-chat-turbo-engine.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/ai-chat-turbo-engine.user.js) | [docs/ai-chat-turbo-engine.md](docs/ai-chat-turbo-engine.md) |
 | Gemini Quota Capsule | [gemini-quota-capsule.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/gemini-quota-capsule.user.js) | [docs/gemini-quota-capsule.md](docs/gemini-quota-capsule.md) |
+| Google Sheets Theme Toggle | [sheets-theme-toggle.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/sheets-theme-toggle.user.js) | [docs/sheets-theme-toggle.md](docs/sheets-theme-toggle.md) |
 | HeyBox Up | [heybox-up.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/heybox-up.user.js) | [docs/heybox-up.md](docs/heybox-up.md) |
 | Web Fullscreen Button | [web-fullscreen.user.js](https://github.com/CYoJkoY/Yoko-ScriptCat-Scripts/blob/release/web-fullscreen.user.js) | [docs/web-fullscreen.md](docs/web-fullscreen.md) |
 
