@@ -17,7 +17,8 @@ export const BUTTON_CLASS = "yoko-sheets-theme-button";
 /** Marks the fallback button pinned to the viewport instead of the toolbar. */
 export const FLOATING_ATTRIBUTE = "data-yoko-sheets-theme-floating";
 
-export const STORAGE_KEY = "xlqsvu.jyhfba.k9";
+/** Namespaced like the other scripts so it cannot collide with page keys. */
+export const STORAGE_KEY = "yoko_sheets_theme_mode";
 
 export const THEME_MODE = Object.freeze({
   LIGHT: "light",

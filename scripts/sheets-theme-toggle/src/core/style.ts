@@ -125,7 +125,10 @@ export function ensureThemeStyle(doc: Document): void {
   const style = doc.createElement("style");
   style.id = STYLE_ID;
   style.textContent = buildThemeCss();
-  const parent = doc.head ?? doc.documentElement;
+  // The DOM types declare a root element that a document being created at
+  // `document-start` may not have yet, so the guard is real, not defensive noise.
+  const parent: Element | null = doc.head ?? doc.documentElement;
+  if (parent === null) return;
   parent.append(style);
 }
 

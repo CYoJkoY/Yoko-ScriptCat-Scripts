@@ -526,3 +526,46 @@ describe("installSheetsTheme", () => {
     }
   });
 });
+
+describe("theme preference", () => {
+  /** A manager that granted the GM storage pair, as in the shipped header. */
+  function createGmScope(): { readonly scope: object; readonly values: Map<string, unknown> } {
+    const values = new Map<string, unknown>();
+    return {
+      values,
+      scope: {
+        GM_getValue: (key: string, fallback: unknown): unknown => values.get(key) ?? fallback,
+        GM_setValue: (key: string, value: unknown): void => {
+          values.set(key, value);
+        },
+      },
+    };
+  }
+
+  it("writes the picked mode through GM_setValue and never touches page storage", () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener: (): void => undefined,
+      removeEventListener: (): void => undefined,
+    }));
+    mountChrome();
+    const { scope, values } = createGmScope();
+    const controller = installSheetsTheme({ doc: document, scope });
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      expect(values.get(STORAGE_KEY)).toBe(THEME_MODE.DARK);
+      expect(controller.mode()).toBe(THEME_MODE.DARK);
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    } finally {
+      controller.dispose();
+    }
+
+    // A fresh install against the same manager storage starts in the saved mode.
+    const reloaded = installSheetsTheme({ doc: document, scope });
+    try {
+      expect(reloaded.mode()).toBe(THEME_MODE.DARK);
+    } finally {
+      reloaded.dispose();
+    }
+  });
+});
