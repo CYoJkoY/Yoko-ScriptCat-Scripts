@@ -30,6 +30,14 @@ import {
   updateThemeButton,
 } from "../scripts/sheets-theme-toggle/src/ui/button";
 import { createThemeMount } from "../scripts/sheets-theme-toggle/src/ui/mount";
+import {
+  CANVAS_PALETTE,
+  formatColor,
+  parseColor,
+  recolorCssColor,
+  recolorPixels,
+} from "../scripts/sheets-theme-toggle/src/core/canvasColor";
+import { installCanvasTheme } from "../scripts/sheets-theme-toggle/src/core/canvasTheme";
 
 const DARK_GATE = `html[${THEME_ATTRIBUTE}="${THEME_MODE.DARK}"]`;
 
@@ -80,6 +88,61 @@ function mountChrome(): void {
     </div>
     <div id="docs-editor-container"></div>
   `;
+}
+
+class FakeCanvasContext {
+  #fill = "black";
+  #stroke = "black";
+  canvas: HTMLCanvasElement | null = null;
+
+  get fillStyle(): string {
+    return this.#fill;
+  }
+
+  set fillStyle(value: string) {
+    this.#fill = value;
+  }
+
+  get strokeStyle(): string {
+    return this.#stroke;
+  }
+
+  set strokeStyle(value: string) {
+    this.#stroke = value;
+  }
+
+  rawFill(): string {
+    return this.#fill;
+  }
+
+  rawStroke(): string {
+    return this.#stroke;
+  }
+}
+
+function makeGridCanvas(initial: number[]): {
+  readonly element: HTMLCanvasElement;
+  readonly pixels: Uint8ClampedArray;
+} {
+  const container = document.createElement("div");
+  container.id = "waffle-grid-container";
+  document.body.append(container);
+  const element = document.createElement("canvas");
+  element.width = 1;
+  element.height = 1;
+  container.append(element);
+
+  const pixels = new Uint8ClampedArray(initial);
+  const context = Object.assign(new FakeCanvasContext(), {
+    canvas: element,
+    getImageData: (): ImageData =>
+      ({ data: new Uint8ClampedArray(pixels), width: element.width, height: element.height }) as unknown as ImageData,
+    putImageData: (image: ImageData): void => {
+      pixels.set(image.data);
+    },
+  });
+  element.getContext = (() => context) as unknown as HTMLCanvasElement["getContext"];
+  return { element, pixels };
 }
 
 describe("theme mode rules", () => {
@@ -604,6 +667,214 @@ describe("theme preference", () => {
       expect(reloaded.mode()).toBe(THEME_MODE.DARK);
     } finally {
       reloaded.dispose();
+    }
+  });
+});
+
+describe("canvas colour mapping", () => {
+  it("maps every default role to its dark counterpart", () => {
+    expect(recolorCssColor("#ffffff", THEME_MODE.DARK)).toBe("#202124");
+    expect(recolorCssColor("#f8f9fa", THEME_MODE.DARK)).toBe("#292a2d");
+    expect(recolorCssColor("#444746", THEME_MODE.DARK)).toBe("#e8eaed");
+    expect(recolorCssColor("#041e49", THEME_MODE.DARK)).toBe("#a8c7fa");
+    expect(recolorCssColor("#d3e3fd", THEME_MODE.DARK)).toBe("#394457");
+    expect(recolorCssColor("#c4c7c5", THEME_MODE.DARK)).toBe("#5f6368");
+    expect(recolorCssColor("rgba(31, 31, 31, 0.133)", THEME_MODE.DARK)).toBe("rgba(255, 255, 255, 0.133)");
+  });
+
+  it("returns author colours and author black text verbatim", () => {
+    for (const value of ["#000000", "#f8cbad", "#fbe5d6", "#d0cece", "#1a73e8", "rgba(248, 203, 173, 1)"]) {
+      expect(recolorCssColor(value, THEME_MODE.DARK)).toBe(value);
+    }
+  });
+
+  it("round-trips every palette entry back to its light form", () => {
+    for (const pair of CANVAS_PALETTE) {
+      const light = formatColor(pair.light);
+      const dark = recolorCssColor(light, THEME_MODE.DARK);
+      expect(dark).not.toBe(light);
+      expect(recolorCssColor(dark, THEME_MODE.LIGHT)).toBe(light);
+    }
+  });
+
+  it("parses the colour forms a 2D context round-trips", () => {
+    expect(parseColor("#fff")).toEqual({ r: 255, g: 255, b: 255, a: 255 });
+    expect(parseColor("#444746")).toEqual({ r: 68, g: 71, b: 70, a: 255 });
+    expect(parseColor("rgb(1, 2, 3)")).toEqual({ r: 1, g: 2, b: 3, a: 255 });
+    expect(parseColor("rgba(4, 5, 6, 0.5)")).toEqual({ r: 4, g: 5, b: 6, a: 128 });
+    expect(parseColor("rgb(4 5 6 / 50%)")).toEqual({ r: 4, g: 5, b: 6, a: 128 });
+    expect(parseColor("white")).toEqual({ r: 255, g: 255, b: 255, a: 255 });
+  });
+
+  it("rejects malformed colour strings instead of guessing", () => {
+    expect(parseColor("not-a-colour")).toBeNull();
+    expect(parseColor("url(#gradient)")).toBeNull();
+    expect(parseColor("#fffff")).toBeNull();
+    expect(parseColor("#gggggg")).toBeNull();
+    expect(parseColor("rgb(1, 2)")).toBeNull();
+  });
+
+  it("recolours a pixel buffer and leaves author and clear pixels alone", () => {
+    const data = new Uint8ClampedArray([
+      255, 255, 255, 255,
+      248, 203, 173, 255,
+      0, 0, 0, 255,
+      255, 255, 255, 0,
+      68, 71, 70, 255,
+      226, 224, 224, 255,
+    ]);
+    expect(recolorPixels(data, THEME_MODE.DARK)).toBe(true);
+    expect(Array.from(data.slice(0, 4))).toEqual([32, 33, 36, 255]);
+    expect(Array.from(data.slice(4, 8))).toEqual([248, 203, 173, 255]);
+    expect(Array.from(data.slice(8, 12))).toEqual([0, 0, 0, 255]);
+    expect(Array.from(data.slice(12, 16))).toEqual([255, 255, 255, 0]);
+    expect(Array.from(data.slice(16, 20))).toEqual([232, 234, 237, 255]);
+    expect(Array.from(data.slice(20, 24))).toEqual([32, 33, 36, 255]);
+  });
+
+  it("reports no change when a buffer holds nothing it can map", () => {
+    const data = new Uint8ClampedArray([248, 203, 173, 255, 0, 0, 0, 255]);
+    expect(recolorPixels(data, THEME_MODE.DARK)).toBe(false);
+    expect(Array.from(data)).toEqual([248, 203, 173, 255, 0, 0, 0, 255]);
+  });
+});
+
+describe("canvas theme", () => {
+  function install(doc: Document): ReturnType<typeof installCanvasTheme> {
+    return installCanvasTheme({
+      doc,
+      page: { CanvasRenderingContext2D: FakeCanvasContext },
+      scope: globalThis,
+    });
+  }
+
+  it("redirects the default palette while dark and passes author colours through", () => {
+    const grid = makeGridCanvas([0, 0, 0, 0]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      context.fillStyle = "white";
+      expect(context.rawFill()).toBe("#202124");
+      // The getter reports the canonical form of what the caller assigned, so
+      // Google's own read-back keeps matching.
+      expect(context.fillStyle).toBe("#ffffff");
+
+      context.strokeStyle = "rgba(31, 31, 31, 0.133)";
+      expect(context.rawStroke()).toBe("rgba(255, 255, 255, 0.133)");
+
+      context.fillStyle = "#f8cbad";
+      expect(context.rawFill()).toBe("#f8cbad");
+      context.fillStyle = "#000000";
+      expect(context.rawFill()).toBe("#000000");
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("leaves draws untouched while the light theme is active", () => {
+    const grid = makeGridCanvas([0, 0, 0, 0]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.LIGHT);
+      context.fillStyle = "white";
+      expect(context.rawFill()).toBe("white");
+      expect(context.fillStyle).toBe("#ffffff");
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("repaints existing pixels to dark and back to light", () => {
+    const grid = makeGridCanvas([255, 255, 255, 255, 248, 203, 173, 255, 0, 0, 0, 255]);
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual([32, 33, 36, 255]);
+      expect(Array.from(grid.pixels.slice(4, 8))).toEqual([248, 203, 173, 255]);
+      expect(Array.from(grid.pixels.slice(8, 12))).toEqual([0, 0, 0, 255]);
+
+      controller.setMode(THEME_MODE.LIGHT);
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual([255, 255, 255, 255]);
+      expect(Array.from(grid.pixels.slice(4, 8))).toEqual([248, 203, 173, 255]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("ignores chart canvases and lifts pixels back to light on dispose", () => {
+    const container = document.createElement("div");
+    container.id = "waffle-grid-container";
+    document.body.append(container);
+    const chart = document.createElement("div");
+    chart.className = "waffle-chart";
+    container.append(chart);
+    const chartCanvas = document.createElement("canvas");
+    chartCanvas.width = 1;
+    chartCanvas.height = 1;
+    chart.append(chartCanvas);
+    const chartPixels = new Uint8ClampedArray([255, 255, 255, 255]);
+    chartCanvas.getContext = (() => ({
+      getImageData: (): ImageData =>
+        ({ data: new Uint8ClampedArray(chartPixels), width: 1, height: 1 }) as unknown as ImageData,
+      putImageData: (image: ImageData): void => {
+        chartPixels.set(image.data);
+      },
+    })) as unknown as HTMLCanvasElement["getContext"];
+
+    const grid = makeGridCanvas([255, 255, 255, 255]);
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      expect(Array.from(chartPixels)).toEqual([255, 255, 255, 255]);
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual([32, 33, 36, 255]);
+    } finally {
+      controller.dispose();
+    }
+    // The grid is restored before the hook is removed.
+    expect(Array.from(grid.pixels.slice(0, 4))).toEqual([255, 255, 255, 255]);
+    expect(Array.from(chartPixels)).toEqual([255, 255, 255, 255]);
+  });
+
+  it("restores the original accessors so a later install starts clean", () => {
+    const grid = makeGridCanvas([0, 0, 0, 0]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const first = install(document);
+    first.setMode(THEME_MODE.DARK);
+    first.dispose();
+
+    // Without a patch, a raw assignment lands on the stand-in's own setter.
+    context.fillStyle = "white";
+    expect(context.rawFill()).toBe("white");
+
+    const second = install(document);
+    try {
+      second.setMode(THEME_MODE.DARK);
+      context.fillStyle = "white";
+      expect(context.rawFill()).toBe("#202124");
+    } finally {
+      second.dispose();
+    }
+  });
+
+  it("does not clobber an accessor installed after it", () => {
+    makeGridCanvas([0, 0, 0, 0]);
+    const original = Object.getOwnPropertyDescriptor(FakeCanvasContext.prototype, "fillStyle");
+    if (original === undefined) throw new Error("Expected the stand-in to expose fillStyle");
+    const controller = install(document);
+    const marker = {
+      configurable: true,
+      get: (): string => "#123456",
+      set: (): void => undefined,
+    };
+    try {
+      Object.defineProperty(FakeCanvasContext.prototype, "fillStyle", marker);
+      controller.dispose();
+      const current = Object.getOwnPropertyDescriptor(FakeCanvasContext.prototype, "fillStyle");
+      expect(current?.get).toBe(marker.get);
+    } finally {
+      Object.defineProperty(FakeCanvasContext.prototype, "fillStyle", original);
     }
   });
 });
