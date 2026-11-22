@@ -1,15 +1,25 @@
 /**
- * Role-based colour mapping for the Google Sheets grid canvas.
+ * Colour mapping for the Google Sheets grid canvas.
  *
  * The grid is painted into a single `<canvas>`, so the dark theme cannot be
- * expressed in CSS. Google draws its own chrome — the cell surface, the default
- * text, the row/column header band, the grid lines and the selection highlight —
- * from a small, fixed palette, so the script maps exactly those palette colours
- * and leaves every other colour on the canvas alone. That is what keeps the
- * promise honest: an author fill (`#f8cbad`, `#fbe5d6`, a grey `#d0cece`
- * column) and an author black font (`#000000`) are not in the palette, so they
- * come through untouched. The spreadsheet data and every cell format are never
- * touched; only the paint Google emits is remapped.
+ * expressed in CSS. Two mapping layers cooperate here:
+ *
+ * 1. A measured palette of the colours Google draws its own chrome with — the
+ *    cell surface, the default text, the header band, the grid lines and the
+ *    selection highlight — mapped one-for-one to Google's dark greys.
+ * 2. A role-based tone curve for everything else. Whatever Google or the author
+ *    paints is either paper (surface fills), ink (text) or an edge (grid lines,
+ *    borders, small glyphs), and each role is pushed into its own lightness
+ *    band: paper becomes a dark tint that keeps its hue, ink becomes light, and
+ *    edges land in a mid grey that stays visible on a dark surface. Hues are
+ *    never rotated, so nothing is "inverted" the way a `filter: invert()` would
+ *    turn a red fill cyan.
+ *
+ * Nothing here reinterprets the *content*: colours drawn by `drawImage` (cell
+ * images, sparkline bitmaps) never pass through this module, and colours that
+ * were never observed in a fill/text/stroke call are left pixel-for-pixel alone.
+ * The spreadsheet data and every cell format are never touched; only the paint
+ * Google emits is remapped.
  *
  * One limit cannot be hidden: the default surface is pure white (`#ffffff`),
  * which is indistinguishable from a fill an author explicitly painted white. An
@@ -40,6 +50,14 @@ interface PalettePair {
   /** The colour the script substitutes while the dark theme is active. */
   readonly dark: Rgba;
 }
+
+/**
+ * Where a colour came from. `paper` is a surface fill (cell background, header
+ * band, selection highlight), `ink` is text glyph fill, and `edge` is anything
+ * stroked or drawn as a small glyph — grid lines, borders, sort arrows,
+ * checkmarks — which must stay visible against a dark surface.
+ */
+export type CanvasRole = "paper" | "ink" | "edge";
 
 /**
  * The palette measured from a live spreadsheet grid. Each entry is one drawing
@@ -96,10 +114,15 @@ const DARK_TABLE = buildTable("light", "dark");
 const LIGHT_TABLE = buildTable("dark", "light");
 
 /** Pack an opaque-ish RGBA quad into one integer so the pixel pass allocates no strings. */
-const pixelKey = (r: number, g: number, b: number, a: number): number =>
+export const pixelKey = (r: number, g: number, b: number, a: number): number =>
   (((r << 24) | (g << 16) | (b << 8) | a) >>> 0);
 
-function buildPixelTable(from: "light" | "dark", to: "light" | "dark"): Map<number, Rgba> {
+/** The integer key of a parsed colour, for the role-driven pixel tables. */
+export function pixelKeyOf(color: Rgba): number {
+  return pixelKey(color.r, color.g, color.b, color.a);
+}
+
+function buildPalettePixels(from: "light" | "dark", to: "light" | "dark"): Map<number, Rgba> {
   const table = new Map<number, Rgba>();
   for (const pair of CANVAS_PALETTE) {
     const source = pair[from];
@@ -110,8 +133,129 @@ function buildPixelTable(from: "light" | "dark", to: "light" | "dark"): Map<numb
   return table;
 }
 
-const DARK_PIXELS = buildPixelTable("light", "dark");
-const LIGHT_PIXELS = buildPixelTable("dark", "light");
+const DARK_PIXELS = buildPalettePixels("light", "dark");
+const LIGHT_PIXELS = buildPalettePixels("dark", "light");
+
+/**
+ * Per-role lightness curves, expressed in HSL. Each curve only moves lightness
+ * and caps extreme saturation; hue is carried over untouched, so a red fill
+ * stays red and a blue link stays blue instead of being inverted into cyan.
+ *
+ * - paper: every surface lands in a narrow dark band. Bright pastels keep a
+ *   visible tint of their hue instead of glowing, and the plain white surface
+ *   resolves to Google's own dark surface.
+ * - ink: text lands in a narrow light band, so black text (Google's default) no
+ *   longer disappears on a dark cell. Accent colours keep their hue and only
+ *   lighten enough to clear the contrast bar.
+ * - edge: strokes and small glyphs are pulled toward the middle of the range, so
+ *   light grid lines darken and dark borders, arrows and ticks lighten; both stay
+ *   visible against the dark surface.
+ */
+const PAPER_LIGHTNESS_BASE = 0.04;
+const PAPER_LIGHTNESS_GAIN = 0.095;
+const PAPER_MAX_SATURATION = 0.6;
+
+const INK_LIGHTNESS_BASE = 0.86;
+const INK_LIGHTNESS_GAIN = 0.12;
+const INK_MAX_SATURATION = 0.85;
+
+const EDGE_LIGHTNESS_BASE = 0.24;
+const EDGE_BRIGHT_GAIN = 0.2;
+const EDGE_DARK_GAIN = 0.24;
+const EDGE_MAX_SATURATION = 0.6;
+
+/** Above this lightness a painted colour is treated as a fill rather than a glyph. */
+export const EDGE_SPLIT_LIGHTNESS = 0.55;
+
+function clampUnit(value: number): number {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
+function rgbToHsl(color: Rgba): readonly [number, number, number] {
+  const red = color.r / 255;
+  const green = color.g / 255;
+  const blue = color.b / 255;
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const lightness = (maximum + minimum) / 2;
+  if (maximum === minimum) return [0, 0, lightness];
+  const delta = maximum - minimum;
+  const saturation =
+    lightness > 0.5 ? delta / (2 - maximum - minimum) : delta / (maximum + minimum);
+  let hue = 0;
+  if (maximum === red) hue = (green - blue) / delta + (green < blue ? 6 : 0);
+  if (maximum === green) hue = (blue - red) / delta + 2;
+  if (maximum === blue) hue = (red - green) / delta + 4;
+  return [hue / 6, saturation, lightness];
+}
+
+function hueToChannel(first: number, second: number, hue: number): number {
+  let value = hue;
+  if (value < 0) value += 1;
+  if (value > 1) value -= 1;
+  if (value < 1 / 6) return first + (second - first) * 6 * value;
+  if (value < 1 / 2) return second;
+  if (value < 2 / 3) return first + (second - first) * (2 / 3 - value) * 6;
+  return first;
+}
+
+function hslToRgba(hue: number, saturation: number, lightness: number, alpha: number): Rgba {
+  if (saturation === 0) {
+    const channel = Math.round(lightness * 255);
+    return rgba(channel, channel, channel, alpha);
+  }
+  const second =
+    lightness < 0.5
+      ? lightness * (1 + saturation)
+      : lightness + saturation - lightness * saturation;
+  const first = 2 * lightness - second;
+  return rgba(
+    Math.round(hueToChannel(first, second, hue + 1 / 3) * 255),
+    Math.round(hueToChannel(first, second, hue) * 255),
+    Math.round(hueToChannel(first, second, hue - 1 / 3) * 255),
+    alpha,
+  );
+}
+
+function roleLightness(role: CanvasRole, lightness: number): number {
+  const clamped = clampUnit(lightness);
+  if (role === "paper") return PAPER_LIGHTNESS_BASE + PAPER_LIGHTNESS_GAIN * clamped;
+  if (role === "ink") return INK_LIGHTNESS_BASE + INK_LIGHTNESS_GAIN * clamped;
+  if (clamped >= 0.5) return EDGE_LIGHTNESS_BASE + (clamped - 0.5) * EDGE_BRIGHT_GAIN * 2;
+  return EDGE_LIGHTNESS_BASE + (0.5 - clamped) * EDGE_DARK_GAIN * 2;
+}
+
+function roleMaxSaturation(role: CanvasRole): number {
+  if (role === "ink") return INK_MAX_SATURATION;
+  if (role === "edge") return EDGE_MAX_SATURATION;
+  return PAPER_MAX_SATURATION;
+}
+
+/** Which role a path fill drawn in `color` most plausibly plays. */
+export function roleForPathFill(color: Rgba): CanvasRole {
+  const [, , lightness] = rgbToHsl(color);
+  return lightness >= EDGE_SPLIT_LIGHTNESS ? "paper" : "edge";
+}
+
+/**
+ * Recolour one colour for its role in the dark theme. Palette colours keep their
+ * exact measured counterparts so the canvas matches the chrome; everything else
+ * goes through the role curve.
+ */
+export function roleColor(color: Rgba, role: CanvasRole): Rgba {
+  if (color.a === 0) return color;
+  const palette = DARK_TABLE.get(colorKey(color));
+  if (palette !== undefined) return palette;
+  const [hue, saturation, lightness] = rgbToHsl(color);
+  return hslToRgba(
+    hue,
+    Math.min(saturation, roleMaxSaturation(role)),
+    roleLightness(role, lightness),
+    color.a,
+  );
+}
 
 /** Map a parsed colour to its dark-theme form, or return it unchanged. */
 export function toDarkColor(color: Rgba): Rgba {
@@ -232,7 +376,7 @@ export function normalizeColor(input: string): string {
   return parsed === null ? input : formatColor(parsed);
 }
 
-function colorsEqual(left: Rgba, right: Rgba): boolean {
+export function colorsEqual(left: Rgba, right: Rgba): boolean {
   return left.r === right.r && left.g === right.g && left.b === right.b && left.a === right.a;
 }
 
@@ -250,14 +394,48 @@ export function recolorCssColor(input: string, mode: "dark" | "light"): string {
 }
 
 /**
- * Recolour an RGBA pixel buffer in place. Palette colours move; near-white
- * fringes of the surface are swept into the dark surface so a runtime toggle
- * leaves no bright halo; everything else — author fills and author text of every
- * colour, including black — is left as it is. Returns whether any pixel changed,
- * so a caller can skip the expensive `putImageData` upload.
+ * Recolour one CSS colour string for a role in the dark theme. Returns the
+ * exact input when the colour does not change, so Google's own read-back stays
+ * byte-identical.
  */
-export function recolorPixels(data: Uint8ClampedArray, mode: "dark" | "light"): boolean {
-  const table = mode === "dark" ? DARK_PIXELS : LIGHT_PIXELS;
+export function recolorCssColorForRole(input: string, role: CanvasRole): string {
+  const parsed = parseColor(input);
+  if (parsed === null) return input;
+  const mapped = roleColor(parsed, role);
+  if (colorsEqual(mapped, parsed)) return input;
+  return formatColor(mapped);
+}
+
+/**
+ * The integer-keyed pixel table for a set of colour pairs. The first pair for a
+ * key wins, so callers put exact palette pairs first and measured pairs after.
+ */
+export function buildPixelTable(pairs: Iterable<readonly [Rgba, Rgba]>): Map<number, Rgba> {
+  const table = new Map<number, Rgba>();
+  for (const [from, to] of pairs) {
+    const key = pixelKeyOf(from);
+    if (table.has(key)) continue;
+    table.set(key, to);
+  }
+  return table;
+}
+
+/** The measured palette for `mode`, as a plain integer-keyed map. */
+export function palettePixels(mode: "dark" | "light"): ReadonlyMap<number, Rgba> {
+  return mode === "dark" ? DARK_PIXELS : LIGHT_PIXELS;
+}
+
+/**
+ * Recolour an RGBA pixel buffer in place from `table`, optionally sweeping
+ * near-white fringes of the surface into `sweep` so a runtime toggle leaves no
+ * bright halo. Returns whether any pixel changed, so a caller can skip the
+ * expensive `putImageData` upload.
+ */
+export function mapPixels(
+  data: Uint8ClampedArray,
+  table: ReadonlyMap<number, Rgba>,
+  sweep: Rgba | null,
+): boolean {
   let changed = false;
   for (let index = 0; index + 3 < data.length; index += 4) {
     const alpha = data[index + 3] ?? 0;
@@ -274,14 +452,27 @@ export function recolorPixels(data: Uint8ClampedArray, mode: "dark" | "light"): 
       changed = true;
       continue;
     }
-    if (mode !== "dark") continue;
+    if (sweep === null) continue;
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
     if (min < FRINGE_MIN_CHANNEL || max - min > FRINGE_MAX_SPREAD) continue;
-    data[index] = DARK_SURFACE.r;
-    data[index + 1] = DARK_SURFACE.g;
-    data[index + 2] = DARK_SURFACE.b;
+    data[index] = sweep.r;
+    data[index + 1] = sweep.g;
+    data[index + 2] = sweep.b;
     changed = true;
   }
   return changed;
+}
+
+/** The dark surface a near-white fringe is swept into. */
+export const FRINGE_SWEEP: Rgba = DARK_SURFACE;
+
+/**
+ * Recolour an RGBA pixel buffer in place using only the measured palette;
+ * everything else is left as it is. This is the conservative entry point the
+ * controller used before role tables existed, kept for callers and tests that
+ * only need the measured colours.
+ */
+export function recolorPixels(data: Uint8ClampedArray, mode: "dark" | "light"): boolean {
+  return mapPixels(data, palettePixels(mode), mode === "dark" ? FRINGE_SWEEP : null);
 }

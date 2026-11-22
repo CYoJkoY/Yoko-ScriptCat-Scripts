@@ -1,34 +1,47 @@
 import { THEME_MODE, type ThemeMode } from "../config";
-import { normalizeColor, recolorCssColor, recolorPixels } from "./canvasColor";
+import {
+  CANVAS_PALETTE,
+  FRINGE_SWEEP,
+  buildPixelTable,
+  formatColor,
+  mapPixels,
+  normalizeColor,
+  palettePixels,
+  parseColor,
+  pixelKeyOf,
+  roleColor,
+  roleForPathFill,
+  type CanvasRole,
+  type Rgba,
+} from "./canvasColor";
 
-/**
- * The sheet body is a single `<canvas>` inside waffle's grid container. Charts
- * are drawn into canvases of their own and carry their own colours, so they are
- * filtered out rather than recoloured with the sheet.
- */
 const GRID_CANVAS_SELECTOR = "#waffle-grid-container canvas";
 const CHART_SELECTOR = ".waffle-chart, [class*='chart']";
-
-/**
- * Google reuses a small palette, so the colour-string cache stays tiny; the cap
- * only guards against a pathological page that cycles through many colours.
- */
-const COLOR_CACHE_LIMIT = 256;
+const COLOR_CACHE_LIMIT = 512;
+const ROLE_RECORD_LIMIT = 512;
 
 type StyleProperty = "fillStyle" | "strokeStyle";
+type DrawMethod = "fillText" | "strokeText" | "fillRect" | "fill" | "stroke" | "strokeRect";
+
+interface RoleRecord {
+  readonly color: Rgba;
+  readonly role: CanvasRole;
+}
+
+interface StyleBinding {
+  assignedValue(self: object): unknown;
+  writeRaw(self: object, value: unknown): void;
+  restore(): void;
+}
 
 export interface CanvasThemeOptions {
   readonly doc?: Document;
-  /** Sandbox global, which also exposes `unsafeWindow` when the manager grants it. */
   readonly scope?: object;
-  /** Page-world object whose `CanvasRenderingContext2D` prototype Google writes to. */
   readonly page?: object | null;
 }
 
 export interface CanvasThemeController {
-  /** Recolour the grid for `mode`; `light` restores the light pixels. */
   setMode(mode: ThemeMode): void;
-  /** Undo the prototype patch and lift any recoloured canvas back to light. */
   dispose(): void;
 }
 
@@ -44,11 +57,6 @@ function isCanvasElement(value: unknown): value is HTMLCanvasElement {
   return isRecord(value) && Reflect.get(value, "nodeType") === 1 && typeof Reflect.get(value, "getContext") === "function";
 }
 
-/**
- * Find the constructor whose prototype Google's 2D contexts inherit from. The
- * page world wins over the sandbox, because a context created by page code is an
- * instance of the page-world prototype even when the userscript runs sandboxed.
- */
 function resolveContextConstructor(candidates: readonly unknown[]): ContextConstructor | null {
   for (const host of candidates) {
     if (!isRecord(host)) continue;
@@ -60,22 +68,15 @@ function resolveContextConstructor(candidates: readonly unknown[]): ContextConst
   return null;
 }
 
-/**
- * Replace one style accessor with a pair that stores the caller's value verbatim
- * (so Google's read-back keeps matching) while forwarding a recoloured value to
- * the real setter. Returns a restore function, or null when the property cannot
- * be patched — the caller then falls back to the pixel pass alone.
- */
 function hookStyleProperty(
   prototype: object,
   property: StyleProperty,
   remap: (self: object, value: unknown) => unknown,
-): (() => void) | null {
+): StyleBinding | null {
   const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
   if (descriptor === undefined) return null;
   if (descriptor.get === undefined && descriptor.set === undefined && !("value" in descriptor)) return null;
 
-  /** What the caller assigned last, so the getter can report it back. */
   const assigned = new WeakMap<object, unknown>();
   const readOriginal = (self: object): unknown => {
     if (assigned.has(self)) return assigned.get(self);
@@ -95,8 +96,6 @@ function hookStyleProperty(
     enumerable: descriptor.enumerable ?? false,
     get(this: object): unknown {
       const original = readOriginal(this);
-      // A real context normalises what it stores, so report the same canonical
-      // form rather than the raw keyword the caller typed.
       return typeof original === "string" ? normalizeColor(original) : original;
     },
     set(this: object, value: unknown): void {
@@ -108,97 +107,197 @@ function hookStyleProperty(
   try {
     Reflect.defineProperty(prototype, property, accessor);
   } catch (error) {
-    // A frozen or otherwise locked prototype throws a TypeError; that leaves
-    // nothing to patch and the pixel pass still themes what is already on
-    // screen. Any other failure is unexpected and must surface, not be hidden.
     if (error instanceof TypeError) return null;
     throw error;
   }
 
-  return () => {
-    const current = Object.getOwnPropertyDescriptor(prototype, property);
-    // Only restore when our accessor is still the live one; a later patcher owns
-    // the property now and must not be clobbered.
-    if (current === undefined || current.get !== accessor.get) return;
-    Reflect.defineProperty(prototype, property, descriptor);
+  return {
+    assignedValue: (self) => readOriginal(self),
+    writeRaw: (self, value) => writeOriginal(self, value),
+    restore: () => {
+      const current = Object.getOwnPropertyDescriptor(prototype, property);
+      if (current === undefined || current.get !== accessor.get) return;
+      Reflect.defineProperty(prototype, property, descriptor);
+    },
   };
 }
 
-/**
- * Wire the canvas theme to the document: patch the 2D prototype so future draws
- * use the themed palette, and repaint pixels that were already on screen when
- * the theme or the set of grid canvases changed.
- */
+function hookDrawMethod(
+  prototype: object,
+  method: DrawMethod,
+  draw: Function,
+  role: (self: object, args: readonly unknown[]) => CanvasRole,
+  fill: StyleBinding,
+  stroke: StyleBinding,
+  themed: (self: object) => boolean,
+  record: (self: object, color: Rgba, role: CanvasRole) => void,
+  darkColor: (color: Rgba, role: CanvasRole) => string,
+  dark: () => boolean,
+): (() => void) | null {
+  const original = Object.getOwnPropertyDescriptor(prototype, method);
+  if (original?.value !== draw || typeof draw !== "function") return null;
+  const wrapper = function (this: object, ...args: unknown[]): unknown {
+    const style = method === "fillText" || method === "fillRect" || method === "fill" ? fill : stroke;
+    const defaultRole: CanvasRole = style === fill ? "paper" : "edge";
+    const current = style.assignedValue(this);
+    const currentColor = typeof current === "string" ? parseColor(current) : null;
+    const currentRole = role(this, args);
+    if (currentColor !== null) record(this, currentColor, currentRole);
+    if (!themed(this) || currentColor === null || !dark()) return draw.apply(this, args);
+    style.writeRaw(this, darkColor(currentColor, currentRole));
+    try {
+      return draw.apply(this, args);
+    } finally {
+      // Leave the style in the state the setter would have produced, so a draw
+      // that bypasses these wrappers never picks up an unthemed colour.
+      style.writeRaw(this, darkColor(currentColor, defaultRole));
+    }
+  };
+  try {
+    Reflect.defineProperty(prototype, method, { ...original, value: wrapper });
+  } catch (error) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
+  return () => {
+    const current = Object.getOwnPropertyDescriptor(prototype, method);
+    if (current?.value !== wrapper) return;
+    Reflect.defineProperty(prototype, method, original);
+  };
+}
+
 export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThemeController {
   const doc = options.doc ?? document;
   const scope = options.scope ?? globalThis;
   const page = options.page ?? (isRecord(scope) ? Reflect.get(scope, "unsafeWindow") : null);
   const constructor = resolveContextConstructor([page, scope]);
-
   let mode: ThemeMode = THEME_MODE.LIGHT;
+  let applied: ThemeMode | null = null;
   let disposed = false;
 
-  /** Canvases whose draws should be intercepted (membership via DOM identity). */
   const themed = new WeakSet<object>();
-  /** Live grid canvases, iterated to repaint on a theme change. */
   const canvases = new Set<HTMLCanvasElement>();
-  /** The theme a canvas' pixels are currently normalised to. */
   const rendered = new WeakMap<HTMLCanvasElement, ThemeMode>();
-  /** Memoised light→dark colour strings, keyed by the value Google assigned. */
+  const records = new WeakMap<HTMLCanvasElement, Map<number, RoleRecord>>();
   const colorCache = new Map<string, string>();
-
-  const recolor = (value: string): string => {
-    const cached = colorCache.get(value);
-    if (cached !== undefined) return cached;
-    const mapped = recolorCssColor(value, THEME_MODE.DARK);
-    if (colorCache.size >= COLOR_CACHE_LIMIT) colorCache.clear();
-    colorCache.set(value, mapped);
-    return mapped;
-  };
-
-  const isThemedContext = (self: object): boolean => {
-    const canvas = Reflect.get(self, "canvas");
-    return isCanvasElement(canvas) && themed.has(canvas);
-  };
-
-  const remap = (self: object, value: unknown): unknown => {
-    if (mode !== THEME_MODE.DARK) return value;
-    if (typeof value !== "string") return value;
-    if (!isThemedContext(self)) return value;
-    return recolor(value);
-  };
-
   const restores: (() => void)[] = [];
-  if (constructor !== null) {
-    for (const property of ["fillStyle", "strokeStyle"] as const) {
-      const restore = hookStyleProperty(constructor.prototype, property, remap);
+
+  const themedColor = (color: Rgba, role: CanvasRole): string => {
+    const key = `${role}|${pixelKeyOf(color)}`;
+    const cached = colorCache.get(key);
+    if (cached !== undefined) return cached;
+    const value = formatColor(roleColor(color, role));
+    if (colorCache.size >= COLOR_CACHE_LIMIT) colorCache.clear();
+    colorCache.set(key, value);
+    return value;
+  };
+
+  const contextCanvas = (self: object): HTMLCanvasElement | null => {
+    const canvas = Reflect.get(self, "canvas");
+    return isCanvasElement(canvas) ? canvas : null;
+  };
+  const isThemedContext = (self: object): boolean => {
+    const canvas = contextCanvas(self);
+    return canvas !== null && themed.has(canvas);
+  };
+  const remember = (self: object, color: Rgba, role: CanvasRole): void => {
+    const canvas = contextCanvas(self);
+    if (canvas === null || !themed.has(canvas)) return;
+    let canvasRecords = records.get(canvas);
+    if (canvasRecords === undefined) {
+      canvasRecords = new Map();
+      records.set(canvas, canvasRecords);
+    }
+    const key = pixelKeyOf(color);
+    if (!canvasRecords.has(key) && canvasRecords.size >= ROLE_RECORD_LIMIT) {
+      const first = canvasRecords.keys().next().value;
+      if (typeof first === "number") canvasRecords.delete(first);
+    }
+    if (!canvasRecords.has(key)) canvasRecords.set(key, { color, role });
+  };
+
+  const remap = (role: CanvasRole) => (self: object, value: unknown): unknown => {
+    if (typeof value !== "string") return value;
+    const parsed = parseColor(value);
+    if (parsed === null) return value;
+    if (mode !== THEME_MODE.DARK || !isThemedContext(self)) return value;
+    return themedColor(parsed, role);
+  };
+
+  const fill = constructor === null ? null : hookStyleProperty(constructor.prototype, "fillStyle", remap("paper"));
+  const stroke = constructor === null ? null : hookStyleProperty(constructor.prototype, "strokeStyle", remap("edge"));
+  if (fill !== null) restores.push(fill.restore);
+  if (stroke !== null) restores.push(stroke.restore);
+
+  const roleForMethod = (method: DrawMethod, self: object, args: readonly unknown[]): CanvasRole => {
+    if (method === "fillText" || method === "strokeText") return "ink";
+    if (method === "fillRect") return "paper";
+    if (method === "fill") {
+      const current = fill?.assignedValue(self);
+      const color = typeof current === "string" ? parseColor(current) : null;
+      return color === null ? "paper" : roleForPathFill(color);
+    }
+    return "edge";
+  };
+  if (constructor !== null && fill !== null && stroke !== null) {
+    const prototype = constructor.prototype;
+    const methods: readonly DrawMethod[] = ["fillText", "strokeText", "fillRect", "fill", "stroke", "strokeRect"];
+    for (const method of methods) {
+      const draw = Reflect.get(prototype, method);
+      if (typeof draw !== "function") continue;
+      const restore = hookDrawMethod(
+        prototype,
+        method,
+        draw,
+        (self, args) => roleForMethod(method, self, args),
+        fill,
+        stroke,
+        isThemedContext,
+        remember,
+        themedColor,
+        () => mode === THEME_MODE.DARK,
+      );
       if (restore !== null) restores.push(restore);
     }
   }
 
-  /**
-   * Read a canvas' pixels. A tainted canvas (a cross-origin image was drawn) is
-   * unreadable; that is a documented skip, not a swallowed failure, and any other
-   * error is re-thrown so it is not hidden.
-   */
   const readPixels = (canvas: HTMLCanvasElement): ImageData | null => {
     const context = canvas.getContext("2d");
-    if (context === null) return null;
-    const { width, height } = canvas;
-    if (width === 0 || height === 0) return null;
+    if (context === null || canvas.width === 0 || canvas.height === 0) return null;
     try {
-      return context.getImageData(0, 0, width, height);
+      return context.getImageData(0, 0, canvas.width, canvas.height);
     } catch (error) {
       if (error instanceof DOMException && error.name === "SecurityError") return null;
       throw error;
     }
   };
 
-  /** Repaint one canvas' pixels into `target`, leaving author colours untouched. */
+  const pixelTable = (canvas: HTMLCanvasElement, target: ThemeMode): ReadonlyMap<number, Rgba> => {
+    const pairs: Array<readonly [Rgba, Rgba]> = CANVAS_PALETTE.map((pair) =>
+      target === THEME_MODE.DARK ? [pair.light, pair.dark] : [pair.dark, pair.light],
+    );
+    const remembered = records.get(canvas);
+    if (remembered !== undefined) {
+      for (const { color, role } of remembered.values()) {
+        pairs.push(
+          target === THEME_MODE.DARK
+            ? [color, roleColor(color, role)]
+            : [roleColor(color, role), color],
+        );
+      }
+    }
+    return buildPixelTable(pairs);
+  };
+
   const applyPixels = (canvas: HTMLCanvasElement, target: ThemeMode): void => {
     const image = readPixels(canvas);
     if (image === null) return;
-    if (!recolorPixels(image.data, target)) return;
+    const changed = mapPixels(
+      image.data,
+      pixelTable(canvas, target),
+      target === THEME_MODE.DARK ? FRINGE_SWEEP : null,
+    );
+    if (!changed) return;
     const context = canvas.getContext("2d");
     if (context === null) return;
     try {
@@ -209,15 +308,24 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     }
   };
 
+  const requestRepaint = (view: Window | null): void => {
+    if (view === null) return;
+    try {
+      view.dispatchEvent(new Event("resize"));
+      if (typeof view.requestAnimationFrame === "function") {
+        view.requestAnimationFrame(() => view.dispatchEvent(new Event("resize")));
+      }
+    } catch {
+      // A torn-down document can reject synthetic events during navigation.
+    }
+  };
+
   const register = (canvas: HTMLCanvasElement): void => {
     if (canvases.has(canvas)) return;
     canvases.add(canvas);
     themed.add(canvas);
-    // A canvas discovered while dark already holds light pixels drawn before the
-    // patch saw it, so normalise it now; a blank canvas is all-transparent and the
-    // pixel pass is skipped for free.
     rendered.set(canvas, mode);
-    if (mode === THEME_MODE.DARK) applyPixels(canvas, THEME_MODE.DARK);
+    if (mode === THEME_MODE.DARK) applyPixels(canvas, mode);
   };
 
   const scan = (): void => {
@@ -228,8 +336,7 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       themed.delete(canvas);
     }
     for (const canvas of Array.from(doc.querySelectorAll<HTMLCanvasElement>(GRID_CANVAS_SELECTOR))) {
-      if (canvas.closest(CHART_SELECTOR) !== null) continue;
-      register(canvas);
+      if (canvas.closest(CHART_SELECTOR) === null) register(canvas);
     }
   };
 
@@ -242,40 +349,29 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       scan();
     });
   };
-
-  // Google replaces the whole grid subtree when the active sheet changes, so the
-  // observer both discovers new canvases and drops detached ones.
   const observer =
     doc.documentElement === null || typeof MutationObserver !== "function"
       ? null
       : new MutationObserver(scheduleScan);
   observer?.observe(doc.documentElement, { childList: true, subtree: true });
-
   scan();
 
   return {
     setMode: (next) => {
       if (disposed) return;
+      const changed = applied !== null && applied !== next;
       mode = next;
-      if (next === THEME_MODE.LIGHT) {
-        for (const canvas of canvases) {
-          if (rendered.get(canvas) === THEME_MODE.LIGHT) continue;
-          applyPixels(canvas, THEME_MODE.LIGHT);
-          rendered.set(canvas, THEME_MODE.LIGHT);
-        }
-        return;
-      }
-      scan();
+      if (next === THEME_MODE.DARK) scan();
       for (const canvas of canvases) {
-        if (rendered.get(canvas) === THEME_MODE.DARK) continue;
-        applyPixels(canvas, THEME_MODE.DARK);
-        rendered.set(canvas, THEME_MODE.DARK);
+        if (rendered.get(canvas) === next) continue;
+        applyPixels(canvas, next);
+        rendered.set(canvas, next);
       }
+      applied = next;
+      if (changed) requestRepaint(doc.defaultView);
     },
     dispose: () => {
       if (disposed) return;
-      // Lift recoloured pixels back to light before the hook is removed, so the
-      // page is left exactly as if the script had never run.
       for (const canvas of canvases) {
         if (rendered.get(canvas) !== THEME_MODE.DARK) continue;
         applyPixels(canvas, THEME_MODE.LIGHT);

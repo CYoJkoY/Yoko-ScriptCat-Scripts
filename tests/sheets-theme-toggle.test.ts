@@ -34,6 +34,7 @@ import {
   CANVAS_PALETTE,
   formatColor,
   parseColor,
+  roleColor,
   recolorCssColor,
   recolorPixels,
 } from "../scripts/sheets-theme-toggle/src/core/canvasColor";
@@ -93,6 +94,7 @@ function mountChrome(): void {
 class FakeCanvasContext {
   #fill = "black";
   #stroke = "black";
+  #drawn = new Map<string, string>();
   canvas: HTMLCanvasElement | null = null;
 
   get fillStyle(): string {
@@ -117,6 +119,34 @@ class FakeCanvasContext {
 
   rawStroke(): string {
     return this.#stroke;
+  }
+
+  fillText(_text: string, _x: number, _y: number): void {
+    this.#drawn.set("fillText", this.#fill);
+  }
+
+  strokeText(_text: string, _x: number, _y: number): void {
+    this.#drawn.set("strokeText", this.#stroke);
+  }
+
+  fillRect(): void {
+    this.#drawn.set("fillRect", this.#fill);
+  }
+
+  fill(): void {
+    this.#drawn.set("fill", this.#fill);
+  }
+
+  stroke(): void {
+    this.#drawn.set("stroke", this.#stroke);
+  }
+
+  strokeRect(): void {
+    this.#drawn.set("strokeRect", this.#stroke);
+  }
+
+  drawn(method: string): string | undefined {
+    return this.#drawn.get(method);
   }
 }
 
@@ -748,7 +778,7 @@ describe("canvas theme", () => {
     });
   }
 
-  it("redirects the default palette while dark and passes author colours through", () => {
+  it("redirects the default palette and applies role-aware author colours", () => {
     const grid = makeGridCanvas([0, 0, 0, 0]);
     const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
     const controller = install(document);
@@ -764,9 +794,15 @@ describe("canvas theme", () => {
       expect(context.rawStroke()).toBe("rgba(255, 255, 255, 0.133)");
 
       context.fillStyle = "#f8cbad";
-      expect(context.rawFill()).toBe("#f8cbad");
+      expect(context.rawFill()).toBe(formatColor(roleColor(parseColor("#f8cbad")!, "paper")));
       context.fillStyle = "#000000";
-      expect(context.rawFill()).toBe("#000000");
+      expect(context.rawFill()).toBe(formatColor(roleColor(parseColor("#000000")!, "paper")));
+
+      context.fillText("visible", 0, 0);
+      expect(context.drawn("fillText")).toBe(formatColor(roleColor(parseColor("#000000")!, "ink")));
+      // After the draw the style returns to the themed fill default, not the
+      // unthemed black the caller assigned.
+      expect(context.rawFill()).toBe(formatColor(roleColor(parseColor("#000000")!, "paper")));
     } finally {
       controller.dispose();
     }
@@ -798,6 +834,68 @@ describe("canvas theme", () => {
       controller.setMode(THEME_MODE.LIGHT);
       expect(Array.from(grid.pixels.slice(0, 4))).toEqual([255, 255, 255, 255]);
       expect(Array.from(grid.pixels.slice(4, 8))).toEqual([248, 203, 173, 255]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("requests a resize repaint after an actual theme switch", () => {
+    const grid = makeGridCanvas([0, 0, 0, 0]);
+    const resize = vi.spyOn(window, "dispatchEvent");
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      expect(resize).not.toHaveBeenCalled();
+      controller.setMode(THEME_MODE.LIGHT);
+      expect(resize).toHaveBeenCalledTimes(1);
+      expect(resize.mock.calls[0]?.[0].type).toBe("resize");
+    } finally {
+      controller.dispose();
+      resize.mockRestore();
+    }
+    expect(grid.element.isConnected).toBe(true);
+  });
+
+  it("bridges an observed author colour to dark and back to the same pixel", () => {
+    const peach = parseColor("#f8cbad")!;
+    const grid = makeGridCanvas([peach.r, peach.g, peach.b, peach.a]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      // A draw call teaches the controller that this fill is a surface colour.
+      context.fillStyle = "#f8cbad";
+      context.fillRect();
+      controller.setMode(THEME_MODE.DARK);
+      const dark = roleColor(peach, "paper");
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual([dark.r, dark.g, dark.b, dark.a]);
+      controller.setMode(THEME_MODE.LIGHT);
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual([peach.r, peach.g, peach.b, peach.a]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("lightens black text and keeps black strokes visible in the dark theme", () => {
+    const grid = makeGridCanvas([0, 0, 0, 0]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const black = parseColor("#000000")!;
+    const ink = roleColor(black, "ink");
+    const edge = roleColor(black, "edge");
+    // Text is the brightest band; edges sit in a mid grey that still clears the
+    // dark surface; neither is left as invisible black.
+    expect(ink.r).toBeGreaterThan(200);
+    expect(edge.r).toBeGreaterThan(40);
+    expect(edge.r).toBeLessThan(ink.r);
+
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      context.fillStyle = "#000000";
+      context.fillText("a", 0, 0);
+      expect(context.drawn("fillText")).toBe(formatColor(ink));
+      context.strokeStyle = "#000000";
+      context.stroke();
+      expect(context.drawn("stroke")).toBe(formatColor(edge));
     } finally {
       controller.dispose();
     }
