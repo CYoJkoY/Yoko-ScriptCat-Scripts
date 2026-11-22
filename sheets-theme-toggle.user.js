@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.9
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘、无需手动刷新，同时保护 drawImage 像素与 save/restore 状态，偏好持久化并跟随系统。
+// @version      1.0.10
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘、无需手动刷新，同时保护 drawImage 像素（按 3/5/9 参数与变换解析目标矩形）、按角色曲线映射渐变色标，并保护 save/restore 状态，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -579,6 +579,77 @@
       }
       return "edge";
     };
+    const imageDestinationOf = (self, args, canvas) => {
+      const num = (value, fallback) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
+      const dim = (value, key) => typeof value === "object" && value !== null ? num(Reflect.get(value, key), 0) : 0;
+      const image = args[0];
+      let dx = 0;
+      let dy = 0;
+      let dw = dim(image, "width") || canvas.width;
+      let dh = dim(image, "height") || canvas.height;
+      if (args.length >= 9) {
+        dx = num(args[5], 0);
+        dy = num(args[6], 0);
+        dw = num(args[7], dw);
+        dh = num(args[8], dh);
+      } else if (args.length >= 5) {
+        dx = num(args[1], 0);
+        dy = num(args[2], 0);
+        dw = num(args[3], dw);
+        dh = num(args[4], dh);
+      } else if (args.length === 3) {
+        dx = num(args[1], 0);
+        dy = num(args[2], 0);
+      }
+      if (dw <= 0 || dh <= 0) return null;
+      let corners = [
+        [dx, dy],
+        [dx + dw, dy],
+        [dx, dy + dh],
+        [dx + dw, dy + dh]
+      ];
+      const getTransform = Reflect.get(self, "getTransform");
+      if (typeof getTransform === "function") {
+        try {
+          const matrix = getTransform.call(self);
+          if (isRecord(matrix)) {
+            const [a, b, c, d, e, f] = ["a", "b", "c", "d", "e", "f"].map(
+              (key) => typeof Reflect.get(matrix, key) === "number" ? Reflect.get(matrix, key) : 0
+            );
+            corners = corners.map(([x, y]) => [a * x + c * y + e, b * x + d * y + f]);
+          }
+        } catch {
+        }
+      }
+      const xs = corners.map(([x]) => x);
+      const ys = corners.map(([, y]) => y);
+      const left = Math.min(...xs);
+      const top = Math.min(...ys);
+      return [left, top, Math.max(...xs) - left, Math.max(...ys) - top];
+    };
+    const decorateGradient = (gradient, self) => {
+      if (!isRecord(gradient)) return;
+      const addColorStop = Reflect.get(gradient, "addColorStop");
+      if (typeof addColorStop !== "function") return;
+      const original = addColorStop;
+      const wrapped = function(offset, color) {
+        let mapped = color;
+        if (typeof color === "string" && mode === THEME_MODE.DARK && isThemedContext(self)) {
+          const parsed = parseColor(color);
+          if (parsed !== null) mapped = themedColor(parsed, roleForPathFill(parsed));
+        }
+        return original.call(this, offset, mapped);
+      };
+      try {
+        Reflect.defineProperty(gradient, "addColorStop", {
+          configurable: true,
+          writable: true,
+          enumerable: false,
+          value: wrapped
+        });
+      } catch {
+      }
+    };
     if (constructor !== null && fill !== null && stroke !== null) {
       const prototype = constructor.prototype;
       const methods = ["fillText", "strokeText", "fillRect", "fill", "stroke", "strokeRect"];
@@ -626,19 +697,27 @@
       }
       if (typeof Reflect.get(prototype, "drawImage") === "function") {
         const drawImageRestore = wrapPrototypeMethod(prototype, "drawImage", (next) => function(...args) {
-          next.apply(this, args);
+          const result = next.apply(this, args);
           const canvas = contextCanvas(this);
-          if (canvas === null || !isThemedContext(this)) return;
-          const sx = typeof args[1] === "number" ? args[1] : 0;
-          const sy = typeof args[2] === "number" ? args[2] : 0;
-          const w = typeof args[3] === "number" ? args[3] : canvas.width;
-          const h = typeof args[4] === "number" ? args[4] : canvas.height;
+          if (canvas === null || !isThemedContext(this)) return result;
+          const rect = imageDestinationOf(this, args, canvas);
+          if (rect === null) return result;
           const rects = imageRects.get(canvas) ?? [];
           if (rects.length >= IMAGE_RECT_LIMIT) rects.shift();
-          rects.push([sx, sy, w, h]);
+          rects.push(rect);
           imageRects.set(canvas, rects);
+          return result;
         });
         if (drawImageRestore !== null) restores.push(drawImageRestore);
+      }
+      for (const factory of ["createLinearGradient", "createRadialGradient", "createConicGradient"]) {
+        if (typeof Reflect.get(prototype, factory) !== "function") continue;
+        const restore = wrapPrototypeMethod(prototype, factory, (next) => function(...args) {
+          const gradient = next.apply(this, args);
+          decorateGradient(gradient, this);
+          return gradient;
+        });
+        if (restore !== null) restores.push(restore);
       }
     }
     const readPixels = (canvas) => {
@@ -672,12 +751,14 @@
       let mask = null;
       if (rects !== void 0 && rects.length > 0 && image.width > 0 && image.height > 0) {
         mask = new Uint8Array(image.width * image.height);
+        const total = image.width * image.height;
         for (const [rx, ry, rw, rh] of rects) {
           const left = Math.max(0, Math.floor(rx));
           const top = Math.max(0, Math.floor(ry));
           const right = Math.min(image.width, Math.ceil(rx + rw));
           const bottom = Math.min(image.height, Math.ceil(ry + rh));
           if (right <= left || bottom <= top) continue;
+          if ((right - left) * (bottom - top) * 2 >= total) continue;
           for (let y = top; y < bottom; y += 1) {
             mask.fill(1, y * image.width + left, y * image.width + right);
           }
