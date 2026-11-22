@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.10
+// @version      0.23.11
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -3064,6 +3064,9 @@ ${CODE_FENCE}
       }
       return withinPeekBand(current, pointerX, pointerY);
     }
+    function pointerReturnedToPeek() {
+      return hideTimer !== null && active !== null && pointerStillOverRail(active);
+    }
     function isMousePointer(event) {
       const pointerType = event.pointerType;
       return pointerType === void 0 || pointerType === "" || pointerType === "mouse";
@@ -3075,7 +3078,10 @@ ${CODE_FENCE}
       const target = event.target;
       if (!(target instanceof Element)) return;
       const rail = railFor(target);
-      if (rail === null) return;
+      if (rail === null) {
+        if (pointerReturnedToPeek()) cancelHide();
+        return;
+      }
       if (active === rail) {
         liftInert(rail);
         if (rescanNeeded) {
@@ -3098,6 +3104,10 @@ ${CODE_FENCE}
           else scheduleShow(overRail);
           return;
         }
+      }
+      if (pointerReturnedToPeek()) {
+        cancelHide();
+        return;
       }
       if (!pointerNearEdge()) {
         suppressShowUntilExit = false;
