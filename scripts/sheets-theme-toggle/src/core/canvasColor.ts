@@ -110,6 +110,19 @@ const FRINGE_MAX_SPREAD = 8;
 const NEUTRAL_SPREAD = 24;
 const NEUTRAL_LIGHTNESS_MIN = 0.5;
 
+/**
+ * Pale tints are the other half of the same problem: anti-aliased blends of a
+ * colored element (selection highlight, pastel fill, colored text, conditional
+ * format) with the bright surface are light and slightly tinted rather than
+ * neutral, so a neutral-only fold would leave them glowing as colored specks on
+ * the dark surface. Any light pixel up to this channel spread is darkened along
+ * the paper curve with its hue (channel ratios) preserved — never inverted — so
+ * the pale fringe settles into the dark background while staying the same hue.
+ * Saturated colours and most image pixels exceed the spread and are left alone.
+ */
+const LIGHT_FOLD_MIN_LIGHTNESS = 0.5;
+const LIGHT_FOLD_MAX_SPREAD = 64;
+
 const colorKey = (color: Rgba): string => `${color.r},${color.g},${color.b},${color.a}`;
 
 function buildTable(from: "light" | "dark", to: "light" | "dark"): Map<string, Rgba> {
@@ -499,13 +512,28 @@ export function mapPixels(
       changed = true;
       continue;
     }
-    if (neutralLut === null || max - min > NEUTRAL_SPREAD) continue;
-    const grey = Math.round((r + g + b) / 3);
-    const value = neutralLut[grey] ?? grey;
-    if (value === grey) continue;
-    data[index] = value;
-    data[index + 1] = value;
-    data[index + 2] = value;
+    if (neutralLut === null) continue;
+    const spread = max - min;
+    if (spread <= NEUTRAL_SPREAD) {
+      // Neutral grey: collapse the channels and fold through the cached LUT.
+      const grey = Math.round((r + g + b) / 3);
+      const value = neutralLut[grey] ?? grey;
+      if (value === grey) continue;
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
+      changed = true;
+      continue;
+    }
+    if (spread > LIGHT_FOLD_MAX_SPREAD) continue;
+    // Pale tint: darken along the paper curve while keeping the channel ratios,
+    // so the hue survives and only the brightness is pulled down.
+    const lightness = (max + min) / 510;
+    if (lightness < LIGHT_FOLD_MIN_LIGHTNESS) continue;
+    const ratio = roleLightness("paper", lightness) / lightness;
+    data[index] = Math.round(r * ratio);
+    data[index + 1] = Math.round(g * ratio);
+    data[index + 2] = Math.round(b * ratio);
     changed = true;
   }
   return changed;

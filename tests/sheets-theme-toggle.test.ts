@@ -893,6 +893,34 @@ describe("canvas theme", () => {
     }
   });
 
+  it("darkens pale tinted anti-aliasing without inverting hue and spares saturated colours", () => {
+    // A pale tint (e.g. a selection-highlight or pastel-fill anti-alias blend) is
+    // light but not neutral, so the neutral fold alone would leave it glowing.
+    // The tint fold must pull it dark while keeping the channel order (hue).
+    // A saturated colour and a dark tinted pixel are outside the band and stay.
+    const pale = [200, 220, 245, 255]; // spread 45, light, still blue-ish
+    const saturated = [220, 40, 40, 255]; // spread 180, saturated red
+    const darkTint = [40, 55, 70, 255]; // spread 30 but dark
+    const grid = makeGridCanvas([...pale, ...saturated, ...darkTint]);
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      const [pr, pg, pb] = Array.from(grid.pixels.slice(0, 4));
+      expect(pr).toBeLessThan(128);
+      expect(pg).toBeLessThan(128);
+      expect(pb).toBeLessThan(128);
+      // Hue preserved: the blue channel stays the largest, red the smallest.
+      expect(pb).toBeGreaterThan(pg!);
+      expect(pg).toBeGreaterThan(pr!);
+      // Saturated red is untouched (no inversion into cyan).
+      expect(Array.from(grid.pixels.slice(4, 8))).toEqual(saturated);
+      // A dark tint stays put (brightness is not lifted).
+      expect(Array.from(grid.pixels.slice(8, 12))).toEqual(darkTint);
+    } finally {
+      controller.dispose();
+    }
+  });
+
   it("requests a resize repaint after an actual theme switch", () => {
     const grid = makeGridCanvas([0, 0, 0, 0]);
     const resize = vi.spyOn(window, "dispatchEvent");
