@@ -1183,6 +1183,64 @@ describe("canvas theme", () => {
     }
   });
 
+  it("themes a staged cache that is attached outside the grid container", () => {
+    // Sheets can keep a staging canvas inside a hidden wrapper: it is in the
+    // document but not under the grid, so an ancestry check alone would let its
+    // light pixels through the blit.
+    const stage = document.createElement("div");
+    stage.id = "waffle-stage";
+    document.body.append(stage);
+    const cache = makeCanvas(Array(16 * 4).fill(255), 4, 4);
+    stage.append(cache.element);
+    const controller = install(document);
+    try {
+      const grid = makeGridCanvas([0, 0, 0, 0]);
+      const gridContext = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+      controller.setMode(THEME_MODE.DARK);
+      gridContext.drawImage(cache.element, 0, 0, 4, 4);
+      expect(Array.from(cache.pixels.slice(0, 4))).toEqual([32, 33, 36, 255]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("reconsiders a cache that could not be read on its first blit", () => {
+    // A cache is usually sized just before it is painted. Judging it while it
+    // is still 0x0 must not blacklist it for the rest of the session.
+    const controller = install(document);
+    try {
+      const cache = makeCanvas(Array(16 * 4).fill(255), 0, 0);
+      const grid = makeGridCanvas([0, 0, 0, 0]);
+      const gridContext = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+      controller.setMode(THEME_MODE.DARK);
+      gridContext.drawImage(cache.element, 0, 0, 4, 4);
+      cache.element.width = 4;
+      cache.element.height = 4;
+      gridContext.drawImage(cache.element, 0, 0, 4, 4);
+      expect(Array.from(cache.pixels.slice(0, 4))).toEqual([32, 33, 36, 255]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("never reinterprets a chart canvas the grid blits", () => {
+    const chart = document.createElement("div");
+    chart.className = "waffle-chart";
+    document.body.append(chart);
+    const canvas = makeCanvas(Array(16 * 4).fill(255), 4, 4);
+    chart.append(canvas.element);
+    const controller = install(document);
+    try {
+      const grid = makeGridCanvas([0, 0, 0, 0]);
+      const gridContext = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+      controller.setMode(THEME_MODE.DARK);
+      gridContext.drawImage(canvas.element, 0, 0, 4, 4);
+      expect(Array.from(canvas.pixels.slice(0, 4))).toEqual([255, 255, 255, 255]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
   it("bridges an observed author colour to dark and back to the same pixel", () => {
     const peach = parseColor("#f8cbad")!;
     const grid = makeGridCanvas([peach.r, peach.g, peach.b, peach.a]);

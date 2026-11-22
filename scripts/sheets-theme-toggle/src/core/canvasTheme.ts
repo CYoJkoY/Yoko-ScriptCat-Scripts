@@ -36,6 +36,14 @@ const TILE_PAPER_RATIO = 0.35;
 const TILE_SAMPLE_LIMIT = 4096;
 
 /**
+ * Caches kept in the theme at once. Sheets normally reuses a handful of tile
+ * surfaces; the cap keeps a page that keeps allocating them from turning every
+ * switch into thousands of pixel reads. An evicted cache stays untouched until
+ * the grid blits it again, at which point it is judged and adopted afresh.
+ */
+const SOURCE_LIMIT = 24;
+
+/**
  * A theme switch can only recolour the pixels already in the canvas; it cannot
  * rebuild the anti-aliasing Google would have painted against a dark surface,
  * so blends of text, grid lines and fills with the old white background survive
@@ -663,13 +671,15 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
    * Whether a canvas the grid blits from looks like cached sheet paint: mostly
    * near-white paper. Photos, charts and emoji atlases are mostly opaque colour
    * and fall below the ratio, so they are never reinterpreted as theme paint.
+   * `null` means the surface could not be read yet (still unsized, or not
+   * readable at all), so the answer must stay open for a later blit.
    */
-  const looksLikeGridTile = (canvas: HTMLCanvasElement): boolean => {
+  const gridTileVerdict = (canvas: HTMLCanvasElement): boolean | null => {
     const image = readPixels(canvas);
-    if (image === null) return false;
+    if (image === null) return null;
     const { data } = image;
     const total = Math.floor(data.length / 4);
-    if (total === 0) return false;
+    if (total === 0) return null;
     const step = Math.max(1, Math.floor(total / TILE_SAMPLE_LIMIT));
     let sampled = 0;
     let paper = 0;
@@ -704,14 +714,18 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       return sources.has(candidate) ? "cache" : "grid";
     }
     const canvas = image as unknown as HTMLCanvasElement;
-    if (isCanvasElement(canvas)) {
-      // A canvas that is on the page elsewhere is not ours to theme.
-      if (canvas.isConnected) return classifyGrid(canvas) ? "grid" : null;
-    }
+    const element = isCanvasElement(canvas);
+    // The grid paints its own sheet content (scrolling blits it onto itself),
+    // so its pixels are never treated as opaque content.
+    if (element && classifyGrid(canvas)) return "grid";
+    // A chart paints its own palette and must never be reinterpreted.
+    if (element && canvas.closest(CHART_SELECTOR) !== null) return null;
     if (foreignSources.has(canvas)) return null;
-    // A detached or offscreen canvas only joins the theme when its content
-    // looks like cached sheet paint; an image cache stays untouched.
-    if (!looksLikeGridTile(canvas)) {
+    // A cache Sheets has not sized yet cannot be judged; asking again on the
+    // next blit keeps a later, readable paint out of the permanent skip list.
+    const verdict = gridTileVerdict(canvas);
+    if (verdict === null) return null;
+    if (!verdict) {
       foreignSources.add(canvas);
       return null;
     }
@@ -720,6 +734,16 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     // Bridge the cache in place so the blit that follows copies dark pixels.
     applyPixels(canvas, mode, false);
     rendered.set(canvas, mode);
+    // Keep the cache set bounded to avoid unbounded memory growth and slow down
+    // on switches. Old caches are evicted and will be re-evaluated if reused.
+    if (sources.size > SOURCE_LIMIT) {
+      for (const oldest of sources) {
+        if (sources.size <= SOURCE_LIMIT) break;
+        sources.delete(oldest);
+        themed.delete(oldest);
+        rendered.delete(oldest);
+      }
+    }
     return "cache";
   };
 
