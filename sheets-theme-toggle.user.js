@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.8
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘、无需手动刷新，偏好持久化并跟随系统。
+// @version      1.0.9
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘、无需手动刷新，同时保护 drawImage 像素与 save/restore 状态，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -304,9 +304,10 @@
     }
     return table;
   }
-  function mapPixels(data, table, sweep, neutralLut = null) {
+  function mapPixels(data, table, sweep, neutralLut = null, mask = null) {
     let changed = false;
     for (let index = 0; index + 3 < data.length; index += 4) {
+      if (mask !== null && mask[index >> 2] === 1) continue;
       const alpha = data[index + 3] ?? 0;
       if (alpha === 0) continue;
       const r = data[index] ?? 0;
@@ -361,6 +362,7 @@
   var CHART_SELECTOR = ".waffle-chart, [class*='chart']";
   var COLOR_CACHE_LIMIT = 512;
   var ROLE_RECORD_LIMIT = 512;
+  var IMAGE_RECT_LIMIT = 64;
   var REPAINT_NUDGE_PX = 1;
   var REPAINT_RETRY_MS = 120;
   var REPAINT_LATE_MS = 400;
@@ -424,6 +426,13 @@
     }
     return {
       assignedValue: (self) => readOriginal(self),
+      hasAssigned: (self) => assigned.has(self),
+      setAssigned: (self, value) => {
+        assigned.set(self, value);
+      },
+      deleteAssigned: (self) => {
+        assigned.delete(self);
+      },
       writeRaw: (self, value) => writeOriginal(self, value),
       restore: () => {
         const current = Object.getOwnPropertyDescriptor(prototype, property);
@@ -463,6 +472,24 @@
       Reflect.defineProperty(prototype, method, original);
     };
   }
+  function wrapPrototypeMethod(prototype, name, wrap) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+    if (descriptor === void 0) return null;
+    const original = descriptor.value;
+    if (typeof original !== "function") return null;
+    const wrapper = wrap(original);
+    try {
+      Reflect.defineProperty(prototype, name, { ...descriptor, value: wrapper });
+    } catch (error) {
+      if (error instanceof TypeError) return null;
+      throw error;
+    }
+    return () => {
+      const current = Object.getOwnPropertyDescriptor(prototype, name);
+      if (current?.value !== wrapper) return;
+      Reflect.defineProperty(prototype, name, descriptor);
+    };
+  }
   function installCanvasTheme(options = {}) {
     const doc = options.doc ?? document;
     const scope = options.scope ?? globalThis;
@@ -475,10 +502,12 @@
     const canvases = /* @__PURE__ */ new Set();
     const rendered = /* @__PURE__ */ new WeakMap();
     const records = /* @__PURE__ */ new WeakMap();
+    const imageRects = /* @__PURE__ */ new WeakMap();
     const gridFlags = /* @__PURE__ */ new WeakMap();
     const colorCache = /* @__PURE__ */ new Map();
     const restores = [];
     const repaintTimers = [];
+    const styleStack = /* @__PURE__ */ new WeakMap();
     const themedColor = (color, role) => {
       const key = `${role}|${pixelKeyOf(color)}`;
       const cached = colorCache.get(key);
@@ -570,6 +599,47 @@
         );
         if (restore !== null) restores.push(restore);
       }
+      if (typeof Reflect.get(prototype, "save") === "function" && typeof Reflect.get(prototype, "restore") === "function") {
+        const saveRestore = wrapPrototypeMethod(prototype, "save", (next) => function(...args) {
+          const stack = styleStack.get(this) ?? [];
+          if (stack.length < 256) {
+            stack.push({
+              fill: { present: fill.hasAssigned(this), value: fill.assignedValue(this) },
+              stroke: { present: stroke.hasAssigned(this), value: stroke.assignedValue(this) }
+            });
+            styleStack.set(this, stack);
+          }
+          return next.apply(this, args);
+        });
+        if (saveRestore !== null) restores.push(saveRestore);
+        const restoreRestore = wrapPrototypeMethod(prototype, "restore", (next) => function(...args) {
+          const stack = styleStack.get(this);
+          const saved = stack?.pop();
+          if (saved === void 0) return next.apply(this, args);
+          if (saved.fill.present) fill.setAssigned(this, saved.fill.value);
+          else fill.deleteAssigned(this);
+          if (saved.stroke.present) stroke.setAssigned(this, saved.stroke.value);
+          else stroke.deleteAssigned(this);
+          return next.apply(this, args);
+        });
+        if (restoreRestore !== null) restores.push(restoreRestore);
+      }
+      if (typeof Reflect.get(prototype, "drawImage") === "function") {
+        const drawImageRestore = wrapPrototypeMethod(prototype, "drawImage", (next) => function(...args) {
+          next.apply(this, args);
+          const canvas = contextCanvas(this);
+          if (canvas === null || !isThemedContext(this)) return;
+          const sx = typeof args[1] === "number" ? args[1] : 0;
+          const sy = typeof args[2] === "number" ? args[2] : 0;
+          const w = typeof args[3] === "number" ? args[3] : canvas.width;
+          const h = typeof args[4] === "number" ? args[4] : canvas.height;
+          const rects = imageRects.get(canvas) ?? [];
+          if (rects.length >= IMAGE_RECT_LIMIT) rects.shift();
+          rects.push([sx, sy, w, h]);
+          imageRects.set(canvas, rects);
+        });
+        if (drawImageRestore !== null) restores.push(drawImageRestore);
+      }
     }
     const readPixels = (canvas) => {
       const context = canvas.getContext("2d");
@@ -598,11 +668,27 @@
     const applyPixels = (canvas, target) => {
       const image = readPixels(canvas);
       if (image === null) return false;
+      const rects = imageRects.get(canvas);
+      let mask = null;
+      if (rects !== void 0 && rects.length > 0 && image.width > 0 && image.height > 0) {
+        mask = new Uint8Array(image.width * image.height);
+        for (const [rx, ry, rw, rh] of rects) {
+          const left = Math.max(0, Math.floor(rx));
+          const top = Math.max(0, Math.floor(ry));
+          const right = Math.min(image.width, Math.ceil(rx + rw));
+          const bottom = Math.min(image.height, Math.ceil(ry + rh));
+          if (right <= left || bottom <= top) continue;
+          for (let y = top; y < bottom; y += 1) {
+            mask.fill(1, y * image.width + left, y * image.width + right);
+          }
+        }
+      }
       const changed = mapPixels(
         image.data,
         pixelTable(canvas, target),
         target === THEME_MODE.DARK ? FRINGE_SWEEP : null,
-        target === THEME_MODE.DARK ? neutralDarkLut() : null
+        target === THEME_MODE.DARK ? neutralDarkLut() : null,
+        mask
       );
       if (!changed) return false;
       const context = canvas.getContext("2d");
