@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.4
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、切换后请求重绘，偏好持久化并跟随系统。
+// @version      1.0.5
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠抗锯齿亮噪点并请求重绘，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -94,6 +94,8 @@
   var DARK_SURFACE = rgba(32, 33, 36);
   var FRINGE_MIN_CHANNEL = 220;
   var FRINGE_MAX_SPREAD = 8;
+  var NEUTRAL_SPREAD = 24;
+  var NEUTRAL_LIGHTNESS_MIN = 0.5;
   var colorKey = (color) => `${color.r},${color.g},${color.b},${color.a}`;
   function buildTable(from, to) {
     const table = /* @__PURE__ */ new Map();
@@ -188,6 +190,17 @@
     if (role === "ink") return INK_MAX_SATURATION;
     if (role === "edge") return EDGE_MAX_SATURATION;
     return PAPER_MAX_SATURATION;
+  }
+  var neutralDarkLutCache = null;
+  function neutralDarkLut() {
+    if (neutralDarkLutCache !== null) return neutralDarkLutCache;
+    const lut = new Uint8Array(256);
+    for (let value = 0; value < 256; value += 1) {
+      const lightness = value / 255;
+      lut[value] = lightness >= NEUTRAL_LIGHTNESS_MIN ? Math.round(roleLightness("paper", lightness) * 255) : value;
+    }
+    neutralDarkLutCache = lut;
+    return lut;
   }
   function roleForPathFill(color) {
     const [, , lightness] = rgbToHsl(color);
@@ -289,7 +302,7 @@
     }
     return table;
   }
-  function mapPixels(data, table, sweep) {
+  function mapPixels(data, table, sweep, neutralLut = null) {
     let changed = false;
     for (let index = 0; index + 3 < data.length; index += 4) {
       const alpha = data[index + 3] ?? 0;
@@ -306,13 +319,22 @@
         changed = true;
         continue;
       }
-      if (sweep === null) continue;
       const max = Math.max(r, g, b);
       const min = Math.min(r, g, b);
-      if (min < FRINGE_MIN_CHANNEL || max - min > FRINGE_MAX_SPREAD) continue;
-      data[index] = sweep.r;
-      data[index + 1] = sweep.g;
-      data[index + 2] = sweep.b;
+      if (sweep !== null && min >= FRINGE_MIN_CHANNEL && max - min <= FRINGE_MAX_SPREAD) {
+        data[index] = sweep.r;
+        data[index + 1] = sweep.g;
+        data[index + 2] = sweep.b;
+        changed = true;
+        continue;
+      }
+      if (neutralLut === null || max - min > NEUTRAL_SPREAD) continue;
+      const grey = Math.round((r + g + b) / 3);
+      const value = neutralLut[grey] ?? grey;
+      if (value === grey) continue;
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
       changed = true;
     }
     return changed;
@@ -554,7 +576,8 @@
       const changed = mapPixels(
         image.data,
         pixelTable(canvas, target),
-        target === THEME_MODE.DARK ? FRINGE_SWEEP : null
+        target === THEME_MODE.DARK ? FRINGE_SWEEP : null,
+        target === THEME_MODE.DARK ? neutralDarkLut() : null
       );
       if (!changed) return false;
       const context = canvas.getContext("2d");
