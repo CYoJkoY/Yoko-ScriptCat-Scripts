@@ -25,6 +25,17 @@ const ROLE_RECORD_LIMIT = 512;
 const IMAGE_RECT_LIMIT = 64;
 
 /**
+ * A canvas the grid blits from is treated as a render cache of sheet paint when
+ * enough of it is near-white paper. Photos, emoji bitmaps and other opaque
+ * content fail this test and are left alone.
+ */
+const TILE_PAPER_MIN_CHANNEL = 224;
+const TILE_PAPER_MAX_SPREAD = 24;
+const TILE_PAPER_RATIO = 0.35;
+/** Pixels read per cache check; large caches are sampled, not scanned whole. */
+const TILE_SAMPLE_LIMIT = 4096;
+
+/**
  * A theme switch can only recolour the pixels already in the canvas; it cannot
  * rebuild the anti-aliasing Google would have painted against a dark surface,
  * so blends of text, grid lines and fills with the old white background survive
@@ -96,10 +107,13 @@ function isCanvasElement(value: unknown): value is HTMLCanvasElement {
   return isRecord(value) && Reflect.get(value, "nodeType") === 1 && typeof Reflect.get(value, "getContext") === "function";
 }
 
-function resolveContextConstructor(candidates: readonly unknown[]): ContextConstructor | null {
+function resolveContextConstructor(
+  candidates: readonly unknown[],
+  key = "CanvasRenderingContext2D",
+): ContextConstructor | null {
   for (const host of candidates) {
     if (!isRecord(host)) continue;
-    const candidate = host["CanvasRenderingContext2D"];
+    const candidate = host[key];
     if (typeof candidate !== "function") continue;
     const prototype: unknown = candidate.prototype;
     if (isRecord(prototype)) return { prototype };
@@ -253,6 +267,18 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
 
   const themed = new WeakSet<object>();
   const canvases = new Set<HTMLCanvasElement>();
+  /**
+   * Detached or offscreen canvases the grid blits from. Sheets caches rendered
+   * cells in them; if they were painted before the hooks existed they blit as
+   * light rectangles, which is the pixel noise a reload used to clear.
+   */
+  const sources = new Set<HTMLCanvasElement>();
+  /**
+   * Canvases the grid blits from that were judged not to be sheet paint. The
+   * check needs a full pixel read, so a negative answer is remembered instead of
+   * being recomputed on every frame.
+   */
+  const foreignSources = new WeakSet<object>();
   const rendered = new WeakMap<HTMLCanvasElement, ThemeMode>();
   const records = new WeakMap<HTMLCanvasElement, Map<number, RoleRecord>>();
   /** Rectangles where `drawImage` was called; kept for the bridge mask. */
@@ -282,6 +308,12 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     return isCanvasElement(canvas) ? canvas : null;
   };
 
+  /** The canvas or OffscreenCanvas behind a context, without the DOM check. */
+  const contextSurface = (self: object): object | null => {
+    const surface: unknown = Reflect.get(self, "canvas");
+    return isRecord(surface) ? surface : null;
+  };
+
   /**
    * Decide whether a canvas is the sheet grid, read straight from the DOM. A
    * switched worksheet is repainted in the same task that swaps the canvas, so
@@ -308,11 +340,14 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     rendered.set(canvas, mode);
   };
   const isThemedContext = (self: object): boolean => {
-    const canvas = contextCanvas(self);
-    if (canvas === null) return false;
-    if (themed.has(canvas)) return true;
-    if (!classifyGrid(canvas)) return false;
-    adopt(canvas);
+    const surface = contextSurface(self);
+    if (surface === null) return false;
+    if (themed.has(surface)) return true;
+    // A detached or offscreen surface has no DOM ancestry to classify; it joins
+    // the theme only once the grid is seen drawing from it.
+    if (!isCanvasElement(surface)) return false;
+    if (!classifyGrid(surface)) return false;
+    adopt(surface);
     return true;
   };
   const remember = (self: object, color: Rgba, role: CanvasRole): void => {
@@ -343,6 +378,20 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
   const stroke = constructor === null ? null : hookStyleProperty(constructor.prototype, "strokeStyle", remap("edge"));
   if (fill !== null) restores.push(fill.restore);
   if (stroke !== null) restores.push(stroke.restore);
+
+  // OffscreenCanvas has its own context prototype, so the hooks above never see
+  // a cache Sheets renders there. Style hooks alone are enough: once such a
+  // cache is adopted as a grid source, its paints follow the theme.
+  const offscreenConstructor = resolveContextConstructor([page, scope], "OffscreenCanvasRenderingContext2D");
+  if (offscreenConstructor !== null) {
+    for (const [property, role] of [
+      ["fillStyle", "paper"],
+      ["strokeStyle", "edge"],
+    ] as const) {
+      const binding = hookStyleProperty(offscreenConstructor.prototype, property, remap(role));
+      if (binding !== null) restores.push(binding.restore);
+    }
+  }
 
   const roleForMethod = (method: DrawMethod, self: object, args: readonly unknown[]): CanvasRole => {
     if (method === "fillText" || method === "strokeText") return "ink";
@@ -502,9 +551,15 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     if (typeof Reflect.get(prototype, "drawImage") === "function") {
       const drawImageRestore = wrapPrototypeMethod(prototype, "drawImage", (next) =>
         function (this: object, ...args: unknown[]): unknown {
+          // A tile cache is themed before the blit, so the pixels Sheets copies
+          // onto the grid are already dark instead of a light rectangle.
+          const source = adoptSourceImage(args[0]);
           const result = next.apply(this, args);
           const canvas = contextCanvas(this);
           if (canvas === null || !isThemedContext(this)) return result;
+          // A themed cache holds our own paint; it is bridged like the grid
+          // rather than masked out as opaque content.
+          if (source !== null) return result;
           const rect = imageDestinationOf(this, args, canvas);
           if (rect === null) return result;
           const rects = imageRects.get(canvas) ?? [];
@@ -560,12 +615,12 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     return buildPixelTable(pairs);
   };
 
-  const applyPixels = (canvas: HTMLCanvasElement, target: ThemeMode): boolean => {
+  const applyPixels = (canvas: HTMLCanvasElement, target: ThemeMode, useMask = true): boolean => {
     const image = readPixels(canvas);
     if (image === null) return false;
     // Pixels Google painted with `drawImage` are opaque content the script must
     // not reinterpret, so they are masked out of the bridge entirely.
-    const rects = imageRects.get(canvas);
+    const rects = useMask ? imageRects.get(canvas) : undefined;
     let mask: Uint8Array | null = null;
     if (rects !== undefined && rects.length > 0 && image.width > 0 && image.height > 0) {
       mask = new Uint8Array(image.width * image.height);
@@ -602,6 +657,70 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       throw error;
     }
     return true;
+  };
+
+  /**
+   * Whether a canvas the grid blits from looks like cached sheet paint: mostly
+   * near-white paper. Photos, charts and emoji atlases are mostly opaque colour
+   * and fall below the ratio, so they are never reinterpreted as theme paint.
+   */
+  const looksLikeGridTile = (canvas: HTMLCanvasElement): boolean => {
+    const image = readPixels(canvas);
+    if (image === null) return false;
+    const { data } = image;
+    const total = Math.floor(data.length / 4);
+    if (total === 0) return false;
+    const step = Math.max(1, Math.floor(total / TILE_SAMPLE_LIMIT));
+    let sampled = 0;
+    let paper = 0;
+    for (let pixel = 0; pixel < total; pixel += step) {
+      const index = pixel * 4;
+      if ((data[index + 3] ?? 0) === 0) continue;
+      sampled += 1;
+      const r = data[index] ?? 0;
+      const g = data[index + 1] ?? 0;
+      const b = data[index + 2] ?? 0;
+      const max = Math.max(r, g, b);
+      if (Math.min(r, g, b) >= TILE_PAPER_MIN_CHANNEL && max - Math.min(r, g, b) <= TILE_PAPER_MAX_SPREAD) {
+        paper += 1;
+      }
+    }
+    // A canvas with nothing on it yet is a render buffer, not an image.
+    if (sampled === 0) return true;
+    return paper / sampled >= TILE_PAPER_RATIO;
+  };
+
+  /**
+   * Bring a canvas that the grid draws from into the theme before the blit, so
+   * its pixels already match the mode instead of landing as a light rectangle.
+   * Returns `"grid"` for the sheet canvas itself, `"cache"` for a themed tile
+   * cache, and null for anything else (an image or an unfamiliar canvas, which
+   * the bridge then masks as opaque content).
+   */
+  const adoptSourceImage = (image: unknown): "grid" | "cache" | null => {
+    if (!isRecord(image) || typeof Reflect.get(image, "getContext") !== "function") return null;
+    if (themed.has(image)) {
+      const candidate = image as unknown as HTMLCanvasElement;
+      return sources.has(candidate) ? "cache" : "grid";
+    }
+    const canvas = image as unknown as HTMLCanvasElement;
+    if (isCanvasElement(canvas)) {
+      // A canvas that is on the page elsewhere is not ours to theme.
+      if (canvas.isConnected) return classifyGrid(canvas) ? "grid" : null;
+    }
+    if (foreignSources.has(canvas)) return null;
+    // A detached or offscreen canvas only joins the theme when its content
+    // looks like cached sheet paint; an image cache stays untouched.
+    if (!looksLikeGridTile(canvas)) {
+      foreignSources.add(canvas);
+      return null;
+    }
+    themed.add(canvas);
+    sources.add(canvas);
+    // Bridge the cache in place so the blit that follows copies dark pixels.
+    applyPixels(canvas, mode, false);
+    rendered.set(canvas, mode);
+    return "cache";
   };
 
 /**
@@ -772,6 +891,13 @@ function gridBoxOf(canvas: HTMLCanvasElement): HTMLElement | null {
         applyPixels(canvas, next);
         rendered.set(canvas, next);
       }
+      // Tile caches hold the same paint as the grid; without this they would
+      // keep blitting stale light pixels over the switched canvas.
+      for (const source of sources) {
+        if (rendered.get(source) === next) continue;
+        applyPixels(source, next, false);
+        rendered.set(source, next);
+      }
       applied = next;
       if (changed) requestRepaint(doc.defaultView);
     },
@@ -787,10 +913,16 @@ function gridBoxOf(canvas: HTMLCanvasElement): HTMLElement | null {
         applyPixels(canvas, THEME_MODE.LIGHT);
         rendered.set(canvas, THEME_MODE.LIGHT);
       }
+      for (const source of sources) {
+        if (rendered.get(source) !== THEME_MODE.DARK) continue;
+        applyPixels(source, THEME_MODE.LIGHT, false);
+        rendered.set(source, THEME_MODE.LIGHT);
+      }
       disposed = true;
       observer?.disconnect();
       for (const restore of restores) restore();
       canvases.clear();
+      sources.clear();
       colorCache.clear();
     },
   };

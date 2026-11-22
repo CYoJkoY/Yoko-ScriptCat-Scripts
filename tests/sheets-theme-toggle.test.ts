@@ -175,18 +175,14 @@ class FakeCanvasContext {
   }
 }
 
-function makeGridCanvas(initial: number[], width = Math.max(1, Math.ceil(initial.length / 4)), height = 1): {
-  readonly element: HTMLCanvasElement;
-  readonly pixels: Uint8ClampedArray;
-} {
-  const container = document.createElement("div");
-  container.id = "waffle-grid-container";
-  document.body.append(container);
+function makeCanvas(
+  initial: number[],
+  width = Math.max(1, Math.ceil(initial.length / 4)),
+  height = 1,
+): { readonly element: HTMLCanvasElement; readonly pixels: Uint8ClampedArray } {
   const element = document.createElement("canvas");
   element.width = width;
   element.height = height;
-  container.append(element);
-
   const pixels = new Uint8ClampedArray(initial);
   const context = Object.assign(new FakeCanvasContext(), {
     canvas: element,
@@ -198,6 +194,18 @@ function makeGridCanvas(initial: number[], width = Math.max(1, Math.ceil(initial
   });
   element.getContext = (() => context) as unknown as HTMLCanvasElement["getContext"];
   return { element, pixels };
+}
+
+function makeGridCanvas(initial: number[], width = Math.max(1, Math.ceil(initial.length / 4)), height = 1): {
+  readonly element: HTMLCanvasElement;
+  readonly pixels: Uint8ClampedArray;
+} {
+  const container = document.createElement("div");
+  container.id = "waffle-grid-container";
+  document.body.append(container);
+  const grid = makeCanvas(initial, width, height);
+  container.append(grid.element);
+  return grid;
 }
 
 describe("theme mode rules", () => {
@@ -1126,6 +1134,50 @@ describe("canvas theme", () => {
       light.addColorStop(1, "#444746");
       expect(light.stops[0]).toBe("rgba(255, 255, 255, 0.8)");
       expect(light.stops[1]).toBe("#444746");
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("themes a detached tile cache before the grid blits it", () => {
+    // Sheets caches rendered cells in an off-DOM canvas and blits them with
+    // drawImage. A cache painted before the switch still holds light pixels, so
+    // the blit used to land as a light rectangle until a reload rebuilt it.
+    const controller = install(document);
+    try {
+      const cache = makeCanvas(Array(16 * 4).fill(255), 4, 4);
+      const cacheContext = cache.element.getContext("2d") as unknown as FakeCanvasContext;
+      const grid = makeGridCanvas([0, 0, 0, 0]);
+      const gridContext = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+      controller.setMode(THEME_MODE.DARK);
+      gridContext.drawImage(cache.element, 0, 0, 4, 4);
+      // The cache itself is bridged, so the blit copies dark pixels.
+      expect(Array.from(cache.pixels.slice(0, 4))).toEqual([32, 33, 36, 255]);
+      // Later paint into the cache follows the theme too.
+      cacheContext.fillStyle = "#ffffff";
+      cacheContext.fillRect();
+      expect(cacheContext.drawn("fillRect")).toBe("#202124");
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("leaves a photo-like detached canvas untouched when it is blitted", () => {
+    const onePixel = [198, 124, 92, 255];
+    const controller = install(document);
+    try {
+      const photo = makeCanvas(Array.from({ length: 16 }, () => onePixel).flat(), 4, 4);
+      const photoContext = photo.element.getContext("2d") as unknown as FakeCanvasContext;
+      const grid = makeGridCanvas([0, 0, 0, 0]);
+      const gridContext = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+      controller.setMode(THEME_MODE.DARK);
+      gridContext.drawImage(photo.element, 0, 0, 4, 4);
+      // Not enough near-white paper to be a sheet tile: the pixels stay as-is.
+      expect(Array.from(photo.pixels.slice(0, 4))).toEqual(onePixel);
+      // And its paints are not redirected.
+      photoContext.fillStyle = "#ffffff";
+      photoContext.fillRect();
+      expect(photoContext.rawFill()).toBe("#ffffff");
     } finally {
       controller.dispose();
     }
