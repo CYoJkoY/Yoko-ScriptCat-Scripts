@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.7
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过轻推网格滚动与补发 resize 让 Google 立即整块重绘、无需手动刷新，偏好持久化并跟随系统。
+// @version      1.0.8
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘、无需手动刷新，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -363,6 +363,7 @@
   var ROLE_RECORD_LIMIT = 512;
   var REPAINT_NUDGE_PX = 1;
   var REPAINT_RETRY_MS = 120;
+  var REPAINT_LATE_MS = 400;
   function scrollBoxOf(node) {
     if (!("scrollTop" in node) || !("clientHeight" in node)) return null;
     const element = node;
@@ -614,6 +615,11 @@
       }
       return true;
     };
+    function gridBoxOf(canvas) {
+      const box = canvas.closest(GRID_CONTAINER_SELECTOR);
+      if (box === null || !("style" in box)) return null;
+      return box;
+    }
     const nudgeScroll = (host, view) => {
       const top = host.scrollTop;
       const left = host.scrollLeft;
@@ -640,10 +646,37 @@
       }
       restore();
     };
+    const squeezeLayout = (box, view) => {
+      const height = box.clientHeight;
+      if (height <= 2) return;
+      const previous = box.style.getPropertyValue("height");
+      const priority = box.style.getPropertyPriority("height");
+      const restore = () => {
+        try {
+          if (previous === "") box.style.removeProperty("height");
+          else box.style.setProperty("height", previous, priority);
+        } catch {
+        }
+      };
+      try {
+        box.style.setProperty("height", `${height - 1}px`, "important");
+      } catch {
+        return;
+      }
+      if (view === null || typeof view.requestAnimationFrame !== "function") {
+        restore();
+        return;
+      }
+      view.requestAnimationFrame(() => {
+        view.requestAnimationFrame(restore);
+      });
+    };
     const requestRepaint = (view) => {
       if (view === null) return;
       for (const canvas of canvases) {
         if (!canvas.isConnected) continue;
+        const box = gridBoxOf(canvas);
+        if (box !== null) squeezeLayout(box, view);
         let host = null;
         for (let node = canvas.parentElement; node !== null && host === null; node = node.parentElement) {
           host = scrollBoxOf(node);
@@ -652,6 +685,7 @@
           nudgeScroll(host, view);
           break;
         }
+        if (box !== null) break;
       }
       const ping = () => {
         try {
@@ -664,12 +698,14 @@
         view.requestAnimationFrame(ping);
       }
       if (typeof view.setTimeout !== "function") return;
-      const timer = view.setTimeout(() => {
-        const index = repaintTimers.indexOf(timer);
-        if (index !== -1) repaintTimers.splice(index, 1);
-        ping();
-      }, REPAINT_RETRY_MS);
-      repaintTimers.push(timer);
+      for (const delay of [REPAINT_RETRY_MS, REPAINT_LATE_MS]) {
+        const timer = view.setTimeout(() => {
+          const index = repaintTimers.indexOf(timer);
+          if (index !== -1) repaintTimers.splice(index, 1);
+          ping();
+        }, delay);
+        repaintTimers.push(timer);
+      }
     };
     const register = (canvas) => {
       if (canvases.has(canvas)) return;
