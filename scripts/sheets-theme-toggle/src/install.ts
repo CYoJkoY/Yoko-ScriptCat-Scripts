@@ -1,5 +1,6 @@
 import { type ThemeMode } from "./config";
 import { applyTheme, releaseTheme } from "./core/apply";
+import { installCanvasTheme } from "./core/canvasTheme";
 import { createThemePreference } from "./core/preference";
 import { ensureThemeStyle, removeThemeStyle } from "./core/style";
 import { createSystemDarkQuery, resolveThemeMode, toggleThemeMode } from "./core/theme";
@@ -34,10 +35,16 @@ export function installSheetsTheme(options: SheetsThemeOptions = {}): SheetsThem
   ensureThemeStyle(doc);
   applyTheme(doc, mode);
 
+  // The grid is painted into a canvas, so the chrome's CSS cannot reach it; the
+  // canvas theme recolours that surface (and only its neutral pixels).
+  const canvasTheme = installCanvasTheme({ doc, ...(options.scope === undefined ? {} : { scope: options.scope }) });
+  canvasTheme.setMode(mode);
+
   const button = createThemeButton(doc, mode);
   const paint = (next: ThemeMode, persist: boolean): void => {
     mode = next;
     applyTheme(doc, mode);
+    canvasTheme.setMode(mode);
     updateThemeButton(button, mode);
     if (persist) preference.write(mode);
   };
@@ -75,6 +82,7 @@ export function installSheetsTheme(options: SheetsThemeOptions = {}): SheetsThem
       unsubscribe();
       mount.dispose();
       button.remove();
+      canvasTheme.dispose();
       releaseTheme(doc);
       removeThemeStyle(doc);
     },
