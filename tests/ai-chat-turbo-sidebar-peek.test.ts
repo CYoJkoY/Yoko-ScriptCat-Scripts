@@ -1165,6 +1165,81 @@ describe("sidebar peek hover tracking", () => {
     }
   });
 
+  it("restarts the leave grace when the pointer comes back inside the panel", () => {
+    const instance = start();
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    const button = document.getElementById("new-chat");
+    const chat = document.getElementById("chat");
+    if (!button || !chat) throw new Error("missing nodes");
+
+    const restore = stubHit(chat);
+    try {
+      dispatchPointer("pointerout", button, chat, "mouse", 600, 300);
+      vi.advanceTimersByTime(100);
+      // Back on the widened panel, past the narrow edge band. The user is
+      // looking at this panel, so the deadline armed by the first exit must
+      // not outlive the return.
+      dispatchPointerMove(200, 300, chat);
+      vi.advanceTimersByTime(20);
+      dispatchPointerMove(600, 300, chat);
+      vi.advanceTimersByTime(100);
+      expect(instance.isPeeking()).toBe(true);
+
+      vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS - 100);
+      expect(instance.isPeeking()).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("cancels the pending hide when pointerover lands back inside the panel", () => {
+    const instance = start();
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    const button = document.getElementById("new-chat");
+    const chat = document.getElementById("chat");
+    if (!button || !chat) throw new Error("missing nodes");
+
+    const restore = stubHit(chat);
+    try {
+      dispatchPointer("pointerout", button, chat, "mouse", 600, 300);
+      vi.advanceTimersByTime(100);
+      dispatchPointer("pointerover", chat, null, "mouse", 200, 300);
+      vi.advanceTimersByTime(20);
+      dispatchPointerMove(600, 300, chat);
+      vi.advanceTimersByTime(100);
+      expect(instance.isPeeking()).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the original deadline while the pointer stays outside the band", () => {
+    const instance = start();
+    hoverButton();
+    vi.advanceTimersByTime(SIDEBAR_PEEK_SHOW_DELAY_MS);
+    const button = document.getElementById("new-chat");
+    const chat = document.getElementById("chat");
+    if (!button || !chat) throw new Error("missing nodes");
+
+    const restore = stubHit(chat);
+    try {
+      dispatchPointer("pointerout", button, chat, "mouse", 600, 300);
+      vi.advanceTimersByTime(100);
+      // A move that stays outside the peek is not a return, so it must not
+      // push the deadline the first exit armed.
+      dispatchPointerMove(800, 300, chat);
+      vi.advanceTimersByTime(SIDEBAR_PEEK_HIDE_DELAY_MS - 100 - 1);
+      expect(instance.isPeeking()).toBe(true);
+
+      vi.advanceTimersByTime(1);
+      expect(instance.isPeeking()).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
   it("opens from the last move of a sweep that outruns the probe interval", () => {
     const instance = start();
     const chat = document.getElementById("chat");

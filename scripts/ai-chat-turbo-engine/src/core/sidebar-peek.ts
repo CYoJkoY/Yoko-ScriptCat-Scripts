@@ -1899,6 +1899,18 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     return withinPeekBand(current, pointerX, pointerY);
   }
 
+  /**
+   * Whether a pending hide has been overtaken by the pointer: it came back
+   * onto the panel the peek painted, where the timer would have been vetoed
+   * when it fired. Dropping it here makes the next exit arm a full grace
+   * instead of inheriting the remainder of an older deadline.
+   */
+  function pointerReturnedToPeek(): boolean {
+    return (
+      hideTimer !== null && active !== null && pointerStillOverRail(active)
+    );
+  }
+
   function isMousePointer(event: Event): boolean {
     const pointerType = (event as PointerEvent).pointerType;
     return (
@@ -1913,7 +1925,12 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     const target = event.target;
     if (!(target instanceof Element)) return;
     const rail = railFor(target);
-    if (rail === null) return;
+    if (rail === null) {
+      // A panel painted by a sibling shell or a blank row between two of them
+      // is still the peek the pointer just came back to.
+      if (pointerReturnedToPeek()) cancelHide();
+      return;
+    }
     if (active === rail) {
       liftInert(rail);
       if (rescanNeeded) {
@@ -1948,6 +1965,12 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
         else scheduleShow(overRail);
         return;
       }
+    }
+    // Coming back inside the panel before the grace expires is a return, not
+    // a leave: the countdown starts over from the next exit.
+    if (pointerReturnedToPeek()) {
+      cancelHide();
+      return;
     }
     if (!pointerNearEdge()) {
       suppressShowUntilExit = false;
@@ -2054,7 +2077,11 @@ export function createSidebarPeek(options: SidebarPeekOptions): SidebarPeek {
     if (active !== null) scheduleHide(active);
   }
 
-  /** Arm the leave grace period once; pointer moves must not push it forward. */
+  /**
+   * Arm the leave grace once per departure. Re-entering the peek cancels the
+   * timer, so the pointer that comes back and leaves again gets the whole
+   * grace instead of whatever was left of the first deadline.
+   */
   function requestHide(rail: HTMLElement): void {
     if (hideTimer !== null) return;
     scheduleHide(rail);
