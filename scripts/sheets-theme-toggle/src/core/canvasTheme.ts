@@ -38,6 +38,9 @@ const REPAINT_NUDGE_PX = 1;
 /** Sheets debounces its own layout work, so the resize ping is repeated. */
 const REPAINT_RETRY_MS = 120;
 
+/** A late ping, for a Sheets tab that was throttled while the switch happened. */
+const REPAINT_LATE_MS = 400;
+
 /**
  * The nearest ancestor that Sheets would scroll, i.e. the element whose content
  * is taller or wider than its box. Both metrics are plain geometry reads, and a
@@ -376,6 +379,18 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     return true;
   };
 
+/**
+ * The grid box whose size Sheets derives the canvas from. A real, observable
+ * size change is the one thing Sheets cannot optimise away: it re-lays out the
+ * grid and repaints every visible cell through the draw hooks, exactly like a
+ * page reload does.
+ */
+function gridBoxOf(canvas: HTMLCanvasElement): HTMLElement | null {
+  const box = canvas.closest(GRID_CONTAINER_SELECTOR);
+  if (box === null || !("style" in box)) return null;
+  return box as HTMLElement;
+}
+
   /**
    * Move the scroll box one pixel and put it back on the next frame. The
    * synthetic `scroll` reports the new offset immediately (Sheets redraws at
@@ -410,10 +425,46 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     restore();
   };
 
+  /**
+   * Shrink the grid box by one pixel for two frames. Sheets sizes the grid
+   * canvas from this box, so the size change makes its renderer rebuild the
+   * canvas - the same path a page reload takes, and the only one that cannot be
+   * skipped as a no-op. The inline height is restored exactly as it was, so
+   * Google's own layout value is never lost.
+   */
+  const squeezeLayout = (box: HTMLElement, view: Window | null): void => {
+    const height = box.clientHeight;
+    if (height <= 2) return;
+    const previous = box.style.getPropertyValue("height");
+    const priority = box.style.getPropertyPriority("height");
+    const restore = (): void => {
+      try {
+        if (previous === "") box.style.removeProperty("height");
+        else box.style.setProperty("height", previous, priority);
+      } catch {
+        // A torn-down document can reject style writes mid-navigation.
+      }
+    };
+    try {
+      box.style.setProperty("height", `${height - 1}px`, "important");
+    } catch {
+      return;
+    }
+    if (view === null || typeof view.requestAnimationFrame !== "function") {
+      restore();
+      return;
+    }
+    view.requestAnimationFrame(() => {
+      view.requestAnimationFrame(restore);
+    });
+  };
+
   const requestRepaint = (view: Window | null): void => {
     if (view === null) return;
     for (const canvas of canvases) {
       if (!canvas.isConnected) continue;
+      const box = gridBoxOf(canvas);
+      if (box !== null) squeezeLayout(box, view);
       let host: HTMLElement | null = null;
       for (let node = canvas.parentElement; node !== null && host === null; node = node.parentElement) {
         host = scrollBoxOf(node);
@@ -422,6 +473,7 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
         nudgeScroll(host, view);
         break;
       }
+      if (box !== null) break;
     }
     const ping = (): void => {
       try {
@@ -435,12 +487,14 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       view.requestAnimationFrame(ping);
     }
     if (typeof view.setTimeout !== "function") return;
-    const timer = view.setTimeout(() => {
-      const index = repaintTimers.indexOf(timer);
-      if (index !== -1) repaintTimers.splice(index, 1);
-      ping();
-    }, REPAINT_RETRY_MS);
-    repaintTimers.push(timer);
+    for (const delay of [REPAINT_RETRY_MS, REPAINT_LATE_MS]) {
+      const timer = view.setTimeout(() => {
+        const index = repaintTimers.indexOf(timer);
+        if (index !== -1) repaintTimers.splice(index, 1);
+        ping();
+      }, delay);
+      repaintTimers.push(timer);
+    }
   };
 
   const register = (canvas: HTMLCanvasElement): void => {

@@ -969,6 +969,30 @@ describe("canvas theme", () => {
     }
   });
 
+  it("squeezes the grid box a pixel and restores it so Sheets relayouts the canvas", async () => {
+    // A synthetic resize at an unchanged size is discarded by Sheets, so the
+    // switch also reports a real geometry change (one pixel shorter for two
+    // frames) and then restores the inline height exactly as it was.
+    const grid = makeGridCanvas([255, 255, 255, 255]);
+    const container = grid.element.parentElement;
+    if (container === null) throw new Error("Expected the grid container");
+    Object.defineProperty(container, "clientHeight", { value: 600, configurable: true });
+    const setProperty = vi.spyOn(container.style, "setProperty");
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      // The first paint of a fresh install is not a "switch"; toggle once more.
+      controller.setMode(THEME_MODE.LIGHT);
+      expect(setProperty).toHaveBeenCalledWith("height", "599px", "important");
+      await vi.waitFor(() => {
+        expect(container.style.getPropertyValue("height")).toBe("");
+      });
+    } finally {
+      controller.dispose();
+      setProperty.mockRestore();
+    }
+  });
+
   it("themes a switched worksheet on its first draw without waiting for the observer", () => {
     const controller = install(document);
     try {
