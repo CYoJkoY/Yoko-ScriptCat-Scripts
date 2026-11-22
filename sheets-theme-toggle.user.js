@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.10
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘、无需手动刷新，同时保护 drawImage 像素（按 3/5/9 参数与变换解析目标矩形）、按角色曲线映射渐变色标，并保护 save/restore 状态，偏好持久化并跟随系统。
+// @version      1.0.11
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并在网格 blit 之前接管与之同源的游离/离屏格子缓存，避免切换后残留浅色噪点、无需手动刷新；同时通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘，保护 drawImage 图片像素（按 3/5/9 参数与变换解析目标矩形）、按角色曲线映射渐变与离屏上下文色标，并保护 save/restore 状态，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -363,6 +363,10 @@
   var COLOR_CACHE_LIMIT = 512;
   var ROLE_RECORD_LIMIT = 512;
   var IMAGE_RECT_LIMIT = 64;
+  var TILE_PAPER_MIN_CHANNEL = 224;
+  var TILE_PAPER_MAX_SPREAD = 24;
+  var TILE_PAPER_RATIO = 0.35;
+  var TILE_SAMPLE_LIMIT = 4096;
   var REPAINT_NUDGE_PX = 1;
   var REPAINT_RETRY_MS = 120;
   var REPAINT_LATE_MS = 400;
@@ -379,10 +383,10 @@
   function isCanvasElement(value) {
     return isRecord(value) && Reflect.get(value, "nodeType") === 1 && typeof Reflect.get(value, "getContext") === "function";
   }
-  function resolveContextConstructor(candidates) {
+  function resolveContextConstructor(candidates, key = "CanvasRenderingContext2D") {
     for (const host of candidates) {
       if (!isRecord(host)) continue;
-      const candidate = host["CanvasRenderingContext2D"];
+      const candidate = host[key];
       if (typeof candidate !== "function") continue;
       const prototype = candidate.prototype;
       if (isRecord(prototype)) return { prototype };
@@ -500,6 +504,8 @@
     let disposed = false;
     const themed = /* @__PURE__ */ new WeakSet();
     const canvases = /* @__PURE__ */ new Set();
+    const sources = /* @__PURE__ */ new Set();
+    const foreignSources = /* @__PURE__ */ new WeakSet();
     const rendered = /* @__PURE__ */ new WeakMap();
     const records = /* @__PURE__ */ new WeakMap();
     const imageRects = /* @__PURE__ */ new WeakMap();
@@ -521,6 +527,10 @@
       const canvas = Reflect.get(self, "canvas");
       return isCanvasElement(canvas) ? canvas : null;
     };
+    const contextSurface = (self) => {
+      const surface = Reflect.get(self, "canvas");
+      return isRecord(surface) ? surface : null;
+    };
     const classifyGrid = (canvas) => {
       const cached = gridFlags.get(canvas);
       if (cached !== void 0) return cached;
@@ -536,11 +546,12 @@
       rendered.set(canvas, mode);
     };
     const isThemedContext = (self) => {
-      const canvas = contextCanvas(self);
-      if (canvas === null) return false;
-      if (themed.has(canvas)) return true;
-      if (!classifyGrid(canvas)) return false;
-      adopt(canvas);
+      const surface = contextSurface(self);
+      if (surface === null) return false;
+      if (themed.has(surface)) return true;
+      if (!isCanvasElement(surface)) return false;
+      if (!classifyGrid(surface)) return false;
+      adopt(surface);
       return true;
     };
     const remember = (self, color, role) => {
@@ -569,6 +580,16 @@
     const stroke = constructor === null ? null : hookStyleProperty(constructor.prototype, "strokeStyle", remap("edge"));
     if (fill !== null) restores.push(fill.restore);
     if (stroke !== null) restores.push(stroke.restore);
+    const offscreenConstructor = resolveContextConstructor([page, scope], "OffscreenCanvasRenderingContext2D");
+    if (offscreenConstructor !== null) {
+      for (const [property, role] of [
+        ["fillStyle", "paper"],
+        ["strokeStyle", "edge"]
+      ]) {
+        const binding = hookStyleProperty(offscreenConstructor.prototype, property, remap(role));
+        if (binding !== null) restores.push(binding.restore);
+      }
+    }
     const roleForMethod = (method, self, args) => {
       if (method === "fillText" || method === "strokeText") return "ink";
       if (method === "fillRect") return "paper";
@@ -697,9 +718,11 @@
       }
       if (typeof Reflect.get(prototype, "drawImage") === "function") {
         const drawImageRestore = wrapPrototypeMethod(prototype, "drawImage", (next) => function(...args) {
+          const source = adoptSourceImage(args[0]);
           const result = next.apply(this, args);
           const canvas = contextCanvas(this);
           if (canvas === null || !isThemedContext(this)) return result;
+          if (source !== null) return result;
           const rect = imageDestinationOf(this, args, canvas);
           if (rect === null) return result;
           const rects = imageRects.get(canvas) ?? [];
@@ -744,10 +767,10 @@
       }
       return buildPixelTable(pairs);
     };
-    const applyPixels = (canvas, target) => {
+    const applyPixels = (canvas, target, useMask = true) => {
       const image = readPixels(canvas);
       if (image === null) return false;
-      const rects = imageRects.get(canvas);
+      const rects = useMask ? imageRects.get(canvas) : void 0;
       let mask = null;
       if (rects !== void 0 && rects.length > 0 && image.width > 0 && image.height > 0) {
         mask = new Uint8Array(image.width * image.height);
@@ -781,6 +804,51 @@
         throw error;
       }
       return true;
+    };
+    const looksLikeGridTile = (canvas) => {
+      const image = readPixels(canvas);
+      if (image === null) return false;
+      const { data } = image;
+      const total = Math.floor(data.length / 4);
+      if (total === 0) return false;
+      const step = Math.max(1, Math.floor(total / TILE_SAMPLE_LIMIT));
+      let sampled = 0;
+      let paper = 0;
+      for (let pixel = 0; pixel < total; pixel += step) {
+        const index = pixel * 4;
+        if ((data[index + 3] ?? 0) === 0) continue;
+        sampled += 1;
+        const r = data[index] ?? 0;
+        const g = data[index + 1] ?? 0;
+        const b = data[index + 2] ?? 0;
+        const max = Math.max(r, g, b);
+        if (Math.min(r, g, b) >= TILE_PAPER_MIN_CHANNEL && max - Math.min(r, g, b) <= TILE_PAPER_MAX_SPREAD) {
+          paper += 1;
+        }
+      }
+      if (sampled === 0) return true;
+      return paper / sampled >= TILE_PAPER_RATIO;
+    };
+    const adoptSourceImage = (image) => {
+      if (!isRecord(image) || typeof Reflect.get(image, "getContext") !== "function") return null;
+      if (themed.has(image)) {
+        const candidate = image;
+        return sources.has(candidate) ? "cache" : "grid";
+      }
+      const canvas = image;
+      if (isCanvasElement(canvas)) {
+        if (canvas.isConnected) return classifyGrid(canvas) ? "grid" : null;
+      }
+      if (foreignSources.has(canvas)) return null;
+      if (!looksLikeGridTile(canvas)) {
+        foreignSources.add(canvas);
+        return null;
+      }
+      themed.add(canvas);
+      sources.add(canvas);
+      applyPixels(canvas, mode, false);
+      rendered.set(canvas, mode);
+      return "cache";
     };
     function gridBoxOf(canvas) {
       const box = canvas.closest(GRID_CONTAINER_SELECTOR);
@@ -915,6 +983,11 @@
           applyPixels(canvas, next);
           rendered.set(canvas, next);
         }
+        for (const source of sources) {
+          if (rendered.get(source) === next) continue;
+          applyPixels(source, next, false);
+          rendered.set(source, next);
+        }
         applied = next;
         if (changed) requestRepaint(doc.defaultView);
       },
@@ -930,10 +1003,16 @@
           applyPixels(canvas, THEME_MODE.LIGHT);
           rendered.set(canvas, THEME_MODE.LIGHT);
         }
+        for (const source of sources) {
+          if (rendered.get(source) !== THEME_MODE.DARK) continue;
+          applyPixels(source, THEME_MODE.LIGHT, false);
+          rendered.set(source, THEME_MODE.LIGHT);
+        }
         disposed = true;
         observer?.disconnect();
         for (const restore of restores) restore();
         canvases.clear();
+        sources.clear();
         colorCache.clear();
       }
     };
