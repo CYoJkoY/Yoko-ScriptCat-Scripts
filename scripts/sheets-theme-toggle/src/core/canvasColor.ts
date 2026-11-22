@@ -33,6 +33,20 @@ export interface Rgba {
   readonly a: number;
 }
 
+/**
+ * A recorded text colour and the tone it becomes in the dark theme. Google
+ * anti-aliases glyphs against the light surface, so a glyph's edge pixels are
+ * blends of the text colour with white — they are neither the text colour nor
+ * the surface. Mapping only the exact colour leaves those edges dark, which
+ * reads as invisible text on a dark cell. Interpolating the same blend ratio
+ * between the dark tone and the dark surface rebuilds the ramp, so a switched
+ * canvas keeps the same anti-aliasing a fresh redraw would produce.
+ */
+export interface BridgeLine {
+  readonly from: Rgba;
+  readonly to: Rgba;
+}
+
 function clampByte(value: number): number {
   if (!Number.isFinite(value)) return 0;
   if (value <= 0) return 0;
@@ -115,13 +129,44 @@ const NEUTRAL_LIGHTNESS_MIN = 0.5;
  * colored element (selection highlight, pastel fill, colored text, conditional
  * format) with the bright surface are light and slightly tinted rather than
  * neutral, so a neutral-only fold would leave them glowing as colored specks on
- * the dark surface. Any light pixel up to this channel spread is darkened along
- * the paper curve with its hue (channel ratios) preserved — never inverted — so
- * the pale fringe settles into the dark background while staying the same hue.
- * Saturated colours and most image pixels exceed the spread and are left alone.
+ * the dark surface. Every pixel at or above this lightness is darkened along the
+ * paper curve with its hue (channel ratios) preserved — never inverted — so the
+ * pale fill settles into the dark background while staying the same hue and a
+ * saturated highlight stops glaring. Channel spread is deliberately ignored: a
+ * bright pastel (`#fce8b2`) has a spread above 64 and used to be skipped
+ * wholesale, which is exactly the bright patch that survived a switch.
  */
-const LIGHT_FOLD_MIN_LIGHTNESS = 0.5;
-const LIGHT_FOLD_MAX_SPREAD = 64;
+const LIGHT_FOLD_MIN_LIGHTNESS = 0.42;
+
+/**
+ * A pixel is on a recorded text colour's anti-aliasing ramp when it sits within
+ * this many channel units of the line the blend traces from the text colour to
+ * white. The tolerance is loose enough for JPEG-free canvas quantisation and
+ * tight enough that an unrelated fill is not mistaken for part of a glyph.
+ */
+const BRIDGE_TOLERANCE = 14;
+
+/**
+ * Ramps are followed all the way to the surface tone. The near-white sweep runs
+ * first, so a neutral fringe never reaches a bridge line; letting a ramp reach
+ * t = 1 only means the faintest edge of a glyph lands exactly on the dark
+ * surface instead of being left behind as a stale light pixel.
+ */
+const BRIDGE_T_MAX = 1;
+
+/** Marker for "no ramp / no fold applies to this pixel". */
+const PACKED_NONE = -1;
+
+/**
+ * Six bits per channel as a memo key. A grid is dominated by flat fills, so one
+ * lookup per distinct tone replaces thousands of per-pixel line projections; the
+ * quantisation costs at most two levels of accuracy, which is invisible.
+ */
+const quantKey = (r: number, g: number, b: number): number =>
+  ((r >> 2) << 12) | ((g >> 2) << 6) | (b >> 2);
+
+const packRgb = (r: number, g: number, b: number): number =>
+  (clampByte(r) << 16) | (clampByte(g) << 8) | clampByte(b);
 
 const colorKey = (color: Rgba): string => `${color.r},${color.g},${color.b},${color.a}`;
 
@@ -473,13 +518,87 @@ export function palettePixels(mode: "dark" | "light"): ReadonlyMap<number, Rgba>
 }
 
 /**
+ * Where a pixel sits on a recorded text colour's anti-aliasing ramp: `t` is the
+ * fraction of the way from the glyph tone to white, so `0` is the glyph core and
+ * `1` would be the bare surface. The dark result is the same fraction of the way
+ * from the dark ink tone to the dark surface, which rebuilds the ramp instead of
+ * leaving it dark. Returns the packed dark RGB, or {@link PACKED_NONE} when the
+ * pixel is not on any ramp.
+ */
+function bridgePixel(r: number, g: number, b: number, lines: readonly BridgeLine[]): number {
+  let result = PACKED_NONE;
+  let bestResidual = Number.POSITIVE_INFINITY;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const line of lines) {
+    const from = line.from;
+    const dr = 255 - from.r;
+    const dg = 255 - from.g;
+    const db = 255 - from.b;
+    const lengthSquared = dr * dr + dg * dg + db * db;
+    // A colour that already is white traces no ramp.
+    if (lengthSquared === 0) continue;
+    const raw = ((r - from.r) * dr + (g - from.g) * dg + (b - from.b) * db) / lengthSquared;
+    // Slightly darker than the glyph tone still counts as core (subpixel
+    // rendering overshoots), but a pixel well past white is a different colour.
+    if (raw > BRIDGE_T_MAX || raw < -0.25) continue;
+    const t = raw < 0 ? 0 : raw;
+    const residual = Math.max(
+      Math.abs(r - (from.r + dr * t)),
+      Math.abs(g - (from.g + dg * t)),
+      Math.abs(b - (from.b + db * t)),
+    );
+    if (residual > BRIDGE_TOLERANCE) continue;
+    const distance = (r - from.r) ** 2 + (g - from.g) ** 2 + (b - from.b) ** 2;
+    // The closest ramp wins; a near tie goes to the colour the pixel itself sits
+    // on, so a glyph's own tone beats a longer line that merely passes through
+    // it (the black text ramp contains every neutral grey).
+    if (residual > bestResidual + 2) continue;
+    if (residual < bestResidual - 2 || distance < bestDistance) {
+      bestResidual = residual;
+      bestDistance = distance;
+      const to = line.to;
+      result = packRgb(
+        to.r + (DARK_SURFACE.r - to.r) * t,
+        to.g + (DARK_SURFACE.g - to.g) * t,
+        to.b + (DARK_SURFACE.b - to.b) * t,
+      );
+    }
+  }
+  return result;
+}
+
+/**
+ * Fold a pixel that is not part of a glyph into the dark surface: neutral greys
+ * go through the cached lightness table, and every bright tint is darkened along
+ * the paper curve with its hue preserved. Returns the packed dark RGB, or
+ * {@link PACKED_NONE} when the pixel must keep its value.
+ */
+function foldPixel(r: number, g: number, b: number, spread: number, lut: Uint8Array): number {
+  if (spread <= NEUTRAL_SPREAD) {
+    const grey = Math.round((r + g + b) / 3);
+    const value = lut[grey] ?? grey;
+    if (value === grey) return PACKED_NONE;
+    return packRgb(value, value, value);
+  }
+  const lightness = (Math.max(r, g, b) + Math.min(r, g, b)) / 510;
+  if (lightness < LIGHT_FOLD_MIN_LIGHTNESS) return PACKED_NONE;
+  // Scale the channels by the paper curve's lightness ratio, so the hue (channel
+  // ratios) survives and only the brightness is pulled down.
+  const ratio = roleLightness("paper", lightness) / lightness;
+  return packRgb(r * ratio, g * ratio, b * ratio);
+}
+
+/**
  * Recolour an RGBA pixel buffer in place from `table`, optionally sweeping
  * near-white fringes of the surface into `sweep` so a runtime toggle leaves no
  * bright halo. When `neutralLut` is supplied, lighter neutral greys (anti-aliased
  * edge blends that neither the exact table nor the near-white sweep touches) are
- * folded through it into the dark surface, clearing the halo a dark switch would
- * otherwise expose. Returns whether any pixel changed, so a caller can skip the
- * expensive `putImageData` upload.
+ * folded into the dark surface, and bright coloured tints are darkened with their
+ * hue kept, clearing the halo and the glaring patches a dark switch would
+ * otherwise expose. When `lines` is supplied, pixels on a recorded text colour's
+ * anti-aliasing ramp are rebuilt against the dark surface instead of staying
+ * dark, so switched text is as legible as a fresh redraw. Returns whether any
+ * pixel changed, so a caller can skip the expensive `putImageData` upload.
  *
  * When `mask` is given, a non-zero entry leaves that pixel untouched. The
  * controller masks the rectangles Google painted with `drawImage`, so in-cell
@@ -491,8 +610,17 @@ export function mapPixels(
   sweep: Rgba | null,
   neutralLut: Uint8Array | null = null,
   mask: Uint8Array | null = null,
+  lines: readonly BridgeLine[] | null = null,
 ): boolean {
   let changed = false;
+  const ramps = lines !== null && lines.length > 0 ? lines : null;
+  /**
+   * Both passes are pure functions of the tone and a canvas is mostly flat
+   * fills, so one memo each removes nearly all of the per-pixel work. The caches
+   * live for this call only; they must not leak between canvases or modes.
+   */
+  const rampCache: Map<number, number> | null = ramps === null ? null : new Map();
+  const foldCache: Map<number, number> | null = neutralLut === null ? null : new Map();
   for (let index = 0; index + 3 < data.length; index += 4) {
     // A masked pixel holds content the script must not reinterpret, such as an
     // image Google drew with `drawImage`; it is left byte-for-byte alone.
@@ -513,6 +641,7 @@ export function mapPixels(
     }
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
+    const spread = max - min;
     if (sweep !== null && min >= FRINGE_MIN_CHANNEL && max - min <= FRINGE_MAX_SPREAD) {
       data[index] = sweep.r;
       data[index + 1] = sweep.g;
@@ -520,28 +649,31 @@ export function mapPixels(
       changed = true;
       continue;
     }
-    if (neutralLut === null) continue;
-    const spread = max - min;
-    if (spread <= NEUTRAL_SPREAD) {
-      // Neutral grey: collapse the channels and fold through the cached LUT.
-      const grey = Math.round((r + g + b) / 3);
-      const value = neutralLut[grey] ?? grey;
-      if (value === grey) continue;
-      data[index] = value;
-      data[index + 1] = value;
-      data[index + 2] = value;
-      changed = true;
-      continue;
+    const key = quantKey(r, g, b);
+    if (ramps !== null && rampCache !== null) {
+      let packed = rampCache.get(key);
+      if (packed === undefined) {
+        packed = bridgePixel(r, g, b, ramps);
+        rampCache.set(key, packed);
+      }
+      if (packed !== PACKED_NONE) {
+        data[index] = (packed >> 16) & 255;
+        data[index + 1] = (packed >> 8) & 255;
+        data[index + 2] = packed & 255;
+        changed = true;
+        continue;
+      }
     }
-    if (spread > LIGHT_FOLD_MAX_SPREAD) continue;
-    // Pale tint: darken along the paper curve while keeping the channel ratios,
-    // so the hue survives and only the brightness is pulled down.
-    const lightness = (max + min) / 510;
-    if (lightness < LIGHT_FOLD_MIN_LIGHTNESS) continue;
-    const ratio = roleLightness("paper", lightness) / lightness;
-    data[index] = Math.round(r * ratio);
-    data[index + 1] = Math.round(g * ratio);
-    data[index + 2] = Math.round(b * ratio);
+    if (neutralLut === null || foldCache === null) continue;
+    let folded = foldCache.get(key);
+    if (folded === undefined) {
+      folded = foldPixel(r, g, b, spread, neutralLut);
+      foldCache.set(key, folded);
+    }
+    if (folded === PACKED_NONE) continue;
+    data[index] = (folded >> 16) & 255;
+    data[index + 1] = (folded >> 8) & 255;
+    data[index + 2] = folded & 255;
     changed = true;
   }
   return changed;

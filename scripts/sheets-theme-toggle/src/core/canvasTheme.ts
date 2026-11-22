@@ -12,6 +12,7 @@ import {
   pixelKeyOf,
   roleColor,
   roleForPathFill,
+  type BridgeLine,
   type CanvasRole,
   type Rgba,
 } from "./canvasColor";
@@ -23,6 +24,13 @@ const COLOR_CACHE_LIMIT = 512;
 const ROLE_RECORD_LIMIT = 512;
 /** Drawings kept per canvas for the bridge mask; the grid reuses its rects. */
 const IMAGE_RECT_LIMIT = 64;
+
+/**
+ * Text ramps rebuilt per canvas. A sheet rarely uses more than a handful of text
+ * colours; the cap keeps a canvas that paints a rainbow of them from turning each
+ * switch into a long per-pixel search.
+ */
+const BRIDGE_LINE_LIMIT = 12;
 
 /**
  * A canvas the grid blits from is treated as a render cache of sheet paint when
@@ -606,11 +614,28 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     }
   };
 
+  /**
+   * The roles recorded for `canvas`. A tile cache painted before the hooks
+   * existed has none of its own, yet it holds the same paint as the grid it was
+   * rendered for; borrowing that grid's roles is what keeps a cached cell the
+   * same tone as the live one instead of drifting through the generic fold.
+   */
+  const recordsFor = (canvas: HTMLCanvasElement): Map<number, RoleRecord> | undefined => {
+    const own = records.get(canvas);
+    if (own !== undefined && own.size > 0) return own;
+    for (const grid of canvases) {
+      if (grid === canvas) continue;
+      const other = records.get(grid);
+      if (other !== undefined && other.size > 0) return other;
+    }
+    return undefined;
+  };
+
   const pixelTable = (canvas: HTMLCanvasElement, target: ThemeMode): ReadonlyMap<number, Rgba> => {
     const pairs: Array<readonly [Rgba, Rgba]> = CANVAS_PALETTE.map((pair) =>
       target === THEME_MODE.DARK ? [pair.light, pair.dark] : [pair.dark, pair.light],
     );
-    const remembered = records.get(canvas);
+    const remembered = recordsFor(canvas);
     if (remembered !== undefined) {
       for (const { color, role } of remembered.values()) {
         pairs.push(
@@ -621,6 +646,49 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       }
     }
     return buildPixelTable(pairs);
+  };
+
+  /**
+   * The text tones recorded on one canvas whose anti-aliasing is worth
+   * rebuilding. Text glyphs are the one thing a pixel bridge cannot reconstruct
+   * from the palette alone: their edges are blends with the old white surface,
+   * so a switch leaves them dark against a dark cell. A colour that was also
+   * seen as a fill or a stroke is skipped, because its ramp would then claim
+   * solid areas too.
+   */
+  const inkLinesOf = (canvas: HTMLCanvasElement): BridgeLine[] => {
+    const remembered = recordsFor(canvas);
+    if (remembered === undefined || remembered.size === 0) return [];
+    const painted = new Set<number>();
+    for (const { color, role } of remembered.values()) {
+      if (role !== "ink") painted.add(pixelKeyOf(color));
+    }
+    const lines: BridgeLine[] = [];
+    for (const { color, role } of remembered.values()) {
+      if (role !== "ink") continue;
+      if (painted.has(pixelKeyOf(color))) continue;
+      lines.push({ from: color, to: roleColor(color, role) });
+      if (lines.length >= BRIDGE_LINE_LIMIT) break;
+    }
+    return lines;
+  };
+
+  /**
+   * The text ramps to rebuild while recolouring `canvas`. A tile cache painted
+   * before the hooks existed has no records of its own, yet it holds the same
+   * paint as the grid it was rendered for; borrowing that grid's recorded text
+   * tones is what keeps a cached copy of a label as legible as the live grid
+   * instead of blitting black glyphs onto the switched surface.
+   */
+  const bridgeLines = (canvas: HTMLCanvasElement): BridgeLine[] | null => {
+    const own = inkLinesOf(canvas);
+    if (own.length > 0) return own;
+    for (const grid of canvases) {
+      if (grid === canvas) continue;
+      const lines = inkLinesOf(grid);
+      if (lines.length > 0) return lines;
+    }
+    return null;
   };
 
   const applyPixels = (canvas: HTMLCanvasElement, target: ThemeMode, useMask = true): boolean => {
@@ -654,6 +722,7 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       target === THEME_MODE.DARK ? FRINGE_SWEEP : null,
       target === THEME_MODE.DARK ? neutralDarkLut() : null,
       mask,
+      target === THEME_MODE.DARK ? bridgeLines(canvas) : null,
     );
     if (!changed) return false;
     const context = canvas.getContext("2d");

@@ -777,7 +777,7 @@ describe("canvas colour mapping", () => {
     expect(parseColor("rgb(1, 2)")).toBeNull();
   });
 
-  it("recolours a pixel buffer and leaves author and clear pixels alone", () => {
+  it("recolours a pixel buffer, folding bright author fills and leaving dark and clear pixels alone", () => {
     const data = new Uint8ClampedArray([
       255, 255, 255, 255,
       248, 203, 173, 255,
@@ -788,7 +788,12 @@ describe("canvas colour mapping", () => {
     ]);
     expect(recolorPixels(data, THEME_MODE.DARK)).toBe(true);
     expect(Array.from(data.slice(0, 4))).toEqual([32, 33, 36, 255]);
-    expect(Array.from(data.slice(4, 8))).toEqual([248, 203, 173, 255]);
+    // A bright pastel fill is pulled down into the dark band, but its channel
+    // order (hue) is preserved, so it stays recognisably peach.
+    const [peachRed, peachGreen, peachBlue] = Array.from(data.slice(4, 8));
+    expect(peachRed).toBeLessThan(96);
+    expect(peachRed!).toBeGreaterThan(peachGreen!);
+    expect(peachGreen!).toBeGreaterThan(peachBlue!);
     expect(Array.from(data.slice(8, 12))).toEqual([0, 0, 0, 255]);
     expect(Array.from(data.slice(12, 16))).toEqual([255, 255, 255, 0]);
     expect(Array.from(data.slice(16, 20))).toEqual([232, 234, 237, 255]);
@@ -796,9 +801,10 @@ describe("canvas colour mapping", () => {
   });
 
   it("reports no change when a buffer holds nothing it can map", () => {
-    const data = new Uint8ClampedArray([248, 203, 173, 255, 0, 0, 0, 255]);
+    // Dark neutrals are content, not surface: nothing here may move.
+    const data = new Uint8ClampedArray([31, 31, 31, 255, 0, 0, 0, 255]);
     expect(recolorPixels(data, THEME_MODE.DARK)).toBe(false);
-    expect(Array.from(data)).toEqual([248, 203, 173, 255, 0, 0, 0, 255]);
+    expect(Array.from(data)).toEqual([31, 31, 31, 255, 0, 0, 0, 255]);
   });
 });
 
@@ -855,18 +861,19 @@ describe("canvas theme", () => {
     }
   });
 
-  it("repaints existing pixels to dark and back to light", () => {
-    const grid = makeGridCanvas([255, 255, 255, 255, 248, 203, 173, 255, 0, 0, 0, 255]);
+  it("repaints existing palette pixels to dark and back to light", () => {
+    const grid = makeGridCanvas([255, 255, 255, 255, 68, 71, 70, 255, 0, 0, 0, 255]);
     const controller = install(document);
     try {
       controller.setMode(THEME_MODE.DARK);
       expect(Array.from(grid.pixels.slice(0, 4))).toEqual([32, 33, 36, 255]);
-      expect(Array.from(grid.pixels.slice(4, 8))).toEqual([248, 203, 173, 255]);
+      expect(Array.from(grid.pixels.slice(4, 8))).toEqual([232, 234, 237, 255]);
       expect(Array.from(grid.pixels.slice(8, 12))).toEqual([0, 0, 0, 255]);
 
       controller.setMode(THEME_MODE.LIGHT);
       expect(Array.from(grid.pixels.slice(0, 4))).toEqual([255, 255, 255, 255]);
-      expect(Array.from(grid.pixels.slice(4, 8))).toEqual([248, 203, 173, 255]);
+      expect(Array.from(grid.pixels.slice(4, 8))).toEqual([68, 71, 70, 255]);
+      expect(Array.from(grid.pixels.slice(8, 12))).toEqual([0, 0, 0, 255]);
     } finally {
       controller.dispose();
     }
@@ -886,8 +893,11 @@ describe("canvas theme", () => {
       // Below the lightness floor a neutral keeps its value.
       expect(Array.from(grid.pixels.slice(4, 8))).toEqual([100, 100, 100, 255]);
       expect(Array.from(grid.pixels.slice(8, 12))).toEqual([0, 0, 0, 255]);
-      // A coloured (non-neutral) pixel is never touched by the neutral fold.
-      expect(Array.from(grid.pixels.slice(12, 16))).toEqual([248, 203, 173, 255]);
+      // A coloured (non-neutral) bright pixel is pulled dark into the surface.
+      const [peachRed, peachGreen, peachBlue] = Array.from(grid.pixels.slice(12, 16));
+      expect(peachRed).toBeLessThan(96);
+      expect(peachRed!).toBeGreaterThan(peachGreen!);
+      expect(peachGreen!).toBeGreaterThan(peachBlue!);
     } finally {
       controller.dispose();
     }
@@ -925,11 +935,13 @@ describe("canvas theme", () => {
     }
   });
 
-  it("darkens pale tinted anti-aliasing without inverting hue and spares saturated colours", () => {
+  it("darkens pale tints and bright saturated fills without inverting their hue", () => {
     // A pale tint (e.g. a selection-highlight or pastel-fill anti-alias blend) is
     // light but not neutral, so the neutral fold alone would leave it glowing.
     // The tint fold must pull it dark while keeping the channel order (hue).
-    // A saturated colour and a dark tinted pixel are outside the band and stay.
+    // A saturated bright red is dimmed too, because a vivid fill glares on a dark
+    // surface, but the channel order still proves the hue was never inverted.
+    // A dark tinted pixel is below the floor and keeps its value.
     const pale = [200, 220, 245, 255]; // spread 45, light, still blue-ish
     const saturated = [220, 40, 40, 255]; // spread 180, saturated red
     const darkTint = [40, 55, 70, 255]; // spread 30 but dark
@@ -944,10 +956,62 @@ describe("canvas theme", () => {
       // Hue preserved: the blue channel stays the largest, red the smallest.
       expect(pb).toBeGreaterThan(pg!);
       expect(pg).toBeGreaterThan(pr!);
-      // Saturated red is untouched (no inversion into cyan).
-      expect(Array.from(grid.pixels.slice(4, 8))).toEqual(saturated);
+      // Saturated red dims but stays red: no inversion into cyan.
+      const [sr, sg, sb] = Array.from(grid.pixels.slice(4, 8));
+      expect(sr).toBeLessThan(128);
+      expect(sr!).toBeGreaterThan(sg!);
+      expect(sg!).toBe(sb!);
       // A dark tint stays put (brightness is not lifted).
       expect(Array.from(grid.pixels.slice(8, 12))).toEqual(darkTint);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("rebuilds the anti-aliasing of recorded text instead of leaving it dark", () => {
+    // Text painted on the light surface leaves a ramp of greys from the glyph
+    // tone to white. Bridging only the exact tone left the glyph invisible on a
+    // dark cell, which is the "black text on dark" complaint; the recorded ink
+    // colour lets the ramp be rebuilt against the dark surface instead.
+    const grid = makeGridCanvas([0, 0, 0, 255, 40, 40, 40, 255, 120, 120, 120, 255, 200, 200, 200, 255]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      context.fillStyle = "#000000";
+      context.fillText("A", 0, 0);
+      controller.setMode(THEME_MODE.DARK);
+      const ink = roleColor(parseColor("#000000")!, "ink");
+      const [core] = Array.from(grid.pixels.slice(0, 4));
+      const [nearCore] = Array.from(grid.pixels.slice(4, 8));
+      const [mid] = Array.from(grid.pixels.slice(8, 12));
+      const [pale] = Array.from(grid.pixels.slice(12, 16));
+      // The glyph core lands on the ink tone rather than staying black.
+      expect(core).toBe(ink.r);
+      // The ramp stays monotonic and every step is above the dark surface.
+      expect(nearCore!).toBeGreaterThan(mid!);
+      expect(mid!).toBeGreaterThan(pale!);
+      expect(pale!).toBeGreaterThan(32);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("keeps accent text light and in-hue when its ramp is rebuilt", () => {
+    const red = parseColor("#d93025")!;
+    const grid = makeGridCanvas([red.r, red.g, red.b, 255, 240, 150, 150, 255]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      context.fillStyle = "#d93025";
+      context.fillText("R", 0, 0);
+      controller.setMode(THEME_MODE.DARK);
+      const ink = roleColor(red, "ink");
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual([ink.r, ink.g, ink.b, 255]);
+      const [edgeRed, edgeGreen] = Array.from(grid.pixels.slice(4, 8));
+      // The blend lightens toward the dark surface but keeps red dominant, so a
+      // red label stays a red label instead of a dark smudge or a cyan inversion.
+      expect(edgeRed!).toBeGreaterThan(edgeGreen!);
+      expect(edgeRed!).toBeGreaterThan(96);
     } finally {
       controller.dispose();
     }
