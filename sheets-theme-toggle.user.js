@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.5
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠抗锯齿亮噪点并请求重绘，偏好持久化并跟随系统。
+// @version      1.0.6
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色）并请求重绘，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -96,6 +96,8 @@
   var FRINGE_MAX_SPREAD = 8;
   var NEUTRAL_SPREAD = 24;
   var NEUTRAL_LIGHTNESS_MIN = 0.5;
+  var LIGHT_FOLD_MIN_LIGHTNESS = 0.5;
+  var LIGHT_FOLD_MAX_SPREAD = 64;
   var colorKey = (color) => `${color.r},${color.g},${color.b},${color.a}`;
   function buildTable(from, to) {
     const table = /* @__PURE__ */ new Map();
@@ -328,13 +330,25 @@
         changed = true;
         continue;
       }
-      if (neutralLut === null || max - min > NEUTRAL_SPREAD) continue;
-      const grey = Math.round((r + g + b) / 3);
-      const value = neutralLut[grey] ?? grey;
-      if (value === grey) continue;
-      data[index] = value;
-      data[index + 1] = value;
-      data[index + 2] = value;
+      if (neutralLut === null) continue;
+      const spread = max - min;
+      if (spread <= NEUTRAL_SPREAD) {
+        const grey = Math.round((r + g + b) / 3);
+        const value = neutralLut[grey] ?? grey;
+        if (value === grey) continue;
+        data[index] = value;
+        data[index + 1] = value;
+        data[index + 2] = value;
+        changed = true;
+        continue;
+      }
+      if (spread > LIGHT_FOLD_MAX_SPREAD) continue;
+      const lightness = (max + min) / 510;
+      if (lightness < LIGHT_FOLD_MIN_LIGHTNESS) continue;
+      const ratio = roleLightness("paper", lightness) / lightness;
+      data[index] = Math.round(r * ratio);
+      data[index + 1] = Math.round(g * ratio);
+      data[index + 2] = Math.round(b * ratio);
       changed = true;
     }
     return changed;
