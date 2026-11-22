@@ -108,6 +108,21 @@ function dispatchPointerMove(x: number, y: number, target: Element): void {
   target.dispatchEvent(event);
 }
 
+/**
+ * Send the pointer off the rail while the hit test still answers the
+ * collapsed node, then let the leave grace run 100ms. Leaving with the
+ * widened panel already under the cursor would skip the countdown.
+ */
+function leaveToChat(button: HTMLElement, chat: HTMLElement): void {
+  const restoreButton = stubHit(button);
+  try {
+    dispatchPointer("pointerout", button, chat, "mouse", 600, 300);
+  } finally {
+    restoreButton();
+  }
+  vi.advanceTimersByTime(100);
+}
+
 function stubNodeRect(
   node: Element,
   width: number,
@@ -1172,14 +1187,11 @@ describe("sidebar peek hover tracking", () => {
     const button = document.getElementById("new-chat");
     const chat = document.getElementById("chat");
     if (!button || !chat) throw new Error("missing nodes");
-
+    // The first exit must happen while the hit test still reports the
+    // collapsed rail, or the hide would never be armed.
+    leaveToChat(button, chat);
     const restore = stubHit(chat);
     try {
-      dispatchPointer("pointerout", button, chat, "mouse", 600, 300);
-      vi.advanceTimersByTime(100);
-      // Back on the widened panel, past the narrow edge band. The user is
-      // looking at this panel, so the deadline armed by the first exit must
-      // not outlive the return.
       dispatchPointerMove(200, 300, chat);
       vi.advanceTimersByTime(20);
       dispatchPointerMove(600, 300, chat);
@@ -1201,10 +1213,9 @@ describe("sidebar peek hover tracking", () => {
     const chat = document.getElementById("chat");
     if (!button || !chat) throw new Error("missing nodes");
 
+    leaveToChat(button, chat);
     const restore = stubHit(chat);
     try {
-      dispatchPointer("pointerout", button, chat, "mouse", 600, 300);
-      vi.advanceTimersByTime(100);
       dispatchPointer("pointerover", chat, null, "mouse", 200, 300);
       vi.advanceTimersByTime(20);
       dispatchPointerMove(600, 300, chat);
@@ -1223,10 +1234,9 @@ describe("sidebar peek hover tracking", () => {
     const chat = document.getElementById("chat");
     if (!button || !chat) throw new Error("missing nodes");
 
+    leaveToChat(button, chat);
     const restore = stubHit(chat);
     try {
-      dispatchPointer("pointerout", button, chat, "mouse", 600, 300);
-      vi.advanceTimersByTime(100);
       // A move that stays outside the peek is not a return, so it must not
       // push the deadline the first exit armed.
       dispatchPointerMove(800, 300, chat);
