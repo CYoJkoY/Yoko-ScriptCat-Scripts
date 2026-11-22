@@ -15,6 +15,7 @@ import {
   type Rgba,
 } from "./canvasColor";
 
+const GRID_CONTAINER_SELECTOR = "#waffle-grid-container";
 const GRID_CANVAS_SELECTOR = "#waffle-grid-container canvas";
 const CHART_SELECTOR = ".waffle-chart, [class*='chart']";
 const COLOR_CACHE_LIMIT = 512;
@@ -137,13 +138,16 @@ function hookDrawMethod(
   const original = Object.getOwnPropertyDescriptor(prototype, method);
   if (original?.value !== draw || typeof draw !== "function") return null;
   const wrapper = function (this: object, ...args: unknown[]): unknown {
+    // Adopt the canvas first so the very draw that paints a switched worksheet
+    // is themed; a later record then finds it registered.
+    const isGrid = themed(this);
     const style = method === "fillText" || method === "fillRect" || method === "fill" ? fill : stroke;
     const defaultRole: CanvasRole = style === fill ? "paper" : "edge";
     const current = style.assignedValue(this);
     const currentColor = typeof current === "string" ? parseColor(current) : null;
     const currentRole = role(this, args);
     if (currentColor !== null) record(this, currentColor, currentRole);
-    if (!themed(this) || currentColor === null || !dark()) return draw.apply(this, args);
+    if (!isGrid || currentColor === null || !dark()) return draw.apply(this, args);
     style.writeRaw(this, darkColor(currentColor, currentRole));
     try {
       return draw.apply(this, args);
@@ -179,6 +183,7 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
   const canvases = new Set<HTMLCanvasElement>();
   const rendered = new WeakMap<HTMLCanvasElement, ThemeMode>();
   const records = new WeakMap<HTMLCanvasElement, Map<number, RoleRecord>>();
+  const gridFlags = new WeakMap<object, boolean>();
   const colorCache = new Map<string, string>();
   const restores: (() => void)[] = [];
 
@@ -196,9 +201,39 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     const canvas = Reflect.get(self, "canvas");
     return isCanvasElement(canvas) ? canvas : null;
   };
+
+  /**
+   * Decide whether a canvas is the sheet grid, read straight from the DOM. A
+   * switched worksheet is repainted in the same task that swaps the canvas, so
+   * waiting for the observer's microtask would let the first paint run
+   * unthemed and leave anti-aliased noise; asking the DOM synchronously closes
+   * that window. A "yes" never changes, so it is cached; a "no" is only trusted
+   * once the canvas is in the document, so one painted before insertion is
+   * re-checked on its next draw.
+   */
+  const classifyGrid = (canvas: HTMLCanvasElement): boolean => {
+    const cached = gridFlags.get(canvas);
+    if (cached !== undefined) return cached;
+    const isChart = canvas.closest(CHART_SELECTOR) !== null;
+    const isGrid = !isChart && canvas.closest(GRID_CONTAINER_SELECTOR) !== null;
+    if (isGrid || canvas.isConnected) gridFlags.set(canvas, isGrid);
+    return isGrid;
+  };
+  const adopt = (canvas: HTMLCanvasElement): void => {
+    if (canvases.has(canvas)) return;
+    canvases.add(canvas);
+    themed.add(canvas);
+    // A synchronously adopted canvas is painted through the interceptors, so its
+    // pixels already match `mode`; no separate pixel pass is needed here.
+    rendered.set(canvas, mode);
+  };
   const isThemedContext = (self: object): boolean => {
     const canvas = contextCanvas(self);
-    return canvas !== null && themed.has(canvas);
+    if (canvas === null) return false;
+    if (themed.has(canvas)) return true;
+    if (!classifyGrid(canvas)) return false;
+    adopt(canvas);
+    return true;
   };
   const remember = (self: object, color: Rgba, role: CanvasRole): void => {
     const canvas = contextCanvas(self);
@@ -289,23 +324,24 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     return buildPixelTable(pairs);
   };
 
-  const applyPixels = (canvas: HTMLCanvasElement, target: ThemeMode): void => {
+  const applyPixels = (canvas: HTMLCanvasElement, target: ThemeMode): boolean => {
     const image = readPixels(canvas);
-    if (image === null) return;
+    if (image === null) return false;
     const changed = mapPixels(
       image.data,
       pixelTable(canvas, target),
       target === THEME_MODE.DARK ? FRINGE_SWEEP : null,
     );
-    if (!changed) return;
+    if (!changed) return false;
     const context = canvas.getContext("2d");
-    if (context === null) return;
+    if (context === null) return false;
     try {
       context.putImageData(image, 0, 0);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "SecurityError") return;
+      if (error instanceof DOMException && error.name === "SecurityError") return false;
       throw error;
     }
+    return true;
   };
 
   const requestRepaint = (view: Window | null): void => {
@@ -322,10 +358,13 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
 
   const register = (canvas: HTMLCanvasElement): void => {
     if (canvases.has(canvas)) return;
-    canvases.add(canvas);
-    themed.add(canvas);
-    rendered.set(canvas, mode);
-    if (mode === THEME_MODE.DARK) applyPixels(canvas, mode);
+    adopt(canvas);
+    // A canvas the observer finds before it was adopted may hold light pixels
+    // painted in a race; bridge them and ask Google to redraw so the bridging's
+    // anti-aliased leftovers are replaced by a clean repaint.
+    if (mode === THEME_MODE.DARK && applyPixels(canvas, THEME_MODE.DARK)) {
+      requestRepaint(doc.defaultView);
+    }
   };
 
   const scan = (): void => {

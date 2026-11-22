@@ -856,6 +856,23 @@ describe("canvas theme", () => {
     expect(grid.element.isConnected).toBe(true);
   });
 
+  it("themes a switched worksheet on its first draw without waiting for the observer", () => {
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      // A worksheet switch swaps in a fresh canvas and repaints it in the same
+      // task, before the MutationObserver microtask could register it. The first
+      // draw must still be themed, or its light anti-aliasing shows as noise.
+      const grid = makeGridCanvas([0, 0, 0, 0]);
+      const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+      context.fillStyle = "#ffffff";
+      context.fillRect();
+      expect(context.drawn("fillRect")).toBe("#202124");
+    } finally {
+      controller.dispose();
+    }
+  });
+
   it("bridges an observed author colour to dark and back to the same pixel", () => {
     const peach = parseColor("#f8cbad")!;
     const grid = makeGridCanvas([peach.r, peach.g, peach.b, peach.a]);
