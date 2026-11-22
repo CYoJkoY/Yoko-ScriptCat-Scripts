@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.6
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色）并请求重绘，偏好持久化并跟随系统。
+// @version      1.0.7
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过轻推网格滚动与补发 resize 让 Google 立即整块重绘、无需手动刷新，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -361,6 +361,15 @@
   var CHART_SELECTOR = ".waffle-chart, [class*='chart']";
   var COLOR_CACHE_LIMIT = 512;
   var ROLE_RECORD_LIMIT = 512;
+  var REPAINT_NUDGE_PX = 1;
+  var REPAINT_RETRY_MS = 120;
+  function scrollBoxOf(node) {
+    if (!("scrollTop" in node) || !("clientHeight" in node)) return null;
+    const element = node;
+    const scrollsDown = element.scrollHeight > element.clientHeight + REPAINT_NUDGE_PX;
+    const scrollsAcross = element.scrollWidth > element.clientWidth + REPAINT_NUDGE_PX;
+    return scrollsDown || scrollsAcross ? element : null;
+  }
   function isRecord(value) {
     return typeof value === "object" && value !== null;
   }
@@ -468,6 +477,7 @@
     const gridFlags = /* @__PURE__ */ new WeakMap();
     const colorCache = /* @__PURE__ */ new Map();
     const restores = [];
+    const repaintTimers = [];
     const themedColor = (color, role) => {
       const key = `${role}|${pixelKeyOf(color)}`;
       const cached = colorCache.get(key);
@@ -604,15 +614,62 @@
       }
       return true;
     };
+    const nudgeScroll = (host, view) => {
+      const top = host.scrollTop;
+      const left = host.scrollLeft;
+      const down = host.scrollHeight > host.clientHeight + REPAINT_NUDGE_PX;
+      const across = host.scrollWidth > host.clientWidth + REPAINT_NUDGE_PX;
+      const restore = () => {
+        try {
+          host.scrollTop = top;
+          host.scrollLeft = left;
+          host.dispatchEvent(new Event("scroll"));
+        } catch {
+        }
+      };
+      try {
+        if (down) host.scrollTop = top + REPAINT_NUDGE_PX;
+        if (across) host.scrollLeft = left + REPAINT_NUDGE_PX;
+        host.dispatchEvent(new Event("scroll"));
+      } catch {
+        return;
+      }
+      if (view !== null && typeof view.requestAnimationFrame === "function") {
+        view.requestAnimationFrame(restore);
+        return;
+      }
+      restore();
+    };
     const requestRepaint = (view) => {
       if (view === null) return;
-      try {
-        view.dispatchEvent(new Event("resize"));
-        if (typeof view.requestAnimationFrame === "function") {
-          view.requestAnimationFrame(() => view.dispatchEvent(new Event("resize")));
+      for (const canvas of canvases) {
+        if (!canvas.isConnected) continue;
+        let host = null;
+        for (let node = canvas.parentElement; node !== null && host === null; node = node.parentElement) {
+          host = scrollBoxOf(node);
         }
-      } catch {
+        if (host !== null) {
+          nudgeScroll(host, view);
+          break;
+        }
       }
+      const ping = () => {
+        try {
+          view.dispatchEvent(new Event("resize"));
+        } catch {
+        }
+      };
+      ping();
+      if (typeof view.requestAnimationFrame === "function") {
+        view.requestAnimationFrame(ping);
+      }
+      if (typeof view.setTimeout !== "function") return;
+      const timer = view.setTimeout(() => {
+        const index = repaintTimers.indexOf(timer);
+        if (index !== -1) repaintTimers.splice(index, 1);
+        ping();
+      }, REPAINT_RETRY_MS);
+      repaintTimers.push(timer);
     };
     const register = (canvas) => {
       if (canvases.has(canvas)) return;
@@ -660,6 +717,11 @@
       },
       dispose: () => {
         if (disposed) return;
+        const win = doc.defaultView;
+        if (win !== null) {
+          for (const timer of repaintTimers) win.clearTimeout(timer);
+        }
+        repaintTimers.length = 0;
         for (const canvas of canvases) {
           if (rendered.get(canvas) !== THEME_MODE.DARK) continue;
           applyPixels(canvas, THEME_MODE.LIGHT);
