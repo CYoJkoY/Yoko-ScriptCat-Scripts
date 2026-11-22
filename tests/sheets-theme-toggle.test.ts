@@ -861,6 +861,38 @@ describe("canvas theme", () => {
     }
   });
 
+  it("leaves no bright residue across the bright-neutral band after a dark switch", () => {
+    // Simulate an anti-aliasing ramp from the dark ink toward the white surface:
+    // every grey from #444746's neighbourhood up to pure white. After the switch
+    // no neutral may stay in the bright band (>=128 that band is the "noise").
+    // A few of these greys are exact palette entries (the 192/199 frozen-divider
+    // bands) and map to their own measured dark grey, which is still far below
+    // the bright band, so the invariant is "nothing stays bright", not "all fold".
+    const greys: number[] = [];
+    for (let value = 96; value <= 255; value += 1) greys.push(value);
+    const buffer: number[] = [];
+    for (const value of greys) buffer.push(value, value, value, 255);
+    const grid = makeGridCanvas(buffer);
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      for (let index = 0; index < greys.length; index += 1) {
+        const source = greys[index] ?? 0;
+        const red = grid.pixels[index * 4] ?? 0;
+        if (source >= 128) {
+          // Nothing that was bright stays bright: the whole band drops below the
+          // bright threshold, so no light specks survive the switch.
+          expect(red).toBeLessThan(128);
+        } else {
+          // Dark neutrals keep their value exactly (no lift, no inversion).
+          expect(red).toBe(source);
+        }
+      }
+    } finally {
+      controller.dispose();
+    }
+  });
+
   it("requests a resize repaint after an actual theme switch", () => {
     const grid = makeGridCanvas([0, 0, 0, 0]);
     const resize = vi.spyOn(window, "dispatchEvent");
