@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.3
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充并在切换后请求重绘，偏好持久化并跟随系统。
+// @version      1.0.4
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、切换后请求重绘，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -320,6 +320,7 @@
   var FRINGE_SWEEP = DARK_SURFACE;
 
   // scripts/sheets-theme-toggle/src/core/canvasTheme.ts
+  var GRID_CONTAINER_SELECTOR = "#waffle-grid-container";
   var GRID_CANVAS_SELECTOR = "#waffle-grid-container canvas";
   var CHART_SELECTOR = ".waffle-chart, [class*='chart']";
   var COLOR_CACHE_LIMIT = 512;
@@ -389,13 +390,14 @@
     const original = Object.getOwnPropertyDescriptor(prototype, method);
     if (original?.value !== draw || typeof draw !== "function") return null;
     const wrapper = function(...args) {
+      const isGrid = themed(this);
       const style = method === "fillText" || method === "fillRect" || method === "fill" ? fill : stroke;
       const defaultRole = style === fill ? "paper" : "edge";
       const current = style.assignedValue(this);
       const currentColor = typeof current === "string" ? parseColor(current) : null;
       const currentRole = role(this, args);
       if (currentColor !== null) record(this, currentColor, currentRole);
-      if (!themed(this) || currentColor === null || !dark()) return draw.apply(this, args);
+      if (!isGrid || currentColor === null || !dark()) return draw.apply(this, args);
       style.writeRaw(this, darkColor(currentColor, currentRole));
       try {
         return draw.apply(this, args);
@@ -427,6 +429,7 @@
     const canvases = /* @__PURE__ */ new Set();
     const rendered = /* @__PURE__ */ new WeakMap();
     const records = /* @__PURE__ */ new WeakMap();
+    const gridFlags = /* @__PURE__ */ new WeakMap();
     const colorCache = /* @__PURE__ */ new Map();
     const restores = [];
     const themedColor = (color, role) => {
@@ -442,9 +445,27 @@
       const canvas = Reflect.get(self, "canvas");
       return isCanvasElement(canvas) ? canvas : null;
     };
+    const classifyGrid = (canvas) => {
+      const cached = gridFlags.get(canvas);
+      if (cached !== void 0) return cached;
+      const isChart = canvas.closest(CHART_SELECTOR) !== null;
+      const isGrid = !isChart && canvas.closest(GRID_CONTAINER_SELECTOR) !== null;
+      if (isGrid || canvas.isConnected) gridFlags.set(canvas, isGrid);
+      return isGrid;
+    };
+    const adopt = (canvas) => {
+      if (canvases.has(canvas)) return;
+      canvases.add(canvas);
+      themed.add(canvas);
+      rendered.set(canvas, mode);
+    };
     const isThemedContext = (self) => {
       const canvas = contextCanvas(self);
-      return canvas !== null && themed.has(canvas);
+      if (canvas === null) return false;
+      if (themed.has(canvas)) return true;
+      if (!classifyGrid(canvas)) return false;
+      adopt(canvas);
+      return true;
     };
     const remember = (self, color, role) => {
       const canvas = contextCanvas(self);
@@ -529,21 +550,22 @@
     };
     const applyPixels = (canvas, target) => {
       const image = readPixels(canvas);
-      if (image === null) return;
+      if (image === null) return false;
       const changed = mapPixels(
         image.data,
         pixelTable(canvas, target),
         target === THEME_MODE.DARK ? FRINGE_SWEEP : null
       );
-      if (!changed) return;
+      if (!changed) return false;
       const context = canvas.getContext("2d");
-      if (context === null) return;
+      if (context === null) return false;
       try {
         context.putImageData(image, 0, 0);
       } catch (error) {
-        if (error instanceof DOMException && error.name === "SecurityError") return;
+        if (error instanceof DOMException && error.name === "SecurityError") return false;
         throw error;
       }
+      return true;
     };
     const requestRepaint = (view) => {
       if (view === null) return;
@@ -557,10 +579,10 @@
     };
     const register = (canvas) => {
       if (canvases.has(canvas)) return;
-      canvases.add(canvas);
-      themed.add(canvas);
-      rendered.set(canvas, mode);
-      if (mode === THEME_MODE.DARK) applyPixels(canvas, mode);
+      adopt(canvas);
+      if (mode === THEME_MODE.DARK && applyPixels(canvas, THEME_MODE.DARK)) {
+        requestRepaint(doc.defaultView);
+      }
     };
     const scan = () => {
       if (disposed) return;
