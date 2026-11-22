@@ -21,6 +21,8 @@ const GRID_CANVAS_SELECTOR = "#waffle-grid-container canvas";
 const CHART_SELECTOR = ".waffle-chart, [class*='chart']";
 const COLOR_CACHE_LIMIT = 512;
 const ROLE_RECORD_LIMIT = 512;
+/** Drawings kept per canvas for the bridge mask; the grid reuses its rects. */
+const IMAGE_RECT_LIMIT = 64;
 
 /**
  * A theme switch can only recolour the pixels already in the canvas; it cannot
@@ -64,6 +66,9 @@ interface RoleRecord {
 
 interface StyleBinding {
   assignedValue(self: object): unknown;
+  hasAssigned(self: object): boolean;
+  setAssigned(self: object, value: unknown): void;
+  deleteAssigned(self: object): void;
   writeRaw(self: object, value: unknown): void;
   restore(): void;
 }
@@ -147,6 +152,13 @@ function hookStyleProperty(
 
   return {
     assignedValue: (self) => readOriginal(self),
+    hasAssigned: (self) => assigned.has(self),
+    setAssigned: (self, value) => {
+      assigned.set(self, value);
+    },
+    deleteAssigned: (self) => {
+      assigned.delete(self);
+    },
     writeRaw: (self, value) => writeOriginal(self, value),
     restore: () => {
       const current = Object.getOwnPropertyDescriptor(prototype, property);
@@ -203,6 +215,33 @@ function hookDrawMethod(
   };
 }
 
+/**
+ * Wrap an existing prototype method so extra behaviour can run around it.
+ * Returns a restore function, or null when the method cannot be wrapped.
+ */
+function wrapPrototypeMethod(
+  prototype: object,
+  name: string,
+  wrap: (next: Function) => Function,
+): (() => void) | null {
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+  if (descriptor === undefined) return null;
+  const original = descriptor.value;
+  if (typeof original !== "function") return null;
+  const wrapper = wrap(original);
+  try {
+    Reflect.defineProperty(prototype, name, { ...descriptor, value: wrapper });
+  } catch (error) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
+  return () => {
+    const current = Object.getOwnPropertyDescriptor(prototype, name);
+    if (current?.value !== wrapper) return;
+    Reflect.defineProperty(prototype, name, descriptor);
+  };
+}
+
 export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThemeController {
   const doc = options.doc ?? document;
   const scope = options.scope ?? globalThis;
@@ -216,10 +255,17 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
   const canvases = new Set<HTMLCanvasElement>();
   const rendered = new WeakMap<HTMLCanvasElement, ThemeMode>();
   const records = new WeakMap<HTMLCanvasElement, Map<number, RoleRecord>>();
+  /** Rectangles where `drawImage` was called; kept for the bridge mask. */
+  const imageRects = new WeakMap<HTMLCanvasElement, Array<readonly [number, number, number, number]>>();
   const gridFlags = new WeakMap<object, boolean>();
   const colorCache = new Map<string, string>();
   const restores: (() => void)[] = [];
   const repaintTimers: number[] = [];
+  /** Saved `save()` stacks of assigned style values, kept in step with the native state. */
+  const styleStack = new WeakMap<
+    object,
+    Array<{ fill: { present: boolean; value: unknown }; stroke: { present: boolean; value: unknown } }>
+  >();
 
   const themedColor = (color: Rgba, role: CanvasRole): string => {
     const key = `${role}|${pixelKeyOf(color)}`;
@@ -328,6 +374,53 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       );
       if (restore !== null) restores.push(restore);
     }
+
+    if (typeof Reflect.get(prototype, "save") === "function" && typeof Reflect.get(prototype, "restore") === "function") {
+      const saveRestore = wrapPrototypeMethod(prototype, "save", (next) =>
+        function (this: object, ...args: unknown[]): void {
+          const stack = styleStack.get(this) ?? [];
+          if (stack.length < 256) {
+            stack.push({
+              fill: { present: fill.hasAssigned(this), value: fill.assignedValue(this) },
+              stroke: { present: stroke.hasAssigned(this), value: stroke.assignedValue(this) },
+            });
+            styleStack.set(this, stack);
+          }
+          return next.apply(this, args);
+        });
+      if (saveRestore !== null) restores.push(saveRestore);
+
+      const restoreRestore = wrapPrototypeMethod(prototype, "restore", (next) =>
+        function (this: object, ...args: unknown[]): void {
+          const stack = styleStack.get(this);
+          const saved = stack?.pop();
+          if (saved === undefined) return next.apply(this, args);
+          if (saved.fill.present) fill.setAssigned(this, saved.fill.value);
+          else fill.deleteAssigned(this);
+          if (saved.stroke.present) stroke.setAssigned(this, saved.stroke.value);
+          else stroke.deleteAssigned(this);
+          return next.apply(this, args);
+        });
+      if (restoreRestore !== null) restores.push(restoreRestore);
+    }
+
+    if (typeof Reflect.get(prototype, "drawImage") === "function") {
+      const drawImageRestore = wrapPrototypeMethod(prototype, "drawImage", (next) =>
+        function (this: object, ...args: unknown[]): void {
+          next.apply(this, args);
+          const canvas = contextCanvas(this);
+          if (canvas === null || !isThemedContext(this)) return;
+          const sx = typeof args[1] === "number" ? args[1] : 0;
+          const sy = typeof args[2] === "number" ? args[2] : 0;
+          const w = typeof args[3] === "number" ? args[3] : canvas.width;
+          const h = typeof args[4] === "number" ? args[4] : canvas.height;
+          const rects = imageRects.get(canvas) ?? [];
+          if (rects.length >= IMAGE_RECT_LIMIT) rects.shift();
+          rects.push([sx, sy, w, h]);
+          imageRects.set(canvas, rects);
+        });
+      if (drawImageRestore !== null) restores.push(drawImageRestore);
+    }
   }
 
   const readPixels = (canvas: HTMLCanvasElement): ImageData | null => {
@@ -361,11 +454,29 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
   const applyPixels = (canvas: HTMLCanvasElement, target: ThemeMode): boolean => {
     const image = readPixels(canvas);
     if (image === null) return false;
+    // Pixels Google painted with `drawImage` are opaque content the script must
+    // not reinterpret, so they are masked out of the bridge entirely.
+    const rects = imageRects.get(canvas);
+    let mask: Uint8Array | null = null;
+    if (rects !== undefined && rects.length > 0 && image.width > 0 && image.height > 0) {
+      mask = new Uint8Array(image.width * image.height);
+      for (const [rx, ry, rw, rh] of rects) {
+        const left = Math.max(0, Math.floor(rx));
+        const top = Math.max(0, Math.floor(ry));
+        const right = Math.min(image.width, Math.ceil(rx + rw));
+        const bottom = Math.min(image.height, Math.ceil(ry + rh));
+        if (right <= left || bottom <= top) continue;
+        for (let y = top; y < bottom; y += 1) {
+          mask.fill(1, y * image.width + left, y * image.width + right);
+        }
+      }
+    }
     const changed = mapPixels(
       image.data,
       pixelTable(canvas, target),
       target === THEME_MODE.DARK ? FRINGE_SWEEP : null,
       target === THEME_MODE.DARK ? neutralDarkLut() : null,
+      mask,
     );
     if (!changed) return false;
     const context = canvas.getContext("2d");

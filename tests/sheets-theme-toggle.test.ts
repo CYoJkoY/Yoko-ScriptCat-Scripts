@@ -96,6 +96,7 @@ class FakeCanvasContext {
   #fill = "black";
   #stroke = "black";
   #drawn = new Map<string, string>();
+  #saveStack: number = 0;
   canvas: HTMLCanvasElement | null = null;
 
   get fillStyle(): string {
@@ -145,6 +146,16 @@ class FakeCanvasContext {
   strokeRect(): void {
     this.#drawn.set("strokeRect", this.#stroke);
   }
+
+  save(): void {
+    this.#saveStack += 1;
+  }
+
+  restore(): void {
+    if (this.#saveStack > 0) this.#saveStack -= 1;
+  }
+
+  drawImage(_image: unknown, _sx: number, _sy: number, _sw: number, _sh: number): void {}
 
   drawn(method: string): string | undefined {
     return this.#drawn.get(method);
@@ -1005,6 +1016,54 @@ describe("canvas theme", () => {
       context.fillStyle = "#ffffff";
       context.fillRect();
       expect(context.drawn("fillRect")).toBe("#202124");
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("keeps a save/restore style pair in step so a post-restore draw stays themed", () => {
+    // Google saves, sets a temporary colour, draws and restores. The wrapper
+    // must sync its assigned-value cache with the native state, or the next
+    // draw after restore() would use a stale colour and land unthemed.
+    const grid = makeGridCanvas([0, 0, 0, 0]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      context.fillStyle = "#ffffff";
+      context.fillRect();
+      expect(context.drawn("fillRect")).toBe("#202124");
+      context.save();
+      context.fillStyle = "#f8cbad";
+      context.restore();
+      // After the native restore the style returns to the pre-save value, so
+      // the wrapper must once again redirect a plain white fill to the surface.
+      context.fillRect();
+      expect(context.drawn("fillRect")).toBe("#202124");
+      expect(context.fillStyle).toBe("#ffffff");
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("masks drawImage regions out of the bridge so image pixels survive the switch", () => {
+    // Google pastes in-cell images and emoji bitmaps with drawImage; those
+    // pixels are opaque content, not theme paint, so the dark bridge must leave
+    // them byte-for-byte intact instead of folding them as anti-aliasing.
+    const imagePixels = [255, 250, 235, 255, 250, 200, 150, 255];
+    const grid = makeGridCanvas([...imagePixels, ...Array(8).fill(255)]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      // Google pastes the image first; the wrapper records the destination
+      // rectangle so the bridge masks exactly those pixels.
+      context.drawImage(document.createElement("canvas"), 0, 0, 1, 2);
+      controller.setMode(THEME_MODE.DARK);
+      // The first two pixels (the "image") are masked; the rest fold to dark.
+      expect(Array.from(grid.pixels.slice(0, 8))).toEqual(imagePixels);
+      expect(Array.from(grid.pixels.slice(8, 12))).toEqual([32, 33, 36, 255]);
+      controller.setMode(THEME_MODE.LIGHT);
+      expect(Array.from(grid.pixels.slice(0, 8))).toEqual(imagePixels);
     } finally {
       controller.dispose();
     }

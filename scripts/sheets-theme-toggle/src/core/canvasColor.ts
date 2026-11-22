@@ -480,15 +480,23 @@ export function palettePixels(mode: "dark" | "light"): ReadonlyMap<number, Rgba>
  * folded through it into the dark surface, clearing the halo a dark switch would
  * otherwise expose. Returns whether any pixel changed, so a caller can skip the
  * expensive `putImageData` upload.
+ *
+ * When `mask` is given, a non-zero entry leaves that pixel untouched. The
+ * controller masks the rectangles Google painted with `drawImage`, so in-cell
+ * images and emoji bitmaps keep their exact pixels through a theme switch.
  */
 export function mapPixels(
   data: Uint8ClampedArray,
   table: ReadonlyMap<number, Rgba>,
   sweep: Rgba | null,
   neutralLut: Uint8Array | null = null,
+  mask: Uint8Array | null = null,
 ): boolean {
   let changed = false;
   for (let index = 0; index + 3 < data.length; index += 4) {
+    // A masked pixel holds content the script must not reinterpret, such as an
+    // image Google drew with `drawImage`; it is left byte-for-byte alone.
+    if (mask !== null && mask[index >> 2] === 1) continue;
     const alpha = data[index + 3] ?? 0;
     if (alpha === 0) continue;
     const r = data[index] ?? 0;
