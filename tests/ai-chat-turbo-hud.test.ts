@@ -333,6 +333,16 @@ describe("HUD panel structure", () => {
         .querySelector('label[for="hud-theme"]')
         ?.textContent?.trim(),
     ).toBe("界面主题");
+    expect(
+      shadow
+        .querySelector('label[for="sidebar-peek-delay"]')
+        ?.textContent?.trim(),
+    ).toBe("侧栏探出延迟");
+    expect(
+      shadow
+        .querySelector('label[for="sidebar-peek-hide-delay"]')
+        ?.textContent?.trim(),
+    ).toBe("移出后关闭延迟");
     const stepButtons = Array.from(
       shadow.querySelectorAll<HTMLButtonElement>(".stepper button"),
     );
@@ -360,6 +370,50 @@ describe("HUD panel structure", () => {
     expect(warning.textContent).toContain("检索会话");
     expect(warning.textContent).toContain("调整提醒上限");
     expect(shadow.querySelector(".turbo-count")?.textContent).toBe("60");
+  });
+});
+
+describe("HUD sidebar peek delays", () => {
+  it("starts both delay inputs from the persisted state", () => {
+    const state = createEngineState();
+    state.sidebarPeekDelayMs = 420;
+    state.sidebarPeekHideDelayMs = 680;
+    const { shadow } = createHud({ state });
+
+    expect(shadowInput(shadow, "sidebar-peek-delay").value).toBe("420");
+    expect(shadowInput(shadow, "sidebar-peek-hide-delay").value).toBe("680");
+  });
+
+  it("saves a custom leave delay and announces it", () => {
+    const { shadow, state, saveConfig } = createHud();
+    const input = shadowInput(shadow, "sidebar-peek-hide-delay");
+    input.value = "640";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(state.sidebarPeekHideDelayMs).toBe(640);
+    expect(saveConfig).toHaveBeenCalledTimes(1);
+    const saved: unknown = JSON.parse(
+      window.localStorage.getItem(STORAGE_KEY_CONFIG) ?? "null",
+    );
+    expect(saved).toMatchObject({ sidebarPeekHideDelayMs: 640 });
+    expect(shadow.querySelector(".sr-live")?.textContent).toContain(
+      "移出侧栏后关闭延迟：640 毫秒，设置已保存",
+    );
+  });
+
+  it("clamps an out-of-range leave delay and reverts an empty one", () => {
+    const { shadow, state } = createHud();
+    const input = shadowInput(shadow, "sidebar-peek-hide-delay");
+
+    input.value = "5000";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(state.sidebarPeekHideDelayMs).toBe(2000);
+    expect(input.value).toBe("2000");
+
+    input.value = "";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(state.sidebarPeekHideDelayMs).toBe(2000);
+    expect(input.value).toBe("2000");
   });
 });
 
