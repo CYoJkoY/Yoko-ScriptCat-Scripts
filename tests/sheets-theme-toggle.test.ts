@@ -938,6 +938,37 @@ describe("canvas theme", () => {
     expect(grid.element.isConnected).toBe(true);
   });
 
+  it("nudges the grid scroll box so Sheets redraws the canvas on a switch", () => {
+    // Sheets redraws the grid when its scroll box moves and ignores a synthetic
+    // resize at an unchanged size, so the switch must also report a scroll.
+    const grid = makeGridCanvas([255, 255, 255, 255]);
+    const container = grid.element.parentElement;
+    if (container === null) throw new Error("Expected the grid container");
+    const host = document.createElement("div");
+    host.id = "waffle-grid-scroller";
+    // jsdom has no layout; give the stand-in the metrics of a scrollable grid.
+    Object.defineProperty(host, "clientHeight", { value: 500, configurable: true });
+    Object.defineProperty(host, "clientWidth", { value: 900, configurable: true });
+    Object.defineProperty(host, "scrollHeight", { value: 5000, configurable: true });
+    Object.defineProperty(host, "scrollWidth", { value: 3000, configurable: true });
+    document.body.append(host);
+    host.append(container);
+
+    const events = vi.spyOn(host, "dispatchEvent");
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      // The first paint of a fresh install is not a "switch"; the nudge only
+      // runs for a real mode change, so toggle once more before asserting.
+      controller.setMode(THEME_MODE.LIGHT);
+      const types = events.mock.calls.map(([event]) => event.type);
+      expect(types).toContain("scroll");
+    } finally {
+      controller.dispose();
+      events.mockRestore();
+    }
+  });
+
   it("themes a switched worksheet on its first draw without waiting for the observer", () => {
     const controller = install(document);
     try {

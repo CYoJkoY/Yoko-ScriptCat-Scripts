@@ -3,8 +3,8 @@ import type { UserscriptMeta } from "../../shared/userscript/meta";
 const meta = {
   name: "Google Sheets Theme Toggle",
   namespace: "https://cyojkoy.github.io/Payment/",
-  version: "1.0.6",
-  description: "在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色）并请求重绘，偏好持久化并跟随系统。",
+  version: "1.0.7",
+  description: "在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并通过轻推网格滚动与补发 resize 让 Google 立即整块重绘、无需手动刷新，偏好持久化并跟随系统。",
   author: "Yoko",
   // `dist/` never reaches `main`; CI publishes the built bundles at the root of
   // the `release` branch, so both update links must point there.

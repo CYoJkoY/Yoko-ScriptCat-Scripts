@@ -22,6 +22,35 @@ const CHART_SELECTOR = ".waffle-chart, [class*='chart']";
 const COLOR_CACHE_LIMIT = 512;
 const ROLE_RECORD_LIMIT = 512;
 
+/**
+ * A theme switch can only recolour the pixels already in the canvas; it cannot
+ * rebuild the anti-aliasing Google would have painted against a dark surface,
+ * so blends of text, grid lines and fills with the old white background survive
+ * as bright specks until the grid is redrawn. Sheets redraws on scroll but
+ * ignores a synthetic `resize` whose dimensions it knows are unchanged, which
+ * is why a manual page reload used to be the only cure. Nudging the grid's own
+ * scroll box by a single pixel and restoring it a frame later makes Sheets
+ * redraw the visible grid through the hooks, so the canvas becomes natively
+ * anti-aliased dark instead of bridged pixel soup.
+ */
+const REPAINT_NUDGE_PX = 1;
+
+/** Sheets debounces its own layout work, so the resize ping is repeated. */
+const REPAINT_RETRY_MS = 120;
+
+/**
+ * The nearest ancestor that Sheets would scroll, i.e. the element whose content
+ * is taller or wider than its box. Both metrics are plain geometry reads, and a
+ * box that cannot scroll (jsdom, a freshly built container) is simply skipped.
+ */
+function scrollBoxOf(node: Element): HTMLElement | null {
+  if (!("scrollTop" in node) || !("clientHeight" in node)) return null;
+  const element = node as HTMLElement;
+  const scrollsDown = element.scrollHeight > element.clientHeight + REPAINT_NUDGE_PX;
+  const scrollsAcross = element.scrollWidth > element.clientWidth + REPAINT_NUDGE_PX;
+  return scrollsDown || scrollsAcross ? element : null;
+}
+
 type StyleProperty = "fillStyle" | "strokeStyle";
 type DrawMethod = "fillText" | "strokeText" | "fillRect" | "fill" | "stroke" | "strokeRect";
 
@@ -187,6 +216,7 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
   const gridFlags = new WeakMap<object, boolean>();
   const colorCache = new Map<string, string>();
   const restores: (() => void)[] = [];
+  const repaintTimers: number[] = [];
 
   const themedColor = (color: Rgba, role: CanvasRole): string => {
     const key = `${role}|${pixelKeyOf(color)}`;
@@ -346,16 +376,71 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     return true;
   };
 
+  /**
+   * Move the scroll box one pixel and put it back on the next frame. The
+   * synthetic `scroll` reports the new offset immediately (Sheets redraws at
+   * that offset), and the restore drives a native `scroll` once the position is
+   * back, so the grid ends up redrawn at the correct offset.
+   */
+  const nudgeScroll = (host: HTMLElement, view: Window | null): void => {
+    const top = host.scrollTop;
+    const left = host.scrollLeft;
+    const down = host.scrollHeight > host.clientHeight + REPAINT_NUDGE_PX;
+    const across = host.scrollWidth > host.clientWidth + REPAINT_NUDGE_PX;
+    const restore = (): void => {
+      try {
+        host.scrollTop = top;
+        host.scrollLeft = left;
+        host.dispatchEvent(new Event("scroll"));
+      } catch {
+        // A torn-down document can reject writes and events mid-navigation.
+      }
+    };
+    try {
+      if (down) host.scrollTop = top + REPAINT_NUDGE_PX;
+      if (across) host.scrollLeft = left + REPAINT_NUDGE_PX;
+      host.dispatchEvent(new Event("scroll"));
+    } catch {
+      return;
+    }
+    if (view !== null && typeof view.requestAnimationFrame === "function") {
+      view.requestAnimationFrame(restore);
+      return;
+    }
+    restore();
+  };
+
   const requestRepaint = (view: Window | null): void => {
     if (view === null) return;
-    try {
-      view.dispatchEvent(new Event("resize"));
-      if (typeof view.requestAnimationFrame === "function") {
-        view.requestAnimationFrame(() => view.dispatchEvent(new Event("resize")));
+    for (const canvas of canvases) {
+      if (!canvas.isConnected) continue;
+      let host: HTMLElement | null = null;
+      for (let node = canvas.parentElement; node !== null && host === null; node = node.parentElement) {
+        host = scrollBoxOf(node);
       }
-    } catch {
-      // A torn-down document can reject synthetic events during navigation.
+      if (host !== null) {
+        nudgeScroll(host, view);
+        break;
+      }
     }
+    const ping = (): void => {
+      try {
+        view.dispatchEvent(new Event("resize"));
+      } catch {
+        // A torn-down document can reject synthetic events during navigation.
+      }
+    };
+    ping();
+    if (typeof view.requestAnimationFrame === "function") {
+      view.requestAnimationFrame(ping);
+    }
+    if (typeof view.setTimeout !== "function") return;
+    const timer = view.setTimeout(() => {
+      const index = repaintTimers.indexOf(timer);
+      if (index !== -1) repaintTimers.splice(index, 1);
+      ping();
+    }, REPAINT_RETRY_MS);
+    repaintTimers.push(timer);
   };
 
   const register = (canvas: HTMLCanvasElement): void => {
@@ -413,6 +498,11 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     },
     dispose: () => {
       if (disposed) return;
+      const win = doc.defaultView;
+      if (win !== null) {
+        for (const timer of repaintTimers) win.clearTimeout(timer);
+      }
+      repaintTimers.length = 0;
       for (const canvas of canvases) {
         if (rendered.get(canvas) !== THEME_MODE.DARK) continue;
         applyPixels(canvas, THEME_MODE.LIGHT);
