@@ -354,6 +354,101 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     }
     return "edge";
   };
+
+  /**
+   * The device-space box a `drawImage` call covers. The three arities place the
+   * destination differently, and the current transform (usually a DPR scale)
+   * shifts it out of the canvas's bitmap pixels, so the corners are mapped and
+   * reduced to a bounding box.
+   */
+  const imageDestinationOf = (
+    self: object,
+    args: readonly unknown[],
+    canvas: HTMLCanvasElement,
+  ): readonly [number, number, number, number] | null => {
+    const num = (value: unknown, fallback: number): number =>
+      typeof value === "number" && Number.isFinite(value) ? value : fallback;
+    const dim = (value: unknown, key: "width" | "height"): number =>
+      typeof value === "object" && value !== null ? num(Reflect.get(value, key), 0) : 0;
+    const image = args[0];
+    let dx = 0;
+    let dy = 0;
+    let dw = dim(image, "width") || canvas.width;
+    let dh = dim(image, "height") || canvas.height;
+    if (args.length >= 9) {
+      // 9-argument: drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh)
+      dx = num(args[5], 0);
+      dy = num(args[6], 0);
+      dw = num(args[7], dw);
+      dh = num(args[8], dh);
+    } else if (args.length >= 5) {
+      // 5-argument: drawImage(image, dx, dy, dw, dh)
+      dx = num(args[1], 0);
+      dy = num(args[2], 0);
+      dw = num(args[3], dw);
+      dh = num(args[4], dh);
+    } else if (args.length === 3) {
+      // 3-argument: drawImage(image, dx, dy); size is the image's own dimensions.
+      dx = num(args[1], 0);
+      dy = num(args[2], 0);
+    }
+    if (dw <= 0 || dh <= 0) return null;
+    let corners: Array<readonly [number, number]> = [
+      [dx, dy],
+      [dx + dw, dy],
+      [dx, dy + dh],
+      [dx + dw, dy + dh],
+    ];
+    const getTransform = Reflect.get(self, "getTransform");
+    if (typeof getTransform === "function") {
+      try {
+        const matrix: unknown = getTransform.call(self);
+        if (isRecord(matrix)) {
+          const [a, b, c, d, e, f] = ["a", "b", "c", "d", "e", "f"].map((key) =>
+            typeof Reflect.get(matrix, key) === "number" ? (Reflect.get(matrix, key) as number) : 0,
+          ) as [number, number, number, number, number, number];
+          corners = corners.map(([x, y]) => [a * x + c * y + e, b * x + d * y + f] as const);
+        }
+      } catch {
+        // A context mid-teardown can reject the transform read; keep user space.
+      }
+    }
+    const xs = corners.map(([x]) => x);
+    const ys = corners.map(([, y]) => y);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    return [left, top, Math.max(...xs) - left, Math.max(...ys) - top];
+  };
+
+  /**
+   * Route a gradient's colour stops through the same role curve as a solid
+   * style, so a gradient overlay follows the theme instead of staying bright.
+   */
+  const decorateGradient = (gradient: unknown, self: object): void => {
+    if (!isRecord(gradient)) return;
+    const addColorStop = Reflect.get(gradient, "addColorStop");
+    if (typeof addColorStop !== "function") return;
+    const original: Function = addColorStop;
+    const wrapped = function (this: object, offset: unknown, color: unknown): unknown {
+      let mapped = color;
+      if (typeof color === "string" && mode === THEME_MODE.DARK && isThemedContext(self)) {
+        const parsed = parseColor(color);
+        if (parsed !== null) mapped = themedColor(parsed, roleForPathFill(parsed));
+      }
+      return original.call(this, offset, mapped);
+    };
+    try {
+      Reflect.defineProperty(gradient, "addColorStop", {
+        configurable: true,
+        writable: true,
+        enumerable: false,
+        value: wrapped,
+      });
+    } catch {
+      // A frozen gradient object keeps its original colours.
+    }
+  };
+
   if (constructor !== null && fill !== null && stroke !== null) {
     const prototype = constructor.prototype;
     const methods: readonly DrawMethod[] = ["fillText", "strokeText", "fillRect", "fill", "stroke", "strokeRect"];
@@ -406,20 +501,34 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
 
     if (typeof Reflect.get(prototype, "drawImage") === "function") {
       const drawImageRestore = wrapPrototypeMethod(prototype, "drawImage", (next) =>
-        function (this: object, ...args: unknown[]): void {
-          next.apply(this, args);
+        function (this: object, ...args: unknown[]): unknown {
+          const result = next.apply(this, args);
           const canvas = contextCanvas(this);
-          if (canvas === null || !isThemedContext(this)) return;
-          const sx = typeof args[1] === "number" ? args[1] : 0;
-          const sy = typeof args[2] === "number" ? args[2] : 0;
-          const w = typeof args[3] === "number" ? args[3] : canvas.width;
-          const h = typeof args[4] === "number" ? args[4] : canvas.height;
+          if (canvas === null || !isThemedContext(this)) return result;
+          const rect = imageDestinationOf(this, args, canvas);
+          if (rect === null) return result;
           const rects = imageRects.get(canvas) ?? [];
           if (rects.length >= IMAGE_RECT_LIMIT) rects.shift();
-          rects.push([sx, sy, w, h]);
+          rects.push(rect);
           imageRects.set(canvas, rects);
+          return result;
         });
       if (drawImageRestore !== null) restores.push(drawImageRestore);
+    }
+
+    // Gradient overlays (frozen-pane shadows, selection washes) carry their
+    // colour in `addColorStop`, never in `fillStyle`, so the style hooks cannot
+    // reach them. Decorate each gradient the grid creates and map its stops too,
+    // otherwise a white-to-transparent gradient stays a bright band on dark.
+    for (const factory of ["createLinearGradient", "createRadialGradient", "createConicGradient"]) {
+      if (typeof Reflect.get(prototype, factory) !== "function") continue;
+      const restore = wrapPrototypeMethod(prototype, factory, (next) =>
+        function (this: object, ...args: unknown[]): unknown {
+          const gradient = next.apply(this, args);
+          decorateGradient(gradient, this);
+          return gradient;
+        });
+      if (restore !== null) restores.push(restore);
     }
   }
 
@@ -460,12 +569,17 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
     let mask: Uint8Array | null = null;
     if (rects !== undefined && rects.length > 0 && image.width > 0 && image.height > 0) {
       mask = new Uint8Array(image.width * image.height);
+      const total = image.width * image.height;
       for (const [rx, ry, rw, rh] of rects) {
         const left = Math.max(0, Math.floor(rx));
         const top = Math.max(0, Math.floor(ry));
         const right = Math.min(image.width, Math.ceil(rx + rw));
         const bottom = Math.min(image.height, Math.ceil(ry + rh));
         if (right <= left || bottom <= top) continue;
+        // A rectangle covering half the canvas is a composited layer, not an
+        // in-cell image: masking it would leave that whole area unthemed, so it
+        // is deliberately bridged like the rest of the grid.
+        if ((right - left) * (bottom - top) * 2 >= total) continue;
         for (let y = top; y < bottom; y += 1) {
           mask.fill(1, y * image.width + left, y * image.width + right);
         }

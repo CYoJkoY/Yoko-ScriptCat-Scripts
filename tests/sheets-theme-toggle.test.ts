@@ -155,14 +155,27 @@ class FakeCanvasContext {
     if (this.#saveStack > 0) this.#saveStack -= 1;
   }
 
-  drawImage(_image: unknown, _sx: number, _sy: number, _sw: number, _sh: number): void {}
+  drawImage(..._args: unknown[]): void {}
+
+  createLinearGradient(..._args: number[]): unknown {
+    void _args;
+    const stops: string[] = [];
+   return {
+     get stops(): string[] {
+       return stops;
+     },
+     addColorStop(offset: number, color: string): void {
+       stops.push(color);
+     },
+   };
+  }
 
   drawn(method: string): string | undefined {
     return this.#drawn.get(method);
   }
 }
 
-function makeGridCanvas(initial: number[]): {
+function makeGridCanvas(initial: number[], width = Math.max(1, Math.ceil(initial.length / 4)), height = 1): {
   readonly element: HTMLCanvasElement;
   readonly pixels: Uint8ClampedArray;
 } {
@@ -170,8 +183,8 @@ function makeGridCanvas(initial: number[]): {
   container.id = "waffle-grid-container";
   document.body.append(container);
   const element = document.createElement("canvas");
-  element.width = 1;
-  element.height = 1;
+  element.width = width;
+  element.height = height;
   container.append(element);
 
   const pixels = new Uint8ClampedArray(initial);
@@ -1050,20 +1063,69 @@ describe("canvas theme", () => {
     // Google pastes in-cell images and emoji bitmaps with drawImage; those
     // pixels are opaque content, not theme paint, so the dark bridge must leave
     // them byte-for-byte intact instead of folding them as anti-aliasing.
-    const imagePixels = [255, 250, 235, 255, 250, 200, 150, 255];
-    const grid = makeGridCanvas([...imagePixels, ...Array(8).fill(255)]);
+    const imagePixels = [255, 250, 235, 255];
+    const grid = makeGridCanvas([...imagePixels, ...new Array(60).fill(255)], 4, 4);
     const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
     const controller = install(document);
     try {
       // Google pastes the image first; the wrapper records the destination
       // rectangle so the bridge masks exactly those pixels.
-      context.drawImage(document.createElement("canvas"), 0, 0, 1, 2);
+      context.drawImage(document.createElement("canvas"), 0, 0, 1, 1);
       controller.setMode(THEME_MODE.DARK);
-      // The first two pixels (the "image") are masked; the rest fold to dark.
-      expect(Array.from(grid.pixels.slice(0, 8))).toEqual(imagePixels);
-      expect(Array.from(grid.pixels.slice(8, 12))).toEqual([32, 33, 36, 255]);
+      // The covered pixel (the "image") is masked; the rest fold to dark.
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual(imagePixels);
+      expect(Array.from(grid.pixels.slice(4, 8))).toEqual([32, 33, 36, 255]);
       controller.setMode(THEME_MODE.LIGHT);
-      expect(Array.from(grid.pixels.slice(0, 8))).toEqual(imagePixels);
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual(imagePixels);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("reads the 3-argument drawImage offset from dx/dy and the image's own size", () => {
+    // drawImage(image, dx, dy) must map the image's natural size at (dx, dy),
+    // not treat dx/dy as width/height: a misread would mask the wrong corner.
+    const grid = makeGridCanvas(Array(16 * 4).fill(255), 4, 4);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      const image = document.createElement("canvas");
+      image.width = 1;
+      image.height = 2;
+      // Covers the single column at x=1, rows y=1..2.
+      context.drawImage(image, 1, 1);
+      controller.setMode(THEME_MODE.DARK);
+      const pixelAt = (x: number, y: number): number[] =>
+        Array.from(grid.pixels.slice((y * 4 + x) * 4, (y * 4 + x) * 4 + 4));
+      expect(pixelAt(1, 1)).toEqual([255, 255, 255, 255]);
+      expect(pixelAt(1, 2)).toEqual([255, 255, 255, 255]);
+      // A neighbour outside the rect is themed, so the mask is not the whole canvas.
+      expect(pixelAt(0, 1)).toEqual([32, 33, 36, 255]);
+      expect(pixelAt(2, 1)).toEqual([32, 33, 36, 255]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("maps gradient colour stops through the role curve only in the dark theme", () => {
+    const grid = makeGridCanvas([0, 0, 0, 0]);
+    const context = grid.element.getContext("2d") as unknown as FakeCanvasContext;
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      const white = parseColor("rgba(255, 255, 255, 0.8)")!;
+      const dark = context.createLinearGradient(0, 0, 1, 0) as { stops: string[]; addColorStop(offset: number, color: string): void };
+      dark.addColorStop(0, "rgba(255, 255, 255, 0.8)");
+      dark.addColorStop(1, "#444746");
+      expect(dark.stops[0]).toBe(formatColor(roleColor(white, "paper")));
+      expect(dark.stops[1]).toBe("#e8eaed");
+
+      controller.setMode(THEME_MODE.LIGHT);
+      const light = context.createLinearGradient(0, 0, 1, 0) as { stops: string[]; addColorStop(offset: number, color: string): void };
+      light.addColorStop(0, "rgba(255, 255, 255, 0.8)");
+      light.addColorStop(1, "#444746");
+      expect(light.stops[0]).toBe("rgba(255, 255, 255, 0.8)");
+      expect(light.stops[1]).toBe("#444746");
     } finally {
       controller.dispose();
     }
