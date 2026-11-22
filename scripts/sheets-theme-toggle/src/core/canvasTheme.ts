@@ -5,6 +5,7 @@ import {
   buildPixelTable,
   formatColor,
   mapPixels,
+  neutralDarkLut,
   normalizeColor,
   palettePixels,
   parseColor,
@@ -331,6 +332,7 @@ export function installCanvasTheme(options: CanvasThemeOptions = {}): CanvasThem
       image.data,
       pixelTable(canvas, target),
       target === THEME_MODE.DARK ? FRINGE_SWEEP : null,
+      target === THEME_MODE.DARK ? neutralDarkLut() : null,
     );
     if (!changed) return false;
     const context = canvas.getContext("2d");

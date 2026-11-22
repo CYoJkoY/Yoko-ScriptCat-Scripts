@@ -98,6 +98,18 @@ const DARK_SURFACE = rgba(32, 33, 36);
 const FRINGE_MIN_CHANNEL = 220;
 const FRINGE_MAX_SPREAD = 8;
 
+/**
+ * Anti-aliased text and grid lines over a bright surface also produce lighter
+ * *mid* neutrals, not just the near-white ones the fringe sweep catches. Left as
+ * they are, those greys glow as a bright halo the moment the surface turns dark
+ * ("noise"). A neutral pixel is any whose channels differ by at most this much;
+ * such pixels above the lightness floor are folded into the paper curve so they
+ * settle into the dark surface. Coloured pixels (fills, images) and dark neutrals
+ * keep their values, so nothing is inverted.
+ */
+const NEUTRAL_SPREAD = 24;
+const NEUTRAL_LIGHTNESS_MIN = 0.5;
+
 const colorKey = (color: Rgba): string => `${color.r},${color.g},${color.b},${color.a}`;
 
 function buildTable(from: "light" | "dark", to: "light" | "dark"): Map<string, Rgba> {
@@ -231,6 +243,28 @@ function roleMaxSaturation(role: CanvasRole): number {
   if (role === "ink") return INK_MAX_SATURATION;
   if (role === "edge") return EDGE_MAX_SATURATION;
   return PAPER_MAX_SATURATION;
+}
+
+let neutralDarkLutCache: Uint8Array | null = null;
+
+/**
+ * A 256-entry lookup that folds a neutral grey channel into the dark paper band.
+ * Only channels at or above {@link NEUTRAL_LIGHTNESS_MIN} move — darker neutrals
+ * (text that is already dark, true black) pass through untouched — so a runtime
+ * switch cannot leave a bright grey halo, yet nothing is pushed toward white.
+ */
+export function neutralDarkLut(): Uint8Array {
+  if (neutralDarkLutCache !== null) return neutralDarkLutCache;
+  const lut = new Uint8Array(256);
+  for (let value = 0; value < 256; value += 1) {
+    const lightness = value / 255;
+    lut[value] =
+      lightness >= NEUTRAL_LIGHTNESS_MIN
+        ? Math.round(roleLightness("paper", lightness) * 255)
+        : value;
+  }
+  neutralDarkLutCache = lut;
+  return lut;
 }
 
 /** Which role a path fill drawn in `color` most plausibly plays. */
@@ -428,13 +462,17 @@ export function palettePixels(mode: "dark" | "light"): ReadonlyMap<number, Rgba>
 /**
  * Recolour an RGBA pixel buffer in place from `table`, optionally sweeping
  * near-white fringes of the surface into `sweep` so a runtime toggle leaves no
- * bright halo. Returns whether any pixel changed, so a caller can skip the
+ * bright halo. When `neutralLut` is supplied, lighter neutral greys (anti-aliased
+ * edge blends that neither the exact table nor the near-white sweep touches) are
+ * folded through it into the dark surface, clearing the halo a dark switch would
+ * otherwise expose. Returns whether any pixel changed, so a caller can skip the
  * expensive `putImageData` upload.
  */
 export function mapPixels(
   data: Uint8ClampedArray,
   table: ReadonlyMap<number, Rgba>,
   sweep: Rgba | null,
+  neutralLut: Uint8Array | null = null,
 ): boolean {
   let changed = false;
   for (let index = 0; index + 3 < data.length; index += 4) {
@@ -452,13 +490,22 @@ export function mapPixels(
       changed = true;
       continue;
     }
-    if (sweep === null) continue;
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
-    if (min < FRINGE_MIN_CHANNEL || max - min > FRINGE_MAX_SPREAD) continue;
-    data[index] = sweep.r;
-    data[index + 1] = sweep.g;
-    data[index + 2] = sweep.b;
+    if (sweep !== null && min >= FRINGE_MIN_CHANNEL && max - min <= FRINGE_MAX_SPREAD) {
+      data[index] = sweep.r;
+      data[index + 1] = sweep.g;
+      data[index + 2] = sweep.b;
+      changed = true;
+      continue;
+    }
+    if (neutralLut === null || max - min > NEUTRAL_SPREAD) continue;
+    const grey = Math.round((r + g + b) / 3);
+    const value = neutralLut[grey] ?? grey;
+    if (value === grey) continue;
+    data[index] = value;
+    data[index + 1] = value;
+    data[index + 2] = value;
     changed = true;
   }
   return changed;
@@ -474,5 +521,10 @@ export const FRINGE_SWEEP: Rgba = DARK_SURFACE;
  * only need the measured colours.
  */
 export function recolorPixels(data: Uint8ClampedArray, mode: "dark" | "light"): boolean {
-  return mapPixels(data, palettePixels(mode), mode === "dark" ? FRINGE_SWEEP : null);
+  return mapPixels(
+    data,
+    palettePixels(mode),
+    mode === "dark" ? FRINGE_SWEEP : null,
+    mode === "dark" ? neutralDarkLut() : null,
+  );
 }

@@ -33,6 +33,7 @@ import { createThemeMount } from "../scripts/sheets-theme-toggle/src/ui/mount";
 import {
   CANVAS_PALETTE,
   formatColor,
+  neutralDarkLut,
   parseColor,
   roleColor,
   recolorCssColor,
@@ -834,6 +835,27 @@ describe("canvas theme", () => {
       controller.setMode(THEME_MODE.LIGHT);
       expect(Array.from(grid.pixels.slice(0, 4))).toEqual([255, 255, 255, 255]);
       expect(Array.from(grid.pixels.slice(4, 8))).toEqual([248, 203, 173, 255]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("folds bright neutral anti-aliasing into the dark surface, leaving dark and coloured pixels", () => {
+    // A light surface leaves grey blends of text/edges/paper as anti-aliasing.
+    // Switched to dark, those bright greys would read as noise, so the bridging
+    // pass darkens lighter neutrals while keeping dark neutrals, pure black and
+    // coloured pixels untouched.
+    const grid = makeGridCanvas([200, 200, 200, 255, 100, 100, 100, 255, 0, 0, 0, 255, 248, 203, 173, 255]);
+    const controller = install(document);
+    try {
+      controller.setMode(THEME_MODE.DARK);
+      const folded = neutralDarkLut()[200] ?? 200;
+      expect(Array.from(grid.pixels.slice(0, 4))).toEqual([folded, folded, folded, 255]);
+      // Below the lightness floor a neutral keeps its value.
+      expect(Array.from(grid.pixels.slice(4, 8))).toEqual([100, 100, 100, 255]);
+      expect(Array.from(grid.pixels.slice(8, 12))).toEqual([0, 0, 0, 255]);
+      // A coloured (non-neutral) pixel is never touched by the neutral fold.
+      expect(Array.from(grid.pixels.slice(12, 16))).toEqual([248, 203, 173, 255]);
     } finally {
       controller.dispose();
     }
