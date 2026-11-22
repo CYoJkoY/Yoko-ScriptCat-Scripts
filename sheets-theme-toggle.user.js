@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.12
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并在网格 blit 之前接管与之同源的游离、离屏与暂存格子缓存（含挂在隐藏容器里的画布），避免切换后表格内部残留浅色噪点、无需手动刷新；同时通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘，保护 drawImage 图片像素（按 3/5/9 参数与变换解析目标矩形）、按角色曲线映射渐变与离屏上下文色标，并保护 save/restore 状态，偏好持久化并跟随系统。
+// @version      1.0.13
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充，切换工作表时即时着色、浅→深切换时折叠中性及浅色抗锯齿亮噪点（保留色相、不整体反色），并在网格 blit 之前接管与之同源的游离、离屏与暂存格子缓存（含挂在隐藏容器里的画布），按录制的文字色重建文字边缘抗锯齿、避免切换后表格内部残留浅色噪点且文字不发灰、无需手动刷新；同时通过压矮网格容器 1px、轻推滚动与补发 resize 触发 Google 立即整块重绘，保护 drawImage 图片像素（按 3/5/9 参数与变换解析目标矩形）、按角色曲线映射渐变与离屏上下文色标，并保护 save/restore 状态，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -96,8 +96,12 @@
   var FRINGE_MAX_SPREAD = 8;
   var NEUTRAL_SPREAD = 24;
   var NEUTRAL_LIGHTNESS_MIN = 0.5;
-  var LIGHT_FOLD_MIN_LIGHTNESS = 0.5;
-  var LIGHT_FOLD_MAX_SPREAD = 64;
+  var LIGHT_FOLD_MIN_LIGHTNESS = 0.42;
+  var BRIDGE_TOLERANCE = 14;
+  var BRIDGE_T_MAX = 1;
+  var PACKED_NONE = -1;
+  var quantKey = (r, g, b) => r >> 2 << 12 | g >> 2 << 6 | b >> 2;
+  var packRgb = (r, g, b) => clampByte(r) << 16 | clampByte(g) << 8 | clampByte(b);
   var colorKey = (color) => `${color.r},${color.g},${color.b},${color.a}`;
   function buildTable(from, to) {
     const table = /* @__PURE__ */ new Map();
@@ -304,8 +308,58 @@
     }
     return table;
   }
-  function mapPixels(data, table, sweep, neutralLut = null, mask = null) {
+  function bridgePixel(r, g, b, lines) {
+    let result = PACKED_NONE;
+    let bestResidual = Number.POSITIVE_INFINITY;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const line of lines) {
+      const from = line.from;
+      const dr = 255 - from.r;
+      const dg = 255 - from.g;
+      const db = 255 - from.b;
+      const lengthSquared = dr * dr + dg * dg + db * db;
+      if (lengthSquared === 0) continue;
+      const raw = ((r - from.r) * dr + (g - from.g) * dg + (b - from.b) * db) / lengthSquared;
+      if (raw > BRIDGE_T_MAX || raw < -0.25) continue;
+      const t = raw < 0 ? 0 : raw;
+      const residual = Math.max(
+        Math.abs(r - (from.r + dr * t)),
+        Math.abs(g - (from.g + dg * t)),
+        Math.abs(b - (from.b + db * t))
+      );
+      if (residual > BRIDGE_TOLERANCE) continue;
+      const distance = (r - from.r) ** 2 + (g - from.g) ** 2 + (b - from.b) ** 2;
+      if (residual > bestResidual + 2) continue;
+      if (residual < bestResidual - 2 || distance < bestDistance) {
+        bestResidual = residual;
+        bestDistance = distance;
+        const to = line.to;
+        result = packRgb(
+          to.r + (DARK_SURFACE.r - to.r) * t,
+          to.g + (DARK_SURFACE.g - to.g) * t,
+          to.b + (DARK_SURFACE.b - to.b) * t
+        );
+      }
+    }
+    return result;
+  }
+  function foldPixel(r, g, b, spread, lut) {
+    if (spread <= NEUTRAL_SPREAD) {
+      const grey = Math.round((r + g + b) / 3);
+      const value = lut[grey] ?? grey;
+      if (value === grey) return PACKED_NONE;
+      return packRgb(value, value, value);
+    }
+    const lightness = (Math.max(r, g, b) + Math.min(r, g, b)) / 510;
+    if (lightness < LIGHT_FOLD_MIN_LIGHTNESS) return PACKED_NONE;
+    const ratio = roleLightness("paper", lightness) / lightness;
+    return packRgb(r * ratio, g * ratio, b * ratio);
+  }
+  function mapPixels(data, table, sweep, neutralLut = null, mask = null, lines = null) {
     let changed = false;
+    const ramps = lines !== null && lines.length > 0 ? lines : null;
+    const rampCache = ramps === null ? null : /* @__PURE__ */ new Map();
+    const foldCache = neutralLut === null ? null : /* @__PURE__ */ new Map();
     for (let index = 0; index + 3 < data.length; index += 4) {
       if (mask !== null && mask[index >> 2] === 1) continue;
       const alpha = data[index + 3] ?? 0;
@@ -324,6 +378,7 @@
       }
       const max = Math.max(r, g, b);
       const min = Math.min(r, g, b);
+      const spread = max - min;
       if (sweep !== null && min >= FRINGE_MIN_CHANNEL && max - min <= FRINGE_MAX_SPREAD) {
         data[index] = sweep.r;
         data[index + 1] = sweep.g;
@@ -331,25 +386,31 @@
         changed = true;
         continue;
       }
-      if (neutralLut === null) continue;
-      const spread = max - min;
-      if (spread <= NEUTRAL_SPREAD) {
-        const grey = Math.round((r + g + b) / 3);
-        const value = neutralLut[grey] ?? grey;
-        if (value === grey) continue;
-        data[index] = value;
-        data[index + 1] = value;
-        data[index + 2] = value;
-        changed = true;
-        continue;
+      const key = quantKey(r, g, b);
+      if (ramps !== null && rampCache !== null) {
+        let packed = rampCache.get(key);
+        if (packed === void 0) {
+          packed = bridgePixel(r, g, b, ramps);
+          rampCache.set(key, packed);
+        }
+        if (packed !== PACKED_NONE) {
+          data[index] = packed >> 16 & 255;
+          data[index + 1] = packed >> 8 & 255;
+          data[index + 2] = packed & 255;
+          changed = true;
+          continue;
+        }
       }
-      if (spread > LIGHT_FOLD_MAX_SPREAD) continue;
-      const lightness = (max + min) / 510;
-      if (lightness < LIGHT_FOLD_MIN_LIGHTNESS) continue;
-      const ratio = roleLightness("paper", lightness) / lightness;
-      data[index] = Math.round(r * ratio);
-      data[index + 1] = Math.round(g * ratio);
-      data[index + 2] = Math.round(b * ratio);
+      if (neutralLut === null || foldCache === null) continue;
+      let folded = foldCache.get(key);
+      if (folded === void 0) {
+        folded = foldPixel(r, g, b, spread, neutralLut);
+        foldCache.set(key, folded);
+      }
+      if (folded === PACKED_NONE) continue;
+      data[index] = folded >> 16 & 255;
+      data[index + 1] = folded >> 8 & 255;
+      data[index + 2] = folded & 255;
       changed = true;
     }
     return changed;
@@ -363,6 +424,7 @@
   var COLOR_CACHE_LIMIT = 512;
   var ROLE_RECORD_LIMIT = 512;
   var IMAGE_RECT_LIMIT = 64;
+  var BRIDGE_LINE_LIMIT = 12;
   var TILE_PAPER_MIN_CHANNEL = 224;
   var TILE_PAPER_MAX_SPREAD = 24;
   var TILE_PAPER_RATIO = 0.35;
@@ -754,11 +816,21 @@
         throw error;
       }
     };
+    const recordsFor = (canvas) => {
+      const own = records.get(canvas);
+      if (own !== void 0 && own.size > 0) return own;
+      for (const grid of canvases) {
+        if (grid === canvas) continue;
+        const other = records.get(grid);
+        if (other !== void 0 && other.size > 0) return other;
+      }
+      return void 0;
+    };
     const pixelTable = (canvas, target) => {
       const pairs = CANVAS_PALETTE.map(
         (pair) => target === THEME_MODE.DARK ? [pair.light, pair.dark] : [pair.dark, pair.light]
       );
-      const remembered = records.get(canvas);
+      const remembered = recordsFor(canvas);
       if (remembered !== void 0) {
         for (const { color, role } of remembered.values()) {
           pairs.push(
@@ -767,6 +839,32 @@
         }
       }
       return buildPixelTable(pairs);
+    };
+    const inkLinesOf = (canvas) => {
+      const remembered = recordsFor(canvas);
+      if (remembered === void 0 || remembered.size === 0) return [];
+      const painted = /* @__PURE__ */ new Set();
+      for (const { color, role } of remembered.values()) {
+        if (role !== "ink") painted.add(pixelKeyOf(color));
+      }
+      const lines = [];
+      for (const { color, role } of remembered.values()) {
+        if (role !== "ink") continue;
+        if (painted.has(pixelKeyOf(color))) continue;
+        lines.push({ from: color, to: roleColor(color, role) });
+        if (lines.length >= BRIDGE_LINE_LIMIT) break;
+      }
+      return lines;
+    };
+    const bridgeLines = (canvas) => {
+      const own = inkLinesOf(canvas);
+      if (own.length > 0) return own;
+      for (const grid of canvases) {
+        if (grid === canvas) continue;
+        const lines = inkLinesOf(grid);
+        if (lines.length > 0) return lines;
+      }
+      return null;
     };
     const applyPixels = (canvas, target, useMask = true) => {
       const image = readPixels(canvas);
@@ -793,7 +891,8 @@
         pixelTable(canvas, target),
         target === THEME_MODE.DARK ? FRINGE_SWEEP : null,
         target === THEME_MODE.DARK ? neutralDarkLut() : null,
-        mask
+        mask,
+        target === THEME_MODE.DARK ? bridgeLines(canvas) : null
       );
       if (!changed) return false;
       const context = canvas.getContext("2d");
