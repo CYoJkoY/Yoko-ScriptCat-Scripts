@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Sheets Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.0.2
-// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布背景/默认文字颜色，保留作者自设的单元格底色与字体色，偏好持久化并跟随系统。
+// @version      1.0.3
+// @description  在 Google 表格（/spreadsheets/d/*）编辑界面右侧工具栏加一个深浅主题切换按钮；深色同时调整界面外壳与表格画布，提亮文字、压暗刺眼的浅色填充并在切换后请求重绘，偏好持久化并跟随系统。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/sheets-theme-toggle.user.js
 // @downloadURL  https://ghfast.top/https://raw.githubusercontent.com/CYoJkoY/Yoko-ScriptCat-Scripts/release/sheets-theme-toggle.user.js
@@ -107,7 +107,10 @@
   var DARK_TABLE = buildTable("light", "dark");
   var LIGHT_TABLE = buildTable("dark", "light");
   var pixelKey = (r, g, b, a) => (r << 24 | g << 16 | b << 8 | a) >>> 0;
-  function buildPixelTable(from, to) {
+  function pixelKeyOf(color) {
+    return pixelKey(color.r, color.g, color.b, color.a);
+  }
+  function buildPalettePixels(from, to) {
     const table = /* @__PURE__ */ new Map();
     for (const pair of CANVAS_PALETTE) {
       const source = pair[from];
@@ -117,15 +120,90 @@
     }
     return table;
   }
-  var DARK_PIXELS = buildPixelTable("light", "dark");
-  var LIGHT_PIXELS = buildPixelTable("dark", "light");
-  function toDarkColor(color) {
-    if (color.a === 0) return color;
-    return DARK_TABLE.get(colorKey(color)) ?? color;
+  var DARK_PIXELS = buildPalettePixels("light", "dark");
+  var LIGHT_PIXELS = buildPalettePixels("dark", "light");
+  var PAPER_LIGHTNESS_BASE = 0.04;
+  var PAPER_LIGHTNESS_GAIN = 0.095;
+  var PAPER_MAX_SATURATION = 0.6;
+  var INK_LIGHTNESS_BASE = 0.86;
+  var INK_LIGHTNESS_GAIN = 0.12;
+  var INK_MAX_SATURATION = 0.85;
+  var EDGE_LIGHTNESS_BASE = 0.24;
+  var EDGE_BRIGHT_GAIN = 0.2;
+  var EDGE_DARK_GAIN = 0.24;
+  var EDGE_MAX_SATURATION = 0.6;
+  var EDGE_SPLIT_LIGHTNESS = 0.55;
+  function clampUnit(value) {
+    if (value <= 0) return 0;
+    if (value >= 1) return 1;
+    return value;
   }
-  function toLightColor(color) {
+  function rgbToHsl(color) {
+    const red = color.r / 255;
+    const green = color.g / 255;
+    const blue = color.b / 255;
+    const maximum = Math.max(red, green, blue);
+    const minimum = Math.min(red, green, blue);
+    const lightness = (maximum + minimum) / 2;
+    if (maximum === minimum) return [0, 0, lightness];
+    const delta = maximum - minimum;
+    const saturation = lightness > 0.5 ? delta / (2 - maximum - minimum) : delta / (maximum + minimum);
+    let hue = 0;
+    if (maximum === red) hue = (green - blue) / delta + (green < blue ? 6 : 0);
+    if (maximum === green) hue = (blue - red) / delta + 2;
+    if (maximum === blue) hue = (red - green) / delta + 4;
+    return [hue / 6, saturation, lightness];
+  }
+  function hueToChannel(first, second, hue) {
+    let value = hue;
+    if (value < 0) value += 1;
+    if (value > 1) value -= 1;
+    if (value < 1 / 6) return first + (second - first) * 6 * value;
+    if (value < 1 / 2) return second;
+    if (value < 2 / 3) return first + (second - first) * (2 / 3 - value) * 6;
+    return first;
+  }
+  function hslToRgba(hue, saturation, lightness, alpha) {
+    if (saturation === 0) {
+      const channel = Math.round(lightness * 255);
+      return rgba(channel, channel, channel, alpha);
+    }
+    const second = lightness < 0.5 ? lightness * (1 + saturation) : lightness + saturation - lightness * saturation;
+    const first = 2 * lightness - second;
+    return rgba(
+      Math.round(hueToChannel(first, second, hue + 1 / 3) * 255),
+      Math.round(hueToChannel(first, second, hue) * 255),
+      Math.round(hueToChannel(first, second, hue - 1 / 3) * 255),
+      alpha
+    );
+  }
+  function roleLightness(role, lightness) {
+    const clamped = clampUnit(lightness);
+    if (role === "paper") return PAPER_LIGHTNESS_BASE + PAPER_LIGHTNESS_GAIN * clamped;
+    if (role === "ink") return INK_LIGHTNESS_BASE + INK_LIGHTNESS_GAIN * clamped;
+    if (clamped >= 0.5) return EDGE_LIGHTNESS_BASE + (clamped - 0.5) * EDGE_BRIGHT_GAIN * 2;
+    return EDGE_LIGHTNESS_BASE + (0.5 - clamped) * EDGE_DARK_GAIN * 2;
+  }
+  function roleMaxSaturation(role) {
+    if (role === "ink") return INK_MAX_SATURATION;
+    if (role === "edge") return EDGE_MAX_SATURATION;
+    return PAPER_MAX_SATURATION;
+  }
+  function roleForPathFill(color) {
+    const [, , lightness] = rgbToHsl(color);
+    return lightness >= EDGE_SPLIT_LIGHTNESS ? "paper" : "edge";
+  }
+  function roleColor(color, role) {
     if (color.a === 0) return color;
-    return LIGHT_TABLE.get(colorKey(color)) ?? color;
+    const palette = DARK_TABLE.get(colorKey(color));
+    if (palette !== void 0) return palette;
+    const [hue, saturation, lightness] = rgbToHsl(color);
+    return hslToRgba(
+      hue,
+      Math.min(saturation, roleMaxSaturation(role)),
+      roleLightness(role, lightness),
+      color.a
+    );
   }
   var HEX_PATTERN = /^#[0-9a-f]{3,8}$/u;
   var HEX_DIGIT_COUNTS = /* @__PURE__ */ new Set([3, 4, 6, 8]);
@@ -202,18 +280,16 @@
     const parsed = parseColor(input);
     return parsed === null ? input : formatColor(parsed);
   }
-  function colorsEqual(left, right) {
-    return left.r === right.r && left.g === right.g && left.b === right.b && left.a === right.a;
+  function buildPixelTable(pairs) {
+    const table = /* @__PURE__ */ new Map();
+    for (const [from, to] of pairs) {
+      const key = pixelKeyOf(from);
+      if (table.has(key)) continue;
+      table.set(key, to);
+    }
+    return table;
   }
-  function recolorCssColor(input, mode) {
-    const parsed = parseColor(input);
-    if (parsed === null) return input;
-    const mapped = mode === "dark" ? toDarkColor(parsed) : toLightColor(parsed);
-    if (colorsEqual(mapped, parsed)) return input;
-    return formatColor(mapped);
-  }
-  function recolorPixels(data, mode) {
-    const table = mode === "dark" ? DARK_PIXELS : LIGHT_PIXELS;
+  function mapPixels(data, table, sweep) {
     let changed = false;
     for (let index = 0; index + 3 < data.length; index += 4) {
       const alpha = data[index + 3] ?? 0;
@@ -230,22 +306,24 @@
         changed = true;
         continue;
       }
-      if (mode !== "dark") continue;
+      if (sweep === null) continue;
       const max = Math.max(r, g, b);
       const min = Math.min(r, g, b);
       if (min < FRINGE_MIN_CHANNEL || max - min > FRINGE_MAX_SPREAD) continue;
-      data[index] = DARK_SURFACE.r;
-      data[index + 1] = DARK_SURFACE.g;
-      data[index + 2] = DARK_SURFACE.b;
+      data[index] = sweep.r;
+      data[index + 1] = sweep.g;
+      data[index + 2] = sweep.b;
       changed = true;
     }
     return changed;
   }
+  var FRINGE_SWEEP = DARK_SURFACE;
 
   // scripts/sheets-theme-toggle/src/core/canvasTheme.ts
   var GRID_CANVAS_SELECTOR = "#waffle-grid-container canvas";
   var CHART_SELECTOR = ".waffle-chart, [class*='chart']";
-  var COLOR_CACHE_LIMIT = 256;
+  var COLOR_CACHE_LIMIT = 512;
+  var ROLE_RECORD_LIMIT = 512;
   function isRecord(value) {
     return typeof value === "object" && value !== null;
   }
@@ -297,10 +375,44 @@
       if (error instanceof TypeError) return null;
       throw error;
     }
+    return {
+      assignedValue: (self) => readOriginal(self),
+      writeRaw: (self, value) => writeOriginal(self, value),
+      restore: () => {
+        const current = Object.getOwnPropertyDescriptor(prototype, property);
+        if (current === void 0 || current.get !== accessor.get) return;
+        Reflect.defineProperty(prototype, property, descriptor);
+      }
+    };
+  }
+  function hookDrawMethod(prototype, method, draw, role, fill, stroke, themed, record, darkColor, dark) {
+    const original = Object.getOwnPropertyDescriptor(prototype, method);
+    if (original?.value !== draw || typeof draw !== "function") return null;
+    const wrapper = function(...args) {
+      const style = method === "fillText" || method === "fillRect" || method === "fill" ? fill : stroke;
+      const defaultRole = style === fill ? "paper" : "edge";
+      const current = style.assignedValue(this);
+      const currentColor = typeof current === "string" ? parseColor(current) : null;
+      const currentRole = role(this, args);
+      if (currentColor !== null) record(this, currentColor, currentRole);
+      if (!themed(this) || currentColor === null || !dark()) return draw.apply(this, args);
+      style.writeRaw(this, darkColor(currentColor, currentRole));
+      try {
+        return draw.apply(this, args);
+      } finally {
+        style.writeRaw(this, darkColor(currentColor, defaultRole));
+      }
+    };
+    try {
+      Reflect.defineProperty(prototype, method, { ...original, value: wrapper });
+    } catch (error) {
+      if (error instanceof TypeError) return null;
+      throw error;
+    }
     return () => {
-      const current = Object.getOwnPropertyDescriptor(prototype, property);
-      if (current === void 0 || current.get !== accessor.get) return;
-      Reflect.defineProperty(prototype, property, descriptor);
+      const current = Object.getOwnPropertyDescriptor(prototype, method);
+      if (current?.value !== wrapper) return;
+      Reflect.defineProperty(prototype, method, original);
     };
   }
   function installCanvasTheme(options = {}) {
@@ -309,52 +421,121 @@
     const page = options.page ?? (isRecord(scope) ? Reflect.get(scope, "unsafeWindow") : null);
     const constructor = resolveContextConstructor([page, scope]);
     let mode = THEME_MODE.LIGHT;
+    let applied = null;
     let disposed = false;
     const themed = /* @__PURE__ */ new WeakSet();
     const canvases = /* @__PURE__ */ new Set();
     const rendered = /* @__PURE__ */ new WeakMap();
+    const records = /* @__PURE__ */ new WeakMap();
     const colorCache = /* @__PURE__ */ new Map();
-    const recolor = (value) => {
-      const cached = colorCache.get(value);
+    const restores = [];
+    const themedColor = (color, role) => {
+      const key = `${role}|${pixelKeyOf(color)}`;
+      const cached = colorCache.get(key);
       if (cached !== void 0) return cached;
-      const mapped = recolorCssColor(value, THEME_MODE.DARK);
+      const value = formatColor(roleColor(color, role));
       if (colorCache.size >= COLOR_CACHE_LIMIT) colorCache.clear();
-      colorCache.set(value, mapped);
-      return mapped;
+      colorCache.set(key, value);
+      return value;
+    };
+    const contextCanvas = (self) => {
+      const canvas = Reflect.get(self, "canvas");
+      return isCanvasElement(canvas) ? canvas : null;
     };
     const isThemedContext = (self) => {
-      const canvas = Reflect.get(self, "canvas");
-      return isCanvasElement(canvas) && themed.has(canvas);
+      const canvas = contextCanvas(self);
+      return canvas !== null && themed.has(canvas);
     };
-    const remap = (self, value) => {
-      if (mode !== THEME_MODE.DARK) return value;
+    const remember = (self, color, role) => {
+      const canvas = contextCanvas(self);
+      if (canvas === null || !themed.has(canvas)) return;
+      let canvasRecords = records.get(canvas);
+      if (canvasRecords === void 0) {
+        canvasRecords = /* @__PURE__ */ new Map();
+        records.set(canvas, canvasRecords);
+      }
+      const key = pixelKeyOf(color);
+      if (!canvasRecords.has(key) && canvasRecords.size >= ROLE_RECORD_LIMIT) {
+        const first = canvasRecords.keys().next().value;
+        if (typeof first === "number") canvasRecords.delete(first);
+      }
+      if (!canvasRecords.has(key)) canvasRecords.set(key, { color, role });
+    };
+    const remap = (role) => (self, value) => {
       if (typeof value !== "string") return value;
-      if (!isThemedContext(self)) return value;
-      return recolor(value);
+      const parsed = parseColor(value);
+      if (parsed === null) return value;
+      if (mode !== THEME_MODE.DARK || !isThemedContext(self)) return value;
+      return themedColor(parsed, role);
     };
-    const restores = [];
-    if (constructor !== null) {
-      for (const property of ["fillStyle", "strokeStyle"]) {
-        const restore = hookStyleProperty(constructor.prototype, property, remap);
+    const fill = constructor === null ? null : hookStyleProperty(constructor.prototype, "fillStyle", remap("paper"));
+    const stroke = constructor === null ? null : hookStyleProperty(constructor.prototype, "strokeStyle", remap("edge"));
+    if (fill !== null) restores.push(fill.restore);
+    if (stroke !== null) restores.push(stroke.restore);
+    const roleForMethod = (method, self, args) => {
+      if (method === "fillText" || method === "strokeText") return "ink";
+      if (method === "fillRect") return "paper";
+      if (method === "fill") {
+        const current = fill?.assignedValue(self);
+        const color = typeof current === "string" ? parseColor(current) : null;
+        return color === null ? "paper" : roleForPathFill(color);
+      }
+      return "edge";
+    };
+    if (constructor !== null && fill !== null && stroke !== null) {
+      const prototype = constructor.prototype;
+      const methods = ["fillText", "strokeText", "fillRect", "fill", "stroke", "strokeRect"];
+      for (const method of methods) {
+        const draw = Reflect.get(prototype, method);
+        if (typeof draw !== "function") continue;
+        const restore = hookDrawMethod(
+          prototype,
+          method,
+          draw,
+          (self, args) => roleForMethod(method, self, args),
+          fill,
+          stroke,
+          isThemedContext,
+          remember,
+          themedColor,
+          () => mode === THEME_MODE.DARK
+        );
         if (restore !== null) restores.push(restore);
       }
     }
     const readPixels = (canvas) => {
       const context = canvas.getContext("2d");
-      if (context === null) return null;
-      const { width, height } = canvas;
-      if (width === 0 || height === 0) return null;
+      if (context === null || canvas.width === 0 || canvas.height === 0) return null;
       try {
-        return context.getImageData(0, 0, width, height);
+        return context.getImageData(0, 0, canvas.width, canvas.height);
       } catch (error) {
         if (error instanceof DOMException && error.name === "SecurityError") return null;
         throw error;
       }
     };
+    const pixelTable = (canvas, target) => {
+      const pairs = CANVAS_PALETTE.map(
+        (pair) => target === THEME_MODE.DARK ? [pair.light, pair.dark] : [pair.dark, pair.light]
+      );
+      const remembered = records.get(canvas);
+      if (remembered !== void 0) {
+        for (const { color, role } of remembered.values()) {
+          pairs.push(
+            target === THEME_MODE.DARK ? [color, roleColor(color, role)] : [roleColor(color, role), color]
+          );
+        }
+      }
+      return buildPixelTable(pairs);
+    };
     const applyPixels = (canvas, target) => {
       const image = readPixels(canvas);
       if (image === null) return;
-      if (!recolorPixels(image.data, target)) return;
+      const changed = mapPixels(
+        image.data,
+        pixelTable(canvas, target),
+        target === THEME_MODE.DARK ? FRINGE_SWEEP : null
+      );
+      if (!changed) return;
       const context = canvas.getContext("2d");
       if (context === null) return;
       try {
@@ -364,12 +545,22 @@
         throw error;
       }
     };
+    const requestRepaint = (view) => {
+      if (view === null) return;
+      try {
+        view.dispatchEvent(new Event("resize"));
+        if (typeof view.requestAnimationFrame === "function") {
+          view.requestAnimationFrame(() => view.dispatchEvent(new Event("resize")));
+        }
+      } catch {
+      }
+    };
     const register = (canvas) => {
       if (canvases.has(canvas)) return;
       canvases.add(canvas);
       themed.add(canvas);
       rendered.set(canvas, mode);
-      if (mode === THEME_MODE.DARK) applyPixels(canvas, THEME_MODE.DARK);
+      if (mode === THEME_MODE.DARK) applyPixels(canvas, mode);
     };
     const scan = () => {
       if (disposed) return;
@@ -379,8 +570,7 @@
         themed.delete(canvas);
       }
       for (const canvas of Array.from(doc.querySelectorAll(GRID_CANVAS_SELECTOR))) {
-        if (canvas.closest(CHART_SELECTOR) !== null) continue;
-        register(canvas);
+        if (canvas.closest(CHART_SELECTOR) === null) register(canvas);
       }
     };
     let scanQueued = false;
@@ -398,21 +588,16 @@
     return {
       setMode: (next) => {
         if (disposed) return;
+        const changed = applied !== null && applied !== next;
         mode = next;
-        if (next === THEME_MODE.LIGHT) {
-          for (const canvas of canvases) {
-            if (rendered.get(canvas) === THEME_MODE.LIGHT) continue;
-            applyPixels(canvas, THEME_MODE.LIGHT);
-            rendered.set(canvas, THEME_MODE.LIGHT);
-          }
-          return;
-        }
-        scan();
+        if (next === THEME_MODE.DARK) scan();
         for (const canvas of canvases) {
-          if (rendered.get(canvas) === THEME_MODE.DARK) continue;
-          applyPixels(canvas, THEME_MODE.DARK);
-          rendered.set(canvas, THEME_MODE.DARK);
+          if (rendered.get(canvas) === next) continue;
+          applyPixels(canvas, next);
+          rendered.set(canvas, next);
         }
+        applied = next;
+        if (changed) requestRepaint(doc.defaultView);
       },
       dispose: () => {
         if (disposed) return;
