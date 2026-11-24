@@ -28,21 +28,21 @@ const DARK_TOKENS: readonly Token[] = Object.freeze([
   ["--base_white_007", "rgba(26, 32, 40, 0.07)"],
   ["--base_white_005", "rgba(26, 32, 40, 0.05)"],
   ["--base_white_003", "rgba(26, 32, 40, 0.03)"],
-  ["--base_gray_100", "#E8ECF1"],
-  ["--base_gray_090", "rgba(232, 236, 241, 0.9)"],
-  ["--base_gray_080", "rgba(232, 236, 241, 0.8)"],
-  ["--base_gray_070", "rgba(232, 236, 241, 0.7)"],
-  ["--base_gray_060", "rgba(232, 236, 241, 0.6)"],
-  ["--base_gray_050", "rgba(232, 236, 241, 0.5)"],
-  ["--base_gray_040", "rgba(232, 236, 241, 0.4)"],
-  ["--base_gray_030", "rgba(232, 236, 241, 0.3)"],
-  ["--base_gray_025", "rgba(232, 236, 241, 0.25)"],
-  ["--base_gray_020", "rgba(232, 236, 241, 0.2)"],
-  ["--base_gray_015", "rgba(232, 236, 241, 0.15)"],
-  ["--base_gray_010", "rgba(232, 236, 241, 0.1)"],
-  ["--base_gray_007", "rgba(232, 236, 241, 0.07)"],
-  ["--base_gray_005", "rgba(232, 236, 241, 0.05)"],
-  ["--base_gray_003", "rgba(232, 236, 241, 0.03)"],
+  ["--base_gray_100", "#EEF2F7"],
+  ["--base_gray_090", "rgba(238, 242, 247, 0.95)"],
+  ["--base_gray_080", "rgba(238, 242, 247, 0.92)"],
+  ["--base_gray_070", "rgba(238, 242, 247, 0.88)"],
+  ["--base_gray_060", "rgba(238, 242, 247, 0.8)"],
+  ["--base_gray_050", "rgba(238, 242, 247, 0.72)"],
+  ["--base_gray_040", "rgba(238, 242, 247, 0.62)"],
+  ["--base_gray_030", "rgba(238, 242, 247, 0.44)"],
+  ["--base_gray_025", "rgba(238, 242, 247, 0.25)"],
+  ["--base_gray_020", "rgba(238, 242, 247, 0.2)"],
+  ["--base_gray_015", "rgba(238, 242, 247, 0.15)"],
+  ["--base_gray_010", "rgba(238, 242, 247, 0.1)"],
+  ["--base_gray_007", "rgba(238, 242, 247, 0.07)"],
+  ["--base_gray_005", "rgba(238, 242, 247, 0.05)"],
+  ["--base_gray_003", "rgba(238, 242, 247, 0.03)"],
   ["--base_black", "#E8ECF1"],
   ["--bg_white_web", "#1A2028"],
   ["--bg_white_web_alpha_090", "rgba(26, 32, 40, 0.9)"],
@@ -59,6 +59,21 @@ const DARK_TOKENS: readonly Token[] = Object.freeze([
 
 const ON_ACCENT = "#FFFFFF";
 const ON_ACCENT_MUTED = "rgba(255, 255, 255, 0.8)";
+const SCROLLBAR_TOKENS: readonly Token[] = Object.freeze([
+  ["--color-scroll-bar-bg", "var(--base_gray_030)"],
+  ["--color-scroll-bar-hover-bg", "var(--base_gray_060)"],
+  ["--color-scroll-bar-active-bg", "var(--base_gray_070)"],
+]);
+
+/**
+ * QQ paints the blank reading pane ("未选中任何邮件") with a 160x120
+ * `background-image` — `images/empty_mail.svg`, a single envelope path filled
+ * with `#182B40` at 30%. On the dark canvas that is almost invisible, and a
+ * `background-image` cannot inherit `currentColor`, so the same silhouette is
+ * inlined here painted with the light ink ramp instead.
+ */
+const EMPTY_MAIL_ICON =
+  "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTYwIiBoZWlnaHQ9IjEyMCIgdmlld0JveD0iMCAwIDE2MCAxMjAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0yMi41IDI2QzIyLjUgMjQuMDY3IDI0LjA2NyAyMi41IDI2IDIyLjVIMTM0QzEzNS45MzMgMjIuNSAxMzcuNSAyNC4wNjcgMTM3LjUgMjZWMzcuMTE3QzEzNy41IDM3Ljc2MjYgMTM3LjA4NyAzOC4zMzU4IDEzNi40NzQgMzguNTRMODMuMDA0MiA1Ni4zNjM0QzgxLjA1NDEgNTcuMDEzNCA3OC45NDU5IDU3LjAxMzQgNzYuOTk1OCA1Ni4zNjM0TDIzLjUyNTcgMzguNTRDMjIuOTEzMSAzOC4zMzU4IDIyLjUgMzcuNzYyNiAyMi41IDM3LjExN1YyNlpNMjAgMzcuMTE3VjI2QzIwIDIyLjY4NjMgMjIuNjg2MyAyMCAyNiAyMEgxMzRDMTM3LjMxNCAyMCAxNDAgMjIuNjg2MyAxNDAgMjZWMzcuMTE3Vjk0QzE0MCA5Ny4zMTM3IDEzNy4zMTQgMTAwIDEzNCAxMDBIMjZDMjIuNjg2MyAxMDAgMjAgOTcuMzEzNyAyMCA5NFYzNy4xMTdaTTEzNy41IDQwLjgyNTFWOTRDMTM3LjUgOTUuOTMzIDEzNS45MzMgOTcuNSAxMzQgOTcuNUgyNkMyNC4wNjcgOTcuNSAyMi41IDk1LjkzMyAyMi41IDk0VjQwLjgyNTFDMjIuNTc3MSA0MC44NTYzIDIyLjY1NTQgNDAuODg1MSAyMi43MzUxIDQwLjkxMTdMNzYuMjA1MyA1OC43MzUxQzc4LjY2ODUgNTkuNTU2MiA4MS4zMzE1IDU5LjU1NjIgODMuNzk0NyA1OC43MzUxTDEzNy4yNjUgNDAuOTExN0MxMzcuMzQ1IDQwLjg4NTEgMTM3LjQyMyA0MC44NTYzIDEzNy41IDQwLjgyNTFaIiBmaWxsPSIjRUVGMkY3IiBmaWxsLW9wYWNpdHk9IjAuNDUiLz48L3N2Zz4=";
 
 /**
  * Header and sidebar float on the decorative gradient and use the `white`
@@ -70,40 +85,42 @@ const SHELL_RULES: readonly Rule[] = Object.freeze([
   [
     ".frame-sidebar",
     [
-      ["--feature-title-color", "var(--base_gray_080)"],
+      ["--feature-title-color", "var(--base_gray_090)"],
       ["--sidebar-divider-color", "var(--base_gray_010)"],
+      ...SCROLLBAR_TOKENS,
     ],
   ],
+  [".xmail-page-root::-webkit-scrollbar-thumb", SCROLLBAR_TOKENS],
   [
     ".frame-sidebar-menu",
     [
       ["--color", "var(--base_gray_100)"],
-      ["--total-color", "var(--base_gray_060)"],
-      ["--red-dot-tips-color", "var(--base_gray_060)"],
-      ["--left-icon-color", "var(--base_gray_080)"],
+      ["--total-color", "var(--base_gray_070)"],
+      ["--red-dot-tips-color", "var(--base_gray_070)"],
+      ["--left-icon-color", "var(--base_gray_090)"],
       ["--feature-icon-color", "var(--base_gray_100)"],
-      ["--lock-icon-color", "var(--base_gray_050)"],
-      ["--hover-bg", "var(--base_gray_020)"],
-      ["--active-bg", "var(--base_gray_040)"],
+      ["--lock-icon-color", "var(--base_gray_060)"],
+      ["--hover-bg", "var(--base_gray_010)"],
+      ["--active-bg", "var(--base_gray_020)"],
     ],
   ],
   [
     ".frame-sidebar-menu.sidebar-menu-active",
     [
-      ["--bg", "var(--base_gray_030)"],
-      ["--hover-bg", "var(--base_gray_040)"],
-      ["--active-bg", "var(--base_gray_050)"],
+      ["--bg", "var(--base_gray_015)"],
+      ["--hover-bg", "var(--base_gray_020)"],
+      ["--active-bg", "var(--base_gray_025)"],
       ["--total-color", "var(--base_gray_100)"],
     ],
   ],
-  [".frame-sidebar .frame-sidebar-menu-right-btn", [["--color", "var(--base_gray_070)"]]],
-  [".frame-sidebar-menu-left-btn", [["--icon-color", "var(--base_gray_060)"]]],
+  [".frame-sidebar .frame-sidebar-menu-right-btn", [["--color", "var(--base_gray_090)"]]],
+  [".frame-sidebar-menu-left-btn", [["--icon-color", "var(--base_gray_080)"]]],
   [
     ".frame-sidebar-setting-menus",
     [
       ["--back-btn-color", "var(--base_gray_100)"],
       ["--back-btn-icon-color", "var(--base_gray_080)"],
-      ["--group-title-color", "var(--base_gray_060)"],
+      ["--group-title-color", "var(--base_gray_070)"],
     ],
   ],
   [
@@ -120,11 +137,11 @@ const SHELL_RULES: readonly Rule[] = Object.freeze([
   [
     ".frame-header-auto-reply-btn",
     [
-      ["--bg", "var(--base_gray_030)"],
+      ["--bg", "var(--base_gray_015)"],
       ["--border-color", "var(--base_gray_060)"],
       ["--color", "var(--base_gray_100)"],
       ["--icon-color", "var(--base_gray_100)"],
-      ["--down-icon-color", "var(--base_gray_050)"],
+      ["--down-icon-color", "var(--base_gray_060)"],
     ],
   ],
   [
@@ -137,14 +154,32 @@ const SHELL_RULES: readonly Rule[] = Object.freeze([
   [
     ".mail-lazy-search-wrap",
     [
-      ["--bg", "var(--base_gray_030)"],
+      ["--bg", "var(--base_gray_015)"],
       ["--search-icon-color", "var(--base_gray_080)"],
-      ["--placeholder-text-color", "var(--base_gray_040)"],
+      ["--placeholder-text-color", "var(--base_gray_060)"],
     ],
   ],
   [
     ".cmp-vip-state-icon:not(.cmp-vip-icon-in-panel)",
     [["--vip-icon-color", "var(--base_gray_080)"]],
+  ],
+  /* Blank reading pane: the envelope plus the "未选中任何邮件" caption. */
+  [".mail-list-page-reader-tips .empty-tips::before", [["background-image", `url("${EMPTY_MAIL_ICON}")`]]],
+  [".mail-list-page-reader-tips .empty-tips .tips-title", [["color", "var(--base_gray_070)"]]],
+  /* Empty folder ("暂无邮件") and its secondary line. */
+  [".mail-list-page-tips .empty-desc", [["color", "var(--base_gray_060)"]]],
+  /* Message preview line is the dimmest body text in the list; lift one step. */
+  [".mail-list-page-item .mail-digest", [["color", "var(--base_gray_050)"]]],
+  [".mail-list-page-item .mail-digest.digest-remark", [["color", "var(--chrome_yellow_lighten_2)"]]],
+  /* Unchecked checkbox icons inherit the dim gray_030; lift them for contrast. */
+  [
+    ".xmail-ui-checkbox .ui-checkbox-icon-uncheck .ui-checkbox-uncheck-icon",
+    [["color", "var(--base_gray_060)"]],
+  ],
+  [".xmail-ui-icon-loading > svg > path[fill=\"#192636\"]", [["fill", "var(--base_gray_100)"]]],
+  [
+    ".xmail-ui-icon-loading > svg stop[stop-color=\"#192636\"]",
+    [["stop-color", "var(--base_gray_100)"]],
   ],
 ]);
 
@@ -199,6 +234,27 @@ function tokenLines(tokens: readonly Token[]): string[] {
 }
 
 /**
+ * Split a selector list on commas that sit at the top level, so a comma inside
+ * `:is(...)`/`:not(...)` does not get mistaken for a selector separator.
+ */
+function splitSelectorList(selector: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < selector.length; index += 1) {
+    const char = selector[index];
+    if (char === "(") depth += 1;
+    else if (char === ")") depth = Math.max(0, depth - 1);
+    else if (char === "," && depth === 0) {
+      parts.push(selector.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(selector.slice(start));
+  return parts.map((part) => part.trim()).filter((part) => part.length > 0);
+}
+
+/**
  * Every rule is anchored with `body` on top of the theme gate. QQ's own rules
  * use `body.page-color-theme <selector>`; the extra element step keeps ours
  * strictly more specific so it wins no matter which sheet loads last.
@@ -206,9 +262,8 @@ function tokenLines(tokens: readonly Token[]): string[] {
 function rulesLines(gate: string, rules: readonly Rule[]): string[] {
   const lines: string[] = [];
   for (const [selector, declarations] of rules) {
-    const head = selector
-      .split(",")
-      .map((part) => `body ${part.trim()}`)
+    const head = splitSelectorList(selector)
+      .map((part) => `body ${part}`)
       .join(", ");
     lines.push(`${gate} ${head} {`);
     for (const [property, value] of declarations) {
@@ -230,6 +285,7 @@ export function buildThemeCss(): string {
     `${body} {`,
     "  color-scheme: dark;",
     ...tokenLines(DARK_TOKENS),
+    ...tokenLines(SCROLLBAR_TOKENS),
     "}",
     "",
     "/* Darken the decorative gradient behind the header and sidebar. */",

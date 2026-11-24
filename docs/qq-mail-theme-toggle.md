@@ -1,7 +1,7 @@
 # QQ Mail Theme Toggle
 为 QQ 邮箱网页版新增一个深浅色主题切换按钮的用户脚本（UserScript）。
 
-- 版本：1.2.1
+- 版本：1.2.2
 - 许可：MIT
 - 运行环境：ScriptCat / Tampermonkey / Violentmonkey 等 UserScript 管理器
 - 适用页面：`https://wx.mail.qq.com/home/*`（`@noframes`）
@@ -21,6 +21,10 @@
 - 从未手动选择过主题时跟随系统 `prefers-color-scheme`；点击按钮后模式写入 `GM_getValue` / `GM_setValue`（无授权时退回页面 `localStorage`），刷新后仍然生效；系统主题变化只在用户未手动选择时生效。
 - `MutationObserver` 会在 QQ 邮箱重绘 DOM 后把按钮重新挂载；按钮自身使用两套独立配色，深浅主题下都保持可读，并保留键盘焦点、Enter/Space 与 `aria-pressed` 语义。
 - `@run-at document-start`：主题属性和样式表在首帧渲染前注入，避免整页浅色闪烁。
+- 深色外壳的灰阶前景使用更高亮度和不透明度；邮件列表预览行、空状态文案与外壳图标（依赖 `currentColor` 的 SVG）会继承这套浅色前景，避免在深色背景上发灰或发暗。
+- 空白阅读区（`.mail-list-page-reader-tips .empty-tips::before`）的邮箱插画原本是一张深色 `background-image`（`#182B40`、约 30% 不透明度），在深色底上几乎不可见；脚本改用同形状、同尺寸（160×120）的内联 data URI 插画，以浅色前景重绘。这是插画替换，不是滤镜，也不是反色，且不涉及邮件正文媒体像素。
+- 邮件摘要、空状态提示、账号邮箱和搜索占位符提高亮度，备注摘要仍以黄色区分。
+- 滚动条滑块、未选中复选框和灰色加载图标使用浅色前景；加载图标保留原有渐变与动画。
 
 ## 主题原理
 QQ 邮箱的界面由 `<body class="page-color-theme">` 上的一组 `--base_white_*`、`--base_gray_*`、`--bg_*` 等设计令牌驱动。深色模式在 `<html data-yoko-qq-mail-theme="dark">` 下重新声明这些令牌：原本的“白色层”变成深色背景，原本的“灰色文字”变成浅色文字；同时对少量直接写死颜色的组件做定向覆盖。规则统一带 `body` 前缀，以稳定压过 QQ 邮箱自身的 `body.page-color-theme` 选择器。

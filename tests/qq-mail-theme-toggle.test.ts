@@ -92,11 +92,16 @@ function selectorsOf(css: string): string[] {
 function blockFor(css: string, needle: string): string {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//gu, "");
   const pattern = /([^{}]+)\{[^{}]*\}/gu;
+  const matches: RegExpExecArray[] = [];
   let match: RegExpExecArray | null = pattern.exec(withoutComments);
   while (match !== null) {
-    if (match[1].includes(needle)) return match[0];
+    matches.push(match);
     match = pattern.exec(withoutComments);
   }
+  const exact = matches.find((candidate) => candidate[1].trim().endsWith(needle));
+  if (exact !== undefined) return exact[0];
+  const partial = matches.find((candidate) => candidate[1].includes(needle));
+  if (partial !== undefined) return partial[0];
   throw new Error("Missing CSS block containing: " + needle);
 }
 
@@ -269,6 +274,8 @@ describe("style contract", () => {
     expect(body).toContain("color-scheme: dark;");
     expect(body).toContain("--base_white_100: #1A2028;");
     expect(body).toContain("--base_black: #E8ECF1;");
+    expect(body).toContain("--base_gray_100: #EEF2F7;");
+    expect(body).toContain("--base_gray_080: rgba(238, 242, 247, 0.92);");
   });
 
   it("remaps the shell foreground variables away from the inverted white ramp", () => {
@@ -277,6 +284,60 @@ describe("style contract", () => {
     expect(sidebar).toContain("--color: var(--base_gray_100);");
     const header = blockFor(css, ".frame-header-setting-btn");
     expect(header).toContain("--color: var(--base_gray_080);");
+  });
+
+  it("repaints the blank reading pane illustration instead of leaving it dark", () => {
+    const illustration = blockFor(css, ".mail-list-page-reader-tips .empty-tips::before");
+    expect(illustration).toContain(DARK_GATE);
+    const encoded = /background-image: url\("data:image\/svg\+xml;base64,([A-Za-z0-9+/=]+)"\)/u.exec(
+      illustration,
+    )?.[1];
+    expect(encoded).toBeDefined();
+    const svg = new DOMParser().parseFromString(atob(encoded ?? ""), "image/svg+xml");
+    expect(svg.documentElement.getAttribute("viewBox")).toBe("0 0 160 120");
+    expect(svg.querySelector("path")?.getAttribute("fill")).toBe("#EEF2F7");
+    expect(svg.querySelector("path")?.getAttribute("fill-opacity")).toBe("0.45");
+    const caption = blockFor(css, ".mail-list-page-reader-tips .empty-tips .tips-title");
+    expect(caption).toContain("color: var(--base_gray_070);");
+  });
+
+  it("lifts the dimmest list and empty-state captions one ramp step", () => {
+    expect(blockFor(css, ".mail-list-page-tips .empty-desc")).toContain(
+      "color: var(--base_gray_060);",
+    );
+    expect(blockFor(css, ".mail-list-page-item .mail-digest")).toContain(
+      "color: var(--base_gray_050);",
+    );
+    expect(blockFor(css, ".mail-list-page-item .mail-digest.digest-remark")).toContain(
+      "color: var(--chrome_yellow_lighten_2);",
+    );
+  });
+
+  it("targets real QQ classes instead of a nonexistent shell container", () => {
+    expect(css).not.toContain(".frame-main");
+    expect(css).not.toContain("common-state");
+  });
+
+  it("keeps scrollbar thumbs and unchecked checkbox icons visible", () => {
+    for (const selector of [`${DARK_GATE} body`, ".frame-sidebar", ".xmail-page-root::-webkit-scrollbar-thumb"]) {
+      const scrollbar = blockFor(css, selector);
+      expect(scrollbar).toContain(DARK_GATE);
+      expect(scrollbar).toContain("--color-scroll-bar-bg: var(--base_gray_030);");
+      expect(scrollbar).toContain("--color-scroll-bar-hover-bg: var(--base_gray_060);");
+      expect(scrollbar).toContain("--color-scroll-bar-active-bg: var(--base_gray_070);");
+    }
+    const checkbox = blockFor(css, ".ui-checkbox-uncheck-icon");
+    expect(checkbox).toContain(DARK_GATE);
+    expect(checkbox).toContain("color: var(--base_gray_060);");
+  });
+
+  it("recolours the gray loading ring without replacing its gradient or opacity", () => {
+    const tip = blockFor(css, '.xmail-ui-icon-loading > svg > path[fill="#192636"]');
+    const stops = blockFor(css, '.xmail-ui-icon-loading > svg stop[stop-color="#192636"]');
+    expect(tip).toContain("fill: var(--base_gray_100);");
+    expect(stops).toContain("stop-color: var(--base_gray_100);");
+    expect(tip).not.toContain("fill-opacity:");
+    expect(stops).not.toContain("stop-opacity:");
   });
 
   it("paints the reading pane as a dark canvas instead of a light island", () => {
