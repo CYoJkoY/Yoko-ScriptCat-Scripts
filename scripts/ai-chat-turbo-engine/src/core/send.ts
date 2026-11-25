@@ -52,6 +52,34 @@ export function createSendInterceptUtils(
     }, 280);
   }
 
+  function hasComposerText(input: HTMLElement): boolean {
+    if (
+      input instanceof HTMLTextAreaElement ||
+      input instanceof HTMLInputElement
+    ) {
+      return input.value.trim().length > 0;
+    }
+    const visible = typeof input.innerText === "string" ? input.innerText : "";
+    // jsdom leaves `innerText` empty, so fall back to `textContent` when the
+    // rendered text carries nothing.
+    const raw = visible.trim().length > 0 ? visible : (input.textContent ?? "");
+    return (raw ?? "")
+      .replace(/[\u200b\u200c\u200d\ufeff]/g, "")
+      .trim().length > 0;
+  }
+
+  /**
+   * An Enter that is safe to treat as a send intent at all. Shift keeps the
+   * site's soft newline. IMEs report a composing Enter as `keyCode 229`, and
+   * that Enter confirms a candidate, so it must never be swallowed.
+   */
+  function isEnterKey(event: KeyboardEvent): boolean {
+    if (event.key !== "Enter") return false;
+    if (event.shiftKey) return false;
+    if (event.isComposing) return false;
+    return event.keyCode !== 229;
+  }
+
   function sendWithRetry(
     inputElement: HTMLElement,
     onComplete: (status: boolean) => void,
@@ -110,36 +138,55 @@ export function createSendInterceptUtils(
 
   function handleSendIntercept(event: KeyboardEvent | MouseEvent): void {
     if (isEngineDormant()) return;
-    if (!state.virtualFileEnabled || !hasActiveFiles() || isSubmitting()) {
-      return;
-    }
 
-    if (
-      event instanceof KeyboardEvent &&
-      event.type === "keydown" &&
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.isComposing
-    ) {
+    // Guarding here also keeps the synthetic Enter that `fallbackKeyboardSubmit`
+    // dispatches from looping back into this handler mid-send.
+    if (isSubmitting()) return;
+
+    if (event instanceof KeyboardEvent && event.type === "keydown") {
+      if (!isEnterKey(event)) return;
+
       const input = composer.getChatInput();
       const eventTarget = event.target;
       if (
-        input &&
-        eventTarget instanceof Node &&
-        (eventTarget === input || input.contains(eventTarget))
+        !input ||
+        !(eventTarget instanceof Node) ||
+        (eventTarget !== input && !input.contains(eventTarget))
       ) {
-        event.preventDefault();
-        event.stopPropagation();
-        setSubmitting(true);
-        fuseAndSubmit(input);
-        sendWithRetry(input, () => {
-          setSubmitting(false);
-        });
         return;
       }
+
+      const hasFiles = state.virtualFileEnabled && hasActiveFiles();
+      const enterToSend = currentPlatform.enterToSend === true;
+      // Without pending files only `enterToSend` platforms take the key.
+      if (!hasFiles && !enterToSend) return;
+      // For the opt-in site, a modified Enter belongs to the site or browser.
+      // Pending virtual files keep the legacy behaviour on every platform.
+      if (
+        enterToSend &&
+        !hasFiles &&
+        (event.ctrlKey || event.altKey || event.metaKey)
+      ) {
+        return;
+      }
+      // Nothing to send on a bare Enter into an empty composer: let the site
+      // keep the key so its own cursor behaviour stays intact.
+      if (!hasFiles && !hasComposerText(input)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setSubmitting(true);
+      fuseAndSubmit(input);
+      sendWithRetry(input, () => {
+        setSubmitting(false);
+      });
+      return;
     }
 
     if (event.type === "click") {
+      if (!state.virtualFileEnabled || !hasActiveFiles()) return;
+
       const eventTarget = event.target;
       if (!(eventTarget instanceof Element)) return;
 

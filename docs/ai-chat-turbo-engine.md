@@ -2,7 +2,7 @@
 
 面向长对话与重度使用的跨平台 AI 聊天增强用户脚本。在受支持的 AI 对话页面上叠加一层轻量增强，解决四类实际痛点：长会话渲染变卡、超长代码块挤占阅读空间、大段文本撑爆输入框、上下文难以迁移到新会话。
 
-当前版本：**0.23.11**
+当前版本：**0.23.12**
 许可证：**MIT**
 运行方式：单文件用户脚本，无外部依赖，无网络请求，不申请任何 GM 权限。
 
@@ -15,7 +15,7 @@
 - **侧边栏悬停探出**：ChatGPT / Perplexity / Qwen / 智谱清言 / Z.ai / Gemini 的折叠导航栏在指针停留后原地展开，聊天列位置不动；移开即收回
 - **长代码折叠**：超过阈值的助手代码块自动折叠，保留语言、行数与一键复制
 - **长文本伪文件**：键入或粘贴超长文本时转为悬浮托盘中的"虚拟文件"，发送时合并附加；输入框文本与文件可随时互相转换，已发送消息里的伪文件也能在胶囊与原文之间切换
-- **发送鲁棒性**：多级发送按钮查找 + pointer 序列模拟 + form 兜底提交
+- **发送鲁棒性**：多级发送按钮查找 + pointer 序列模拟 + form 兜底提交；元宝支持 `Enter` 直接发送、`Shift + Enter` 换行
 - **推理强度记忆**：自动记住每个平台上次使用的思考开关 / 推理强度，新对话与刷新后静默还原
 - **元宝工具记忆**：记住腾讯元宝工具行里选中的专业写作、AI 生图等原子工具，刷新或输入框重建后自动恢复
 - **一键交接**：单按钮完成"生成交接包 → 打开新对话 → 填入恢复指令"，任一步失败自动把进度复制到剪贴板
@@ -245,7 +245,8 @@ pointerdown → mousedown → pointerup → mouseup → click
 
 #### 发送拦截 `handleSendIntercept`
 
-- **Enter 键**：存在虚拟文件且未处于提交中时，拦截 `Enter`（不含 `Shift`、非输入法组合状态），合并虚拟文件并触发 `sendWithRetry`。
+- **Enter 键（元宝，`enterToSend`）**：焦点在输入框内、纯 `Enter`（不含 `Shift / Ctrl / Alt / Meta`，且非输入法组合状态或 `keyCode 229`）、输入框有非空白文本时，视为发送意图：`preventDefault + stopPropagation + stopImmediatePropagation` 后合并虚拟文件并触发 `sendWithRetry`。`Shift + Enter` 不拦截，交给站点换行；空输入保留站点原生 Enter。
+- **Enter 键（其他平台）**：只有存在虚拟文件且未处于提交中时才拦截，合并虚拟文件并触发 `sendWithRetry`。
 - **点击**：判断用户是否点击了"发送按钮"时，**不再强制依赖 `isSendControlForInput`**，而是：
   1. 先用 `currentPlatform.sendButtonSelectors` 做 `closest()` 匹配；
   2. 未命中时向上最多 4 层，按 `isSendLikeButton` 兜底识别。
@@ -393,7 +394,8 @@ pointerdown → mousedown → pointerup → mouseup → click
 | `Alt + T` | 呼出 / 收起主面板 |
 | `Ctrl + Shift + O` / `Alt + Shift + O` | 在内置 AI 对话页新开对话（后者为不受浏览器保留的等价入口） |
 | `Esc` | 关闭当前弹层（文件预览或主面板） |
-| `Enter` | 存在虚拟文件时触发合并发送（已输入内容 + 全部虚拟文件） |
+| `Enter` | 元宝：发送输入框内容（空输入不拦截）；其他平台：存在虚拟文件时合并发送 |
+| `Shift + Enter` | 元宝：插入换行；其他平台交给站点原生处理 |
 | 拖拽悬浮仪表 | 移动位置，松手即保存 |
 | 拖拽悬浮仪表到左右边缘 26px 内 | 收成该侧的信息条；贴边状态记住 |
 | 面板标题栏「贴边 / 取消贴边」 | 在侧边信息条与悬浮仪表之间切换 |
@@ -515,6 +517,16 @@ pointerdown → mousedown → pointerup → mouseup → click
 ---
 
 ## 版本记录
+
+### 0.23.12
+
+**让腾讯元宝用 `Enter` 直接发送，`Shift + Enter` 换行。**
+
+- **问题。** 元宝的输入框是 Quill 富文本编辑器，裸 `Enter` 被站点当作软换行，键盘无法发送消息；引擎此前只在存在虚拟文件时才拦截 `Enter`，普通输入完全交给站点。
+- **平台能力开关。** `PlatformDefinition` 新增 `enterToSend`，仅元宝开启；其他站点维持原来的"有虚拟文件才拦截"行为，不受影响。
+- **拦截条件。** 焦点必须在输入框或其内部节点、按键为无修饰的纯 `Enter`、非输入法组合状态（`isComposing` 或 `keyCode 229`），且输入框有非空白文本（有虚拟文件时跳过文本检查，交由合并逻辑提供内容）。命中后先 `preventDefault + stopPropagation + stopImmediatePropagation` 阻止站点插入换行，再合并虚拟文件并走 `sendWithRetry` 点击发送。
+- **保留站点行为。** 元宝上的 `Shift + Enter` 与 `Ctrl / Alt / Meta + Enter` 照常放行；空输入不抢占；发送进行中不重复拦截，`fallbackKeyboardSubmit` 派发的合成 `Enter` 也不会绕回自身造成循环。其他平台有待合并虚拟文件时仍按旧逻辑响应组合 Enter。
+- **测试覆盖。** 纯 Enter 发送、富文本编辑器发送、Shift 换行、修饰键与输入法放行、空输入与仅含 `<br>` 的富文本不发送、未开启平台的旧行为、虚拟文件合并（含组合 Enter 的旧行为）、输入框外事件忽略、消费型 Enter 阻止冒泡而 Shift 放行，共 12 项单元测试。
 
 ### 0.23.11
 
