@@ -301,6 +301,13 @@ export interface PlatformDefinition {
   readonly contentSelectors: readonly string[];
   readonly inputSelectors: readonly string[];
   readonly sendButtonSelectors: readonly string[];
+  /**
+   * The site keeps a soft newline on a bare Enter. When set, a plain Enter in
+   * the composer is treated as a send intent and the engine clicks the send
+   * control instead, while `Shift+Enter` still falls through to the site for a
+   * line break. Left unset on sites whose own Enter already sends.
+   */
+  readonly enterToSend?: boolean;
 }
 
 /**
@@ -990,6 +997,12 @@ export const PLATFORMS = {
     newChatShortcut: "/chat/",
     hosts: ["yuanbao.tencent.com"],
     supportsToolMemory: true,
+    /*
+     * Yuanbao inserts a soft newline on a bare Enter, so a message typed in the
+     * composer cannot be sent from the keyboard alone. Treat plain Enter as a
+     * send intent and keep `Shift+Enter` for line breaks.
+     */
+    enterToSend: true,
     /*
      * Yuanbao wraps its new chat control in a `div[role="button"]` and only
      * names it through `aria-label`, so the shared `button[aria-label*=...]`
