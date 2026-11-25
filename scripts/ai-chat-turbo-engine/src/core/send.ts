@@ -1,7 +1,12 @@
 import type { PlatformDefinition } from "../config";
 import type { EngineState } from "../state";
 import type { ComposerUtils } from "./composer";
+import {
+  DECLARED_CONTROL_MAX_DEPTH,
+  declaredSendControlDepth,
+} from "./composer";
 import { reportRecoverableError } from "./diagnostics";
+import { HUD_ID } from "../config";
 
 export interface SendInterceptDeps {
   currentPlatform: PlatformDefinition;
@@ -20,7 +25,25 @@ export interface SendInterceptUtils {
     inputElement: HTMLElement,
     onComplete: (status: boolean) => void,
   ): void;
-  handleSendIntercept(event: KeyboardEvent | MouseEvent): void;
+  handleSendIntercept(event: KeyboardEvent | MouseEvent | InputEvent): void;
+  bindCompositionTracking(target: Window): void;
+}
+
+/**
+ * Windows Chrome reports the keydown that follows an IME commit with
+ * `keyCode 229` even though the composition has already finished, so the raw
+ * key code cannot decide whether Enter belongs to the input method. Track
+ * composition directly instead and keep a short grace window for the events
+ * that arrive out of order around `compositionend`.
+ */
+const IME_SETTLE_MS = 30;
+
+function isNodeLike(value: unknown): value is Node {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Node).nodeType === "number"
+  );
 }
 
 export function createSendInterceptUtils(
@@ -37,6 +60,30 @@ export function createSendInterceptUtils(
     isSubmitting,
     setSubmitting,
   } = deps;
+
+  let composing = false;
+  let composeSettleTimer = 0;
+
+  function bindCompositionTracking(target: Window): void {
+    target.addEventListener(
+      "compositionstart",
+      () => {
+        window.clearTimeout(composeSettleTimer);
+        composing = true;
+      },
+      true,
+    );
+    target.addEventListener(
+      "compositionend",
+      () => {
+        window.clearTimeout(composeSettleTimer);
+        composeSettleTimer = window.setTimeout(() => {
+          composing = false;
+        }, IME_SETTLE_MS);
+      },
+      true,
+    );
+  }
 
   function cleanupAndResume(
     onComplete: (status: boolean) => void,
@@ -70,14 +117,90 @@ export function createSendInterceptUtils(
 
   /**
    * An Enter that is safe to treat as a send intent at all. Shift keeps the
-   * site's soft newline. IMEs report a composing Enter as `keyCode 229`, and
-   * that Enter confirms a candidate, so it must never be swallowed.
+   * site's soft newline. While an input method is composing, Enter confirms a
+   * candidate and must never be swallowed, but a finished composition still
+   * reports `keyCode 229` on Windows, so the key code is not consulted: the
+   * physical key plus the live composition state decide.
    */
   function isEnterKey(event: KeyboardEvent): boolean {
-    if (event.key !== "Enter") return false;
     if (event.shiftKey) return false;
+    const stroke =
+      event.key === "Enter" ||
+      event.code === "Enter" ||
+      event.code === "NumpadEnter";
+    if (!stroke) return false;
     if (event.isComposing) return false;
-    return event.keyCode !== 229;
+    return !composing;
+  }
+
+  function isEditableTarget(node: HTMLElement): boolean {
+    if (node instanceof HTMLTextAreaElement) return true;
+    if (node instanceof HTMLInputElement) {
+      return (
+        node.type === "text" || node.type === "search" || node.type === "url"
+      );
+    }
+    const editable = node.getAttribute("contenteditable");
+    // Some hosts expose the editable flag as a property without reflecting it
+    // into the attribute (jsdom among them), so both forms count.
+    return (
+      editable === "true" ||
+      editable === "" ||
+      node.contentEditable === "true"
+    );
+  }
+
+  /**
+   * True when a control declared as this platform's send button lives in the
+   * editable's neighbourhood. That keeps the send intent tied to a real
+   * composer instead of any stray editable (a rename box, a search field).
+   */
+  function ownsSendControl(element: HTMLElement): boolean {
+    const selectors = currentPlatform.sendButtonSelectors || [];
+    if (!selectors.length) return true;
+    return (
+      declaredSendControlDepth(element, selectors) <=
+      DECLARED_CONTROL_MAX_DEPTH
+    );
+  }
+
+  /**
+   * Resolve the composer from the event itself. Selector guessing can pick a
+   * different editable on a page that renders more than one (Yuanbao keeps a
+   * Quill editor per panel), and the element that owns the keystroke is the
+   * one the user typed into.
+   */
+  function resolveComposerInput(event: Event): HTMLElement | null {
+    const path =
+      typeof event.composedPath === "function" ? event.composedPath() : [];
+    for (const node of path) {
+      if (!(node instanceof HTMLElement) || !node.isConnected) continue;
+      if (node.closest(`#${HUD_ID}`)) continue;
+      if (node.getAttribute("aria-hidden") === "true") continue;
+      if (!isEditableTarget(node)) continue;
+      if (node !== composer.getChatInput() && !ownsSendControl(node)) continue;
+      return node;
+    }
+    return composer.getChatInput();
+  }
+
+  function isEventInside(input: HTMLElement, event: Event): boolean {
+    const eventTarget = event.target;
+    if (!isNodeLike(eventTarget)) return false;
+    return eventTarget === input || input.contains(eventTarget);
+  }
+
+  function consumeEnter(input: HTMLElement, event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    }
+    setSubmitting(true);
+    fuseAndSubmit(input);
+    sendWithRetry(input, () => {
+      setSubmitting(false);
+    });
   }
 
   function sendWithRetry(
@@ -136,25 +259,21 @@ export function createSendInterceptUtils(
     }, 50);
   }
 
-  function handleSendIntercept(event: KeyboardEvent | MouseEvent): void {
+  function handleSendIntercept(
+    event: KeyboardEvent | MouseEvent | InputEvent,
+  ): void {
     if (isEngineDormant()) return;
 
     // Guarding here also keeps the synthetic Enter that `fallbackKeyboardSubmit`
     // dispatches from looping back into this handler mid-send.
     if (isSubmitting()) return;
 
-    if (event instanceof KeyboardEvent && event.type === "keydown") {
-      if (!isEnterKey(event)) return;
+    if (event.type === "keydown") {
+      const keyEvent = event as KeyboardEvent;
+      if (!isEnterKey(keyEvent)) return;
 
-      const input = composer.getChatInput();
-      const eventTarget = event.target;
-      if (
-        !input ||
-        !(eventTarget instanceof Node) ||
-        (eventTarget !== input && !input.contains(eventTarget))
-      ) {
-        return;
-      }
+      const input = resolveComposerInput(event);
+      if (!input || !isEventInside(input, event)) return;
 
       const hasFiles = state.virtualFileEnabled && hasActiveFiles();
       const enterToSend = currentPlatform.enterToSend === true;
@@ -165,7 +284,7 @@ export function createSendInterceptUtils(
       if (
         enterToSend &&
         !hasFiles &&
-        (event.ctrlKey || event.altKey || event.metaKey)
+        (keyEvent.ctrlKey || keyEvent.altKey || keyEvent.metaKey)
       ) {
         return;
       }
@@ -173,14 +292,25 @@ export function createSendInterceptUtils(
       // keep the key so its own cursor behaviour stays intact.
       if (!hasFiles && !hasComposerText(input)) return;
 
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      setSubmitting(true);
-      fuseAndSubmit(input);
-      sendWithRetry(input, () => {
-        setSubmitting(false);
-      });
+      consumeEnter(input, event);
+      return;
+    }
+
+    // Second net: a paragraph break that reached the editable means some
+    // keystroke path bypassed the keydown handler (another capture listener
+    // consuming the event, an input-method commit, a synthetic insert). The
+    // opt-in platform still promised Enter sends, so stop the newline here.
+    if (event.type === "beforeinput") {
+      const inputEvent = event as InputEvent;
+      if (inputEvent.inputType !== "insertParagraph") return;
+      if (currentPlatform.enterToSend !== true) return;
+      if (composing) return;
+
+      const input = resolveComposerInput(event);
+      if (!input || !isEventInside(input, event)) return;
+      if (!hasComposerText(input)) return;
+
+      consumeEnter(input, event);
       return;
     }
 
@@ -235,5 +365,5 @@ export function createSendInterceptUtils(
     }
   }
 
-  return { sendWithRetry, handleSendIntercept };
+  return { sendWithRetry, handleSendIntercept, bindCompositionTracking };
 }

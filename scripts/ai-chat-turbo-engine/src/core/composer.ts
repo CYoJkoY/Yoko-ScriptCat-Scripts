@@ -28,6 +28,65 @@ export interface TextBounds {
   width: number;
 }
 
+/**
+ * Yuanbao renders its send control six levels away from the editor, and that
+ * wrapper is the closest ancestor the two share. Ten leaves room for DOM
+ * churn while still refusing controls that only meet the editor at the body,
+ * such as a submit button in an unrelated dialog or another panel.
+ */
+export const DECLARED_CONTROL_MAX_DEPTH = 10;
+
+/** Ancestor steps from `input` up to the closest ancestor also holding
+ * `control`; `Infinity` when the two only meet at the body or document. */
+export function sharedAncestorDepth(
+  input: Element,
+  control: Element,
+): number {
+  let ancestor: Element | null = control;
+  let controlSteps = 0;
+  while (
+    ancestor &&
+    ancestor !== document.body &&
+    ancestor !== document.documentElement
+  ) {
+    if (ancestor === input || ancestor.contains(input)) {
+      let steps = 0;
+      let walker: Element | null = input;
+      while (walker && walker !== ancestor) {
+        walker = walker.parentElement;
+        steps++;
+      }
+      return steps + controlSteps;
+    }
+    ancestor = ancestor.parentElement;
+    controlSteps++;
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
+/** Depth of the nearest control declared by any of `selectors`, regardless of
+ * whether it is currently clickable; `Infinity` when none is nearby. */
+export function declaredSendControlDepth(
+  input: Element,
+  selectors: readonly string[],
+): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (const selector of selectors) {
+    let matches: NodeListOf<Element>;
+    try {
+      matches = document.querySelectorAll(selector);
+    } catch (error: unknown) {
+      reportRecoverableError("query declared send selector", error);
+      continue;
+    }
+    for (const candidate of matches) {
+      const depth = sharedAncestorDepth(input, candidate);
+      if (depth < best) best = depth;
+    }
+  }
+  return best;
+}
+
 export function createComposerUtils(deps: ComposerDeps): ComposerUtils {
   const { currentPlatform } = deps;
   function getChatInput(): HTMLElement | null {
@@ -162,7 +221,9 @@ export function createComposerUtils(deps: ComposerDeps): ComposerUtils {
     const usable = (btn: unknown): boolean =>
       isButtonUsable(btn) && (allowDisabled || !isButtonDisabled(btn));
 
-    // 1) 平台选择器
+    // 1) 平台选择器：优先要求与输入框同属一个 composer 容器
+    let declaredControl: HTMLElement | null = null;
+    let declaredDepth = Number.POSITIVE_INFINITY;
     for (const sel of currentPlatform.sendButtonSelectors || []) {
       let matches: NodeListOf<Element>;
       try {
@@ -172,14 +233,23 @@ export function createComposerUtils(deps: ComposerDeps): ComposerUtils {
         continue;
       }
       for (const btn of matches) {
-        if (
-          usable(btn) &&
-          isSendControlForInput(btn, inputElement) &&
-          btn instanceof HTMLElement
-        ) {
-          return btn;
+        if (!usable(btn) || !(btn instanceof HTMLElement)) continue;
+        if (isSendControlForInput(btn, inputElement)) return btn;
+        // 记录离输入框最近的一个，避免页面上存在多个面板时误点别处的按钮
+        const depth = sharedAncestorDepth(inputElement, btn);
+        if (depth < declaredDepth) {
+          declaredDepth = depth;
+          declaredControl = btn;
         }
       }
+    }
+    // 1b) 站点显式声明的发送控件可能渲染在 composer 容器之外：元宝的
+    // `#yuanbao-send-btn` 与编辑器相隔六层，容器启发式匹配不到它，而它并
+    // 不是 `<button>`，后续的按钮兜底也不会命中。声明本身就是最可靠的
+    // 信号，因此在没有同容器候选时采用最近的一个；只有它们连页面壳都不
+    // 共享时（比如登录弹窗里的提交按钮）才放弃，避免把别处的控件当发送。
+    if (declaredControl && declaredDepth <= DECLARED_CONTROL_MAX_DEPTH) {
+      return declaredControl;
     }
 
     // 2) input 所在 form
@@ -319,6 +389,11 @@ export function createComposerUtils(deps: ComposerDeps): ComposerUtils {
         reportRecoverableError("submit composer form", error);
       }
     }
+
+    // On an `enterToSend` platform a plain Enter is the very soft newline the
+    // intercept promised to remove, so replaying it would silently undo the
+    // send intent. Leaving the text in place is the honest failure.
+    if (currentPlatform.enterToSend === true) return false;
 
     const enterOpts = {
       key: "Enter",

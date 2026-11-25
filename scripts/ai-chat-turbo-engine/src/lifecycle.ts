@@ -894,6 +894,14 @@ export function initializeEngine(): void {
       (event) => sendIntercept.handleSendIntercept(event),
       true,
     );
+    // A paragraph break that slips past the keydown handler still must not
+    // turn a bare Enter into a newline on a platform that promised to send.
+    window.addEventListener(
+      "beforeinput",
+      (event) => sendIntercept.handleSendIntercept(event),
+      true,
+    );
+    sendIntercept.bindCompositionTracking(window);
     window.addEventListener(
       "click",
       (event) => sendIntercept.handleSendIntercept(event),
