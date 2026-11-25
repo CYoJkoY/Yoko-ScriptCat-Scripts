@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.11
+// @version      0.23.12
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -879,6 +879,12 @@
       newChatShortcut: "/chat/",
       hosts: ["yuanbao.tencent.com"],
       supportsToolMemory: true,
+      /*
+       * Yuanbao inserts a soft newline on a bare Enter, so a message typed in the
+       * composer cannot be sent from the keyboard alone. Treat plain Enter as a
+       * send intent and keep `Shift+Enter` for line breaks.
+       */
+      enterToSend: true,
       /*
        * Yuanbao wraps its new chat control in a `div[role="button"]` and only
        * names it through `aria-label`, so the shared `button[aria-label*=...]`
@@ -7204,6 +7210,20 @@ ${CODE_FENCE}
         onComplete(status);
       }, 280);
     }
+    function hasComposerText(input) {
+      if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+        return input.value.trim().length > 0;
+      }
+      const visible = typeof input.innerText === "string" ? input.innerText : "";
+      const raw = visible.trim().length > 0 ? visible : input.textContent ?? "";
+      return (raw ?? "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").trim().length > 0;
+    }
+    function isEnterKey(event) {
+      if (event.key !== "Enter") return false;
+      if (event.shiftKey) return false;
+      if (event.isComposing) return false;
+      return event.keyCode !== 229;
+    }
     function sendWithRetry(inputElement, onComplete) {
       let attempts = 0;
       const maxAttempts = 40;
@@ -7250,24 +7270,33 @@ ${CODE_FENCE}
     }
     function handleSendIntercept(event) {
       if (isEngineDormant2()) return;
-      if (!state.virtualFileEnabled || !hasActiveFiles() || isSubmitting()) {
-        return;
-      }
-      if (event instanceof KeyboardEvent && event.type === "keydown" && event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      if (isSubmitting()) return;
+      if (event instanceof KeyboardEvent && event.type === "keydown") {
+        if (!isEnterKey(event)) return;
         const input = composer.getChatInput();
         const eventTarget = event.target;
-        if (input && eventTarget instanceof Node && (eventTarget === input || input.contains(eventTarget))) {
-          event.preventDefault();
-          event.stopPropagation();
-          setSubmitting(true);
-          fuseAndSubmit(input);
-          sendWithRetry(input, () => {
-            setSubmitting(false);
-          });
+        if (!input || !(eventTarget instanceof Node) || eventTarget !== input && !input.contains(eventTarget)) {
           return;
         }
+        const hasFiles = state.virtualFileEnabled && hasActiveFiles();
+        const enterToSend = currentPlatform.enterToSend === true;
+        if (!hasFiles && !enterToSend) return;
+        if (enterToSend && !hasFiles && (event.ctrlKey || event.altKey || event.metaKey)) {
+          return;
+        }
+        if (!hasFiles && !hasComposerText(input)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        setSubmitting(true);
+        fuseAndSubmit(input);
+        sendWithRetry(input, () => {
+          setSubmitting(false);
+        });
+        return;
       }
       if (event.type === "click") {
+        if (!state.virtualFileEnabled || !hasActiveFiles()) return;
         const eventTarget = event.target;
         if (!(eventTarget instanceof Element)) return;
         let sendControl = null;
