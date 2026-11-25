@@ -32,6 +32,9 @@ interface SendFixture {
   resumeObservers: ReturnType<typeof vi.fn<() => void>>;
   isSubmitting: () => boolean;
   press(init?: KeyInit, target?: EventTarget): KeyboardEvent;
+  type(init: InputEventInit, target?: EventTarget): InputEvent;
+  startComposition(): void;
+  endComposition(): void;
 }
 
 function createComposer(
@@ -100,6 +103,7 @@ function createFixture(options: FixtureOptions = {}): SendFixture {
       submitting = value;
     },
   });
+  utils.bindCompositionTracking(window);
 
   function press(init: KeyInit = {}, target: EventTarget = input): KeyboardEvent {
     const event = new KeyboardEvent("keydown", {
@@ -120,6 +124,28 @@ function createFixture(options: FixtureOptions = {}): SendFixture {
     return event;
   }
 
+  function type(
+    init: InputEventInit,
+    target: EventTarget = input,
+  ): InputEvent {
+    const event = new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    const handler = (received: Event): void => {
+      utils.handleSendIntercept(received as InputEvent);
+    };
+    target.addEventListener("beforeinput", handler);
+    target.dispatchEvent(event);
+    target.removeEventListener("beforeinput", handler);
+    return event;
+  }
+
+  function fireComposition(type: string): void {
+    document.dispatchEvent(new CompositionEvent(type, { bubbles: true }));
+  }
+
   return {
     input,
     composer,
@@ -129,6 +155,9 @@ function createFixture(options: FixtureOptions = {}): SendFixture {
     resumeObservers,
     isSubmitting: () => submitting,
     press,
+    type,
+    startComposition: () => fireComposition("compositionstart"),
+    endComposition: () => fireComposition("compositionend"),
   };
 }
 
@@ -202,13 +231,122 @@ describe("send intercept", () => {
     expect(fixture.fuseAndSubmit).not.toHaveBeenCalled();
   });
 
-  it("never swallows an input-method Enter", () => {
+  it("never swallows the Enter that confirms an input-method candidate", () => {
     const fixture = createFixture();
 
     expect(fixture.press({ key: "Enter", isComposing: true }).defaultPrevented)
       .toBe(false);
+
+    fixture.startComposition();
     expect(fixture.press({ key: "Enter", keyCode: 229 }).defaultPrevented)
       .toBe(false);
+    // The composition is still settling right after `compositionend`.
+    fixture.endComposition();
+    expect(fixture.press({ key: "Enter", keyCode: 229 }).defaultPrevented)
+      .toBe(false);
+
+    expect(fixture.fuseAndSubmit).not.toHaveBeenCalled();
+  });
+
+  it("sends on the keyCode 229 Enter that Windows reports after a commit", () => {
+    const fixture = createFixture();
+    fixture.startComposition();
+    fixture.endComposition();
+    vi.advanceTimersByTime(40);
+
+    const event = fixture.press({ key: "Enter", keyCode: 229 });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(fixture.fuseAndSubmit).toHaveBeenCalledWith(fixture.input);
+    vi.advanceTimersByTime(50);
+    expect(fixture.composer.triggerSendButton).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends when the IME reports the key as Process", () => {
+    const fixture = createFixture();
+
+    const event = fixture.press({ key: "Process", code: "Enter", keyCode: 229 });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(fixture.fuseAndSubmit).toHaveBeenCalledWith(fixture.input);
+  });
+
+  it("resolves the composer from the event instead of the first selector hit", () => {
+    const stale = document.createElement("div");
+    stale.contentEditable = "true";
+    stale.textContent = "旧草稿";
+    document.body.append(stale);
+    const fixture = createFixture({ input: stale });
+
+    // Yuanbao keeps the send control six levels above the editor, so the
+    // focused panel owns a declared control even though it is no <button>.
+    const root = document.createElement("div");
+    const control = document.createElement("div");
+    control.id = "yuanbao-send-btn";
+    control.setAttribute("aria-label", "发送");
+    root.append(control);
+    const focused = document.createElement("div");
+    focused.className = "ql-editor";
+    focused.contentEditable = "true";
+    focused.textContent = "元宝，帮我看看这段代码";
+    let panel = root;
+    for (let level = 0; level < 6; level++) {
+      const wrapper = document.createElement("div");
+      panel.append(wrapper);
+      panel = wrapper;
+    }
+    panel.append(focused);
+    document.body.append(root);
+
+    const event = fixture.press({ key: "Enter" }, focused);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(fixture.fuseAndSubmit).toHaveBeenCalledWith(focused);
+  });
+
+  it("leaves a stray editable without a declared send control alone", () => {
+    const fixture = createFixture();
+
+    const panel = document.createElement("div");
+    const control = document.createElement("div");
+    control.id = "yuanbao-send-btn";
+    control.setAttribute("aria-label", "发送");
+    panel.append(control);
+    document.body.append(panel);
+
+    // A search box elsewhere on the page owns no send control, so Enter must
+    // not fall through to the document-wide first match.
+    const search = document.createElement("input");
+    search.type = "text";
+    search.value = "会话搜索";
+    document.body.append(search);
+
+    const event = fixture.press({ key: "Enter" }, search);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(fixture.fuseAndSubmit).not.toHaveBeenCalled();
+  });
+
+  it("blocks a paragraph break that bypassed the keydown handler", () => {
+    const fixture = createFixture();
+
+    const event = fixture.type({ inputType: "insertParagraph" });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(fixture.fuseAndSubmit).toHaveBeenCalledWith(fixture.input);
+  });
+
+  it("keeps a soft line break and a composing paragraph break", () => {
+    const fixture = createFixture();
+
+    expect(
+      fixture.type({ inputType: "insertLineBreak" }).defaultPrevented,
+    ).toBe(false);
+
+    fixture.startComposition();
+    expect(fixture.type({ inputType: "insertParagraph" }).defaultPrevented)
+      .toBe(false);
+
     expect(fixture.fuseAndSubmit).not.toHaveBeenCalled();
   });
 
