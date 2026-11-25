@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.12
+// @version      0.23.13
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -6765,6 +6765,42 @@ ${CODE_FENCE}
   }
 
   // scripts/ai-chat-turbo-engine/src/core/composer.ts
+  var DECLARED_CONTROL_MAX_DEPTH = 10;
+  function sharedAncestorDepth(input, control) {
+    let ancestor = control;
+    let controlSteps = 0;
+    while (ancestor && ancestor !== document.body && ancestor !== document.documentElement) {
+      if (ancestor === input || ancestor.contains(input)) {
+        let steps = 0;
+        let walker = input;
+        while (walker && walker !== ancestor) {
+          walker = walker.parentElement;
+          steps++;
+        }
+        return steps + controlSteps;
+      }
+      ancestor = ancestor.parentElement;
+      controlSteps++;
+    }
+    return Number.POSITIVE_INFINITY;
+  }
+  function declaredSendControlDepth(input, selectors) {
+    let best = Number.POSITIVE_INFINITY;
+    for (const selector of selectors) {
+      let matches;
+      try {
+        matches = document.querySelectorAll(selector);
+      } catch (error) {
+        reportRecoverableError("query declared send selector", error);
+        continue;
+      }
+      for (const candidate of matches) {
+        const depth = sharedAncestorDepth(input, candidate);
+        if (depth < best) best = depth;
+      }
+    }
+    return best;
+  }
   function createComposerUtils(deps) {
     const { currentPlatform } = deps;
     function getChatInput() {
@@ -6859,6 +6895,8 @@ ${CODE_FENCE}
     function findSendControl(inputElement, { allowDisabled = false } = {}) {
       if (!inputElement) return null;
       const usable = (btn) => isButtonUsable(btn) && (allowDisabled || !isButtonDisabled(btn));
+      let declaredControl = null;
+      let declaredDepth = Number.POSITIVE_INFINITY;
       for (const sel of currentPlatform.sendButtonSelectors || []) {
         let matches;
         try {
@@ -6868,10 +6906,17 @@ ${CODE_FENCE}
           continue;
         }
         for (const btn of matches) {
-          if (usable(btn) && isSendControlForInput(btn, inputElement) && btn instanceof HTMLElement) {
-            return btn;
+          if (!usable(btn) || !(btn instanceof HTMLElement)) continue;
+          if (isSendControlForInput(btn, inputElement)) return btn;
+          const depth2 = sharedAncestorDepth(inputElement, btn);
+          if (depth2 < declaredDepth) {
+            declaredDepth = depth2;
+            declaredControl = btn;
           }
         }
+      }
+      if (declaredControl && declaredDepth <= DECLARED_CONTROL_MAX_DEPTH) {
+        return declaredControl;
       }
       const form = inputElement.closest("form");
       if (form) {
@@ -6994,6 +7039,7 @@ ${CODE_FENCE}
           reportRecoverableError("submit composer form", error);
         }
       }
+      if (currentPlatform.enterToSend === true) return false;
       const enterOpts = {
         key: "Enter",
         code: "Enter",
@@ -7188,6 +7234,10 @@ ${CODE_FENCE}
   }
 
   // scripts/ai-chat-turbo-engine/src/core/send.ts
+  var IME_SETTLE_MS = 30;
+  function isNodeLike(value) {
+    return typeof value === "object" && value !== null && typeof value.nodeType === "number";
+  }
   function createSendInterceptUtils(deps) {
     const {
       currentPlatform,
@@ -7200,6 +7250,28 @@ ${CODE_FENCE}
       isSubmitting,
       setSubmitting
     } = deps;
+    let composing = false;
+    let composeSettleTimer = 0;
+    function bindCompositionTracking(target) {
+      target.addEventListener(
+        "compositionstart",
+        () => {
+          window.clearTimeout(composeSettleTimer);
+          composing = true;
+        },
+        true
+      );
+      target.addEventListener(
+        "compositionend",
+        () => {
+          window.clearTimeout(composeSettleTimer);
+          composeSettleTimer = window.setTimeout(() => {
+            composing = false;
+          }, IME_SETTLE_MS);
+        },
+        true
+      );
+    }
     function cleanupAndResume(onComplete, status) {
       window.setTimeout(() => {
         if (isEngineDormant2()) {
@@ -7219,10 +7291,53 @@ ${CODE_FENCE}
       return (raw ?? "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").trim().length > 0;
     }
     function isEnterKey(event) {
-      if (event.key !== "Enter") return false;
       if (event.shiftKey) return false;
+      const stroke = event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter";
+      if (!stroke) return false;
       if (event.isComposing) return false;
-      return event.keyCode !== 229;
+      return !composing;
+    }
+    function isEditableTarget(node) {
+      if (node instanceof HTMLTextAreaElement) return true;
+      if (node instanceof HTMLInputElement) {
+        return node.type === "text" || node.type === "search" || node.type === "url";
+      }
+      const editable = node.getAttribute("contenteditable");
+      return editable === "true" || editable === "" || node.contentEditable === "true";
+    }
+    function ownsSendControl(element) {
+      const selectors = currentPlatform.sendButtonSelectors || [];
+      if (!selectors.length) return true;
+      return declaredSendControlDepth(element, selectors) <= DECLARED_CONTROL_MAX_DEPTH;
+    }
+    function resolveComposerInput(event) {
+      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+      for (const node of path) {
+        if (!(node instanceof HTMLElement) || !node.isConnected) continue;
+        if (node.closest(`#${HUD_ID}`)) continue;
+        if (node.getAttribute("aria-hidden") === "true") continue;
+        if (!isEditableTarget(node)) continue;
+        if (node !== composer.getChatInput() && !ownsSendControl(node)) continue;
+        return node;
+      }
+      return composer.getChatInput();
+    }
+    function isEventInside(input, event) {
+      const eventTarget = event.target;
+      if (!isNodeLike(eventTarget)) return false;
+      return eventTarget === input || input.contains(eventTarget);
+    }
+    function consumeEnter(input, event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") {
+        event.stopImmediatePropagation();
+      }
+      setSubmitting(true);
+      fuseAndSubmit(input);
+      sendWithRetry(input, () => {
+        setSubmitting(false);
+      });
     }
     function sendWithRetry(inputElement, onComplete) {
       let attempts = 0;
@@ -7271,28 +7386,30 @@ ${CODE_FENCE}
     function handleSendIntercept(event) {
       if (isEngineDormant2()) return;
       if (isSubmitting()) return;
-      if (event instanceof KeyboardEvent && event.type === "keydown") {
-        if (!isEnterKey(event)) return;
-        const input = composer.getChatInput();
-        const eventTarget = event.target;
-        if (!input || !(eventTarget instanceof Node) || eventTarget !== input && !input.contains(eventTarget)) {
-          return;
-        }
+      if (event.type === "keydown") {
+        const keyEvent = event;
+        if (!isEnterKey(keyEvent)) return;
+        const input = resolveComposerInput(event);
+        if (!input || !isEventInside(input, event)) return;
         const hasFiles = state.virtualFileEnabled && hasActiveFiles();
         const enterToSend = currentPlatform.enterToSend === true;
         if (!hasFiles && !enterToSend) return;
-        if (enterToSend && !hasFiles && (event.ctrlKey || event.altKey || event.metaKey)) {
+        if (enterToSend && !hasFiles && (keyEvent.ctrlKey || keyEvent.altKey || keyEvent.metaKey)) {
           return;
         }
         if (!hasFiles && !hasComposerText(input)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        setSubmitting(true);
-        fuseAndSubmit(input);
-        sendWithRetry(input, () => {
-          setSubmitting(false);
-        });
+        consumeEnter(input, event);
+        return;
+      }
+      if (event.type === "beforeinput") {
+        const inputEvent = event;
+        if (inputEvent.inputType !== "insertParagraph") return;
+        if (currentPlatform.enterToSend !== true) return;
+        if (composing) return;
+        const input = resolveComposerInput(event);
+        if (!input || !isEventInside(input, event)) return;
+        if (!hasComposerText(input)) return;
+        consumeEnter(input, event);
         return;
       }
       if (event.type === "click") {
@@ -7331,7 +7448,7 @@ ${CODE_FENCE}
         });
       }
     }
-    return { sendWithRetry, handleSendIntercept };
+    return { sendWithRetry, handleSendIntercept, bindCompositionTracking };
   }
 
   // scripts/ai-chat-turbo-engine/src/core/new-chat.ts
@@ -12812,6 +12929,12 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
         (event) => sendIntercept.handleSendIntercept(event),
         true
       );
+      window.addEventListener(
+        "beforeinput",
+        (event) => sendIntercept.handleSendIntercept(event),
+        true
+      );
+      sendIntercept.bindCompositionTracking(window);
       window.addEventListener(
         "click",
         (event) => sendIntercept.handleSendIntercept(event),
