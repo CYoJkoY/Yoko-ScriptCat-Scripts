@@ -10,6 +10,10 @@ export const THEME_ATTRIBUTE = "data-yoko-qq-mail-theme";
 
 export const STYLE_ID = "yoko-qq-mail-theme-style";
 
+export const COMPOSE_STYLE_ID = "yoko-qq-mail-compose-style";
+
+export const COMPOSE_CONTENT_SELECTOR = '.xmail-cmp-editor-content[contenteditable="true"]';
+
 export const BUTTON_ID = "yoko-qq-mail-theme-toggle";
 
 export const BUTTON_CLASS = "yoko-qq-mail-theme-button";

@@ -7,6 +7,9 @@
  * never touched, so photos, logos and videos keep their original pixels.
  */
 
+import { COMPOSE_CONTENT_SELECTOR } from "../config";
+import { createComposePalette } from "./composeStyle";
+
 interface Rgba {
   readonly r: number;
   readonly g: number;
@@ -20,7 +23,24 @@ type BorderProperty =
   | "border-bottom-color"
   | "border-left-color";
 
-type EmailStyleProperty = "color" | "-webkit-text-fill-color" | "background-color" | BorderProperty;
+type BackgroundLayerProperty =
+  | "background-size"
+  | "background-position"
+  | "background-repeat"
+  | "background-attachment"
+  | "background-origin"
+  | "background-clip"
+  | "background-blend-mode";
+
+type EmailStyleProperty =
+  | "color"
+  | "-webkit-text-fill-color"
+  | "background-color"
+  | "background-image"
+  | BackgroundLayerProperty
+  | BorderProperty;
+
+type PaletteWriter = (element: HTMLElement, property: EmailStyleProperty, value: string) => boolean;
 
 interface SavedProperty {
   readonly value: string;
@@ -34,14 +54,16 @@ interface EmailElementStyle {
   readonly textFill: string;
   readonly backgroundColor: string;
   readonly backgroundImage: string;
+  readonly backgroundLayers: readonly (readonly [BackgroundLayerProperty, string])[];
+  readonly hasText: boolean;
   readonly borders: readonly BorderEntry[];
   readonly children: readonly EmailElementStyle[];
 }
 
 interface VisitContext {
   readonly background: Rgba;
-  readonly preserveForeground: boolean;
   readonly foreground: string;
+  readonly write: PaletteWriter;
 }
 
 interface EmailDarkSession {
@@ -87,6 +109,17 @@ const CONTRAST_EXTREMES: readonly Rgba[] = [
   { r: 0, g: 0, b: 0, a: 1 },
 ];
 const PALETTE_ATTRIBUTES = ["style", "class", "color", "bgcolor", "background"];
+const CONTENT_SELECTOR = `${EMAIL_CONTENT_SELECTOR}, ${COMPOSE_CONTENT_SELECTOR}`;
+const IMAGE_OVERLAY_ALPHA = 0.85;
+const BACKGROUND_LAYER_DEFAULTS: readonly (readonly [BackgroundLayerProperty, string])[] = [
+  ["background-size", "auto"],
+  ["background-position", "0% 0%"],
+  ["background-repeat", "repeat"],
+  ["background-attachment", "scroll"],
+  ["background-origin", "padding-box"],
+  ["background-clip", "border-box"],
+  ["background-blend-mode", "normal"],
+];
 
 /** Surfaces at or above this luminance count as "paper" and become dark. */
 const PAPER_LUMINANCE = 0.18;
@@ -106,6 +139,7 @@ const LIGHTENED_MAX_SATURATION = 0.8;
 
 const trackedElements = new Map<HTMLElement, Map<EmailStyleProperty, SavedProperty>>();
 let activeSession: EmailDarkSession | null = null;
+let composeStyle: HTMLStyleElement | null = null;
 
 function parseCssColor(value: string): Rgba | null {
   const normalized = value.trim().toLowerCase();
@@ -281,7 +315,7 @@ function setTrackedProperty(
   element: HTMLElement,
   property: EmailStyleProperty,
   value: string,
-): void {
+): boolean {
   const properties = trackedElements.get(element) ?? new Map<EmailStyleProperty, SavedProperty>();
   const saved = properties.get(property) ?? {
     value: element.style.getPropertyValue(property),
@@ -290,6 +324,7 @@ function setTrackedProperty(
   element.style.setProperty(property, value, "important");
   properties.set(property, { ...saved, applied: element.style.getPropertyValue(property) });
   trackedElements.set(element, properties);
+  return true;
 }
 
 type BorderEntry = readonly [BorderProperty, string, string, string];
@@ -328,49 +363,64 @@ function readEmailElement(element: Element, view: Window): EmailElementStyle | n
   if (MEDIA_TAGS.has(tag) || INERT_TAGS.has(tag)) return null;
   if (!(element instanceof HTMLElement)) return null;
   const computed = view.getComputedStyle(element);
+  const children = Array.from(element.children)
+    .map((child) => readEmailElement(child, view))
+    .filter((child): child is EmailElementStyle => child !== null);
+  const hasOwnText = Array.from(element.childNodes)
+    .some((node) => node.nodeType === 3 && (node.textContent?.trim().length ?? 0) > 0);
   return {
     element,
     color: computed.color,
     textFill: computed.getPropertyValue("-webkit-text-fill-color"),
     backgroundColor: computed.backgroundColor,
     backgroundImage: computed.backgroundImage,
+    backgroundLayers: BACKGROUND_LAYER_DEFAULTS.map(([property, fallback]) =>
+      [property, computed.getPropertyValue(property) || fallback] as const,
+    ),
+    hasText: hasOwnText || children.some((child) => child.hasText),
     borders: borderEntries(computed),
-    children: Array.from(element.children)
-      .map((child) => readEmailElement(child, view))
-      .filter((child): child is EmailElementStyle => child !== null),
+    children,
   };
+}
+
+function darkenImageSurface(snapshot: EmailElementStyle, context: VisitContext): VisitContext {
+  const overlay = { ...DARK_BACKGROUND, a: IMAGE_OVERLAY_ALPHA };
+  const color = formatColor(overlay);
+  const image = `linear-gradient(${color}, ${color}), ${snapshot.backgroundImage}`;
+  if (!context.write(snapshot.element, "background-image", image)) return context;
+  for (const [property, value] of snapshot.backgroundLayers) {
+    const fallback = BACKGROUND_LAYER_DEFAULTS.find(([name]) => name === property)?.[1] ?? "initial";
+    context.write(snapshot.element, property, `${fallback}, ${value}`);
+  }
+  return { ...context, background: compositeColor(overlay, CONTRAST_EXTREMES[0]) };
 }
 
 function resolveBackground(snapshot: EmailElementStyle, context: VisitContext): VisitContext {
-  const paintedOverImage = snapshot.backgroundImage !== "none" && snapshot.backgroundImage !== "";
-  if (paintedOverImage) return { ...context, preserveForeground: true };
   const declared = parseCssColor(snapshot.backgroundColor);
-  if (declared === null || declared.a === 0) return context;
-  const preserveForeground = context.preserveForeground && declared.a < 1;
-  const mapped = preserveForeground ? null : mapBackground(declared);
-  if (mapped !== null) setTrackedProperty(snapshot.element, "background-color", mapped);
-  const surface = mapped === null ? declared : parseCssColor(mapped) ?? declared;
-  return {
-    ...context,
-    background: compositeColor(surface, context.background),
-    preserveForeground,
+  const mapped = declared === null ? null : mapBackground(declared);
+  const applied = mapped !== null && context.write(snapshot.element, "background-color", mapped);
+  const surface = applied ? parseCssColor(mapped) : declared;
+  const result = surface === null ? context : {
+    ...context, background: compositeColor(surface, context.background),
   };
+  const hasImage = snapshot.backgroundImage !== "none" && snapshot.backgroundImage !== "";
+  if (hasImage && snapshot.hasText) return darkenImageSurface(snapshot, result);
+  return result;
 }
 
 function resolveForeground(value: string, context: VisitContext): string {
-  if (context.preserveForeground) return value;
   const color = parseCssColor(value);
   if (color === null) return value;
   return mapForeground(color, context.background) ?? value;
 }
 
-function recolorBorders(snapshot: EmailElementStyle): void {
+function recolorBorders(snapshot: EmailElementStyle, write: PaletteWriter): void {
   for (const [property, width, style, color] of snapshot.borders) {
     if (!hasBorder(width, style)) continue;
     const parsed = parseCssColor(color);
     if (parsed === null) continue;
     const mapped = mapBorder(parsed);
-    if (mapped !== null) setTrackedProperty(snapshot.element, property, mapped);
+    if (mapped !== null) write(snapshot.element, property, mapped);
   }
 }
 
@@ -378,12 +428,11 @@ function visitElement(snapshot: EmailElementStyle, context: VisitContext): void 
   const surface = resolveBackground(snapshot, context);
   const foreground = resolveForeground(snapshot.color, surface);
   if (foreground !== snapshot.color || foreground !== context.foreground) {
-    setTrackedProperty(snapshot.element, "color", foreground);
+    context.write(snapshot.element, "color", foreground);
   }
-  if (parseCssColor(snapshot.textFill) !== null) {
-    setTrackedProperty(snapshot.element, "-webkit-text-fill-color", resolveForeground(snapshot.textFill, surface));
-  }
-  if (!surface.preserveForeground) recolorBorders(snapshot);
+  const textFill = resolveForeground(snapshot.textFill || snapshot.color, surface);
+  context.write(snapshot.element, "-webkit-text-fill-color", textFill);
+  recolorBorders(snapshot, context.write);
   const next = { ...surface, foreground };
   for (const child of snapshot.children) visitElement(child, next);
 }
@@ -394,11 +443,15 @@ export function applyEmailDarkMode(doc: Document): void {
   activeSession?.observer.disconnect();
   try {
     restoreEmailColors();
-    const snapshots = Array.from(doc.querySelectorAll(EMAIL_CONTENT_SELECTOR))
+    const snapshots = Array.from(doc.querySelectorAll(CONTENT_SELECTOR))
       .map((element) => readEmailElement(element, view))
       .filter((snapshot): snapshot is EmailElementStyle => snapshot !== null);
-    const root: VisitContext = { background: DARK_BACKGROUND, preserveForeground: false, foreground: "" };
-    for (const snapshot of snapshots) visitElement(snapshot, root);
+    const palette = createComposePalette(doc);
+    for (const snapshot of snapshots) {
+      const write = snapshot.element.matches(COMPOSE_CONTENT_SELECTOR) ? palette.write : setTrackedProperty;
+      visitElement(snapshot, { background: DARK_BACKGROUND, foreground: "", write });
+    }
+    composeStyle = palette.mount();
   } finally {
     if (activeSession !== null) observeEmailContent(activeSession);
   }
@@ -414,17 +467,20 @@ function restoreElementColors(element: HTMLElement, properties: Map<EmailStylePr
 }
 
 export function restoreEmailColors(): void {
+  composeStyle?.remove();
+  composeStyle = null;
   for (const [element, properties] of trackedElements) restoreElementColors(element, properties);
   trackedElements.clear();
 }
 
 function touchesEmailContent(record: MutationRecord): boolean {
   const target = record.target instanceof Element ? record.target : record.target.parentElement;
-  if (target?.closest(EMAIL_CONTENT_SELECTOR)) return true;
-  for (const node of Array.from(record.addedNodes)) {
+  if (target?.closest(CONTENT_SELECTOR)) return true;
+  if (record.type === "childList" && target?.querySelector(COMPOSE_CONTENT_SELECTOR)) return true;
+  for (const node of [...record.addedNodes, ...record.removedNodes]) {
     if (!(node instanceof Element)) continue;
-    if (node.closest(EMAIL_CONTENT_SELECTOR) !== null) return true;
-    if (node.querySelector(EMAIL_CONTENT_SELECTOR) !== null) return true;
+    if (node.closest(CONTENT_SELECTOR) !== null) return true;
+    if (node.querySelector(CONTENT_SELECTOR) !== null) return true;
   }
   return false;
 }

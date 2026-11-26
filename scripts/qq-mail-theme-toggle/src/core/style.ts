@@ -1,4 +1,4 @@
-import { BUTTON_CLASS, STYLE_ID, THEME_ATTRIBUTE, THEME_MODE } from "../config";
+import { BUTTON_CLASS, COMPOSE_CONTENT_SELECTOR, STYLE_ID, THEME_ATTRIBUTE, THEME_MODE } from "../config";
 
 /**
  * QQ Mail paints its whole interface from a design-token palette defined on
@@ -301,6 +301,16 @@ export function buildThemeCss(): string {
     "  color-scheme: dark;",
     "  background-color: #1A2028 !important;",
     "  color: #E8ECF1 !important;",
+    "}",
+    "",
+    `${body} ${COMPOSE_CONTENT_SELECTOR} {`,
+    "  background-color: #1A2028 !important;",
+    "  color: #E8ECF1 !important;",
+    "  caret-color: #E8ECF1 !important;",
+    "  --editor-quote-border-color: #3A4049 !important;",
+    "  --editor-todo-box-bg-color: #1A2028 !important;",
+    "  --editor-todo-box-border-color: #A0A8B2 !important;",
+    "  --editor-todo-tick-color: #E8ECF1 !important;",
     "}",
     "",
     "/* Toggle button: a compact icon button pinned to the bottom-left corner. */",
