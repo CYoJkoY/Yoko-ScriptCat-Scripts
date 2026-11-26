@@ -405,6 +405,38 @@ describe("email body recolouring", () => {
     expect(table.style.getPropertyPriority("background-color")).toBe("important");
   });
 
+  it("recolours white paper and dark ink inside an open email shadow root", () => {
+    const host = mountEmail("");
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = '<div class="paper" style="background: #ffffff"><p style="color: #1d1d1f">正文</p></div>';
+    applyEmailDarkMode(document);
+    const paper = mustQuery(shadow, ".paper");
+    const paragraph = mustQuery(shadow, "p");
+    expect(paper.style.backgroundColor).toBe(DARK_CANVAS);
+    expect(paragraph.style.color).toBe(LIGHT_INK);
+    expect(paragraph.style.getPropertyValue("-webkit-text-fill-color")).toBe(LIGHT_INK);
+  });
+
+  it("darkens shadow paper even when the host already supplies light text fill", () => {
+    const host = mountEmail('<div class="detail-content-box" style="-webkit-text-fill-color: #eef2f7 !important"></div>');
+    const shadow = mustQuery(host, ".detail-content-box").attachShadow({ mode: "open" });
+    shadow.innerHTML = '<div style="background: white; color: white"><p style="color: #1d1d1f; -webkit-text-fill-color: #1d1d1f">正文</p><img src="logo.png"></div>';
+    const image = mustQuery(shadow, "img").outerHTML;
+    applyEmailDarkMode(document);
+    expect(mustQuery(shadow, "div").style.backgroundColor).toBe(DARK_CANVAS);
+    expect(mustQuery(shadow, "div").style.getPropertyValue("-webkit-text-fill-color")).toBe(WHITE_PAPER);
+    expect(mustQuery(shadow, "p").style.getPropertyValue("-webkit-text-fill-color")).toBe(LIGHT_INK);
+    expect(mustQuery(shadow, "img").outerHTML).toBe(image);
+  });
+
+  it("includes direct shadow text when darkening a background image", () => {
+    const host = mountEmail("");
+    host.style.cssText = "background-image: url(hero.png); color: white";
+    host.attachShadow({ mode: "open" }).textContent = "正文";
+    applyEmailDarkMode(document);
+    expect(host.style.backgroundImage).toContain("rgba(26, 32, 40, 0.85)");
+  });
+
   it("lifts the dark ink an email hard-codes in its inline styles", () => {
     const host = mountEmail('<p style="color: #1d1d1f">正文</p>');
     applyEmailDarkMode(document);
@@ -608,6 +640,62 @@ describe("email body recolouring", () => {
     });
   });
 
+  it("recolours content inserted into an email shadow root", async () => {
+    const host = mountEmail("");
+    const shadow = host.attachShadow({ mode: "open" });
+    const body = document.createElement("div");
+    shadow.append(body);
+    enableEmailDarkMode(document);
+    const paragraph = document.createElement("p");
+    paragraph.style.cssText = "background: white; color: #1d1d1f";
+    paragraph.textContent = "新正文";
+    body.append(paragraph);
+    await vi.waitFor(() => {
+      expect(paragraph.style.backgroundColor).toBe(DARK_CANVAS);
+      expect(paragraph.style.color).toBe(LIGHT_INK);
+    });
+  });
+
+  it("observes insertions directly into an initially empty shadow root", async () => {
+    const host = mountEmail("");
+    const shadow = host.attachShadow({ mode: "open" });
+    enableEmailDarkMode(document);
+    const paragraph = document.createElement("p");
+    paragraph.style.cssText = "background: white; color: white";
+    paragraph.textContent = "新正文";
+    shadow.append(paragraph);
+    await vi.waitFor(() => expect(paragraph.style.backgroundColor).toBe(DARK_CANVAS));
+    disableEmailDarkMode();
+    paragraph.style.backgroundColor = "white";
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(paragraph.style.backgroundColor).toBe("white");
+  });
+
+  it("discovers newly inserted shadow hosts and follows nested palette changes", async () => {
+    const host = mountEmail("");
+    const outer = host.attachShadow({ mode: "open" });
+    enableEmailDarkMode(document);
+    const box = document.createElement("div");
+    const inner = box.attachShadow({ mode: "open" });
+    inner.innerHTML = '<p style="background: white; color: #1d1d1f">正文</p>';
+    outer.append(box);
+    const paragraph = mustQuery(inner, "p");
+    await vi.waitFor(() => expect(paragraph.style.backgroundColor).toBe(DARK_CANVAS));
+    paragraph.style.cssText = "background: #bbbbbb; color: #222222 !important";
+    await vi.waitFor(() => {
+      expect(paragraph.style.backgroundColor).toBe(DARK_CANVAS);
+      expect(paragraph.style.color).toBe(LIGHT_INK);
+    });
+    const write = vi.spyOn(paragraph.style, "setProperty");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(write).not.toHaveBeenCalled();
+    write.mockRestore();
+    disableEmailDarkMode();
+    expect(paragraph.style.backgroundColor).toBe("rgb(187, 187, 187)");
+    expect(paragraph.style.color).toBe("rgb(34, 34, 34)");
+    expect(paragraph.style.getPropertyPriority("color")).toBe("important");
+  });
+
   it("recolours inline palette updates and restores the latest authored values", async () => {
     const host = mountEmail('<p style="color: #1d1d1f">正文</p>');
     enableEmailDarkMode(document);
@@ -621,6 +709,19 @@ describe("email body recolouring", () => {
     expect(paragraph.style.backgroundColor).toBe("rgb(187, 187, 187)");
     expect(paragraph.style.color).toBe("rgb(34, 34, 34)");
     expect(paragraph.style.getPropertyPriority("color")).toBe("important");
+  });
+
+  it("restores authored shadow-root values when dark mode is disabled", () => {
+    const host = mountEmail("");
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = '<p style="background: white; color: #1d1d1f">正文</p>';
+    const paragraph = mustQuery(shadow, "p");
+    enableEmailDarkMode(document);
+    expect(paragraph.style.backgroundColor).toBe(DARK_CANVAS);
+    disableEmailDarkMode();
+    expect(paragraph.style.backgroundColor).toBe("white");
+    expect(paragraph.style.color).toBe(DARK_INK);
+    expect(paragraph.style.getPropertyValue("-webkit-text-fill-color")).toBe("");
   });
 
   it("re-evaluates class changes without observing its own recolouring writes", async () => {
