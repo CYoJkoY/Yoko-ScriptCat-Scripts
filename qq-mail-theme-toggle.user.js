@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QQ Mail Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.2.4
+// @version      1.2.5
 // @description  在QQ邮箱网页版左下角添加深浅主题切换按钮；深色主题替换界面配色令牌，并逐个元素重映射邮件正文里写死的内联颜色，不使用滤镜或反色，邮件中的图片、视频保持原始像素，偏好持久化并可跟随系统主题。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/qq-mail-theme-toggle.user.js
@@ -142,6 +142,7 @@
   var trackedElements = /* @__PURE__ */ new Map();
   var activeSession = null;
   var composeStyle = null;
+  var observedRoots = [];
   function parseCssColor(value) {
     const normalized = value.trim().toLowerCase();
     if (normalized === "" || normalized === "transparent") return null;
@@ -319,10 +320,13 @@
     if (MEDIA_TAGS.has(tag) || INERT_TAGS.has(tag)) return null;
     if (!(element instanceof HTMLElement)) return null;
     const computed = view.getComputedStyle(element);
-    const children = Array.from(element.children).map((child) => readEmailElement(child, view)).filter((child) => child !== null);
-    const hasOwnText = Array.from(element.childNodes).some((node) => node.nodeType === 3 && (node.textContent?.trim().length ?? 0) > 0);
+    const shadowRoot = element.shadowRoot;
+    const childNodes = [...element.childNodes, ...shadowRoot?.childNodes ?? []];
+    const children = childNodes.filter((node) => node instanceof Element).map((child) => readEmailElement(child, view)).filter((child) => child !== null);
+    const hasOwnText = childNodes.some((node) => node.nodeType === 3 && (node.textContent?.trim().length ?? 0) > 0);
     return {
       element,
+      shadowRoot,
       color: computed.color,
       textFill: computed.getPropertyValue("-webkit-text-fill-color"),
       backgroundColor: computed.backgroundColor,
@@ -334,6 +338,10 @@
       borders: borderEntries(computed),
       children
     };
+  }
+  function collectShadowRoots(snapshot, roots) {
+    if (snapshot.shadowRoot !== null) roots.add(snapshot.shadowRoot);
+    for (const child of snapshot.children) collectShadowRoots(child, roots);
   }
   function darkenImageSurface(snapshot, context) {
     const overlay = { ...DARK_BACKGROUND, a: IMAGE_OVERLAY_ALPHA };
@@ -392,6 +400,9 @@
     try {
       restoreEmailColors();
       const snapshots = Array.from(doc.querySelectorAll(CONTENT_SELECTOR)).map((element) => readEmailElement(element, view)).filter((snapshot) => snapshot !== null);
+      const roots = /* @__PURE__ */ new Set();
+      for (const snapshot of snapshots) collectShadowRoots(snapshot, roots);
+      observedRoots = Array.from(roots);
       const palette = createComposePalette(doc);
       for (const snapshot of snapshots) {
         const write = snapshot.element.matches(COMPOSE_CONTENT_SELECTOR) ? palette.write : setTrackedProperty;
@@ -413,17 +424,34 @@
   function restoreEmailColors() {
     composeStyle?.remove();
     composeStyle = null;
+    observedRoots = [];
     for (const [element, properties] of trackedElements) restoreElementColors(element, properties);
     trackedElements.clear();
   }
   function touchesEmailContent(record) {
-    const target = record.target instanceof Element ? record.target : record.target.parentElement;
-    if (target?.closest(CONTENT_SELECTOR)) return true;
+    const target = mutationTargetElement(record.target);
+    if (target !== null && isInsideEmailContent(target)) return true;
     if (record.type === "childList" && target?.querySelector(COMPOSE_CONTENT_SELECTOR)) return true;
     for (const node of [...record.addedNodes, ...record.removedNodes]) {
       if (!(node instanceof Element)) continue;
-      if (node.closest(CONTENT_SELECTOR) !== null) return true;
+      if (isInsideEmailContent(node)) return true;
       if (node.querySelector(CONTENT_SELECTOR) !== null) return true;
+    }
+    return false;
+  }
+  function mutationTargetElement(target) {
+    if (target instanceof Element) return target;
+    if (target.parentElement !== null) return target.parentElement;
+    const root2 = target.getRootNode();
+    return root2 instanceof ShadowRoot ? root2.host : null;
+  }
+  function isInsideEmailContent(node) {
+    let current = node;
+    while (current !== null) {
+      if (current instanceof Element && current.closest(CONTENT_SELECTOR) !== null) return true;
+      const root2 = current.getRootNode();
+      if (!(root2 instanceof ShadowRoot)) return false;
+      current = root2.host;
     }
     return false;
   }
@@ -436,13 +464,15 @@
     }, 0);
   }
   function observeEmailContent(session) {
-    session.observer.observe(session.doc.documentElement, {
+    const options = {
       childList: true,
       characterData: true,
       subtree: true,
       attributes: true,
       attributeFilter: PALETTE_ATTRIBUTES
-    });
+    };
+    session.observer.observe(session.doc.documentElement, options);
+    for (const root2 of observedRoots) session.observer.observe(root2, options);
   }
   function enableEmailDarkMode(doc) {
     if (activeSession !== null && activeSession.doc !== doc) disableEmailDarkMode();
