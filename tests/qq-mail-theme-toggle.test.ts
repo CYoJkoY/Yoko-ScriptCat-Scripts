@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUTTON_CLASS,
   BUTTON_ID,
+  COMPOSE_CONTENT_SELECTOR,
+  COMPOSE_STYLE_ID,
   SCRIPT_MARKER_ATTRIBUTE,
   STORAGE_KEY,
   STYLE_ID,
@@ -348,6 +350,15 @@ describe("style contract", () => {
     expect(detail).toContain("color: #E8ECF1 !important;");
   });
 
+  it("pairs the compose canvas and caret with readable editor tokens", () => {
+    const editor = blockFor(css, COMPOSE_CONTENT_SELECTOR);
+    expect(editor).toContain(DARK_GATE);
+    expect(editor).toContain("background-color: #1A2028 !important;");
+    expect(editor).toContain("caret-color: #E8ECF1 !important;");
+    expect(editor).toContain("--editor-todo-box-bg-color: #1A2028 !important;");
+    expect(editor).toContain("--editor-quote-border-color: #3A4049 !important;");
+  });
+
   it("never inverts or filters the page, so embedded images keep their colours", () => {
     expect(css).not.toContain("invert(");
     expect(css).not.toContain("filter:");
@@ -437,12 +448,14 @@ describe("email body recolouring", () => {
     expect(mustQuery(host, "span").style.getPropertyValue("color")).toBe(LIGHT_INK);
   });
 
-  it("leaves text authored on top of a background image alone", () => {
+  it("lifts dark ink over a dimmed background image", () => {
     const host = mountEmail(
       '<div style="background-image: url(hero.png)"><span style="color: #1d1d1f">hero</span></div>',
     );
     applyEmailDarkMode(document);
-    expect(mustQuery(host, "span").style.getPropertyValue("color")).toBe(DARK_INK);
+    expect(mustQuery(host, "span").style.getPropertyValue("color")).toBe(LIGHT_INK);
+    expect(mustQuery(host, "div").style.backgroundImage).toContain("linear-gradient(");
+    expect(mustQuery(host, "div").style.backgroundImage).toContain("hero.png");
   });
 
   it("darkens opaque paper nested inside a background-image container", () => {
@@ -455,14 +468,70 @@ describe("email body recolouring", () => {
     expect(mustQuery(host, "span").style.color).toBe(LIGHT_INK);
   });
 
-  it("preserves inherited authored ink over images after an ancestor is recoloured", () => {
+  it("keeps inherited ink readable both over images and on plain surfaces", () => {
     const host = mountEmail(
       '<div style="color: #1d1d1f"><p style="background-image: url(hero.png)">' +
         '<span>hero</span></p><span class="plain">正文</span></div>',
     );
     applyEmailDarkMode(document);
-    expect(getComputedStyle(mustQuery(host, "p span")).color).toBe(DARK_INK);
+    expect(getComputedStyle(mustQuery(host, "p span")).color).toBe(LIGHT_INK);
     expect(getComputedStyle(mustQuery(host, ".plain")).color).toBe(LIGHT_INK);
+  });
+
+  it("darkens light gradients before keeping light text", () => {
+    const host = mountEmail(
+      '<p style="background-image: linear-gradient(white, #eeeeee); color: white">gradient</p>',
+    );
+    const paragraph = mustQuery(host, "p");
+    const originalImage = paragraph.style.backgroundImage;
+    applyEmailDarkMode(document);
+    expect(paragraph.style.backgroundImage).toContain("rgba(26, 32, 40, 0.85)");
+    expect(paragraph.style.backgroundImage).toContain(originalImage);
+    expect(paragraph.style.color).toBe(WHITE_PAPER);
+    restoreEmailColors();
+    expect(paragraph.style.backgroundImage).toBe(originalImage);
+    expect(paragraph.style.getPropertyPriority("background-image")).toBe("");
+  });
+
+  it("preserves background layer geometry and restores it after repeat scans", () => {
+    const host = mountEmail(
+      '<p style="background-image: url(hero.png), linear-gradient(white, white);' +
+        'background-size: cover, 25px 50px; background-position: center, right bottom;' +
+        'background-repeat: no-repeat, repeat-x; background-blend-mode: multiply, normal;' +
+        'color: #eeeeee">layers</p>',
+    );
+    const paragraph = mustQuery(host, "p");
+    const properties = ["background-image", "background-size", "background-position", "background-repeat", "background-blend-mode"];
+    const original = properties.map((name) => paragraph.style.getPropertyValue(name));
+    const position = getComputedStyle(paragraph).backgroundPosition;
+    applyEmailDarkMode(document);
+    const applied = paragraph.style.backgroundImage;
+    expect(paragraph.style.backgroundSize).toBe(`auto, ${original[1]}`);
+    expect(paragraph.style.backgroundPosition).toBe(`0% 0%, ${position}`);
+    expect(paragraph.style.backgroundRepeat).toBe(`repeat, ${original[3]}`);
+    expect(paragraph.style.backgroundBlendMode).toBe(`normal, ${original[4]}`);
+    applyEmailDarkMode(document);
+    expect(paragraph.style.backgroundImage).toBe(applied);
+    restoreEmailColors();
+    expect(properties.map((name) => paragraph.style.getPropertyValue(name))).toEqual(original);
+  });
+
+  it("leaves decorative background images without text unchanged", () => {
+    const host = mountEmail('<div style="background-image: url(hero.png)"><img src="logo.png"></div>');
+    const element = mustQuery(host, "div");
+    const image = element.style.backgroundImage;
+    applyEmailDarkMode(document);
+    expect(element.style.backgroundImage).toBe(image);
+  });
+
+  it("handles light translucent panels over an image without retaining light paper", () => {
+    const host = mountEmail(
+      '<div style="background-image: url(hero.png)">' +
+        '<p style="background: rgba(255,255,255,0.9); color: #eeeeee">panel</p></div>',
+    );
+    applyEmailDarkMode(document);
+    expect(mustQuery(host, "p").style.backgroundColor).toBe("rgba(26, 32, 40, 0.9)");
+    expect(mustQuery(host, "p").style.color).toBe("rgb(238, 238, 238)");
   });
 
   it("darkens mid-light paper instead of lifting its ink onto a light surface", () => {
@@ -512,7 +581,7 @@ describe("email body recolouring", () => {
     expect(span.style.color).toBe(LIGHT_INK);
     mustQuery(host, ".photo").append(span);
     applyEmailDarkMode(document);
-    expect(span.style.color).toBe(DARK_INK);
+    expect(span.style.color).toBe(LIGHT_INK);
   });
 
   it("restores the exact authored colours when the dark theme goes away", () => {
@@ -590,6 +659,106 @@ describe("email body recolouring", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(table.style.getPropertyValue("background-color")).toBe(WHITE_PAPER);
     expect(table.getAttribute("style")).toBe("background: rgb(255, 255, 255)");
+  });
+});
+
+describe("compose presentation", () => {
+  function mountEditor(): HTMLElement {
+    applyTheme(document, THEME_MODE.DARK);
+    ensureThemeStyle(document);
+    const editor = document.createElement("div");
+    editor.className = "xmail-cmp-editor-content";
+    editor.setAttribute("contenteditable", "true");
+    editor.style.color = "black";
+    editor.innerHTML = '<div style="color: black">draft <span style="background: white; color: white">nested</span></div>';
+    document.body.append(editor);
+    return editor;
+  }
+
+  function rulesFor(element: Element): CSSStyleDeclaration[] {
+    const style = document.getElementById(COMPOSE_STYLE_ID) as HTMLStyleElement | null;
+    return Array.from(style?.sheet?.cssRules ?? [])
+      .filter((rule): rule is CSSStyleRule => rule instanceof window.CSSStyleRule)
+      .filter((rule) => element.matches(rule.selectorText))
+      .map((rule) => rule.style);
+  }
+
+  it("repairs draft text and paper through CSS without changing outgoing HTML", () => {
+    const editor = mountEditor();
+    const original = editor.outerHTML;
+    applyEmailDarkMode(document);
+    expect(editor.outerHTML).toBe(original);
+    const text = editor.firstElementChild!;
+    expect(rulesFor(text).some((style) => style.getPropertyValue("color") === LIGHT_INK)).toBe(true);
+    expect(rulesFor(text).some((style) => style.getPropertyValue("-webkit-text-fill-color") === LIGHT_INK)).toBe(true);
+    expect(rulesFor(text.firstElementChild!).some((style) => style.backgroundColor === DARK_CANVAS)).toBe(true);
+    disableEmailDarkMode();
+    expect(document.getElementById(COMPOSE_STYLE_ID)).toBeNull();
+    expect(editor.outerHTML).toBe(original);
+  });
+
+  it("refreshes selectors when a draft inserts or moves a paragraph", async () => {
+    const editor = mountEditor();
+    enableEmailDarkMode(document);
+    const paragraph = document.createElement("p");
+    paragraph.style.color = "black";
+    paragraph.textContent = "new paragraph";
+    editor.prepend(paragraph);
+    const original = editor.innerHTML;
+    await vi.waitFor(() => {
+      expect(rulesFor(paragraph).some((style) => style.getPropertyValue("color") === LIGHT_INK)).toBe(true);
+    });
+    expect(editor.innerHTML).toBe(original);
+    paragraph.style.color = "rgb(255, 100, 100)";
+    await vi.waitFor(() => {
+      expect(rulesFor(paragraph).some((style) => style.getPropertyValue("color") === "rgb(255, 100, 100)")).toBe(true);
+    });
+    expect(paragraph.style.color).toBe("rgb(255, 100, 100)");
+  });
+
+  it("chooses dark ink when an important draft background must stay light", () => {
+    const editor = mountEditor();
+    editor.innerHTML = '<p style="background: white !important; color: white">pasted text</p>';
+    const original = editor.innerHTML;
+    applyEmailDarkMode(document);
+    const paragraph = editor.firstElementChild!;
+    expect(rulesFor(paragraph).some((style) => style.getPropertyValue("-webkit-text-fill-color") === "rgb(0, 0, 0)")).toBe(true);
+    expect(editor.innerHTML).toBe(original);
+  });
+
+  it("refreshes draft paths when a preceding shell sibling is inserted", async () => {
+    const editor = mountEditor();
+    enableEmailDarkMode(document);
+    const shell = document.createElement("section");
+    shell.innerHTML = "<div>unrelated shell</div>";
+    editor.before(shell);
+    expect(rulesFor(shell.firstElementChild!)).toEqual([]);
+    await vi.waitFor(() => {
+      expect(rulesFor(editor.firstElementChild!).some((style) => style.color === LIGHT_INK)).toBe(true);
+    });
+    expect(rulesFor(shell.firstElementChild!)).toEqual([]);
+  });
+
+  it("removes draft rules when the editor is replaced by another view", async () => {
+    const editor = mountEditor();
+    enableEmailDarkMode(document);
+    const replacement = document.createElement("section");
+    replacement.innerHTML = "<div>other view</div>";
+    editor.replaceWith(replacement);
+    expect(rulesFor(replacement.firstElementChild!)).toEqual([]);
+    await vi.waitFor(() => expect(document.getElementById(COMPOSE_STYLE_ID)).toBeNull());
+  });
+
+  it("removes draft overrides on light mode and reinstalls without accumulating styles", () => {
+    const editor = mountEditor();
+    const original = editor.outerHTML;
+    applyEmailDarkMode(document);
+    applyEmailDarkMode(document);
+    expect(document.querySelectorAll(`#${COMPOSE_STYLE_ID}`)).toHaveLength(1);
+    disableEmailDarkMode();
+    applyTheme(document, THEME_MODE.LIGHT);
+    expect(rulesFor(editor.firstElementChild!)).toEqual([]);
+    expect(editor.outerHTML).toBe(original);
   });
 });
 

@@ -4,7 +4,7 @@ import brandIcon from "./src/brand-icon";
 const meta = {
   name: "QQ Mail Theme Toggle",
   namespace: "https://cyojkoy.github.io/Payment/",
-  version: "1.2.3",
+  version: "1.2.4",
   description:
     "在QQ邮箱网页版左下角添加深浅主题切换按钮；深色主题替换界面配色令牌，并逐个元素重映射邮件正文里写死的内联颜色，不使用滤镜或反色，邮件中的图片、视频保持原始像素，偏好持久化并可跟随系统主题。",
   author: "Yoko",
