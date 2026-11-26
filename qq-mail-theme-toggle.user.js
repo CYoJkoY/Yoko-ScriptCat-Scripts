@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QQ Mail Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.2.2
+// @version      1.2.3
 // @description  在QQ邮箱网页版左下角添加深浅主题切换按钮；深色主题替换界面配色令牌，并逐个元素重映射邮件正文里写死的内联颜色，不使用滤镜或反色，邮件中的图片、视频保持原始像素，偏好持久化并可跟随系统主题。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/qq-mail-theme-toggle.user.js
@@ -75,9 +75,13 @@
   var DARK_BACKGROUND = { r: 26, g: 32, b: 40, a: 1 };
   var LIGHT_FOREGROUND = { r: 232, g: 236, b: 241, a: 1 };
   var DARK_BORDER = { r: 58, g: 64, b: 73, a: 1 };
-  var PAPER_LUMINANCE = 0.58;
+  var CONTRAST_EXTREMES = [
+    { r: 255, g: 255, b: 255, a: 1 },
+    { r: 0, g: 0, b: 0, a: 1 }
+  ];
+  var PALETTE_ATTRIBUTES = ["style", "class", "color", "bgcolor", "background"];
+  var PAPER_LUMINANCE = 0.18;
   var HAIRLINE_LUMINANCE = 0.55;
-  var OPAQUE_ALPHA = 0.9;
   var MIN_CONTRAST = 4.5;
   var MUTED_MAX_SATURATION = 0.18;
   var NEUTRAL_MAX_SATURATION = 0.08;
@@ -85,8 +89,7 @@
   var TINT_MAX_SATURATION = 0.45;
   var LIGHTENED_LIGHTNESS = 0.72;
   var LIGHTENED_MAX_SATURATION = 0.8;
-  var tracked = /* @__PURE__ */ new WeakMap();
-  var trackedElements = /* @__PURE__ */ new Set();
+  var trackedElements = /* @__PURE__ */ new Map();
   var activeSession = null;
   function parseCssColor(value) {
     const normalized = value.trim().toLowerCase();
@@ -152,6 +155,15 @@
     const darker = Math.min(luminance(first), luminance(second));
     return (lighter + 0.05) / (darker + 0.05);
   }
+  function compositeColor(foreground, background) {
+    const remaining = 1 - foreground.a;
+    return {
+      r: foreground.r * foreground.a + background.r * remaining,
+      g: foreground.g * foreground.a + background.g * remaining,
+      b: foreground.b * foreground.a + background.b * remaining,
+      a: 1
+    };
+  }
   function rgbToHsl(color) {
     const red = color.r / 255;
     const green = color.g / 255;
@@ -201,31 +213,27 @@
     return formatColor(tint);
   }
   function mapForeground(color, background) {
-    if (color.a === 0 || contrastRatio(color, background) >= MIN_CONTRAST) return null;
+    if (color.a === 0) return null;
+    if (contrastRatio(compositeColor(color, background), background) >= MIN_CONTRAST) return null;
     const [hue, saturation] = rgbToHsl(color);
-    if (saturation < MUTED_MAX_SATURATION) {
-      return formatColor({ ...LIGHT_FOREGROUND, a: color.a });
-    }
-    const lightened = hslToRgb(
-      hue,
-      Math.min(saturation, LIGHTENED_MAX_SATURATION),
-      LIGHTENED_LIGHTNESS,
-      color.a
-    );
-    return formatColor(lightened);
+    const candidate = saturation < MUTED_MAX_SATURATION ? LIGHT_FOREGROUND : hslToRgb(hue, Math.min(saturation, LIGHTENED_MAX_SATURATION), LIGHTENED_LIGHTNESS, 1);
+    if (contrastRatio(candidate, background) >= MIN_CONTRAST) return formatColor(candidate);
+    const fallback = CONTRAST_EXTREMES.find((ink) => contrastRatio(ink, background) >= MIN_CONTRAST);
+    return formatColor(fallback ?? LIGHT_FOREGROUND);
   }
   function mapBorder(color) {
     if (color.a === 0 || luminance(color) < HAIRLINE_LUMINANCE) return null;
     return formatColor({ ...DARK_BORDER, a: color.a });
   }
-  function setTrackedProperty(element, state, property, value) {
-    if (!state.properties.has(property)) {
-      state.properties.set(property, {
-        value: element.style.getPropertyValue(property),
-        priority: element.style.getPropertyPriority(property)
-      });
-    }
+  function setTrackedProperty(element, property, value) {
+    const properties = trackedElements.get(element) ?? /* @__PURE__ */ new Map();
+    const saved = properties.get(property) ?? {
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property)
+    };
     element.style.setProperty(property, value, "important");
+    properties.set(property, { ...saved, applied: element.style.getPropertyValue(property) });
+    trackedElements.set(element, properties);
   }
   function borderEntries(computed) {
     return [
@@ -254,88 +262,92 @@
     if (width === "" || width === "0px" || style === "" || style === "none") return false;
     return true;
   }
-  function trackElement(element, context, view) {
-    const computed = view.getComputedStyle(element);
-    const paintedOverImage = computed.backgroundImage !== "none" && computed.backgroundImage !== "";
-    let background = context.background;
-    const preserveForeground = context.preserveForeground || paintedOverImage;
-    const pending = [];
-    const declared = parseCssColor(computed.backgroundColor);
-    if (paintedOverImage) {
-    } else if (declared !== null) {
-      const mapped = mapBackground(declared);
-      if (mapped !== null) {
-        pending.push(["background-color", mapped]);
-        background = parseCssColor(mapped) ?? background;
-      } else if (declared.a >= OPAQUE_ALPHA) {
-        background = declared;
-      }
-    }
-    if (!preserveForeground) {
-      const foreground = parseCssColor(computed.color);
-      if (foreground !== null) {
-        const mapped = mapForeground(foreground, background);
-        if (mapped !== null) pending.push(["color", mapped]);
-      }
-      for (const [property, width, style, color] of borderEntries(computed)) {
-        if (!hasBorder(width, style)) continue;
-        const parsed = parseCssColor(color);
-        if (parsed === null) continue;
-        const mapped = mapBorder(parsed);
-        if (mapped !== null) pending.push([property, mapped]);
-      }
-    }
-    const state = { properties: /* @__PURE__ */ new Map(), background, preserveForeground };
-    tracked.set(element, state);
-    trackedElements.add(element);
-    for (const [property, value] of pending) setTrackedProperty(element, state, property, value);
-    return { background, preserveForeground };
-  }
-  function visitElement(element, context, view) {
+  function readEmailElement(element, view) {
     const tag = element.tagName.toUpperCase();
-    if (MEDIA_TAGS.has(tag) || INERT_TAGS.has(tag)) return;
-    if (!(element instanceof HTMLElement)) return;
-    const existing = tracked.get(element);
-    const next = existing === void 0 ? trackElement(element, context, view) : { background: existing.background, preserveForeground: existing.preserveForeground };
-    for (const child of Array.from(element.children)) {
-      visitElement(child, next, view);
+    if (MEDIA_TAGS.has(tag) || INERT_TAGS.has(tag)) return null;
+    if (!(element instanceof HTMLElement)) return null;
+    const computed = view.getComputedStyle(element);
+    return {
+      element,
+      color: computed.color,
+      textFill: computed.getPropertyValue("-webkit-text-fill-color"),
+      backgroundColor: computed.backgroundColor,
+      backgroundImage: computed.backgroundImage,
+      borders: borderEntries(computed),
+      children: Array.from(element.children).map((child) => readEmailElement(child, view)).filter((child) => child !== null)
+    };
+  }
+  function resolveBackground(snapshot, context) {
+    const paintedOverImage = snapshot.backgroundImage !== "none" && snapshot.backgroundImage !== "";
+    if (paintedOverImage) return { ...context, preserveForeground: true };
+    const declared = parseCssColor(snapshot.backgroundColor);
+    if (declared === null || declared.a === 0) return context;
+    const preserveForeground = context.preserveForeground && declared.a < 1;
+    const mapped = preserveForeground ? null : mapBackground(declared);
+    if (mapped !== null) setTrackedProperty(snapshot.element, "background-color", mapped);
+    const surface = mapped === null ? declared : parseCssColor(mapped) ?? declared;
+    return {
+      ...context,
+      background: compositeColor(surface, context.background),
+      preserveForeground
+    };
+  }
+  function resolveForeground(value, context) {
+    if (context.preserveForeground) return value;
+    const color = parseCssColor(value);
+    if (color === null) return value;
+    return mapForeground(color, context.background) ?? value;
+  }
+  function recolorBorders(snapshot) {
+    for (const [property, width, style, color] of snapshot.borders) {
+      if (!hasBorder(width, style)) continue;
+      const parsed = parseCssColor(color);
+      if (parsed === null) continue;
+      const mapped = mapBorder(parsed);
+      if (mapped !== null) setTrackedProperty(snapshot.element, property, mapped);
     }
   }
-  function pruneDisconnected() {
-    for (const element of trackedElements) {
-      if (element.isConnected) continue;
-      trackedElements.delete(element);
-      tracked.delete(element);
+  function visitElement(snapshot, context) {
+    const surface = resolveBackground(snapshot, context);
+    const foreground = resolveForeground(snapshot.color, surface);
+    if (foreground !== snapshot.color || foreground !== context.foreground) {
+      setTrackedProperty(snapshot.element, "color", foreground);
     }
+    if (parseCssColor(snapshot.textFill) !== null) {
+      setTrackedProperty(snapshot.element, "-webkit-text-fill-color", resolveForeground(snapshot.textFill, surface));
+    }
+    if (!surface.preserveForeground) recolorBorders(snapshot);
+    const next = { ...surface, foreground };
+    for (const child of snapshot.children) visitElement(child, next);
   }
   function applyEmailDarkMode(doc) {
     const view = doc.defaultView;
     if (view === null) return;
-    pruneDisconnected();
-    const root2 = { background: DARK_BACKGROUND, preserveForeground: false };
-    for (const element of Array.from(doc.querySelectorAll(EMAIL_CONTENT_SELECTOR))) {
-      visitElement(element, root2, view);
+    activeSession?.observer.disconnect();
+    try {
+      restoreEmailColors();
+      const snapshots = Array.from(doc.querySelectorAll(EMAIL_CONTENT_SELECTOR)).map((element) => readEmailElement(element, view)).filter((snapshot) => snapshot !== null);
+      const root2 = { background: DARK_BACKGROUND, preserveForeground: false, foreground: "" };
+      for (const snapshot of snapshots) visitElement(snapshot, root2);
+    } finally {
+      if (activeSession !== null) observeEmailContent(activeSession);
+    }
+  }
+  function restoreElementColors(element, properties) {
+    for (const [property, saved] of properties) {
+      if (element.style.getPropertyValue(property) !== saved.applied) continue;
+      if (element.style.getPropertyPriority(property) !== "important") continue;
+      if (saved.value === "") element.style.removeProperty(property);
+      else element.style.setProperty(property, saved.value, saved.priority);
     }
   }
   function restoreEmailColors() {
-    for (const element of trackedElements) {
-      const state = tracked.get(element);
-      if (state === void 0) continue;
-      for (const [property, saved] of state.properties) {
-        if (saved.value === "") {
-          element.style.removeProperty(property);
-          continue;
-        }
-        element.style.setProperty(property, saved.value, saved.priority);
-      }
-    }
-    tracked = /* @__PURE__ */ new WeakMap();
-    trackedElements = /* @__PURE__ */ new Set();
+    for (const [element, properties] of trackedElements) restoreElementColors(element, properties);
+    trackedElements.clear();
   }
   function touchesEmailContent(record) {
-    if (record.target instanceof Element) {
-      if (record.target.closest(EMAIL_CONTENT_SELECTOR) !== null) return true;
-    }
+    const target = record.target instanceof Element ? record.target : record.target.parentElement;
+    if (target?.closest(EMAIL_CONTENT_SELECTOR)) return true;
     for (const node of Array.from(record.addedNodes)) {
       if (!(node instanceof Element)) continue;
       if (node.closest(EMAIL_CONTENT_SELECTOR) !== null) return true;
@@ -350,6 +362,15 @@
       if (activeSession !== session) return;
       applyEmailDarkMode(session.doc);
     }, 0);
+  }
+  function observeEmailContent(session) {
+    session.observer.observe(session.doc.documentElement, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: PALETTE_ATTRIBUTES
+    });
   }
   function enableEmailDarkMode(doc) {
     if (activeSession !== null && activeSession.doc !== doc) disableEmailDarkMode();
@@ -367,7 +388,7 @@
     });
     const session = { doc, view, observer, timer: null };
     activeSession = session;
-    observer.observe(root2, { childList: true, subtree: true });
+    observeEmailContent(session);
   }
   function disableEmailDarkMode() {
     const session = activeSession;
