@@ -50,6 +50,7 @@ interface SavedProperty {
 
 interface EmailElementStyle {
   readonly element: HTMLElement;
+  readonly shadowRoot: ShadowRoot | null;
   readonly color: string;
   readonly textFill: string;
   readonly backgroundColor: string;
@@ -140,6 +141,7 @@ const LIGHTENED_MAX_SATURATION = 0.8;
 const trackedElements = new Map<HTMLElement, Map<EmailStyleProperty, SavedProperty>>();
 let activeSession: EmailDarkSession | null = null;
 let composeStyle: HTMLStyleElement | null = null;
+let observedRoots: readonly ShadowRoot[] = [];
 
 function parseCssColor(value: string): Rgba | null {
   const normalized = value.trim().toLowerCase();
@@ -363,13 +365,17 @@ function readEmailElement(element: Element, view: Window): EmailElementStyle | n
   if (MEDIA_TAGS.has(tag) || INERT_TAGS.has(tag)) return null;
   if (!(element instanceof HTMLElement)) return null;
   const computed = view.getComputedStyle(element);
-  const children = Array.from(element.children)
+  const shadowRoot = element.shadowRoot;
+  const childNodes = [...element.childNodes, ...(shadowRoot?.childNodes ?? [])];
+  const children = childNodes
+    .filter((node): node is Element => node instanceof Element)
     .map((child) => readEmailElement(child, view))
     .filter((child): child is EmailElementStyle => child !== null);
-  const hasOwnText = Array.from(element.childNodes)
+  const hasOwnText = childNodes
     .some((node) => node.nodeType === 3 && (node.textContent?.trim().length ?? 0) > 0);
   return {
     element,
+    shadowRoot,
     color: computed.color,
     textFill: computed.getPropertyValue("-webkit-text-fill-color"),
     backgroundColor: computed.backgroundColor,
@@ -381,6 +387,11 @@ function readEmailElement(element: Element, view: Window): EmailElementStyle | n
     borders: borderEntries(computed),
     children,
   };
+}
+
+function collectShadowRoots(snapshot: EmailElementStyle, roots: Set<ShadowRoot>): void {
+  if (snapshot.shadowRoot !== null) roots.add(snapshot.shadowRoot);
+  for (const child of snapshot.children) collectShadowRoots(child, roots);
 }
 
 function darkenImageSurface(snapshot: EmailElementStyle, context: VisitContext): VisitContext {
@@ -446,6 +457,9 @@ export function applyEmailDarkMode(doc: Document): void {
     const snapshots = Array.from(doc.querySelectorAll(CONTENT_SELECTOR))
       .map((element) => readEmailElement(element, view))
       .filter((snapshot): snapshot is EmailElementStyle => snapshot !== null);
+    const roots = new Set<ShadowRoot>();
+    for (const snapshot of snapshots) collectShadowRoots(snapshot, roots);
+    observedRoots = Array.from(roots);
     const palette = createComposePalette(doc);
     for (const snapshot of snapshots) {
       const write = snapshot.element.matches(COMPOSE_CONTENT_SELECTOR) ? palette.write : setTrackedProperty;
@@ -469,18 +483,37 @@ function restoreElementColors(element: HTMLElement, properties: Map<EmailStylePr
 export function restoreEmailColors(): void {
   composeStyle?.remove();
   composeStyle = null;
+  observedRoots = [];
   for (const [element, properties] of trackedElements) restoreElementColors(element, properties);
   trackedElements.clear();
 }
 
 function touchesEmailContent(record: MutationRecord): boolean {
-  const target = record.target instanceof Element ? record.target : record.target.parentElement;
-  if (target?.closest(CONTENT_SELECTOR)) return true;
+  const target = mutationTargetElement(record.target);
+  if (target !== null && isInsideEmailContent(target)) return true;
   if (record.type === "childList" && target?.querySelector(COMPOSE_CONTENT_SELECTOR)) return true;
   for (const node of [...record.addedNodes, ...record.removedNodes]) {
     if (!(node instanceof Element)) continue;
-    if (node.closest(CONTENT_SELECTOR) !== null) return true;
+    if (isInsideEmailContent(node)) return true;
     if (node.querySelector(CONTENT_SELECTOR) !== null) return true;
+  }
+  return false;
+}
+
+function mutationTargetElement(target: Node): Element | null {
+  if (target instanceof Element) return target;
+  if (target.parentElement !== null) return target.parentElement;
+  const root = target.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+
+function isInsideEmailContent(node: Node): boolean {
+  let current: Node | null = node;
+  while (current !== null) {
+    if (current instanceof Element && current.closest(CONTENT_SELECTOR) !== null) return true;
+    const root = current.getRootNode();
+    if (!(root instanceof ShadowRoot)) return false;
+    current = root.host;
   }
   return false;
 }
@@ -495,13 +528,15 @@ function scheduleFlush(session: EmailDarkSession): void {
 }
 
 function observeEmailContent(session: EmailDarkSession): void {
-  session.observer.observe(session.doc.documentElement, {
+  const options: MutationObserverInit = {
     childList: true,
     characterData: true,
     subtree: true,
     attributes: true,
     attributeFilter: PALETTE_ATTRIBUTES,
-  });
+  };
+  session.observer.observe(session.doc.documentElement, options);
+  for (const root of observedRoots) session.observer.observe(root, options);
 }
 
 /** Recolour now, then keep watching for freshly rendered email bodies. */
