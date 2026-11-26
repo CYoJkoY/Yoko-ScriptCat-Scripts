@@ -20,22 +20,28 @@ type BorderProperty =
   | "border-bottom-color"
   | "border-left-color";
 
-type EmailStyleProperty = "color" | "background-color" | BorderProperty;
+type EmailStyleProperty = "color" | "-webkit-text-fill-color" | "background-color" | BorderProperty;
 
 interface SavedProperty {
   readonly value: string;
   readonly priority: string;
+  readonly applied: string;
 }
 
-interface TrackedElement {
-  readonly properties: Map<EmailStyleProperty, SavedProperty>;
-  readonly background: Rgba;
-  readonly preserveForeground: boolean;
+interface EmailElementStyle {
+  readonly element: HTMLElement;
+  readonly color: string;
+  readonly textFill: string;
+  readonly backgroundColor: string;
+  readonly backgroundImage: string;
+  readonly borders: readonly BorderEntry[];
+  readonly children: readonly EmailElementStyle[];
 }
 
 interface VisitContext {
   readonly background: Rgba;
   readonly preserveForeground: boolean;
+  readonly foreground: string;
 }
 
 interface EmailDarkSession {
@@ -76,13 +82,16 @@ const INERT_TAGS: ReadonlySet<string> = new Set([
 const DARK_BACKGROUND: Rgba = { r: 26, g: 32, b: 40, a: 1 };
 const LIGHT_FOREGROUND: Rgba = { r: 232, g: 236, b: 241, a: 1 };
 const DARK_BORDER: Rgba = { r: 58, g: 64, b: 73, a: 1 };
+const CONTRAST_EXTREMES: readonly Rgba[] = [
+  { r: 255, g: 255, b: 255, a: 1 },
+  { r: 0, g: 0, b: 0, a: 1 },
+];
+const PALETTE_ATTRIBUTES = ["style", "class", "color", "bgcolor", "background"];
 
 /** Surfaces at or above this luminance count as "paper" and become dark. */
-const PAPER_LUMINANCE = 0.58;
+const PAPER_LUMINANCE = 0.18;
 /** Hairlines at or above this luminance count as drawn on paper. */
 const HAIRLINE_LUMINANCE = 0.55;
-/** A surface this opaque fully hides whatever is painted behind it. */
-const OPAQUE_ALPHA = 0.9;
 /** WCAG AA contrast for body text. */
 const MIN_CONTRAST = 4.5;
 /** Below this saturation an accent is really ink, so it follows the ink ramp. */
@@ -95,8 +104,7 @@ const TINT_MAX_SATURATION = 0.45;
 const LIGHTENED_LIGHTNESS = 0.72;
 const LIGHTENED_MAX_SATURATION = 0.8;
 
-let tracked: WeakMap<HTMLElement, TrackedElement> = new WeakMap();
-let trackedElements: Set<HTMLElement> = new Set();
+const trackedElements = new Map<HTMLElement, Map<EmailStyleProperty, SavedProperty>>();
 let activeSession: EmailDarkSession | null = null;
 
 function parseCssColor(value: string): Rgba | null {
@@ -183,6 +191,16 @@ function contrastRatio(first: Rgba, second: Rgba): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+function compositeColor(foreground: Rgba, background: Rgba): Rgba {
+  const remaining = 1 - foreground.a;
+  return {
+    r: foreground.r * foreground.a + background.r * remaining,
+    g: foreground.g * foreground.a + background.g * remaining,
+    b: foreground.b * foreground.a + background.b * remaining,
+    a: 1,
+  };
+}
+
 function rgbToHsl(color: Rgba): readonly [number, number, number] {
   const red = color.r / 255;
   const green = color.g / 255;
@@ -242,18 +260,15 @@ function mapBackground(color: Rgba): string | null {
 
 /** Ink that no longer reads on the dark canvas is lifted; accents keep their hue. */
 function mapForeground(color: Rgba, background: Rgba): string | null {
-  if (color.a === 0 || contrastRatio(color, background) >= MIN_CONTRAST) return null;
+  if (color.a === 0) return null;
+  if (contrastRatio(compositeColor(color, background), background) >= MIN_CONTRAST) return null;
   const [hue, saturation] = rgbToHsl(color);
-  if (saturation < MUTED_MAX_SATURATION) {
-    return formatColor({ ...LIGHT_FOREGROUND, a: color.a });
-  }
-  const lightened = hslToRgb(
-    hue,
-    Math.min(saturation, LIGHTENED_MAX_SATURATION),
-    LIGHTENED_LIGHTNESS,
-    color.a,
-  );
-  return formatColor(lightened);
+  const candidate = saturation < MUTED_MAX_SATURATION
+    ? LIGHT_FOREGROUND
+    : hslToRgb(hue, Math.min(saturation, LIGHTENED_MAX_SATURATION), LIGHTENED_LIGHTNESS, 1);
+  if (contrastRatio(candidate, background) >= MIN_CONTRAST) return formatColor(candidate);
+  const fallback = CONTRAST_EXTREMES.find((ink) => contrastRatio(ink, background) >= MIN_CONTRAST);
+  return formatColor(fallback ?? LIGHT_FOREGROUND);
 }
 
 /** Light hairlines drawn on paper become hairlines drawn on the dark canvas. */
@@ -264,17 +279,17 @@ function mapBorder(color: Rgba): string | null {
 
 function setTrackedProperty(
   element: HTMLElement,
-  state: TrackedElement,
   property: EmailStyleProperty,
   value: string,
 ): void {
-  if (!state.properties.has(property)) {
-    state.properties.set(property, {
-      value: element.style.getPropertyValue(property),
-      priority: element.style.getPropertyPriority(property),
-    });
-  }
+  const properties = trackedElements.get(element) ?? new Map<EmailStyleProperty, SavedProperty>();
+  const saved = properties.get(property) ?? {
+    value: element.style.getPropertyValue(property),
+    priority: element.style.getPropertyPriority(property),
+  };
   element.style.setProperty(property, value, "important");
+  properties.set(property, { ...saved, applied: element.style.getPropertyValue(property) });
+  trackedElements.set(element, properties);
 }
 
 type BorderEntry = readonly [BorderProperty, string, string, string];
@@ -308,116 +323,104 @@ function hasBorder(width: string, style: string): boolean {
   return true;
 }
 
-/**
- * Recolour one element, remember what it looked like, and hand the resulting
- * context down to its children. Media subtrees are skipped before any read or
- * write happens, and elements painted over a background image keep their ink.
- */
-function trackElement(
-  element: HTMLElement,
-  context: VisitContext,
-  view: Window,
-): VisitContext {
-  const computed = view.getComputedStyle(element);
-  const paintedOverImage = computed.backgroundImage !== "none" && computed.backgroundImage !== "";
-  let background = context.background;
-  const preserveForeground = context.preserveForeground || paintedOverImage;
-  const pending: [EmailStyleProperty, string][] = [];
-
-  const declared = parseCssColor(computed.backgroundColor);
-  if (paintedOverImage) {
-    // Whatever the author drew on the image must stay exactly as authored.
-  } else if (declared !== null) {
-    const mapped = mapBackground(declared);
-    if (mapped !== null) {
-      pending.push(["background-color", mapped]);
-      background = parseCssColor(mapped) ?? background;
-    } else if (declared.a >= OPAQUE_ALPHA) {
-      background = declared;
-    }
-  }
-
-  if (!preserveForeground) {
-    const foreground = parseCssColor(computed.color);
-    if (foreground !== null) {
-      const mapped = mapForeground(foreground, background);
-      if (mapped !== null) pending.push(["color", mapped]);
-    }
-    for (const [property, width, style, color] of borderEntries(computed)) {
-      if (!hasBorder(width, style)) continue;
-      const parsed = parseCssColor(color);
-      if (parsed === null) continue;
-      const mapped = mapBorder(parsed);
-      if (mapped !== null) pending.push([property, mapped]);
-    }
-  }
-
-  const state: TrackedElement = { properties: new Map(), background, preserveForeground };
-  tracked.set(element, state);
-  trackedElements.add(element);
-  for (const [property, value] of pending) setTrackedProperty(element, state, property, value);
-
-  return { background, preserveForeground };
-}
-
-function visitElement(element: Element, context: VisitContext, view: Window): void {
-  // `tagName` keeps the authored case for SVG elements, so compare upper-cased.
+function readEmailElement(element: Element, view: Window): EmailElementStyle | null {
   const tag = element.tagName.toUpperCase();
-  if (MEDIA_TAGS.has(tag) || INERT_TAGS.has(tag)) return;
-  // Anything that is not a plain HTML element (svg, MathML, …) is left alone.
-  if (!(element instanceof HTMLElement)) return;
+  if (MEDIA_TAGS.has(tag) || INERT_TAGS.has(tag)) return null;
+  if (!(element instanceof HTMLElement)) return null;
+  const computed = view.getComputedStyle(element);
+  return {
+    element,
+    color: computed.color,
+    textFill: computed.getPropertyValue("-webkit-text-fill-color"),
+    backgroundColor: computed.backgroundColor,
+    backgroundImage: computed.backgroundImage,
+    borders: borderEntries(computed),
+    children: Array.from(element.children)
+      .map((child) => readEmailElement(child, view))
+      .filter((child): child is EmailElementStyle => child !== null),
+  };
+}
 
-  const existing = tracked.get(element);
-  const next: VisitContext =
-    existing === undefined
-      ? trackElement(element, context, view)
-      : { background: existing.background, preserveForeground: existing.preserveForeground };
+function resolveBackground(snapshot: EmailElementStyle, context: VisitContext): VisitContext {
+  const paintedOverImage = snapshot.backgroundImage !== "none" && snapshot.backgroundImage !== "";
+  if (paintedOverImage) return { ...context, preserveForeground: true };
+  const declared = parseCssColor(snapshot.backgroundColor);
+  if (declared === null || declared.a === 0) return context;
+  const preserveForeground = context.preserveForeground && declared.a < 1;
+  const mapped = preserveForeground ? null : mapBackground(declared);
+  if (mapped !== null) setTrackedProperty(snapshot.element, "background-color", mapped);
+  const surface = mapped === null ? declared : parseCssColor(mapped) ?? declared;
+  return {
+    ...context,
+    background: compositeColor(surface, context.background),
+    preserveForeground,
+  };
+}
 
-  for (const child of Array.from(element.children)) {
-    visitElement(child, next, view);
+function resolveForeground(value: string, context: VisitContext): string {
+  if (context.preserveForeground) return value;
+  const color = parseCssColor(value);
+  if (color === null) return value;
+  return mapForeground(color, context.background) ?? value;
+}
+
+function recolorBorders(snapshot: EmailElementStyle): void {
+  for (const [property, width, style, color] of snapshot.borders) {
+    if (!hasBorder(width, style)) continue;
+    const parsed = parseCssColor(color);
+    if (parsed === null) continue;
+    const mapped = mapBorder(parsed);
+    if (mapped !== null) setTrackedProperty(snapshot.element, property, mapped);
   }
 }
 
-function pruneDisconnected(): void {
-  for (const element of trackedElements) {
-    if (element.isConnected) continue;
-    trackedElements.delete(element);
-    tracked.delete(element);
+function visitElement(snapshot: EmailElementStyle, context: VisitContext): void {
+  const surface = resolveBackground(snapshot, context);
+  const foreground = resolveForeground(snapshot.color, surface);
+  if (foreground !== snapshot.color || foreground !== context.foreground) {
+    setTrackedProperty(snapshot.element, "color", foreground);
   }
+  if (parseCssColor(snapshot.textFill) !== null) {
+    setTrackedProperty(snapshot.element, "-webkit-text-fill-color", resolveForeground(snapshot.textFill, surface));
+  }
+  if (!surface.preserveForeground) recolorBorders(snapshot);
+  const next = { ...surface, foreground };
+  for (const child of snapshot.children) visitElement(child, next);
 }
 
-/** Recolour every rendered email body in `doc`. Safe to call repeatedly. */
 export function applyEmailDarkMode(doc: Document): void {
   const view = doc.defaultView;
   if (view === null) return;
-  pruneDisconnected();
-  const root: VisitContext = { background: DARK_BACKGROUND, preserveForeground: false };
-  for (const element of Array.from(doc.querySelectorAll<HTMLElement>(EMAIL_CONTENT_SELECTOR))) {
-    visitElement(element, root, view);
+  activeSession?.observer.disconnect();
+  try {
+    restoreEmailColors();
+    const snapshots = Array.from(doc.querySelectorAll(EMAIL_CONTENT_SELECTOR))
+      .map((element) => readEmailElement(element, view))
+      .filter((snapshot): snapshot is EmailElementStyle => snapshot !== null);
+    const root: VisitContext = { background: DARK_BACKGROUND, preserveForeground: false, foreground: "" };
+    for (const snapshot of snapshots) visitElement(snapshot, root);
+  } finally {
+    if (activeSession !== null) observeEmailContent(activeSession);
   }
 }
 
-/** Put every touched declaration back exactly as the email authored it. */
-export function restoreEmailColors(): void {
-  for (const element of trackedElements) {
-    const state = tracked.get(element);
-    if (state === undefined) continue;
-    for (const [property, saved] of state.properties) {
-      if (saved.value === "") {
-        element.style.removeProperty(property);
-        continue;
-      }
-      element.style.setProperty(property, saved.value, saved.priority);
-    }
+function restoreElementColors(element: HTMLElement, properties: Map<EmailStyleProperty, SavedProperty>): void {
+  for (const [property, saved] of properties) {
+    if (element.style.getPropertyValue(property) !== saved.applied) continue;
+    if (element.style.getPropertyPriority(property) !== "important") continue;
+    if (saved.value === "") element.style.removeProperty(property);
+    else element.style.setProperty(property, saved.value, saved.priority);
   }
-  tracked = new WeakMap();
-  trackedElements = new Set();
+}
+
+export function restoreEmailColors(): void {
+  for (const [element, properties] of trackedElements) restoreElementColors(element, properties);
+  trackedElements.clear();
 }
 
 function touchesEmailContent(record: MutationRecord): boolean {
-  if (record.target instanceof Element) {
-    if (record.target.closest(EMAIL_CONTENT_SELECTOR) !== null) return true;
-  }
+  const target = record.target instanceof Element ? record.target : record.target.parentElement;
+  if (target?.closest(EMAIL_CONTENT_SELECTOR)) return true;
   for (const node of Array.from(record.addedNodes)) {
     if (!(node instanceof Element)) continue;
     if (node.closest(EMAIL_CONTENT_SELECTOR) !== null) return true;
@@ -433,6 +436,16 @@ function scheduleFlush(session: EmailDarkSession): void {
     if (activeSession !== session) return;
     applyEmailDarkMode(session.doc);
   }, 0);
+}
+
+function observeEmailContent(session: EmailDarkSession): void {
+  session.observer.observe(session.doc.documentElement, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: PALETTE_ATTRIBUTES,
+  });
 }
 
 /** Recolour now, then keep watching for freshly rendered email bodies. */
@@ -452,7 +465,7 @@ export function enableEmailDarkMode(doc: Document): void {
   });
   const session: EmailDarkSession = { doc, view, observer, timer: null };
   activeSession = session;
-  observer.observe(root, { childList: true, subtree: true });
+  observeEmailContent(session);
 }
 
 /** Stop watching and put the email bodies back to their authored colours. */

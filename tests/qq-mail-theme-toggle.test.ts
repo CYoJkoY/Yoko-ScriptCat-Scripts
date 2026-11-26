@@ -445,6 +445,76 @@ describe("email body recolouring", () => {
     expect(mustQuery(host, "span").style.getPropertyValue("color")).toBe(DARK_INK);
   });
 
+  it("darkens opaque paper nested inside a background-image container", () => {
+    const host = mountEmail(
+      '<div style="background-image: url(hero.png)"><table style="background: white">' +
+        '<tbody><tr><td><span style="color: #1d1d1f">正文</span></td></tr></tbody></table></div>',
+    );
+    applyEmailDarkMode(document);
+    expect(mustQuery(host, "table").style.backgroundColor).toBe(DARK_CANVAS);
+    expect(mustQuery(host, "span").style.color).toBe(LIGHT_INK);
+  });
+
+  it("preserves inherited authored ink over images after an ancestor is recoloured", () => {
+    const host = mountEmail(
+      '<div style="color: #1d1d1f"><p style="background-image: url(hero.png)">' +
+        '<span>hero</span></p><span class="plain">正文</span></div>',
+    );
+    applyEmailDarkMode(document);
+    expect(getComputedStyle(mustQuery(host, "p span")).color).toBe(DARK_INK);
+    expect(getComputedStyle(mustQuery(host, ".plain")).color).toBe(LIGHT_INK);
+  });
+
+  it("darkens mid-light paper instead of lifting its ink onto a light surface", () => {
+    const host = mountEmail('<p style="background: #bbbbbb; color: #777777">正文</p>');
+    applyEmailDarkMode(document);
+    const paragraph = mustQuery(host, "p");
+    expect(paragraph.style.backgroundColor).toBe(DARK_CANVAS);
+    expect(paragraph.style.color).toBe(LIGHT_INK);
+  });
+
+  it("composites translucent backgrounds before deciding whether ink needs lifting", () => {
+    const host = mountEmail(
+      '<div style="background: #666666"><p style="background: rgba(0, 0, 0, 0.7); color: #888888">正文</p></div>',
+    );
+    applyEmailDarkMode(document);
+    expect(mustQuery(host, "p").style.color).toBe("rgb(136, 136, 136)");
+  });
+
+  it("makes low-opacity ink readable rather than keeping its unreadable alpha", () => {
+    const host = mountEmail('<p style="color: rgba(29, 29, 31, 0.15)">正文</p>');
+    applyEmailDarkMode(document);
+    expect(mustQuery(host, "p").style.color).toBe(LIGHT_INK);
+  });
+
+  it("uses a contrast-safe fallback when the preferred light ink is still too dim", () => {
+    const host = mountEmail('<p style="background: #747474; color: #1d1d1f">正文</p>');
+    applyEmailDarkMode(document);
+    expect(mustQuery(host, "p").style.backgroundColor).toBe("rgb(116, 116, 116)");
+    expect(mustQuery(host, "p").style.color).toBe(WHITE_PAPER);
+  });
+
+  it("keeps fully transparent text invisible", () => {
+    const host = mountEmail('<p style="color: rgba(0, 0, 0, 0)">hidden</p>');
+    applyEmailDarkMode(document);
+    expect(mustQuery(host, "p").style.color).toBe("rgba(0, 0, 0, 0)");
+  });
+
+  it("recomputes moved email nodes against their new background", () => {
+    const host = mountEmail(
+      '<div class="photo" style="background-image: url(hero.png)">' +
+        '<span style="color: #1d1d1f">正文</span></div><div class="plain"></div>',
+    );
+    applyEmailDarkMode(document);
+    const span = mustQuery(host, "span");
+    mustQuery(host, ".plain").append(span);
+    applyEmailDarkMode(document);
+    expect(span.style.color).toBe(LIGHT_INK);
+    mustQuery(host, ".photo").append(span);
+    applyEmailDarkMode(document);
+    expect(span.style.color).toBe(DARK_INK);
+  });
+
   it("restores the exact authored colours when the dark theme goes away", () => {
     const host = mountEmail(
       '<table style="background: rgb(255, 255, 255); color: #1d1d1f"><tbody><tr><td>cell</td></tr></tbody></table>',
@@ -467,6 +537,47 @@ describe("email body recolouring", () => {
     await vi.waitFor(() => {
       expect(table.style.getPropertyValue("background-color")).toBe(DARK_CANVAS);
     });
+  });
+
+  it("recolours inline palette updates and restores the latest authored values", async () => {
+    const host = mountEmail('<p style="color: #1d1d1f">正文</p>');
+    enableEmailDarkMode(document);
+    const paragraph = mustQuery(host, "p");
+    paragraph.style.cssText = "color: #222222 !important; background: #bbbbbb";
+    await vi.waitFor(() => {
+      expect(paragraph.style.backgroundColor).toBe(DARK_CANVAS);
+      expect(paragraph.style.color).toBe(LIGHT_INK);
+    });
+    disableEmailDarkMode();
+    expect(paragraph.style.backgroundColor).toBe("rgb(187, 187, 187)");
+    expect(paragraph.style.color).toBe("rgb(34, 34, 34)");
+    expect(paragraph.style.getPropertyPriority("color")).toBe("important");
+  });
+
+  it("re-evaluates class changes without observing its own recolouring writes", async () => {
+    const host = mountEmail(
+      '<style>.late-paper { background-color: #bbbbbb; color: #777777 }</style><p>正文</p>',
+    );
+    enableEmailDarkMode(document);
+    const paragraph = mustQuery(host, "p");
+    paragraph.className = "late-paper";
+    await vi.waitFor(() => {
+      expect(paragraph.style.backgroundColor).toBe(DARK_CANVAS);
+      expect(paragraph.style.color).toBe(LIGHT_INK);
+    });
+    const write = vi.spyOn(paragraph.style, "setProperty");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(write).not.toHaveBeenCalled();
+    write.mockRestore();
+  });
+
+  it("does not overwrite an authored edit made immediately before light mode", () => {
+    const host = mountEmail('<p style="color: #1d1d1f">正文</p>');
+    enableEmailDarkMode(document);
+    const paragraph = mustQuery(host, "p");
+    paragraph.style.setProperty("color", "#334455");
+    disableEmailDarkMode();
+    expect(paragraph.style.color).toBe("rgb(51, 68, 85)");
   });
 
   it("stops recolouring after the dark theme is disabled", async () => {
