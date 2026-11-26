@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QQ Mail Theme Toggle
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      1.2.3
+// @version      1.2.4
 // @description  在QQ邮箱网页版左下角添加深浅主题切换按钮；深色主题替换界面配色令牌，并逐个元素重映射邮件正文里写死的内联颜色，不使用滤镜或反色，邮件中的图片、视频保持原始像素，偏好持久化并可跟随系统主题。
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/qq-mail-theme-toggle.user.js
@@ -21,6 +21,8 @@
   var SCRIPT_MARKER_ATTRIBUTE = "data-yoko-qq-mail-theme-ready";
   var THEME_ATTRIBUTE = "data-yoko-qq-mail-theme";
   var STYLE_ID = "yoko-qq-mail-theme-style";
+  var COMPOSE_STYLE_ID = "yoko-qq-mail-compose-style";
+  var COMPOSE_CONTENT_SELECTOR = '.xmail-cmp-editor-content[contenteditable="true"]';
   var BUTTON_ID = "yoko-qq-mail-theme-toggle";
   var BUTTON_CLASS = "yoko-qq-mail-theme-button";
   var STORAGE_KEY = "yoko_qq_mail_theme_mode";
@@ -47,6 +49,43 @@
   function releaseTheme(doc) {
     const root2 = doc.documentElement;
     root2?.removeAttribute(THEME_ATTRIBUTE);
+  }
+
+  // scripts/qq-mail-theme-toggle/src/core/composeStyle.ts
+  function createComposePalette(doc) {
+    const declarations = /* @__PURE__ */ new Map();
+    const selectors = /* @__PURE__ */ new WeakMap();
+    const selectorFor = (element) => {
+      const saved = selectors.get(element);
+      if (saved !== void 0) return saved;
+      const parent = element.parentElement;
+      if (parent === null) return `html[${THEME_ATTRIBUTE}="${THEME_MODE.DARK}"]`;
+      const position = Array.from(parent.children).indexOf(element) + 1;
+      const boundary = element.matches(COMPOSE_CONTENT_SELECTOR) ? COMPOSE_CONTENT_SELECTOR : "";
+      const selector = `${selectorFor(parent)} > ${boundary}:nth-child(${position})`;
+      selectors.set(element, selector);
+      return selector;
+    };
+    return {
+      write(element, property, value) {
+        if (element.style.getPropertyPriority(property) === "important") return false;
+        const style = declarations.get(element) ?? doc.createElement("span").style;
+        style.setProperty(property, value, "important");
+        declarations.set(element, style);
+        return true;
+      },
+      mount() {
+        if (declarations.size === 0) return null;
+        const style = doc.createElement("style");
+        style.id = COMPOSE_STYLE_ID;
+        style.textContent = Array.from(
+          declarations,
+          ([element, palette]) => `${selectorFor(element)} { ${palette.cssText} }`
+        ).join("\n");
+        (doc.head ?? doc.documentElement).append(style);
+        return style;
+      }
+    };
   }
 
   // scripts/qq-mail-theme-toggle/src/core/emailDark.ts
@@ -80,6 +119,17 @@
     { r: 0, g: 0, b: 0, a: 1 }
   ];
   var PALETTE_ATTRIBUTES = ["style", "class", "color", "bgcolor", "background"];
+  var CONTENT_SELECTOR = `${EMAIL_CONTENT_SELECTOR}, ${COMPOSE_CONTENT_SELECTOR}`;
+  var IMAGE_OVERLAY_ALPHA = 0.85;
+  var BACKGROUND_LAYER_DEFAULTS = [
+    ["background-size", "auto"],
+    ["background-position", "0% 0%"],
+    ["background-repeat", "repeat"],
+    ["background-attachment", "scroll"],
+    ["background-origin", "padding-box"],
+    ["background-clip", "border-box"],
+    ["background-blend-mode", "normal"]
+  ];
   var PAPER_LUMINANCE = 0.18;
   var HAIRLINE_LUMINANCE = 0.55;
   var MIN_CONTRAST = 4.5;
@@ -91,6 +141,7 @@
   var LIGHTENED_MAX_SATURATION = 0.8;
   var trackedElements = /* @__PURE__ */ new Map();
   var activeSession = null;
+  var composeStyle = null;
   function parseCssColor(value) {
     const normalized = value.trim().toLowerCase();
     if (normalized === "" || normalized === "transparent") return null;
@@ -234,6 +285,7 @@
     element.style.setProperty(property, value, "important");
     properties.set(property, { ...saved, applied: element.style.getPropertyValue(property) });
     trackedElements.set(element, properties);
+    return true;
   }
   function borderEntries(computed) {
     return [
@@ -267,56 +319,69 @@
     if (MEDIA_TAGS.has(tag) || INERT_TAGS.has(tag)) return null;
     if (!(element instanceof HTMLElement)) return null;
     const computed = view.getComputedStyle(element);
+    const children = Array.from(element.children).map((child) => readEmailElement(child, view)).filter((child) => child !== null);
+    const hasOwnText = Array.from(element.childNodes).some((node) => node.nodeType === 3 && (node.textContent?.trim().length ?? 0) > 0);
     return {
       element,
       color: computed.color,
       textFill: computed.getPropertyValue("-webkit-text-fill-color"),
       backgroundColor: computed.backgroundColor,
       backgroundImage: computed.backgroundImage,
+      backgroundLayers: BACKGROUND_LAYER_DEFAULTS.map(
+        ([property, fallback]) => [property, computed.getPropertyValue(property) || fallback]
+      ),
+      hasText: hasOwnText || children.some((child) => child.hasText),
       borders: borderEntries(computed),
-      children: Array.from(element.children).map((child) => readEmailElement(child, view)).filter((child) => child !== null)
+      children
     };
+  }
+  function darkenImageSurface(snapshot, context) {
+    const overlay = { ...DARK_BACKGROUND, a: IMAGE_OVERLAY_ALPHA };
+    const color = formatColor(overlay);
+    const image = `linear-gradient(${color}, ${color}), ${snapshot.backgroundImage}`;
+    if (!context.write(snapshot.element, "background-image", image)) return context;
+    for (const [property, value] of snapshot.backgroundLayers) {
+      const fallback = BACKGROUND_LAYER_DEFAULTS.find(([name]) => name === property)?.[1] ?? "initial";
+      context.write(snapshot.element, property, `${fallback}, ${value}`);
+    }
+    return { ...context, background: compositeColor(overlay, CONTRAST_EXTREMES[0]) };
   }
   function resolveBackground(snapshot, context) {
-    const paintedOverImage = snapshot.backgroundImage !== "none" && snapshot.backgroundImage !== "";
-    if (paintedOverImage) return { ...context, preserveForeground: true };
     const declared = parseCssColor(snapshot.backgroundColor);
-    if (declared === null || declared.a === 0) return context;
-    const preserveForeground = context.preserveForeground && declared.a < 1;
-    const mapped = preserveForeground ? null : mapBackground(declared);
-    if (mapped !== null) setTrackedProperty(snapshot.element, "background-color", mapped);
-    const surface = mapped === null ? declared : parseCssColor(mapped) ?? declared;
-    return {
+    const mapped = declared === null ? null : mapBackground(declared);
+    const applied = mapped !== null && context.write(snapshot.element, "background-color", mapped);
+    const surface = applied ? parseCssColor(mapped) : declared;
+    const result = surface === null ? context : {
       ...context,
-      background: compositeColor(surface, context.background),
-      preserveForeground
+      background: compositeColor(surface, context.background)
     };
+    const hasImage = snapshot.backgroundImage !== "none" && snapshot.backgroundImage !== "";
+    if (hasImage && snapshot.hasText) return darkenImageSurface(snapshot, result);
+    return result;
   }
   function resolveForeground(value, context) {
-    if (context.preserveForeground) return value;
     const color = parseCssColor(value);
     if (color === null) return value;
     return mapForeground(color, context.background) ?? value;
   }
-  function recolorBorders(snapshot) {
+  function recolorBorders(snapshot, write) {
     for (const [property, width, style, color] of snapshot.borders) {
       if (!hasBorder(width, style)) continue;
       const parsed = parseCssColor(color);
       if (parsed === null) continue;
       const mapped = mapBorder(parsed);
-      if (mapped !== null) setTrackedProperty(snapshot.element, property, mapped);
+      if (mapped !== null) write(snapshot.element, property, mapped);
     }
   }
   function visitElement(snapshot, context) {
     const surface = resolveBackground(snapshot, context);
     const foreground = resolveForeground(snapshot.color, surface);
     if (foreground !== snapshot.color || foreground !== context.foreground) {
-      setTrackedProperty(snapshot.element, "color", foreground);
+      context.write(snapshot.element, "color", foreground);
     }
-    if (parseCssColor(snapshot.textFill) !== null) {
-      setTrackedProperty(snapshot.element, "-webkit-text-fill-color", resolveForeground(snapshot.textFill, surface));
-    }
-    if (!surface.preserveForeground) recolorBorders(snapshot);
+    const textFill = resolveForeground(snapshot.textFill || snapshot.color, surface);
+    context.write(snapshot.element, "-webkit-text-fill-color", textFill);
+    recolorBorders(snapshot, context.write);
     const next = { ...surface, foreground };
     for (const child of snapshot.children) visitElement(child, next);
   }
@@ -326,9 +391,13 @@
     activeSession?.observer.disconnect();
     try {
       restoreEmailColors();
-      const snapshots = Array.from(doc.querySelectorAll(EMAIL_CONTENT_SELECTOR)).map((element) => readEmailElement(element, view)).filter((snapshot) => snapshot !== null);
-      const root2 = { background: DARK_BACKGROUND, preserveForeground: false, foreground: "" };
-      for (const snapshot of snapshots) visitElement(snapshot, root2);
+      const snapshots = Array.from(doc.querySelectorAll(CONTENT_SELECTOR)).map((element) => readEmailElement(element, view)).filter((snapshot) => snapshot !== null);
+      const palette = createComposePalette(doc);
+      for (const snapshot of snapshots) {
+        const write = snapshot.element.matches(COMPOSE_CONTENT_SELECTOR) ? palette.write : setTrackedProperty;
+        visitElement(snapshot, { background: DARK_BACKGROUND, foreground: "", write });
+      }
+      composeStyle = palette.mount();
     } finally {
       if (activeSession !== null) observeEmailContent(activeSession);
     }
@@ -342,16 +411,19 @@
     }
   }
   function restoreEmailColors() {
+    composeStyle?.remove();
+    composeStyle = null;
     for (const [element, properties] of trackedElements) restoreElementColors(element, properties);
     trackedElements.clear();
   }
   function touchesEmailContent(record) {
     const target = record.target instanceof Element ? record.target : record.target.parentElement;
-    if (target?.closest(EMAIL_CONTENT_SELECTOR)) return true;
-    for (const node of Array.from(record.addedNodes)) {
+    if (target?.closest(CONTENT_SELECTOR)) return true;
+    if (record.type === "childList" && target?.querySelector(COMPOSE_CONTENT_SELECTOR)) return true;
+    for (const node of [...record.addedNodes, ...record.removedNodes]) {
       if (!(node instanceof Element)) continue;
-      if (node.closest(EMAIL_CONTENT_SELECTOR) !== null) return true;
-      if (node.querySelector(EMAIL_CONTENT_SELECTOR) !== null) return true;
+      if (node.closest(CONTENT_SELECTOR) !== null) return true;
+      if (node.querySelector(CONTENT_SELECTOR) !== null) return true;
     }
     return false;
   }
@@ -860,6 +932,16 @@
       "  color-scheme: dark;",
       "  background-color: #1A2028 !important;",
       "  color: #E8ECF1 !important;",
+      "}",
+      "",
+      `${body} ${COMPOSE_CONTENT_SELECTOR} {`,
+      "  background-color: #1A2028 !important;",
+      "  color: #E8ECF1 !important;",
+      "  caret-color: #E8ECF1 !important;",
+      "  --editor-quote-border-color: #3A4049 !important;",
+      "  --editor-todo-box-bg-color: #1A2028 !important;",
+      "  --editor-todo-box-border-color: #A0A8B2 !important;",
+      "  --editor-todo-tick-color: #E8ECF1 !important;",
       "}",
       "",
       "/* Toggle button: a compact icon button pinned to the bottom-left corner. */",
