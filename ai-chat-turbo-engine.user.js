@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Chat Turbo Engine
 // @namespace    https://cyojkoy.github.io/Payment/
-// @version      0.23.13
+// @version      0.23.14
 // @description  跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖
 // @author       Yoko
 // @updateURL    https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js
@@ -7247,6 +7247,8 @@ ${CODE_FENCE}
       fuseAndSubmit,
       resumeObservers,
       hasActiveFiles,
+      hasConversionOffer,
+      dismissConversionOffer,
       isSubmitting,
       setSubmitting
     } = deps;
@@ -7413,7 +7415,9 @@ ${CODE_FENCE}
         return;
       }
       if (event.type === "click") {
-        if (!state.virtualFileEnabled || !hasActiveFiles()) return;
+        if (!state.virtualFileEnabled) return;
+        const hasFiles = hasActiveFiles();
+        if (!hasFiles && !hasConversionOffer()) return;
         const eventTarget = event.target;
         if (!(eventTarget instanceof Element)) return;
         let sendControl = null;
@@ -7437,6 +7441,10 @@ ${CODE_FENCE}
           }
         }
         if (!sendControl) return;
+        if (!hasFiles) {
+          dismissConversionOffer();
+          return;
+        }
         const input = composer.getChatInput();
         if (!input) return;
         event.preventDefault();
@@ -10703,13 +10711,21 @@ ${contentText}`);
         }
         if (ts - virtualFileTraySyncLastTs >= VF_TRAY_SYNC_INTERVAL) {
           virtualFileTraySyncLastTs = ts;
-          if (activeVirtualFiles.length === 0 && !trayInputIsUsable()) {
-            const input = composer.getChatInput();
-            if (input === null || !refreshConversionOffer(input)) {
-              removeVirtualFileTray();
-              return;
+          if (activeVirtualFiles.length === 0) {
+            const cached = virtualFileTrayCachedInput;
+            if (!trayInputIsUsable()) {
+              const input = composer.getChatInput();
+              if (input === null || !refreshConversionOffer(input)) {
+                removeVirtualFileTray();
+                return;
+              }
+              virtualFileTrayCachedInput = input;
+            } else if (cached && composerMayBeBelowThreshold(cached)) {
+              if (!refreshConversionOffer(cached)) {
+                removeVirtualFileTray();
+                return;
+              }
             }
-            virtualFileTrayCachedInput = input;
           }
           positionVirtualFileTray();
         }
@@ -10885,6 +10901,23 @@ ${contentText}`);
         return false;
       }
       return text !== conversionDismissedText;
+    }
+    function composerMayBeBelowThreshold(input) {
+      const raw = input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement ? input.value : input.textContent ?? "";
+      if (raw.length < VIRTUAL_FILE_THRESHOLD) return true;
+      return raw.trim().length < VIRTUAL_FILE_THRESHOLD;
+    }
+    function hasConversionOffer() {
+      if (activeVirtualFiles.length > 0) return false;
+      const tray = document.getElementById("ai-turbo-vf-tray");
+      return tray !== null && tray.isConnected;
+    }
+    function dismissConversionOffer() {
+      if (!hasConversionOffer()) return;
+      conversionDismissedText = readComposerText(
+        composer.getChatInput()
+      ).trim();
+      removeVirtualFileTray();
     }
     function removeVirtualFileTray() {
       const current = document.getElementById("ai-turbo-vf-tray");
@@ -11275,6 +11308,8 @@ ${CODE_FENCE}`;
       clearFiles,
       activeFileCount,
       isTrayDirty,
+      hasConversionOffer,
+      dismissConversionOffer,
       handlePasteIntercept,
       handleComposerInput,
       fuseAndSubmit
@@ -12453,6 +12488,8 @@ ${GEMINI_NATIVE_RENDER_CSS}` : baseCss;
         codeBlocks.observeCodeLayout();
       },
       hasActiveFiles: () => virtualFiles.activeFileCount() > 0,
+      hasConversionOffer: () => virtualFiles.hasConversionOffer(),
+      dismissConversionOffer: () => virtualFiles.dismissConversionOffer(),
       isSubmitting: () => isSubmitting,
       setSubmitting: (value) => {
         isSubmitting = value;
