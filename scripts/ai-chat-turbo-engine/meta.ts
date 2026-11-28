@@ -4,7 +4,7 @@ import { PLATFORM_MATCH_PATTERNS } from "./src/config";
 const meta = {
   name: "AI Chat Turbo Engine",
   namespace: "https://cyojkoy.github.io/Payment/",
-  version: "0.23.13",
+  version: "0.23.14",
   description: "跨平台 AI 对话加速：常驻统计 + 完整消息提取 + YAML 交接 + 多平台适配 + 长代码折叠 + 自适应脱水 + 推理强度记忆 + 元宝原子工具记忆 + 新对话快捷键覆盖",
   author: "Yoko",
   updateURL: "https://cdn.jsdelivr.net/gh/CYoJkoY/Yoko-ScriptCat-Scripts@release/ai-chat-turbo-engine.user.js",

@@ -16,6 +16,8 @@ export interface SendInterceptDeps {
   fuseAndSubmit: (inputElement: HTMLElement) => boolean;
   resumeObservers: () => void;
   hasActiveFiles: () => boolean;
+  hasConversionOffer: () => boolean;
+  dismissConversionOffer: () => void;
   isSubmitting: () => boolean;
   setSubmitting: (value: boolean) => void;
 }
@@ -57,6 +59,8 @@ export function createSendInterceptUtils(
     fuseAndSubmit,
     resumeObservers,
     hasActiveFiles,
+    hasConversionOffer,
+    dismissConversionOffer,
     isSubmitting,
     setSubmitting,
   } = deps;
@@ -315,7 +319,13 @@ export function createSendInterceptUtils(
     }
 
     if (event.type === "click") {
-      if (!state.virtualFileEnabled || !hasActiveFiles()) return;
+      if (!state.virtualFileEnabled) return;
+
+      const hasFiles = hasActiveFiles();
+      // A prompt-only tray is just an offer to convert the composer text. A
+      // send click retires it here: the host clears the composer afterwards
+      // and often fires no input event, so nothing else would remove it.
+      if (!hasFiles && !hasConversionOffer()) return;
 
       const eventTarget = event.target;
       if (!(eventTarget instanceof Element)) return;
@@ -349,6 +359,11 @@ export function createSendInterceptUtils(
       }
 
       if (!sendControl) return;
+
+      if (!hasFiles) {
+        dismissConversionOffer();
+        return;
+      }
 
       const input = composer.getChatInput();
       if (!input) return;
