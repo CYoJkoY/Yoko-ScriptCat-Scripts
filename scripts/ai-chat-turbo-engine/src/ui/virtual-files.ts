@@ -43,6 +43,10 @@ export interface VirtualFileUtils {
   clearFiles(): void;
   activeFileCount(): number;
   isTrayDirty(): boolean;
+  /** True while the tray holds only the long-text conversion offer. */
+  hasConversionOffer(): boolean;
+  /** Retire the conversion offer because the message is being sent. */
+  dismissConversionOffer(): void;
   handlePasteIntercept(event: ClipboardEvent): void;
   fuseAndSubmit(inputElement: HTMLElement): boolean;
 }
@@ -127,13 +131,27 @@ export function createVirtualFileUtils(
          * then dropped unless the new composer still asks for a conversion,
          * so a detached editor cannot leave the tray behind.
          */
-        if (activeVirtualFiles.length === 0 && !trayInputIsUsable()) {
-          const input = composer.getChatInput();
-          if (input === null || !refreshConversionOffer(input)) {
-            removeVirtualFileTray();
-            return;
+        if (activeVirtualFiles.length === 0) {
+          const cached = virtualFileTrayCachedInput;
+          if (!trayInputIsUsable()) {
+            const input = composer.getChatInput();
+            if (input === null || !refreshConversionOffer(input)) {
+              removeVirtualFileTray();
+              return;
+            }
+            virtualFileTrayCachedInput = input;
+          } else if (cached && composerMayBeBelowThreshold(cached)) {
+            /*
+             * Sending clears the composer on the host side, and several hosts
+             * never dispatch an input event for that change. Without a
+             * re-check the conversion offer would keep hanging above an empty
+             * box, so sweep the prompt-only tray while it is on screen.
+             */
+            if (!refreshConversionOffer(cached)) {
+              removeVirtualFileTray();
+              return;
+            }
           }
-          virtualFileTrayCachedInput = input;
         }
 
         positionVirtualFileTray();
@@ -381,6 +399,41 @@ export function createVirtualFileUtils(
       return false;
     }
     return text !== conversionDismissedText;
+  }
+
+  /**
+   * Cheap pre-check for the periodic sweep: a textarea value or raw
+   * `textContent` needs no layout, so only a composer that looks short pays
+   * for the `innerText` read inside `refreshConversionOffer`.
+   */
+  function composerMayBeBelowThreshold(input: HTMLElement): boolean {
+    const raw =
+      input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement
+        ? input.value
+        : (input.textContent ?? "");
+    // Trimming only shortens the text, so a raw string below the threshold
+    // answers without copying a long composer on every tick.
+    if (raw.length < VIRTUAL_FILE_THRESHOLD) return true;
+    return raw.trim().length < VIRTUAL_FILE_THRESHOLD;
+  }
+
+  function hasConversionOffer(): boolean {
+    if (activeVirtualFiles.length > 0) return false;
+    const tray = document.getElementById("ai-turbo-vf-tray");
+    return tray !== null && tray.isConnected;
+  }
+
+  /**
+   * The user just sent the message the offer pointed at, so the tray must not
+   * survive the send. The text is remembered as dismissed in case the host
+   * echoes the old content back with an input event.
+   */
+  function dismissConversionOffer(): void {
+    if (!hasConversionOffer()) return;
+    conversionDismissedText = readComposerText(
+      composer.getChatInput(),
+    ).trim();
+    removeVirtualFileTray();
   }
 
   /** Drop the tray and its layout tracking; nothing is left on the page. */
@@ -863,6 +916,8 @@ export function createVirtualFileUtils(
     clearFiles,
     activeFileCount,
     isTrayDirty,
+    hasConversionOffer,
+    dismissConversionOffer,
     handlePasteIntercept,
     handleComposerInput,
     fuseAndSubmit,

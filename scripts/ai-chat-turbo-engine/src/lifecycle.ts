@@ -279,6 +279,8 @@ export function initializeEngine(): void {
       codeBlocks.observeCodeLayout();
     },
     hasActiveFiles: () => virtualFiles.activeFileCount() > 0,
+    hasConversionOffer: () => virtualFiles.hasConversionOffer(),
+    dismissConversionOffer: () => virtualFiles.dismissConversionOffer(),
     isSubmitting: () => isSubmitting,
     setSubmitting: (value) => {
       isSubmitting = value;

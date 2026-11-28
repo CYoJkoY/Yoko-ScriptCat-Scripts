@@ -20,6 +20,7 @@ interface FixtureOptions {
   platform?: PlatformDefinition;
   input?: HTMLElement;
   hasFiles?: boolean;
+  hasConversionOffer?: boolean;
   virtualFileEnabled?: boolean;
 }
 
@@ -30,6 +31,8 @@ interface SendFixture {
   utils: SendInterceptUtils;
   fuseAndSubmit: ReturnType<typeof vi.fn<(input: HTMLElement) => boolean>>;
   resumeObservers: ReturnType<typeof vi.fn<() => void>>;
+  dismissConversionOffer: ReturnType<typeof vi.fn<() => void>>;
+  clickSendButton(): MouseEvent;
   isSubmitting: () => boolean;
   press(init?: KeyInit, target?: EventTarget): KeyboardEvent;
   type(init: InputEventInit, target?: EventTarget): InputEvent;
@@ -89,6 +92,7 @@ function createFixture(options: FixtureOptions = {}): SendFixture {
   let submitting = false;
   const fuseAndSubmit = vi.fn<(input: HTMLElement) => boolean>(() => true);
   const resumeObservers = vi.fn<() => void>();
+  const dismissConversionOffer = vi.fn<() => void>();
 
   const utils = createSendInterceptUtils({
     currentPlatform: platform,
@@ -98,12 +102,28 @@ function createFixture(options: FixtureOptions = {}): SendFixture {
     fuseAndSubmit,
     resumeObservers,
     hasActiveFiles: () => options.hasFiles === true,
+    hasConversionOffer: () => options.hasConversionOffer === true,
+    dismissConversionOffer,
     isSubmitting: () => submitting,
     setSubmitting: (value: boolean) => {
       submitting = value;
     },
   });
   utils.bindCompositionTracking(window);
+
+  function clickSendButton(): MouseEvent {
+    const event = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    });
+    const handler = (received: Event): void => {
+      utils.handleSendIntercept(received as MouseEvent);
+    };
+    sendButton.addEventListener("click", handler);
+    sendButton.dispatchEvent(event);
+    sendButton.removeEventListener("click", handler);
+    return event;
+  }
 
   function press(init: KeyInit = {}, target: EventTarget = input): KeyboardEvent {
     const event = new KeyboardEvent("keydown", {
@@ -153,6 +173,8 @@ function createFixture(options: FixtureOptions = {}): SendFixture {
     utils,
     fuseAndSubmit,
     resumeObservers,
+    dismissConversionOffer,
+    clickSendButton,
     isSubmitting: () => submitting,
     press,
     type,
@@ -440,5 +462,42 @@ describe("send intercept", () => {
     soft.press({ key: "Enter", shiftKey: true });
     window.removeEventListener("keydown", onSoft);
     expect(softSeen).toBe(true);
+  });
+
+  it("retires a prompt-only conversion offer on a send click", () => {
+    const fixture = createFixture({
+      platform: PLATFORMS.chatgpt,
+      hasConversionOffer: true,
+    });
+
+    const event = fixture.clickSendButton();
+
+    expect(fixture.dismissConversionOffer).toHaveBeenCalledTimes(1);
+    // The click must reach the site: the offer never owned the send.
+    expect(event.defaultPrevented).toBe(false);
+    expect(fixture.fuseAndSubmit).not.toHaveBeenCalled();
+    expect(fixture.composer.triggerSendButton).not.toHaveBeenCalled();
+    expect(fixture.isSubmitting()).toBe(false);
+  });
+
+  it("leaves unrelated clicks alone when only the offer is showing", () => {
+    const fixture = createFixture({
+      platform: PLATFORMS.chatgpt,
+      hasConversionOffer: true,
+    });
+    // Not a send-like control, so the offer must stay put.
+    const elsewhere = document.createElement("div");
+    document.body.append(elsewhere);
+
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    const handler = (received: Event): void => {
+      fixture.utils.handleSendIntercept(received as MouseEvent);
+    };
+    elsewhere.addEventListener("click", handler);
+    elsewhere.dispatchEvent(event);
+    elsewhere.removeEventListener("click", handler);
+
+    expect(fixture.dismissConversionOffer).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
   });
 });

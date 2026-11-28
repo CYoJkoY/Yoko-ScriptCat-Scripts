@@ -272,6 +272,38 @@ describe("virtual file tray conversion", () => {
     expect(tray()).toBeNull();
   });
 
+  it("drops a prompt-only tray when a send clears the composer silently", async () => {
+    // A painted composer keeps the cached node usable, which is exactly the
+    // path a send takes: the host empties the box without any input event.
+    fixture.textarea.getBoundingClientRect = () =>
+      ({ top: 500, left: 40, width: 720, height: 120 }) as DOMRect;
+    fixture.textarea.getClientRects = () =>
+      [fixture.textarea.getBoundingClientRect()] as unknown as DOMRectList;
+
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    expect(tray()).not.toBeNull();
+
+    fixture.textarea.value = "";
+    await new Promise((resolve) => setTimeout(resolve, 160));
+
+    expect(tray()).toBeNull();
+    expect(fixture.files.isTrayDirty()).toBe(false);
+  });
+
+  it("keeps the conversion offer while the long text stays put", async () => {
+    fixture.textarea.getBoundingClientRect = () =>
+      ({ top: 500, left: 40, width: 720, height: 120 }) as DOMRect;
+    fixture.textarea.getClientRects = () =>
+      [fixture.textarea.getBoundingClientRect()] as unknown as DOMRectList;
+
+    fixture.textarea.value = LONG_TEXT;
+    fixture.files.handleComposerInput(fixture.textarea);
+    await new Promise((resolve) => setTimeout(resolve, 160));
+
+    expect(tray()).not.toBeNull();
+  });
+
   it("drops the tray when the host swaps in a fresh empty composer", async () => {
     fixture.textarea.value = LONG_TEXT;
     fixture.files.handleComposerInput(fixture.textarea);
